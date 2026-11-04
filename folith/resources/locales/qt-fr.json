@@ -2508,5 +2508,6 @@
   "译文仍保留整段源文": "La traduction est encore identique à la source",
   "当前译文与原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。": "La traduction est identique à la source ; sauf élément à conserver explicitement, elle est peut-être incomplète.",
   "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。": "Vérifiez si ce segment est à conserver ; sinon, retraduisez en gardant les noms propres nécessaires.",
-  "译文与源段完全相同，疑似整段未翻译": "La traduction égale la source ; segment peut-être non traduit"
+  "译文与源段完全相同，疑似整段未翻译": "La traduction égale la source ; segment peut-être non traduit",
+  "此项目没有额外证据。": "Aucun élément supplémentaire pour cet élément."
 }

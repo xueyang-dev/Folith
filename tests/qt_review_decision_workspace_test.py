@@ -276,6 +276,51 @@ def test_short_content_body_height_is_bounded(qapp):
     assert panel.item_body.height() <= 420
 
 
+def test_missing_target_is_explicit_and_edit_is_primary(qapp):
+    panel = rp.ReviewPanel()
+    item = _finding("missing-target", source="A source sentence.", target="",
+                    target_span="（未翻译）")
+    panel.apply(_view(queue_items=[item], group_counts={"must": 0, "suggested": 1,
+                                                       "reference": 0, "auto": 0}))
+    assert "（未翻译）" in panel.item_body.toPlainText()
+    assert "<mark>" not in panel._translation_html(item)
+    assert panel.edit_button.property("kind") == "primary"
+    assert panel.confirm_button.property("kind") != "primary"
+    assert "没有额外证据" in panel.evidence_body.toPlainText()
+
+
+def test_evidence_inspector_yields_space_only_when_empty(qapp):
+    panel = rp.ReviewPanel()
+    item = _finding("evidence", source="Source", target="译文")
+    counts = {"must": 0, "suggested": 1, "reference": 0, "auto": 0}
+    panel.apply(_view(queue_items=[item], group_counts=counts))
+    assert panel.evidence_area.maximumWidth() == 200
+    item["decision_label"] = "确认已解决"
+    panel.apply(_view(queue_items=[item], group_counts=counts))
+    assert panel.evidence_area.minimumWidth() == 280
+    assert "确认已解决" in panel.evidence_body.toPlainText()
+
+
+def test_evidence_toggle_can_reopen_wide_inspector_and_switch_narrow(qapp):
+    panel = rp.ReviewPanel()
+    item = _finding("toggle", source="Source", target="译文")
+    panel.resize(1280, 900)
+    panel.apply(_view(queue_items=[item], group_counts={"suggested": 1}))
+    panel.show()
+    qapp.processEvents()
+    assert panel.evidence_area.isVisible()
+    panel.evidence_toggle.click()
+    assert not panel.evidence_area.isVisible()
+    panel.evidence_toggle.click()
+    assert panel.evidence_area.isVisible()
+    panel.resize(980, 900)
+    qapp.processEvents()
+    assert panel.workspace_area.isVisible() and not panel.evidence_area.isVisible()
+    panel.evidence_toggle.click()
+    assert panel.evidence_area.isVisible() and not panel.workspace_area.isVisible()
+    panel.close()
+
+
 def _audit_item(**over):
     base = {"title": "第 41 段 · 数字确定性修复", "triage_record_key": "rk1",
             "triage_actor_type": "rule", "triage_disposition": "auto_resolvable",
@@ -305,6 +350,7 @@ def test_committed_repair_shows_before_after_and_current(qapp):
     body = panel.item_body.toPlainText()
     assert "完成于 00 s" in body and "完成于 100 s" in body
     assert "已提交且仍为当前" in body
+    assert "当前译文" in body
 
 
 def test_committed_then_modified_shows_current_and_status(qapp):

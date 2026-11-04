@@ -279,6 +279,8 @@ class ReviewPanel(QWidget):
         # ---- 顶部：就绪状态 + 筛选 ------------------------------------------
         self.headline = QLabel("")
         self.headline.setObjectName("reviewHeadline")
+        self.headline.setWordWrap(True)
+        self.headline.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.detail = QLabel("")
         self.detail.setWordWrap(True)
         self.detail.setProperty("role", "muted")
@@ -288,7 +290,9 @@ class ReviewPanel(QWidget):
         self.concept_button.clicked.connect(self.conceptRequested.emit)
         # 窄窗（<1000px）下证据检查器单独做成可切换面板，避免三栏把窗口撑出横向溢出。
         self.evidence_toggle = button(i18n.tr('证据'), "info")
-        self.evidence_toggle.setVisible(False)
+        self.evidence_toggle.setCheckable(True)
+        self.evidence_toggle.setChecked(True)
+        self._inspector_collapsed = False
         self.evidence_toggle.clicked.connect(self._toggle_evidence)
         # 标签复用左栏分组已有的、已翻译的词条，避免引入新 key 后在非中文界面
         # 回落成中文。
@@ -298,19 +302,21 @@ class ReviewPanel(QWidget):
             ("auto", i18n.tr(GROUP_LABELS["auto"])),
             ("reference", i18n.tr(GROUP_LABELS["reference"])),
         ])
-        top = QVBoxLayout()
+        self.toolbar = QFrame()
+        self.toolbar.setObjectName("qaToolbar")
+        top = QVBoxLayout(self.toolbar)
+        top.setContentsMargins(16, 10, 16, 10)
         top.setSpacing(6)
         top.addWidget(self.overview, 0)
         text_column = QVBoxLayout()
         text_column.setSpacing(2)
         text_column.addWidget(self.headline)
         text_column.addWidget(self.detail)
-        top.addLayout(text_column)
-        # 次级控件单独一行右对齐：和概览条挤在一行会把最小宽度撑过默认窗口，
-        # 德语/俄语/法语的长标签就会横向溢出。
+        # Readiness is independent of QA counts. Keep the secondary actions on
+        # the same row while allowing the status copy to wrap in long languages.
         controls_row = QHBoxLayout()
         controls_row.setSpacing(8)
-        controls_row.addStretch(1)
+        controls_row.addLayout(text_column, 1)
         controls_row.addWidget(self.evidence_toggle, 0, Qt.AlignmentFlag.AlignTop)
         controls_row.addWidget(self.review_all_button, 0, Qt.AlignmentFlag.AlignTop)
         controls_row.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignTop)
@@ -319,7 +325,7 @@ class ReviewPanel(QWidget):
         # ---- 左：队列 --------------------------------------------------------
         self.list = QListWidget()
         self.list.setObjectName("reviewQueue")
-        self.list.setMinimumWidth(260)
+        self.list.setMinimumWidth(240)
         # 队列项是两行纯文本，超出列宽就省略；开横向滚动条会让 RTL（阿拉伯语）
         # 下的长行把列表撑出可视区，文字贴到窗口边缘。
         self.list.setWordWrap(False)
@@ -345,24 +351,32 @@ class ReviewPanel(QWidget):
         self._filter_chips: dict[str, QPushButton] = {}
         # 长语言下分组标签很长：用可换行的 FlowRow，窄列里折行而不是互相挤压。
         chip_row = components.FlowRow(spacing=6, fill=False)
+        chip_row.setContentsMargins(12, 0, 12, 0)
         for key in GROUP_ORDER:
             chip = QPushButton("")
-            chip.setObjectName("pill")
+            chip.setProperty("qaFilter", True)
             chip.setCheckable(True)
             chip.clicked.connect(
                 lambda _checked=False, name=key: self._focus_group(name))
             chip_row.addWidget(chip)
             self._filter_chips[key] = chip
-        self.queue_area = QWidget()
+        self.queue_area = QFrame()
+        self.queue_area.setObjectName("qaQueue")
         queue_layout = QVBoxLayout(self.queue_area)
-        queue_layout.setContentsMargins(12, 12, 8, 12)
-        queue_layout.setSpacing(10)
-        queue_layout.addWidget(self.queue_heading)
+        queue_layout.setContentsMargins(0, 0, 0, 12)
+        queue_layout.setSpacing(8)
+        queue_header = QFrame()
+        queue_header.setObjectName("qaPanelHeader")
+        queue_header.setMinimumHeight(48)
+        queue_header_layout = QHBoxLayout(queue_header)
+        queue_header_layout.setContentsMargins(16, 10, 16, 10)
+        queue_header_layout.addWidget(self.queue_heading)
+        queue_layout.addWidget(queue_header)
         queue_layout.addLayout(chip_row)
         queue_layout.addWidget(self.list, 1)
         queue_layout.addWidget(self.empty_label)
         self.queue_area.setMinimumWidth(250)
-        self.queue_area.setMaximumWidth(380)
+        self.queue_area.setMaximumWidth(320)
 
         # ---- 右：详情 + 动作 -------------------------------------------------
         self.item_title = QLabel("")
@@ -372,7 +386,7 @@ class ReviewPanel(QWidget):
         self.item_body = QTextBrowser()
         self.item_body.setObjectName("reviewDetail")
         self.item_body.setOpenExternalLinks(False)
-        self.item_body.setMinimumHeight(80)
+        self.item_body.setMinimumHeight(300)
         # 内容自适应：短段落按内容高度、长段落限高后内部滚动，避免一整块空文本框。
         self.item_body.setMaximumHeight(420)
         self.item_body.setSizePolicy(QSizePolicy.Policy.Preferred,
@@ -478,7 +492,11 @@ class ReviewPanel(QWidget):
         self.source_button.setVisible(False)
         self.source_button.clicked.connect(self._open_source)
 
-        title_row = QHBoxLayout()
+        workspace_header = QFrame()
+        workspace_header.setObjectName("qaPanelHeader")
+        workspace_header.setMinimumHeight(48)
+        title_row = QHBoxLayout(workspace_header)
+        title_row.setContentsMargins(20, 10, 20, 10)
         title_row.addWidget(self.item_title, 1)
         title_row.addWidget(self.source_button, 0, Qt.AlignmentFlag.AlignTop)
         title_row.addWidget(self.item_chip, 0, Qt.AlignmentFlag.AlignTop)
@@ -492,36 +510,49 @@ class ReviewPanel(QWidget):
         content_column.addWidget(self.source_confirm_box)
         content_column.addWidget(self.source_note_edit)
         content_column.addStretch(1)
-        content_column.addWidget(self.note_edit)
-        content_column.addLayout(action_row)
-        content_column.addWidget(self.hint)
-        content_column.addWidget(self.shortcut_hint)
+        self.action_bar = QFrame()
+        self.action_bar.setObjectName("qaActionBar")
+        action_layout = QVBoxLayout(self.action_bar)
+        action_layout.setContentsMargins(16, 12, 16, 12)
+        action_layout.setSpacing(8)
+        action_layout.addWidget(self.note_edit)
+        action_layout.addLayout(action_row)
+        action_layout.addWidget(self.hint)
+        action_layout.addWidget(self.shortcut_hint)
 
         # ---- 区域 B：译文工作区（中间，视觉中心；右侧可并排原页）---------------
         self.workspace_area = QFrame()
         self.workspace_area.setObjectName("qaWorkspace")
         workspace = QVBoxLayout(self.workspace_area)
-        workspace.setContentsMargins(20, 16, 20, 16)
-        workspace.setSpacing(10)
-        workspace.addLayout(title_row)
+        workspace.setContentsMargins(0, 0, 0, 0)
+        workspace.setSpacing(0)
+        workspace.addWidget(workspace_header)
         work_split = QHBoxLayout()
+        work_split.setContentsMargins(20, 16, 20, 16)
         work_split.setSpacing(14)
         work_split.addLayout(content_column, 2)
         work_split.addWidget(self.pdf, 1)
         workspace.addLayout(work_split, 1)
+        workspace.addWidget(self.action_bar)
 
         # ---- 区域 C：证据检查器（右侧，独立只读面）------------------------------
         self.evidence_title = style_module.SectionLabel(i18n.tr('证据'))
         self.evidence_area = QFrame()
         self.evidence_area.setObjectName("qaEvidence")
         evidence_layout = QVBoxLayout(self.evidence_area)
-        evidence_layout.setContentsMargins(16, 16, 16, 16)
-        evidence_layout.setSpacing(10)
-        evidence_layout.addWidget(self.evidence_title)
+        evidence_layout.setContentsMargins(0, 0, 0, 12)
+        evidence_layout.setSpacing(8)
+        evidence_header = QFrame()
+        evidence_header.setObjectName("qaPanelHeader")
+        evidence_header.setMinimumHeight(48)
+        evidence_header_layout = QHBoxLayout(evidence_header)
+        evidence_header_layout.setContentsMargins(16, 10, 16, 10)
+        evidence_header_layout.addWidget(self.evidence_title)
+        evidence_layout.addWidget(evidence_header)
         evidence_layout.addWidget(self.evidence_body, 1)
         evidence_layout.addWidget(self.audit_hint)
-        self.evidence_area.setMinimumWidth(280)
-        self.evidence_area.setMaximumWidth(440)
+        self.evidence_area.setMinimumWidth(180)
+        self.evidence_area.setMaximumWidth(320)
 
         body = QHBoxLayout()
         body.setSpacing(0)
@@ -534,8 +565,8 @@ class ReviewPanel(QWidget):
         self.content = QWidget()
         content_layout = QVBoxLayout(self.content)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(10)
-        content_layout.addLayout(top)
+        content_layout.setSpacing(0)
+        content_layout.addWidget(self.toolbar)
         content_layout.addLayout(body, 1)
         self.empty_state = style_module.EmptyState(icon="shield-check", page=True,
                                                    action=i18n.tr('审校全部段落'))
@@ -572,6 +603,10 @@ class ReviewPanel(QWidget):
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
             shortcut.activated.connect(self._shortcut_handlers[key])
             self._shortcuts.append(shortcut)
+        app = QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(self._sync_shortcut_focus)
+        self._sync_shortcut_focus()
 
         self._render_detail()
         self._sync_accessibility()
@@ -758,7 +793,8 @@ class ReviewPanel(QWidget):
         self.list.blockSignals(False)
         self._selected_id = (str(self._visible[row].get("id"))
                              if 0 <= row < len(self._visible) else "")
-        self.empty_label.setVisible(not self._visible)
+        self.empty_label.setVisible(not self._visible and not (
+            self._expanded["auto"] and self._auto))
         self.empty_label.setText(
             i18n.tr('展开分组查看其中的项目。')
             if self._items or self._handled or self._auto
@@ -1039,17 +1075,20 @@ class ReviewPanel(QWidget):
     def _translation_html(self, item: dict) -> str:
         """工作区里把原文、当前译文、建议译文各画成独立区块（不是一整块灰）。"""
         from folith.textual import text_direction
-        muted = style_module.html_color("text-muted", over="bg-surface")
+        muted = style_module.html_color("text-secondary", over="bg-surface")
         blocks: list[str] = []
         for label, key, span_key in (("原文", "source", "source_span"),
                                      ("当前译文", "target", "target_span"),
                                      ("建议译文", "suggested_target", None)):
             value = str(item.get(key) or "").strip()
             if not value:
-                continue
+                if key != "target":
+                    continue
+                value = i18n.tr('（未翻译）')
             rtl = text_direction(value, None) == "rtl"
             block = ' dir="rtl"' if rtl else ""
-            span = str(item.get(span_key) or "") if span_key else ""
+            # The empty-target label is UI copy, not document text or evidence.
+            span = str(item.get(span_key) or "") if span_key and item.get(key) else ""
             if blocks:
                 blocks.append("<hr/>")
             blocks.append(
@@ -1088,25 +1127,31 @@ class ReviewPanel(QWidget):
                   "auto": GROUP_LABELS["auto"],
                   "reference": GROUP_LABELS["reference"]}
         for key, chip in self._filter_chips.items():
-            chip.setText(f"{i18n.tr(labels[key])} {int(counts.get(key) or 0)}")
+            chip.setText(i18n.tr(labels[key]))
             # 分诊关闭时没有「自动处理」这种能力：不显示这一片，避免出现一个
             # 会误导的 0。其余分组始终显示。
             chip.setVisible(not (key == "auto" and not self._triage_on))
             chip.setChecked(bool(self._expanded.get(key)))
 
     def _toggle_evidence(self) -> None:
-        self._apply_narrow_evidence(not getattr(self, "_narrow_evidence", False))
+        if self.width() >= 1000:
+            self._inspector_collapsed = not self._inspector_collapsed
+            self._apply_narrow_evidence(getattr(self, "_narrow_evidence", False))
+        else:
+            self._apply_narrow_evidence(not getattr(self, "_narrow_evidence", False))
 
     def _apply_narrow_evidence(self, show_evidence: bool) -> None:
         """窄窗下证据检查器与译文工作区互斥显示，避免三栏把窗口撑出横向溢出。"""
         self._narrow_evidence = bool(show_evidence)
         if self.width() >= 1000:
             self.workspace_area.setVisible(True)
-            self.evidence_area.setVisible(True)
+            self.evidence_area.setVisible(not self._inspector_collapsed)
+            self.evidence_toggle.setChecked(not self._inspector_collapsed)
             self.evidence_toggle.setText(i18n.tr('证据'))
             return
         self.workspace_area.setVisible(not show_evidence)
         self.evidence_area.setVisible(show_evidence)
+        self.evidence_toggle.setChecked(show_evidence)
         self.evidence_toggle.setText(
             i18n.tr('证据'))
 
@@ -1114,14 +1159,12 @@ class ReviewPanel(QWidget):
         super().resizeEvent(event)
         if not hasattr(self, "workspace_area"):
             return
-        narrow = self.width() < 1000
-        self.evidence_toggle.setVisible(narrow)
         self._apply_narrow_evidence(getattr(self, "_narrow_evidence", False))
 
     def _block(self, label: str, value: str) -> str:
         """Work-area 里一个独立文本块（标签 + 正文），原文/译文各自成块。"""
         from folith.textual import text_direction
-        muted = style_module.html_color("text-muted", over="bg-surface")
+        muted = style_module.html_color("text-secondary", over="bg-surface")
         rtl = text_direction(value, None) == "rtl"
         attr = ' dir="rtl"' if rtl else ""
         return (f"<p style=\"font-size:11px;font-weight:700;color:{muted};"
@@ -1140,6 +1183,8 @@ class ReviewPanel(QWidget):
             self._render_detail_empty()
             return
         self._selected_id = ""
+        self.evidence_area.setMinimumWidth(280)
+        self.evidence_area.setMaximumWidth(320)
         self.item_title.setText(self._item_title(item) or i18n.tr('自动处理'))
         disposition_name = i18n.tr_dynamic(str(_DISPOSITION_LABELS.get(
             str(item.get("triage_disposition") or ""),
@@ -1193,7 +1238,7 @@ class ReviewPanel(QWidget):
                 parts.append(self._block("处理前译文", before))
             if after:
                 parts.append(self._block("处理后译文", after))
-            if status == i18n.tr('已提交但已被修改') and current:
+            if current:
                 parts.append(self._block("当前译文", current))
         self.item_body.setHtml("".join(parts))
         # 审计要完整展示前/后/当前/状态：给正文更大的最小高度（普通短内容仍是自适应）。
@@ -1251,7 +1296,7 @@ class ReviewPanel(QWidget):
             self._render_audit()
             return
         self.audit_revoke_button.setVisible(False)
-        self.item_body.setMinimumHeight(80)
+        self.item_body.setMinimumHeight(300)
         item = self.selected_item()
         has = bool(item)
         for widget in (self.item_title, self.item_chip, self.item_body,
@@ -1277,7 +1322,7 @@ class ReviewPanel(QWidget):
         if item.get("term_card"):
             # 术语卡的重点是「哪些段还在用旧译法」，不是某一段的问题描述。
             self.item_body.setHtml(self._term_html(item))
-            self.evidence_body.setHtml(self._evidence_html(item, _colon()))
+            self._set_evidence(self._evidence_html(item, _colon()))
             self.audit_hint.setText("")
             self._sync_source()
             self._sync_buttons()
@@ -1300,7 +1345,7 @@ class ReviewPanel(QWidget):
                     f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
         self.item_body.setHtml("".join(problem_parts) + self._translation_html(item))
         # 证据检查器：术语参考 / 已记录决定 / 分组摘要；空则给说明，不留白。
-        self.evidence_body.setHtml(self._evidence_html(item, sep))
+        self._set_evidence(self._evidence_html(item, sep))
         self.audit_hint.setText("")
         summary_a11y = (task_copy.get("summary") if task_item else "") \
             or str(item.get("summary") or "")
@@ -1314,6 +1359,13 @@ class ReviewPanel(QWidget):
         self.conflict.setVisible(bool(entity))
         self._sync_buttons()
         self._sync_source()
+
+    def _set_evidence(self, html: str) -> None:
+        """An empty inspector remains discoverable but gives reading space back."""
+        populated = bool(html.strip())
+        self.evidence_area.setMinimumWidth(280 if populated else 180)
+        self.evidence_area.setMaximumWidth(320 if populated else 200)
+        self.evidence_body.setHtml(html or f"<p>{_escape(i18n.tr('此项目没有额外证据。'))}</p>")
 
     # ================= 原页 =================
     def set_pdf_job(self, job_id: str, state: dict | None = None) -> None:
@@ -1403,6 +1455,12 @@ class ReviewPanel(QWidget):
         if getattr(self, cache, "") == kind:
             return
         style_module.set_button(button, kind)
+        icon_name = {"_apply_kind": "sparkles", "_edit_kind": "translate",
+                     "_confirm_kind": "check"}.get(cache)
+        if icon_name:
+            button.setIcon(icons.icon(icon_name, 16,
+                                     "text-on-accent" if kind == "primary"
+                                     else "text-secondary"))
         setattr(self, cache, kind)
 
     def _sync_buttons(self, *_args) -> None:
@@ -1436,7 +1494,7 @@ class ReviewPanel(QWidget):
         # 作为主行动。
         source_text = str(item.get("source") or "").strip()
         target_text = str(item.get("target") or "").strip()
-        untranslated = bool(source_text) and source_text == target_text
+        untranslated = bool(source_text) and (not target_text or source_text == target_text)
         edit_primary = (not suggestion) and (not source) and has_segment and (
             untranslated or not decidable)
         self._set_button_kind(
@@ -1494,6 +1552,13 @@ class ReviewPanel(QWidget):
         """焦点在文本输入控件里：快捷键让位给打字。"""
         focus = QApplication.focusWidget()
         return isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QComboBox))
+
+    def _sync_shortcut_focus(self, *_args) -> None:
+        # A guarded QShortcut still consumes the key before its handler runs.
+        # Disable it while typing so letters reach the editor in the first place.
+        enabled = not self._typing()
+        for shortcut in self._shortcuts:
+            shortcut.setEnabled(enabled)
 
     def _visible_index(self) -> int:
         """当前列表行在 ``_visible`` 里的下标；分组标题行不算（返回 -1）。"""

@@ -271,3 +271,76 @@ load/timing flakes, not regressions from this work:
   and on unchanged `main`.
 `scripts/qt_i18n_coverage.py --strict`: 1733/1733 per language, 0 missing. New
 production-projection localization tests pass.
+
+## v3 — workspace visual architecture
+
+The v2.3 untranslated reference is
+[`v23_en_untranslated.png`](ui-audit/qa-decision-studio-v2.3/v23_en_untranslated.png).
+It has weak boundaries, a status strip and bottom actions detached from the
+reading area. The v3 [Light render](ui-audit/qa-decision-studio-v3/final-light.png)
+uses separate queue, workspace and inspector surfaces, matching panel headers,
+a status toolbar and an integrated action bar. The fixtures differ: v2.3
+shows a source-identical target while v3 shows an actually empty target, so the
+images are a visual architecture comparison, not a data-equivalence comparison.
+
+### Direction studies
+
+The [Qt-painted studies](ui-audit/qa-decision-studio-v3/prototypes.py) are design
+sketches, not screenshots of production widgets. Each sheet includes an empty
+translation, terminology conflict, automatic repair, and empty evidence:
+
+- [A — IDE precision](ui-audit/qa-decision-studio-v3/direction-a.png): compact
+  navigation and a side-by-side source/target comparison. It makes panel boundaries
+  unambiguous, but halves the reading width and makes long multilingual paragraphs
+  harder to scan at narrow widths.
+- [B — editorial workspace](ui-audit/qa-decision-studio-v3/direction-b.png):
+  a wider, vertically ordered reading surface and quiet supporting areas. It
+  better accommodates prose and mixed writing directions; sparse supporting
+  surfaces need firm boundaries to remain recognizable.
+- [C — modern productivity](ui-audit/qa-decision-studio-v3/direction-c.png):
+  balanced panels with an inset comparison region. It is approachable and
+  practical in Qt, but adds a nested container around the primary reading task.
+
+Selected **B**, retaining A's panel boundaries and aligned headers. This favors
+readability, remains workable for long German and RTL, preserves Qt-native
+keyboard and accessible widgets, and fits Folith's existing restrained palette.
+The production screen uses the real projection and controls rather than the
+study's illustrative copy.
+
+### Implementation
+
+`ReviewPanel` now owns scoped toolbar, queue, workspace, inspector and action
+surfaces. Shared palette values are mapped by `theme.qa_surface_tokens` to the
+semantic roles shell, queue, workspace, inspector, content, toolbar, selected,
+border, hover and focus; no unrelated screen's palette changes. Queue filters
+no longer duplicate the overview counts; group rows retain their counts. An
+empty inspector uses less width and can be hidden or restored; at narrow widths
+the existing workspace/inspector switch remains. An absent target is labelled
+as untranslated, and editing is the emphasized action for it. Actual actions,
+signals, audit-only guards, triage, candidate and delivery behavior remain in
+the existing paths. Shortcut objects are disabled during text entry so they do
+not consume letters, and enabled again when focus leaves an editor.
+
+### Visual review and limits
+
+Offscreen Qt captures using the actual panel and synthetic fixtures:
+[Light](ui-audit/qa-decision-studio-v3/final-light.png),
+[Dark](ui-audit/qa-decision-studio-v3/final-dark.png),
+[Paper](ui-audit/qa-decision-studio-v3/final-paper.png),
+[980 px](ui-audit/qa-decision-studio-v3/final-980.png),
+[German 980 px](ui-audit/qa-decision-studio-v3/final-de-980.png),
+[Arabic RTL 1280 px](ui-audit/qa-decision-studio-v3/final-ar-1280.png),
+[long paragraph](ui-audit/qa-decision-studio-v3/final-long.png),
+[terminology decision](ui-audit/qa-decision-studio-v3/final-term.png),
+[automatic repair](ui-audit/qa-decision-studio-v3/final-audit.png), and
+[empty queue](ui-audit/qa-decision-studio-v3/final-empty.png). The Light render
+also covers a short untranslated segment and empty evidence. The long reading
+surface scrolls internally; audit records retain their separate revoke path.
+
+The renders were inspected for panel separation, selected row, reading order,
+action-bar integration and RTL/narrow geometry. In the native macOS Qt test
+window the inspector was collapsed and restored, a note was entered, and the
+focus ring and accessibility tree were inspected. The computer-control tool did
+not reliably deliver individual keys even for an ordinary letter; keyboard
+entry was instead verified with Qt key-event tests. These checks do not replace
+full native macOS application/title-bar acceptance or Windows acceptance.
