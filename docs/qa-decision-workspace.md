@@ -206,3 +206,12 @@ tests in `tests/qt_review_decision_workspace_test.py` pass.
 - **Native macOS/Windows acceptance not performed here** (no interactive native GUI run in
   this automated environment). Offscreen Qt renders are not native acceptance; both remain
   release gates.
+
+### v2.2 verification (final)
+
+`pytest tests/`: **5096 passed, 38 skipped, 1 failed**. The one failure is
+`qt_terms_panel_test.py::test_workbench_stays_at_980px_with_terms_open_and_closed`
+— an order-dependent layout flake: it passes in isolation on this branch **and**
+on the unchanged baseline `main` (`7d565d80`); only fails under full-suite load.
+Not a regression from this work. Focused audit/triage/candidate/localization
+suites pass; `qt_i18n_coverage.py --strict` is 1729/1729, 0 missing.
