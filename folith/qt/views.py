@@ -6049,13 +6049,16 @@ class WorkbenchView(QWidget):
         # F2：这一次运行跑完了，不等于这个任务做完了。只要交付门禁还挂着未解决的
         # 阻断项，页头就不能说「已完成」——它与交付页、审校步骤条必须同一个数。
         blocking = self.blocking_items()
-        if tone == "done" and blocking:
+        run_finished = tone == "done"
+        if run_finished and blocking:
+            # 语气改成"需要处理"，但这条运行确实结束了：进度条保持隐藏，
+            # 否则会显示一条 0% 的空条（审查回归项）。
             tone = "attention"
-            line = i18n.tr('运行已完成 · 还有 {v0} 个问题必须处理', v0=len(blocking))
+            line = i18n.tr('必须处理 {v0}', v0=len(blocking))
         # 跑完了就不要进度条：没有阶段进度时它停在 0，和下面的"已完成"自相矛盾；
         # 有进度时它是一根满条，也只是把"已完成"再说一遍。文字行仍可点开运行记录。
-        self.run_status.track.setVisible(tone != "done")
-        self.run_status.percent.setVisible(tone != "done")
+        self.run_status.track.setVisible(tone != "done" and not run_finished)
+        self.run_status.percent.setVisible(tone != "done" and not run_finished)
         # 运行头显示这条任务实际在用的连接（服务商 · 模型，以及哪些角色在用它），
         # 而不是设置里"现在选的是什么"：切换连接后用户能立刻看出是不是已经生效。
         connection = runtime.get("active_connection") or {}
@@ -6256,7 +6259,9 @@ class WorkbenchView(QWidget):
                                            or preview.get("can_accept_risk")))
         snapshot = preview.get("snapshot") or {}
         # F11：冻结之后把成品放回画面中央——左边封面，右边版本与文件名。
-        frozen = bool(snapshot.get("current"))
+        # `current` 为假时也要看"有没有冻结版本"：刷新被节流或工作版本后来偏离时，
+        # 成品仍然存在，不能因此把封面收起来（审查阻断项 4）。
+        frozen = bool(snapshot.get("current") or snapshot.get("latest") or self._snapshots)
         self.delivery_product_row.setVisible(frozen)
         if frozen:
             filename = str(self._state.get("filename") or "")
@@ -6298,8 +6303,11 @@ class WorkbenchView(QWidget):
             return
         index = items[0].get("segment_index")
         self.show_page("translate")
-        if isinstance(index, int) and index >= 0 and hasattr(self.segment_list, "select_segment"):
-            self.segment_list.select_segment(index)
+        if isinstance(index, int) and index >= 0:
+            # `segment_list` 是 QTableWidget，选择由工作台负责（它还要同步检查器、
+            # 浮层编辑框与行高）；以前写成了 `self.segment_list.select_segment(...)`
+            # 并套了 hasattr 兜底，于是这一跳从来没发生过（审查阻断项）。
+            self.select_segment(index)
 
     def _fill_supplements(self, items: list[dict]) -> None:
         """按"还能补生成的文件"重建按钮（每秒刷新：清单没变就不动控件）。"""

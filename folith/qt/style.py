@@ -693,7 +693,7 @@ QFrame#termFocusBar QLabel {{ background: transparent; }}
 /* 任务库的书面卡片：文字浮在底部磨砂玻璃上。夜间是暗玻璃配白字；浅色主题是浅色
    磨砂配正文色（components.CoverArt 按主题画玻璃，色彩审校 C4）。 */
 QWidget#coverOverlay, QWidget#coverOverlay QLabel {{ background: transparent; }}
-QLabel#coverTitle {{ font-size: {f['card']}px; font-weight: 600; color: {cover['title']}; }}
+QLabel#coverTitle {{ font-size: {f['reading']}px; font-weight: 600; color: {cover['title']}; }}
 QLabel#coverMeta {{ font-size: {f['caption']}px; color: {cover['meta']}; }}
 QLabel#coverStatus {{ font-size: {f['caption']}px; color: {cover['status']}; }}
 QLabel#coverStatus[state="danger"] {{ color: {cover['danger']}; }}
@@ -783,6 +783,14 @@ QPushButton[kind="plain"]:pressed {{ background: {t['bg-selected']}; }}
 QPushButton[kind="plain"]:focus {{ border-color: {t['accent']}; }}
 QPushButton[kind="plain"]:checked {{ color: {t['text-muted']}; }}
 QPushButton[kind="plain"]:disabled {{ background: transparent; border-color: transparent; color: {t['disabled-ink']}; }}
+QToolButton[kind="plain"] {{
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  color: {t['accent']}; font-weight: 600; padding: 0 8px;
+}}
+QToolButton[kind="plain"]:hover {{ background: {t['bg-hover']}; color: {t['accent-hover']}; }}
+QToolButton[kind="plain"]:pressed, QToolButton[kind="plain"]:open {{ background: {t['bg-selected']}; }}
+QToolButton[kind="plain"]:disabled {{ color: {t['disabled-ink']}; }}
+QToolButton[kind="plain"]::menu-indicator {{ image: none; width: 0; }}
 QPushButton[kind="danger"] {{ color: {t['danger']}; }}
 QPushButton[kind="danger"]:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
 QPushButton[kind="danger"]:pressed {{ background: {t['danger-soft']}; }}

@@ -1650,8 +1650,33 @@ class MainWindow(QMainWindow):
             return
         self.show_home()
 
+    def _sync_minimum_size(self) -> None:
+        """让窗口的 minimumSize 与当前布局的 minimumSizeHint 一致。
+
+        Qt 只用 hint 去"顶住"手动 resize，不会把它写进 ``minimumSize()``；两边一旦
+        差 1–8px，把窗口缩到 ``minimumSize()`` 就会被悄悄放大一点（实测 870×529 →
+        871×537）。页面内容在这一轮变高（卡片文字行、检查器动作条），这个偏差才显形。
+        """
+        if getattr(self, "_syncing_minimum", False):
+            return
+        hint = self.minimumSizeHint()
+        if not hint.isValid():
+            return
+        if self.minimumSize() == hint:
+            return
+        self._syncing_minimum = True
+        try:
+            self.setMinimumSize(hint)
+        finally:
+            self._syncing_minimum = False
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        self._sync_minimum_size()
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
+        self._sync_minimum_size()
         # A frozen page width belongs to the window size the transition began
         # with; a resize mid-transition jumps straight to the final layout.
         settle = getattr(self, "_sidebar_settle", None)

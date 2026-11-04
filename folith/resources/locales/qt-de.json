@@ -2473,5 +2473,15 @@
   "待确认": "Ausstehende Bestätigung",
   "长文按拉丁 1.5、中文 1.7 的行距排版；同样的窗口一屏会少看到几段，长时间审校更省力。": "Lange Texte werden mit 1,5 Zeilenabstand für Lateinisch und 1,7 für Chinesisch gesetzt; ein Bildschirm zeigt dadurch einige Absätze weniger, längeres Prüfen ermüdet aber weniger.",
   "这个项目以后的新任务会自动使用；另外 {v0} 条暂定术语随任务过去，在术语库里是「待确认」，确认后才会用": "Neue Aufgaben in diesem Projekt verwenden sie automatisch; weitere {v0} vorläufige Begriffe werden übernommen und stehen im Glossar auf „Zur Bestätigung“, Verwendung erst nach Bestätigung",
-  "MTI 是翻译硕士（Master of Translation and Interpreting）专业学位；打开后，学术写作、案例与合规页面才会出现。": "MTI steht für „Master of Translation and Interpreting“, einen berufsqualifizierenden Abschluss. Die Seiten akademisches Schreiben, Fälle und Konformität erscheinen erst nach dem Aktivieren."
+  "MTI 是翻译硕士（Master of Translation and Interpreting）专业学位；打开后，学术写作、案例与合规页面才会出现。": "MTI steht für „Master of Translation and Interpreting“, einen berufsqualifizierenden Abschluss. Die Seiten akademisches Schreiben, Fälle und Konformität erscheinen erst nach dem Aktivieren.",
+  "{v0} · 交付包里的文件见下方清单。": "{v0} · Die Dateien im Lieferpaket sind unten aufgeführt.",
+  "交付门禁还有 {v0} 个必须处理的问题，处理完才能冻结交付。": "Das Liefer-Gate hat noch {v0} zu behebende Probleme, bevor eingefroren werden kann.",
+  "去处理…": "Beheben…",
+  "必须处理的问题": "Zu behebende Probleme",
+  "恢复本段…": "Dieses Segment wiederherstellen…",
+  "排除本段…": "Dieses Segment ausschließen…",
+  "更多段落操作": "Weitere Segmentaktionen",
+  "第一处位于第 {v0} 段。": "Die erste befindet sich in Segment {v0}.",
+  "约为「标准」的 {v0} 倍": "etwa {v0}× der Einstellung „Standard“",
+  "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Die Prüfeinträge sind vollständig, aber das Liefer-Gate hat noch ungelöste blockierende Probleme; erst danach einfrieren."
 }

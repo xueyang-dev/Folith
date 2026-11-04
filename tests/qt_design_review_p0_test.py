@@ -167,3 +167,17 @@ def test_inspector_and_drawer_share_one_width(translated):
     assert closed[side] == opened[side] == translated._inspector_width
     grid = translated.translation_split.indexOf(translated.grid_card)
     assert closed[grid] == opened[grid], "打开检查与修复时网格不重排"
+
+
+def test_delivery_fix_button_jumps_to_the_blocking_segment(translated):
+    """F3：门禁页的「去处理」必须真的跳到那一段。
+
+    旧实现写成 ``self.segment_list.select_segment(...)``（QTableWidget 没有这个方法）
+    并套了 ``hasattr`` 兜底，于是这一跳从来没发生过——审查把这条列为阻断项。
+    """
+    seen: list[int] = []
+    translated.blocking_items = lambda: [{"segment_index": 4}]  # type: ignore[method-assign]
+    translated.select_segment = lambda index: seen.append(index) or True  # type: ignore[method-assign]
+    translated._go_fix_blocking()
+    assert seen == [4], f"「去处理」没有跳到阻断段：{seen}"
+    assert translated.current_page_id() == "translate"

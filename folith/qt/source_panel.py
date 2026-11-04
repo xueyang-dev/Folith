@@ -19,8 +19,16 @@ from . import adapter
 from . import i18n
 from . import icons
 
-#: 与 PDF 原页高亮同一种暖黄，两个面板的「找到了」是同一种颜色。
-_HIGHLIGHT_STYLE = "background-color:#ffe08a;color:#202124;"
+def _highlight_style() -> str:
+    """与 PDF 原页高亮同一种暖黄，两个面板的「找到了」是同一种颜色。
+
+    色值走 token（`highlight-bg` / `highlight-ink`），主题切换与夜间都跟着变。
+    """
+    from . import style as _style
+    from . import theme as _theme
+    tokens = _theme.tokens(_style.current_theme())
+    return (f"background-color:{tokens['highlight-bg']};"
+            f"color:{tokens['highlight-ink']};")
 
 
 class _LoadSignals(QObject):
@@ -172,7 +180,7 @@ class SourcePanel(QWidget):
         for offset, block in enumerate(blocks):
             text = escape(str(block.get("text") or ""))
             if block.get("highlight"):
-                text = f'<span style="{_HIGHLIGHT_STYLE}">{text}</span>'
+                text = f'<span style="{_highlight_style()}">{text}</span>'
                 anchor = anchor or f"blk{offset}"
             tag = "h3" if block.get("role") == "heading" else "p"
             parts.append(f'<a name="blk{offset}"></a><{tag}>{text}</{tag}>')

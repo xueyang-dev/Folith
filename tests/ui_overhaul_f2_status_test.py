@@ -22,7 +22,7 @@
 修复后（2026-11-04 17:3x 复核）：审校页 / 交付页 / 首页任务行 / 检查浮层的**数据**已经同数，
 ``test_all_four_surfaces_report_same_blocking`` 是正式断言；剩下的缺口在**视图层**——
 ``FollowupPanel`` 还不读 ``followup_view["blocking"]``，角标数的是固定 8 张卡，
-``test_followup_panel_counts_blocking`` 仍标 ``xfail(strict=False)`` 记录这条。
+``test_followup_panel_counts_blocking`` 已转成正式断言（面板已接线）。
 """
 from __future__ import annotations
 

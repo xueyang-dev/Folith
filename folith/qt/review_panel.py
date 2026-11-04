@@ -335,7 +335,7 @@ class ReviewPanel(QWidget):
         self.confirm_source_button.clicked.connect(self._emit_confirm_source)
 
         self.apply_button = button(
-            i18n.tr('暂存为候选'), "sparkles", "text-on-accent", "primary")
+            i18n.tr('暂存为候选'), "sliders", "text-on-accent", "primary")
         self.apply_button.setToolTip(
             i18n.tr('把建议译文暂存为候选并显示差异；采用后才会写入译文'))
         self.apply_button.clicked.connect(self._emit_apply)
@@ -532,7 +532,9 @@ class ReviewPanel(QWidget):
             for group in (self._view.get("finding_groups") or [])}
         readiness = self._view.get("readiness") or {}
         headline, detail = _coverage_texts(self._view)
-        self.headline.setText(headline)
+        # 投影里的中文来自 folith/workbench_view.py（业务层，不走 Qt 的 tr）：
+        # 显示前过一遍 tr_dynamic，外语界面才不会露中文。
+        self.headline.setText(i18n.tr_dynamic(headline))
         self.detail.setText(detail)
         if not self._initialised:
             # 第一次打开：有「必须处理」就只展开它；没有就把第一个非空组展开，

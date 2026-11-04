@@ -132,6 +132,11 @@ def _action(review: Mapping, delivery: Mapping, current: str) -> dict | None:
         if kind == "handle_finding":
             return {"kind": kind, "label": i18n.tr_dynamic(str(primary.get("label") or "")),
                     "item_id": primary.get("item_id"), "target": REVIEW}
+        if kind == "delivery":
+            # 审校这边已经没有要做的了，问题在交付门禁上：头部不放主按钮——
+            # 否则会落到下面的 "review_all"，把一个 100% 审校完的任务又送去
+            # 重跑一遍全部段落（真实模型调用）。入口在交付页的「去处理」。
+            return None
         # 审校还没跑过：没有"缺哪几段"的清单，推荐的就是跑一遍全部。
         return {"kind": "review_all", "label": i18n.tr("审校全部段落"), "target": REVIEW}
     if current == DELIVER and delivery.get("can_deliver"):

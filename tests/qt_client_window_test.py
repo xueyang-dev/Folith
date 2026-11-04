@@ -1171,6 +1171,9 @@ def test_declared_delivery_formats_are_the_ones_produced(client):
         assert "translation.docx" in names
         assert "bilingual.docx" not in names
         assert "terms.xlsx" not in names
+        # F11：冻结之后，成品要回到画面里（封面 + 版本）。
+        assert window.workbench.delivery_product_row.isHidden() is False, (
+            "冻结交付后交付页没有显示成品封面行")
     finally:
         stub.stop()
 

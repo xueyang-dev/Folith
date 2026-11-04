@@ -28,6 +28,7 @@ from . import i18n
 from . import icons
 from . import project_sheets
 from . import prompts
+from . import status_voice
 from . import style as style_module
 from . import theme as theme_module
 
@@ -649,9 +650,14 @@ class ProjectsView(QWidget):
             row.addWidget(icons.IconLabel("file-text", 16, "text-secondary"))
             name = _elide(task["name"], "body")
             row.addWidget(name, 1)
-            tone = ("error" if task.get("runtime_status") == "failed" else
-                    "active" if task.get("active") else
-                    "done" if "交付" in str(task.get("status")) else "idle")
+            # 状态语气只走 status_voice（F4）：以前用 `"交付" in status` 判断，
+            # 于是「暂不满足交付条件」「工作版本已偏离冻结交付」都会显示成绿色。
+            tone = status_voice.theme_tone(
+                status_voice.tone_for_label(str(task.get("status") or "")))
+            if task.get("runtime_status") == "failed":
+                tone = status_voice.ERROR
+            elif task.get("active"):
+                tone = status_voice.ACTIVE
             status = components.StatusLabel(
                 i18n.tr_dynamic(str(task.get("status") or "")) or i18n.tr('未开始'), tone)
             status.setMinimumWidth(96)

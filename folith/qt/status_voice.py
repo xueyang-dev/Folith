@@ -125,13 +125,15 @@ def escalate(tone: str, runtime_status: str, *, active: bool = False) -> str:
     * 运行中 -> 只有任务本身还没给结论时才说 active。
     """
     base = str(tone or IDLE)
-    if base in (ERROR, DONE):
-        return base
     run_tone = tone_for_run_state(runtime_status, active=active)
-    if run_tone == ERROR:
+    if base == ERROR:
         return ERROR
-    if run_tone == ATTENTION:
-        return ATTENTION
+    # 运行失败 / 停止响应**必须**压过任务语气：以前 `done` 直接返回，于是
+    # 「可以冻结交付 + 当前步骤失败」显示成绿字写失败（审查 F4 反例）。
+    if run_tone in (ERROR, ATTENTION):
+        return run_tone
+    if base == DONE:
+        return DONE
     if run_tone == ACTIVE and base == IDLE:
         return ACTIVE
     return base
@@ -152,10 +154,6 @@ class Voice:
     #: idle）。进度条的颜色仍跟着**这一次运行**走，任务语气的判定走 ``tone``。
     run_state: str = "idle"
 
-    @property
-    def finished(self) -> bool:
-        """只有 done 才允许说「已完成」。有阻断就不是。"""
-        return self.tone == DONE and not self.blocking
 
 
 #: 这些运行语气下，卡片说的是**这一次运行**在做什么；其余情况说的是任务状态。

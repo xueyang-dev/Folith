@@ -95,6 +95,10 @@ TOKENS: dict[str, dict[str, str]] = {
         # action colour: only status pills and a few icon tints use it.
         'info': '#7761b0',
         'info-soft': '#f6f4ff',
+        # 高亮（PDF 原页 / 搜索命中 / 术语定位）：暖黄荧光笔。原来源码里写死，
+        # 主题切到夜间时与纸面对比失控——2026-11-04 审校 F20 要求进 token。
+        'highlight-bg': '#ffe08a',
+        'highlight-ink': '#202124',
         # Page wash: the home canvas fades from the page colour into a faint
         # brand-blue tint (135deg).  Dark stays flat on purpose (graphite).
         'bg-gradient-start': '#fbfbfc',
@@ -193,6 +197,9 @@ TOKENS: dict[str, dict[str, str]] = {
         'danger-soft': 'rgba(255,170,164,.14)',
         'info': '#c0a8ff',
         'info-soft': 'rgba(192,168,255,.16)',
+        # 夜间：同一支荧光笔压暗，字仍用深色（高亮块本身是浅色底）。
+        'highlight-bg': 'rgba(255,214,102,.72)',
+        'highlight-ink': '#1b1b1f',
         'bg-gradient-start': '#1C1C1E',
         'bg-gradient-end': '#1C1C1E',
         'brand-navy': '#f2f2f7',
