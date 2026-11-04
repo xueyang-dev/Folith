@@ -459,4 +459,24 @@ inline-editor test. A subsequent full-suite attempt also crashed during window
 destruction; the same destruction test passed on the unmodified v3 baseline.
 Replacing the reading view's unowned deferred callback with a widget-owned
 timer made the destruction test pass twice and the previously crashing combined
-focused sequence pass; the full-suite rerun is the remaining broader check.
+focused sequence pass. The subsequent full-suite rerun passed the destruction
+test and completed; this evidence supports the lifetime fix but does not prove
+the earlier concept-dialog crash had the same cause.
+
+
+### v3.1 regression results
+
+- Focused review, terminology-dialog, triage, candidate, keyboard, accessibility,
+  localization, RTL and theme tests: **370 passed, 0 failed, 0 skipped**. The
+  window-destruction test passed twice separately after the timer change.
+- Full offline `pytest -q tests`: **5,111 passed, 1 failed, 38 skipped**,
+  with 573 warnings in 912.67 seconds. The failure is
+  `qt_terms_panel_test.py::test_workbench_stays_at_980px_with_terms_open_and_closed`
+  with the 241 px / 204 px overlap documented above. No assertions were weakened.
+- Strict Qt localization coverage: **1,735/1,735 keys per language**, zero
+  missing. The missing-target deterministic summary also has a direct
+  localization assertion; dynamically formatted numeric and terminology copy
+  remains the limitation described above.
+- The earlier full attempt crashed during window destruction before totals; it
+  is not represented as a completed suite. The test-generated DOCX fixture
+  changes were restored after the completed run.
