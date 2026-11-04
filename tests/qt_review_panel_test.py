@@ -598,7 +598,7 @@ def test_term_card_detail_lists_the_paragraphs_that_still_use_the_old_term(panel
     body = panel.item_body.toPlainText()
     assert "Lycidas" in body and "利西达斯" in body
     assert "吕西达斯" in body, "旧译法也要摆出来，用户才知道差在哪"
-    assert "未用冻结译法" in body
+    assert "未用锁定译法" in body
     # 标题按术语写，不写某一段的段号。
     assert panel.item_title.text().startswith("Lycidas → 利西达斯")
 
@@ -613,7 +613,7 @@ def test_term_card_title_counts_the_affected_paragraphs(panel):
 
 
 # ---- #277：概念决策类术语卡的决定参考字段 ---------------------------------------
-# 与 #102 过期译法卡同一套字段与渲染：冻结译法 / 旧译法 / 影响段落。
+# 与 #102 过期译法卡同一套字段与渲染：锁定译法 / 旧译法 / 影响段落。
 
 def _concept_card_view(**term_fields):
     item = _item(id="finding:c277", finding_id="c277",
@@ -639,7 +639,7 @@ def test_concept_card_shows_frozen_previous_and_affected_segments(panel):
     panel.apply(view)
     assert panel.select_item_id("finding:c277")
     body = panel.item_body.toPlainText()
-    assert "冻结译法" in body and "阿里克" in body
+    assert "锁定译法" in body and "阿里克" in body
     assert "旧译法" in body and "阿瑞克" in body
     assert "影响段落" in body and "5 段" in body
     # 原有信息不丢：原文 / 当前译文对照与统一译名的操作部件都还在。
@@ -654,7 +654,7 @@ def test_concept_card_without_frozen_translation_shows_no_empty_field(panel):
     panel.apply(view)
     assert panel.select_item_id("finding:c277")
     body = panel.item_body.toPlainText()
-    assert "冻结译法" not in body, "没有冻结译法就不显示空字段冒充有值"
+    assert "锁定译法" not in body, "没有锁定译法就不显示空字段冒充有值"
     assert "旧译法" not in body
     assert "影响段落" in body and "6 段" in body
 
@@ -667,8 +667,8 @@ def test_concept_card_previous_equal_to_frozen_is_not_repeated(panel):
     panel.apply(view)
     assert panel.select_item_id("finding:c277")
     body = panel.item_body.toPlainText()
-    assert "冻结译法" in body
-    assert "旧译法" not in body, "旧译法与冻结译法一致时不重复占一行"
+    assert "锁定译法" in body
+    assert "旧译法" not in body, "旧译法与锁定译法一致时不重复占一行"
 
 
 def test_entity_rows_for_the_same_name_merge_the_hit_segments():

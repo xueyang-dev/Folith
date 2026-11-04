@@ -52,8 +52,16 @@ TOKENS: dict[str, dict[str, str]] = {
         'bg-hover': '#f7f9fc',
         'bg-selected': '#eef4fd',
         'text-primary': '#131c2e',
-        'text-secondary': '#667085',
-        'text-muted': '#7e8796',
+        # 2026-11-04 F10：次要文字必须 >= 4.5:1（WCAG AA 小字）。
+        # 实测（tmp/overhaul-tokens/contrast_audit.py）原值 text-secondary #667085 /
+        # text-muted #7e8796 在最深的侧栏底（shell 渐变末端 #e6e9ed）只有 4.08 / 2.98；
+        # 页面底 4.59 / 3.35、卡片 4.97 / 3.62，后面两处 muted 都不达标。
+        #   * secondary 提到 #4f5b70 —— 侧栏底 5.63、页面底 6.33、卡片 6.86；
+        #   * muted 提到 #59647a —— 侧栏底 4.89、页面底 5.49、卡片 5.95。
+        # 两档仍保留层级（最差处 5.63 : 4.89 ≈ 1.15），没有合成一档：idle 状态点、
+        # 时间、格式标签本来就应该比字段标签轻一点。
+        'text-secondary': '#4f5b70',
+        'text-muted': '#59647a',
         'text-on-accent': '#ffffff',
         'text-on-status': '#ffffff',
         # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
@@ -96,7 +104,10 @@ TOKENS: dict[str, dict[str, str]] = {
         'brand-logo-blue': '#004cfd',
         'brand-cyan': '#00e8fe',
         'brand-azure': '#0088fd',
-        'disabled-bg': '#d9e5f6',
+        # 禁用面不再刷在按钮上（F7：禁用态去掉填充），只剩开关轨道用它。
+        # 原值 #d9e5f6 带蓝味：主题色换成翠绿 / 石板时，禁用轨道仍是蓝的，
+        # 而且它在页面底上比可用的控件更显眼。改成中性灰。
+        'disabled-bg': '#e2e6ec',
         'disabled-ink': '#8ca2c0',
         'overlay-veil': 'rgba(247,248,250,.96)',
         'surface-glass': 'rgba(248,251,255,.96)',
@@ -141,8 +152,13 @@ TOKENS: dict[str, dict[str, str]] = {
         'bg-selected': 'rgba(130,172,255,.18)',
         # --- text ---
         'text-primary': 'rgba(255,255,255,.92)',
-        'text-secondary': 'rgba(235,235,245,.62)',
-        'text-muted': 'rgba(235,235,245,.38)',
+        # 2026-11-04 F10（同 light）：半透明文字按实际叠加结果算。原 .62 / .38 在
+        # 卡片底只有 5.92 / 3.13、选中行底 5.05 / 3.16，muted 全部不达标。
+        #   * secondary .66 —— 最差的选中行底 5.45；
+        #   * muted .60 —— 最差的选中行底 4.80（页面底 5.95、卡片 5.64）。
+        # 与 light 保持同一层级比例（5.45 : 4.80 ≈ 1.14）。
+        'text-secondary': 'rgba(235,235,245,.66)',
+        'text-muted': 'rgba(235,235,245,.60)',
         'text-on-accent': '#ffffff',
         'text-on-status': '#131316',
         # The one primary action of a page (sidebar 「导入文档…」): a fill that reads

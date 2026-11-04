@@ -55,9 +55,14 @@ READINESS_COPY = {
 }
 
 
-def _coverage_copy(readiness: Mapping[str, Any]) -> tuple[str, str, str]:
+def _coverage_copy(readiness: Mapping[str, Any], blocking: int = 0) -> tuple[str, str, str]:
     status = str(readiness.get("status") or "not_run")
     label, detail, tone = READINESS_COPY.get(status, READINESS_COPY["not_run"])
+    # F2：审校就绪（收据齐全）不等于可以交付——旧式阻断项仍拦着门禁。
+    if status == "current" and int(blocking or 0) > 0:
+        return (f"还有 {int(blocking)} 个必须处理的问题",
+                "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。",
+                "warning")
     if status != "current":
         return label, detail, tone
     coverage = str(readiness.get("coverage_status") or "")
@@ -775,9 +780,13 @@ def _primary_action(
         return {"kind": "review_segments", "label": f"重新审校 {stale} 段",
                 "segment_ids": list(readiness["stale_segment_ids"])}
     if blocking:
-        first = next(item for item in items if item.get("severity") == "blocking")
-        return {"kind": "handle_finding", "label": f"继续处理 {blocking} 个必须处理的问题",
-                "item_id": first["id"]}
+        must = [item for item in items if item.get("severity") == "blocking"]
+        if must:
+            return {"kind": "handle_finding", "label": f"继续处理 {blocking} 个必须处理的问题",
+                    "item_id": must[0]["id"]}
+        # 阻断项不在审校队列里（旧式问题）：不强行制造一个 item，让用户去交付页，
+        # 那里有「去处理 N 个必须处理的问题」直达段落（F3）。
+        return {"kind": "delivery", "label": f"还有 {blocking} 个必须处理的问题"}
     if missing:
         return {"kind": "review_segments", "label": f"审校尚未完成的 {missing} 段",
                 "segment_ids": list(readiness["missing_segment_ids"])}
@@ -790,6 +799,12 @@ def _primary_action(
 
 def _delivery_copy(readiness: Mapping[str, Any], counts: Mapping[str, int]) -> Dict[str, Any]:
     skipped = int(readiness.get("skipped_count") or 0)
+    # 有未解决的阻断项就不能说「已完成」——即使审校就绪（F2：收据齐了，旧式阻断项还在）。
+    blocking = int(counts.get("blocking") or 0)
+    if blocking:
+        return {"title": "暂时无法交付",
+                "detail": f"还有 {blocking} 个必须处理的问题",
+                "tone": "warning"}
     if readiness.get("ready") and skipped:
         return {
             "title": "可以准备交付（审校覆盖不完整）",
@@ -897,7 +912,13 @@ def _triage_stats(items: Sequence[Mapping[str, Any]],
 
 
 def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
-    """Project authoritative review truth into one read-only workbench model."""
+    """Project authoritative review truth into one read-only workbench model.
+
+    **阻断项只数一次**（2026-11-04 审校 F2）：审校队列的 ``counts`` 只看得见队列自己
+    收进的问题（要求审校收据与事件匹配），旧的阻断项不在队列里，却仍然拦着交付。
+    以前这里、交付预检、页头和检查浮层各数一遍，于是出现「审校页说完成、交付页拦 1 项」。
+    现在 ``delivery.unresolved_blocking(state)`` 是唯一的数，四个界面都读它。
+    """
     readiness = translation_evidence.translation_review_readiness(state)
     items, auto_items = _queue_items(state, readiness)
     counts = {
@@ -905,6 +926,11 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
                       for item in items)
         for severity in delivery.SEVERITY_LABELS
     }
+    try:
+        blocking_total = len(delivery.unresolved_blocking(dict(state)))
+    except Exception:  # noqa: BLE001 - 只读投影，坏了不该拖垮界面
+        blocking_total = 0
+    counts["blocking"] = max(counts["blocking"], blocking_total)
     filter_counts = {
         name: sum(item.get("filter_group") == name for item in items)
         for name in ("pending", "rereview", "skipped", "suggested", "reference")
@@ -915,7 +941,7 @@ def review_workbench_view(state: Mapping[str, Any]) -> Dict[str, Any]:
         name: sum(item.get("list_group") == name for item in items + handled)
         for name in ("must", "suggested", "reference")
     }
-    label, detail, tone = _coverage_copy(readiness)
+    label, detail, tone = _coverage_copy(readiness, counts["blocking"])
     progress = {
         "total": len(readiness.get("expected_segment_ids") or []),
         "current": len(readiness.get("current_segment_ids") or []),

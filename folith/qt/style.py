@@ -152,6 +152,12 @@ def build_qss(theme: str) -> str:
         cover = {"title": t["text-primary"], "meta": t["text-secondary"],
                  "status": t["text-primary"], "danger": t["danger"], "ok": t["success"]}
     sp = theme_module.SPACE
+    #: 阅读区的字体族链（设置 · 阅读，F6）。默认（跟随界面字体）是空串：不写
+    #: ``font-family``，阅读区继承应用字体；用户另选一个族时，中文 / 阿拉伯文 /
+    #: 西里尔文的回退族仍然留在链上（见 theme.reading_font_stack）。
+    reading_families = reading_font_families()
+    reading_family = (f"font-family: {', '.join(repr(name) for name in reading_families)};"
+                      if reading_families else "")
 
     def box(token: str, *, pad_y: int, border: int = 1) -> int:
         """设计高度 → QSS 的 ``min-height``。
@@ -288,7 +294,8 @@ QLabel#onboardingStep[state="done"] {{ color: {t['text-secondary']}; }}
 QFrame#onboardingChoice {{ background: {t['bg-surface']}; border: 1px solid {t['border-subtle']};
     border-radius: {r['md']}px; }}
 QFrame#onboardingChoice:hover, QFrame#onboardingChoice:focus {{ border-color: {t['accent']}; }}
-QFrame#onboardingChoice:disabled {{ background: {t['disabled-bg']}; }}
+/* 不可点的选择卡同样是"没有面"：去掉填充，只留一圈极淡的轮廓（F7）。 */
+QFrame#onboardingChoice:disabled {{ background: transparent; border-color: {t['border-faint']}; }}
 QFrame#onboardingChoice QLabel {{ background: transparent; }}
 QLabel#link {{ color: {t['accent']}; font-weight: 600; }}
 /* 交付清单：小节标题 + 右侧汇总（"6 个文件 · 85.5 KB"），行内布局由委托自绘 */
@@ -637,17 +644,25 @@ QPushButton {{
 QPushButton:hover {{ background: {t['bg-hover']}; border-color: {t['border-strong']}; }}
 QPushButton:pressed {{ background: {t['bg-selected']}; }}
 QPushButton:focus {{ border-color: {t['accent']}; }}
-/* 禁用态用中性灰面（token 里的 disabled-bg 偏蓝，成排按钮一起灰会发蓝光） */
+/* 禁用态**没有填充**：可以点的按钮才有一块"面"，不可点的只剩灰字与一道极淡的
+   轮廓。以前禁用是 bg-surface-sunken（#f2f4f7）的实底，压在页面上比可用的白按钮
+   更有分量，可点性被读反（F7，2026-11-04 审查）。 */
 QPushButton:disabled {{
-    background: {t['bg-surface-sunken']}; color: {t['disabled-ink']};
+    background: transparent; color: {t['disabled-ink']};
     border-color: {t['border-faint']};
 }}
 /* 展开行的原文浮层：看起来就是表格里的字，只是可以选中 */
 QPlainTextEdit#inlineSource {{
     background: transparent; border: none; padding: 0; color: {t['text-primary']};
 }}
-/* 阅读区比界面正文大一档：段落网格、原文浮层、译文编辑框是用户真正在读的文字。 */
-QTableWidget#segmentGrid, QPlainTextEdit#inlineSource, QPlainTextEdit#targetEdit {{ font-size: {f['reading']}px; }}
+/* 阅读区比界面正文大一档：段落网格、原文浮层、译文编辑框是用户真正在读的文字。
+   字体走"阅读字体"那条回退链（设置 · 阅读；默认跟随界面字体，见
+   ``theme.reading_font_stack``）——西文、中文、阿拉伯文都要有字可用。
+   行距不在这里：Qt 的 QSS 没有 line-height，块级行距由
+   :func:`reading_line_height` / :func:`set_reading_line_height` 交给绘制方。 */
+QTableWidget#segmentGrid, QPlainTextEdit#inlineSource, QPlainTextEdit#targetEdit {{
+    font-size: {f['reading']}px;{reading_family}
+}}
 QPlainTextEdit#inlineSource:focus {{ border: none; }}
 /* 右栏：术语、前后文、需要注意 */
 /* 术语：浅强调色底的条目，首选译名加粗；被点开（全文定位）时描边强调色。 */
@@ -758,7 +773,7 @@ QPushButton[kind="primary"]:hover {{ background: {t['accent-fill-hover']}; borde
 QPushButton[kind="primary"]:pressed {{ background: {t['accent-fill-active']}; border-color: {t['accent-fill-active']}; }}
 QPushButton[kind="primary"]:focus {{ border-color: {t['focus-ring']}; }}
 QPushButton[kind="primary"]:disabled {{
-    background: {t['bg-surface-sunken']}; color: {t['disabled-ink']}; border-color: {t['border-faint']};
+    background: transparent; color: {t['disabled-ink']}; border-color: {t['border-faint']};
 }}
 QPushButton[kind="plain"] {{
     background: transparent; border-color: transparent; color: {t['accent']}; font-weight: 600;
@@ -772,7 +787,7 @@ QPushButton[kind="danger"] {{ color: {t['danger']}; }}
 QPushButton[kind="danger"]:hover {{ background: {t['danger-soft']}; border-color: {t['danger']}; }}
 QPushButton[kind="danger"]:pressed {{ background: {t['danger-soft']}; }}
 QPushButton[kind="danger"]:disabled {{
-    background: {t['bg-surface-sunken']}; color: {t['disabled-ink']}; border-color: {t['border-faint']};
+    background: transparent; color: {t['disabled-ink']}; border-color: {t['border-faint']};
 }}
 QPushButton[small="true"] {{
     padding: {sp['xxs']}px {sp['sm'] + 2}px;
@@ -798,10 +813,14 @@ QPushButton#segment:checked {{
     color: {t['text-primary']}; font-weight: 600;
 }}
 
-/* 工具条按钮（筛选、查找替换）：与旁边的分段控件同一套外观——沉底、发丝线、
-   同样的圆角与高度；不画系统的下拉小箭头。有筛选生效时整颗按钮高亮。 */
+/* 工具条按钮（筛选、查找替换、术语、结构、翻译范围）：
+   用**控件底 + 发丝边**（和普通按钮同一层），不是沉底。
+   以前用 bg-surface-sunken（#f2f4f7）压在页面上（#f4f6f8）：两颗灰几乎同色，
+   整排按钮读起来像"已禁用"（F7，2026-11-04 审查）。
+   禁用态**去掉填充**：可点的是"浮起的一小块面"，不可点的只剩灰字，
+   轻重顺序与可点性一致（审查 F7 的另一半：禁用按钮不该比可用按钮重）。 */
 QToolButton#toolbarButton {{
-    background: {t['bg-surface-sunken']}; border: 1px solid {t['border-hairline']};
+    background: {t['control-bg']}; border: 1px solid {t['border-hairline']};
     border-radius: {r['md']}px; padding: {sp['xxs'] + 2}px {sp['md']}px;
     min-height: {box('sm', pad_y=sp['xxs']) + 2}px;
     color: {t['text-secondary']}; font-weight: 500;
@@ -809,6 +828,9 @@ QToolButton#toolbarButton {{
 QToolButton#toolbarButton:hover {{ color: {t['text-primary']}; background: {t['bg-hover']}; }}
 QToolButton#toolbarButton:pressed, QToolButton#toolbarButton:open {{ background: {t['bg-selected']}; }}
 QToolButton#toolbarButton:focus {{ border-color: {t['focus-ring']}; }}
+QToolButton#toolbarButton:disabled {{
+    background: transparent; border-color: transparent; color: {t['disabled-ink']};
+}}
 QToolButton#toolbarButton[active="true"] {{
     background: {t['accent-soft']}; border-color: {t['accent-border']}; color: {t['accent']}; font-weight: 600;
 }}
@@ -1191,6 +1213,142 @@ def font_for(theme: str, *, mono: bool = False) -> QFont:
     return font
 
 
+#: 中日韩字符：阅读行距按"这行是不是中文/日文/韩文"取 1.7，其余取 1.5（F6）。
+#: 西里尔文（俄文）与阿拉伯文按拉丁那一档：它们的字面高度与拉丁接近，
+#: 阿拉伯文的附加符号由字体自己的行距向上容纳。
+_CJK_RANGES = ((0x3040, 0x30FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF),
+               (0xF900, 0xFAFF), (0xAC00, 0xD7AF))
+
+
+def reading_font_families() -> tuple[str, ...]:
+    """阅读区的 QSS 字体族链（设置 · 阅读）。空元组 = 跟随界面字体（不写死任何族）。"""
+    return theme_module.reading_font_stack()
+
+
+def reading_line_height(text: str) -> float:
+    """一段阅读文字该用的**行距倍率**（F6）：中文 1.7，拉丁 1.5。
+
+    只看这段文字里有没有中日韩字符，不看界面语言——一本书的原文与译文往往
+    是两种文字系统，两栏各按自己的行距排，才轮到"两栏基线对齐"这件事。
+    """
+    for character in str(text or ""):
+        code = ord(character)
+        if any(start <= code <= end for start, end in _CJK_RANGES):
+            return theme_module.READING_LINE_HEIGHT["cjk"]
+    return theme_module.READING_LINE_HEIGHT["latin"]
+
+
+def set_reading_line_height(document, ratio: float) -> None:
+    """给一个 ``QTextDocument`` 显式行距（阅读区的编辑框、预览都走它）。
+
+    ``ratio`` 是**相对字号**的倍率（``reading_line_height`` 给的 1.5 / 1.7，
+    也就是"行高 = 1.5 × 字号"）——审查报告量到的 1.2 / 1.4 就是这个口径。
+
+    用 ``MinimumHeight`` 而不是 ``ProportionalHeight``：比例是相对**每个 run 自己
+    字体的天然行距**算的，中文回退字体（PingFang SC 19.6px）与拉丁字体（16.7px）
+    天然行距不同，同一个百分比会排出一大一小两种行距（实测 1.5 倍率得到 21.4 / 25.2）。
+    ``MinimumHeight`` 给的是**像素**，两种文字按同一个目标排；同时它是"最小值"，
+    比目标更高的字形（阿拉伯文附加符号、超大字号）不会被裁掉。
+
+    ``QPlainTextEdit`` 没有行距接口，块格式是唯一入口：对整篇生效，Qt 自己处理
+    标点、混排与换行。注意它是块格式，``setPlainText`` 之后要重新调用。
+    """
+    from PySide6.QtGui import QFontMetricsF, QTextBlockFormat, QTextCursor
+
+    font = document.defaultFont()
+    metrics = QFontMetricsF(font)
+    size = font.pixelSize() if font.pixelSize() > 0 else metrics.height()
+    target = max(1.0, float(ratio)) * size
+    block = QTextBlockFormat()
+    # PySide 的 setLineHeight 只接受 (float, int)；这层枚举要显式取 .value。
+    block.setLineHeight(target,
+                        QTextBlockFormat.LineHeightTypes.MinimumHeight.value)
+    cursor = QTextCursor(document)
+    cursor.select(QTextCursor.SelectionType.Document)
+    cursor.mergeBlockFormat(block)
+
+
+def reading_text_height(text: str, font, width: int) -> int:
+    """一段阅读文字按 F6 行距排出来之后占多高（像素，向上取整）。
+
+    阅读区的**绘制**与**行高测量**必须走同一个口径，否则 1.5 / 1.7 倍的行距会被裁字：
+    ``QFontMetrics.boundingRect(...)`` 量的是字体自带的 1.2 / 1.4，比显式行距矮
+    17→21 / 20→23.8 那么多。这里用 ``QTextDocument`` 按同一段文字、同一宽度排一遍，
+    块级行距与绘制时完全一致（内部就是 :func:`set_reading_line_height`）。
+
+    ``width`` 要传**与绘制相同的可用宽度**（单元格 / 编辑框的内容宽度），
+    它决定换行位置，进而决定行数。
+    """
+    import math
+
+    from PySide6.QtGui import QTextDocument
+
+    document = QTextDocument()
+    document.setDefaultFont(font)
+    document.setDocumentMargin(0)
+    document.setPlainText(str(text or "") or " ")
+    set_reading_line_height(document, reading_line_height(text))
+    document.setTextWidth(max(1, int(width)))
+    return math.ceil(document.size().height())
+
+
+#: 阅读字体偏好只在**第一次套用主题**时从客户端偏好里读一次（见 :func:`load_reading_font`）。
+_READING_PREFERENCE_LOADED = False
+
+
+def load_reading_font() -> str:
+    """从客户端偏好里读一次"阅读字体"，返回生效的族名（``""`` = 跟随界面字体）。
+
+    ``apply_theme`` 是每个进程都会经过的唯一入口（启动、切换外观、从设置页改字体
+    都走它），所以读取放在那里、并且只读一次：``QSettings`` 的往返不进入逐帧路径。
+    """
+    global _READING_PREFERENCE_LOADED
+    if _READING_PREFERENCE_LOADED:
+        return theme_module.reading_font()
+    _READING_PREFERENCE_LOADED = True
+    stored = ""
+    try:
+        from . import preferences
+
+        stored = preferences.settings().value(theme_module.READING_FONT_KEY, "")
+    except Exception:  # noqa: BLE001 - 读不到偏好就是"跟随界面字体"，不挡启动
+        stored = ""
+    theme_module.set_reading_font(str(stored or ""))
+    return theme_module.reading_font()
+
+
+def save_reading_font(family: str) -> str:
+    """保存"阅读字体"偏好（空串 = 跟随界面字体，直接把键删掉）。返回生效的族名。"""
+    theme_module.set_reading_font(family)
+    try:
+        from . import preferences
+
+        settings = preferences.settings()
+        if theme_module.reading_font():
+            settings.setValue(theme_module.READING_FONT_KEY, theme_module.reading_font())
+        else:
+            settings.remove(theme_module.READING_FONT_KEY)
+        settings.sync()
+    except Exception:  # noqa: BLE001 - 存不下偏好不该让设置窗口崩掉
+        pass
+    return theme_module.reading_font()
+
+
+def apply_reading_font(app, family: str | None = None) -> str:
+    """设置 · 阅读里换字体：存偏好并**立刻**重编译样式表（阅读区马上换字）。
+
+    字体只活在 QSS 的族链里，所以改完重编译 ``build_qss(current_theme())`` 就够了，
+    不用重启、也不用重算调色板。
+    """
+    if family is not None:
+        save_reading_font(family)
+    if app is not None:
+        # 只重编译样式表：**不**走 apply_theme——那个会按显式主题钉住原生窗口外观，
+        # 用户选的是"跟随系统"时会被钉成当前那一套（macOS 标题栏跟着变）。
+        app.setStyleSheet(build_qss(current_theme()))
+    return theme_module.reading_font()
+
+
 def style_hints():
     """QApplication 的 ``QStyleHints``（没有 QApplication 或老 Qt 时 ``None``）。
 
@@ -1299,6 +1457,10 @@ def _register_display_font() -> None:
 def apply_theme(app, theme: str, *, system_dark: bool = False) -> str:
     """把主题应用到 QApplication；返回实际生效的主题名。"""
     _register_display_font()
+    # 阅读字体是 QSS 里的一条族链（F6）：进程内第一次套主题时从偏好读一次，
+    # 之后由 :func:`apply_reading_font` 维护。没有这一步，重启后阅读区会悄悄
+    # 退回界面字体——设置看起来"没生效"。
+    load_reading_font()
     preference = str(theme or "").strip().lower()
     resolved = theme_module.resolve(theme, system_dark=system_dark)
     t = theme_module.tokens(resolved)
@@ -1431,6 +1593,35 @@ def paint_elevation(painter: QPainter, rect: QRectF, radius: float, level: str =
     painter.restore()
 
 
+def paint_paper_shadow(painter: QPainter, rect: QRectF, radius: float, level: str = "raised",
+                       *, strength: float = 1.0) -> None:
+    """卡片的投影：**只往下画**，水平方向不外扩。
+
+    2026-11-04 UI 审查 F14：卡片曾经在自己矩形里内缩 4px 画影子（四周都要留白），
+    可见的"纸"因此比布局矩形窄 4px，同一列里带卡片与不带卡片的控件左边差 4px。
+    纸面改成与布局矩形同宽同高之后，影子不能往左右扩（会立刻被控件矩形裁掉，
+    留下硬边），所以这里只保留朝下的那一半：纸压在一张桌面上，影子在纸下。
+
+    与 :func:`paint_elevation` 的分工：那个给浮层（弹层、菜单）用，四周留白由调用方
+    自己给；卡片用这一个。层数与不透明度仍然来自 ``theme.ELEVATION``，不另造一套。
+    """
+    layers = theme_module.ELEVATION.get(level, ())
+    if not layers:
+        return
+    ink = shadow_ink()
+    gain = theme_module.ELEVATION_NIGHT_GAIN if night_mode() else 1.0
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    for spread, offset, alpha in layers:
+        colour = QColor(ink)
+        colour.setAlphaF(max(0.0, min(1.0, alpha * gain * strength)))
+        painter.setBrush(colour)
+        # 左/右/上都不外扩：纸面不透光，扩张的部分也只会被它自己盖住。
+        shadow = QRectF(rect.left(), rect.top(), rect.width(), rect.height() + spread + offset)
+        painter.drawRoundedRect(shadow, radius + spread, radius + spread)
+    painter.restore()
+
+
 def paint_selection_ring(painter: QPainter, rect: QRectF, radius: float) -> None:
     """选中 / 键盘焦点：白色间隙 + 半透明主色环（全界面同一种选中样子）。"""
     ring = theme_module.SELECTION_RING
@@ -1452,9 +1643,11 @@ class Surface(QFrame):
     """E 层次 v2 的"卡片"一层：最亮的面，**没有描边**，层级只靠自己画的投影。
 
     QSS 没有 box-shadow，``QGraphicsDropShadowEffect`` 又只有一层且会让文字失去
-    次像素抗锯齿，所以面自己画：在自身矩形里按 ``theme.ELEVATION_PAD`` 内缩出"纸"，
-    影子画在内缩出来的那圈留白里。这圈留白是控件自己的 ``contentsMargins``，布局
-    排在它里面，所以调用方照旧给布局写设计边距即可（别再对面本身调
+    次像素抗锯齿，所以面自己画。**纸面就是控件自己的矩形**（2026-11-04 审查 F14：
+    曾经在矩形里内缩 4px 画影子，导致同一列里卡片与不带卡片的控件左边差 4px）；
+    投影只往下方那圈留白里画（``theme.ELEVATION_PAD``，下 9px），左右不外扩，
+    因此卡片的左边线与同列其它控件对齐。留白同时是控件的 ``contentsMargins``，
+    布局排在它里面，所以调用方照旧给布局写设计边距即可（别再对面本身调
     ``setContentsMargins``，那会吃掉影子的位置）。
 
     子类 / 调用方可以设 ``elevation``（flat / raised / floating）、``fill``（颜色 token）、
@@ -1483,6 +1676,7 @@ class Surface(QFrame):
         return QMargins(*theme_module.ELEVATION_PAD)
 
     def paper_rect(self) -> QRectF:
+        """卡片的"纸"：布局矩形本身（只减掉下方留给投影的那一条）。"""
         pad = self.pad()
         return QRectF(self.rect()).adjusted(pad.left(), pad.top(), -pad.right(), -pad.bottom())
 
@@ -1509,9 +1703,9 @@ class Surface(QFrame):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rect = self.paper_rect()
         if self._elevation != "flat":
-            paint_elevation(painter, rect, self.RADIUS, self._elevation, strength=1.0 - self._lift)
+            paint_paper_shadow(painter, rect, self.RADIUS, self._elevation, strength=1.0 - self._lift)
             if self._lift:
-                paint_elevation(painter, rect, self.RADIUS, "floating", strength=self._lift)
+                paint_paper_shadow(painter, rect, self.RADIUS, "floating", strength=self._lift)
         painter.setPen(Qt.PenStyle.NoPen)
         tokens = theme_module.tokens(current_theme())
         if self._fill != "none":          # "none"：内容直接放在页面上，不画面
@@ -2515,6 +2709,61 @@ def icon_button(name: str, tooltip: str = "", *, size: int = 16,
     return button
 
 
+
+# ---------------------------------------------------------------- 阅读区排版 --
+#: 阅读行距的 Qt 落地方式：``QTextLine`` **没有**行高接口，行距就是"把下一行的起点
+#: 往下推"——绘制按这个位置走，术语高亮矩形也从同一份 layout 取，两者因此天然同源
+#: （见 F6 的委托 opt-in，2026-11-04 审查）。
+def item_text_rect(option, widget=None) -> QRectF:
+    """单元格里文字的可用矩形（与 Qt 画字时的同一个 ``SE_ItemViewItemText`` 口径）。"""
+    from PySide6.QtWidgets import QApplication, QStyle
+
+    style = widget.style() if widget is not None else QApplication.style()
+    rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, widget)
+    margin = style.pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, widget) + 1
+    return QRectF(rect.adjusted(margin, 0, -margin, 0))
+
+
+def reading_layout(text: str, font, width: float, ratio: float,
+                   direction: Qt.LayoutDirection = Qt.LayoutDirection.LeftToRight):
+    """按 F6 行距排一段阅读文字，返回**唯一**的 ``QTextLayout``。
+
+    单元格绘制与术语高亮矩形都从这一份 layout 取位置：另建一份"看起来一样"的
+    layout 在行距变了之后会把荧光笔画到上一行去。
+
+    ``ratio`` 是相对字号的倍率（:func:`reading_line_height`）；每行的步进取
+    ``max(ratio × 字号, 该行天然高度)``——比目标更高的字形（阿拉伯文附加符号、
+    不同字体的回退行）不会被裁掉。
+    """
+    from PySide6.QtGui import QFontMetricsF, QTextLayout, QTextOption
+
+    layout = QTextLayout(str(text or ""), font)
+    option = QTextOption()
+    # 与 QCommonStyle 画单元格时同一个换行口径（长 URL、连写词不会撑破单元格）。
+    option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+    option.setTextDirection(direction)
+    layout.setTextOption(option)
+    pixel_size = font.pixelSize() if font.pixelSize() > 0 else QFontMetricsF(font).height()
+    step = max(1.0, float(ratio)) * pixel_size
+    layout.beginLayout()
+    y = 0.0
+    rtl = direction == Qt.LayoutDirection.RightToLeft
+    try:
+        while True:
+            line = layout.createLine()
+            if not line.isValid():
+                break
+            line.setLineWidth(max(1.0, float(width)))
+            # 从右往左的语言（阿拉伯文、希伯来文）与基样式一致：右对齐。
+            # 偏移写进 line 的位置，绘制与术语矩形（line.x()）因此仍是同一份坐标。
+            offset = max(0.0, float(width) - line.naturalTextWidth()) if rtl else 0.0
+            line.setPosition(QPointF(offset, y))
+            y += max(step, line.height())
+    finally:
+        layout.endLayout()
+    return layout
+
+
 class RowDelegate(QStyledItemDelegate):
     """表格行观感：底部发丝分隔线、整行悬停（夜间）、选中行左侧强调条（浅色）。
 
@@ -2528,15 +2777,31 @@ class RowDelegate(QStyledItemDelegate):
     （见 :func:`_night_surface_rules`），浅色不参与，观感与基线逐字节一致。
     """
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, reading_text: bool = False) -> None:
         super().__init__(parent)
         self._hover_row = -1
+        #: 阅读行距（F6）：按 ``reading_line_height`` 排单元格文字。默认关闭——
+        #: 只有段落网格需要"书"的排版，其余表格（任务库、术语、交付清单）保持原样。
+        self.reading_text = bool(reading_text)
+        #: 最近一次绘制用的排版与文字区：术语高亮（term_highlight.text_rects）拿它取位置，
+        #: 保证荧光笔和字是同一份 layout，不再另建一份去估。
+        self.painted_layout = None
+        self.painted_text = ""
+        self.painted_cell_rect = QRect()
+        self.painted_text_rect = QRectF()
         self._view = parent if isinstance(parent, QAbstractItemView) else None
         if self._view is not None:
             self._view.setMouseTracking(True)
             self._view.viewport().setMouseTracking(True)
             self._view.entered.connect(self._remember_hover_row)
             self._view.viewport().installEventFilter(self)
+
+    def set_reading_text(self, enabled: bool) -> None:
+        """开/关阅读行距排版（F6）。开之前请确认行高测量也按同一口径
+        （:func:`reading_text_height`），否则多出来的行会被裁掉。"""
+        self.reading_text = bool(enabled)
+        if self._view is not None:
+            self._view.viewport().update()
 
     def _remember_hover_row(self, index) -> None:
         self._set_hover_row(index.row())
@@ -2552,8 +2817,54 @@ class RowDelegate(QStyledItemDelegate):
             self._set_hover_row(-1)
         return super().eventFilter(watched, event)
 
+    #: "没有文字的格子"：只用来让基样式画底色（见 _paint_reading_text）。
+    _EMPTY_MODEL = None
+
+    @classmethod
+    def _empty_index(cls):
+        from PySide6.QtGui import QStandardItemModel
+
+        if cls._EMPTY_MODEL is None:
+            cls._EMPTY_MODEL = QStandardItemModel(1, 1)
+        return cls._EMPTY_MODEL.index(0, 0)
+
+    def _paint_reading_text(self, painter, option, index, styled) -> None:
+        """F6：按 1.5 / 1.7 的行距画单元格文字，并把这一份 layout 留给术语高亮。
+
+        底色、选中、焦点框仍旧交给基样式（只把它的文字清空，免得画两遍）；
+        文字用 :func:`reading_layout` 排，绘制与高亮矩形因此是同一份 layout。
+        """
+        from PySide6.QtGui import QPalette
+        from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+
+        text = str(styled.text or "")
+        # 底色 / 选中 / 焦点框交给基样式，但**不能**让它把字也画一遍：Qt 6 的
+        # `QStyledItemDelegate.paint` 会用 index 重新 `initStyleOption`（DisplayRole
+        # 有效时会覆盖 option.text），所以只清 option.text 不够——index 也要换成
+        # 一个"有格子、没文字"的索引。底色渍（已保存段的高亮）先自己 initStyleOption 取好。
+        background = QStyleOptionViewItem(option)
+        self.initStyleOption(background, index)
+        background.text = ""
+        super().paint(painter, background, self._empty_index())
+
+        text_rect = item_text_rect(styled, styled.widget)
+        layout = reading_layout(text, styled.font, text_rect.width(),
+                                reading_line_height(text), styled.direction)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setPen(styled.palette.color(
+            QPalette.ColorRole.HighlightedText
+            if styled.state & QStyle.StateFlag.State_Selected
+            else QPalette.ColorRole.Text))
+        layout.draw(painter, text_rect.topLeft())
+        painter.restore()
+        self.painted_layout = layout
+        self.painted_text = text
+        self.painted_cell_rect = QRect(option.rect)
+        self.painted_text_rect = QRectF(text_rect)
+
     def paint(self, painter, option, index) -> None:  # noqa: N802 - Qt 命名
-        from PySide6.QtWidgets import QStyle
+        from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
 
         tokens = theme_module.tokens(current_theme())
         if (night_mode() and index.row() == self._hover_row
@@ -2561,7 +2872,19 @@ class RowDelegate(QStyledItemDelegate):
             painter.save()
             painter.fillRect(option.rect, qcolor(tokens["bg-hover"]))
             painter.restore()
-        super().paint(painter, option, index)
+        styled = None
+        if self.reading_text:
+            # 视图交给委托的 option 没有填文字（Qt 6 由 `QStyledItemDelegate.paint`
+            # 自己 initStyleOption），所以这里先按子类的口径取一次；子类把 text 清空
+            # （当前行原文交给浮层）时就不画，保持"不重复画字"的意图。
+            styled = QStyleOptionViewItem(option)
+            self.initStyleOption(styled, index)
+        if styled is not None and str(styled.text or ""):
+            self._paint_reading_text(painter, option, index, styled)
+        else:
+            self.painted_layout = None
+            self.painted_text = ""
+            super().paint(painter, option, index)
         painter.save()
         rect = option.rect
         pen = QPen(qcolor(tokens["border-hairline"]))

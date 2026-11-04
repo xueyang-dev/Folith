@@ -267,6 +267,16 @@ class FollowupPanel(QWidget):
         self.entity_card.body.addWidget(self.conflict)
 
         # ---- 疑似原文碎片 --------------------------------------------------------
+        # F2：交付门禁挂着的阻断项也要在这里出现——它原来只看流水线健康，
+        # 于是出现「浮层说没问题、交付页拦住 1 项」。数与交付门禁同一个函数。
+        self.blocking_card = IssueCard("danger")
+        self.blocking_card.set_title(i18n.tr('必须处理的问题'))
+        self.blocking_button = _tool(i18n.tr('去处理…'), primary=True)
+        self.blocking_button.clicked.connect(self._locate_blocking)
+        self.blocking_card.add_action(self.blocking_button)
+        self.blocking_card.finish_actions()
+        self.blocking_card.setVisible(False)
+
         self.fragments_card = IssueCard("warning")
         self.fragments_title = self.fragments_card.title
         self.fragments_text = self.fragments_card.summary
@@ -335,7 +345,8 @@ class FollowupPanel(QWidget):
         column.setSpacing(theme_module.SPACE["sm"])
         column.addWidget(self.overview)
         # 按严重程度：缺译文 → 中断 → 质量依据 → 专名 → 碎片；然后是导入相关。
-        for widget in (self.empty, self.failures_card, self.recovery_card, self.retry_card,
+        for widget in (self.empty, self.blocking_card, self.failures_card,
+                       self.recovery_card, self.retry_card,
                        self.profile_card, self.entity_card, self.fragments_card):
             column.addWidget(widget)
         column.addSpacing(theme_module.SPACE["xs"])
@@ -356,8 +367,8 @@ class FollowupPanel(QWidget):
     # ================= 汇总（给顶栏的检查图标） =================
     def issue_cards(self) -> list[IssueCard]:
         """当前需要用户处理的项（可见、且是 ✕ / ⚠）。"""
-        cards = (self.failures_card, self.recovery_card, self.scan_pages_card,
-                 self.understanding_card,
+        cards = (self.blocking_card, self.failures_card, self.recovery_card,
+                 self.scan_pages_card, self.understanding_card,
                  self.annotation_card, self.profile_card, self.entity_card, self.fragments_card)
         return [card for card in cards
                 if not card.isHidden() and card.tone() in ISSUE_TONES
@@ -387,6 +398,8 @@ class FollowupPanel(QWidget):
         self._apply_profile(self._view.get("profile") or {})
         self._apply_entities(list(self._view.get("entities") or []), keep_source)
         self._apply_fragments([int(item) for item in self._view.get("fragments") or []])
+        self._apply_blocking(int(self._view.get("blocking") or 0),
+                             self._view.get("blocking_anchor"))
         self._apply_rescan(self._view.get("rescan") or {})
         self._apply_extraction(self._view.get("extraction") or {})
         self.import_caption.setVisible(not self.extraction_card.isHidden()
@@ -396,6 +409,24 @@ class FollowupPanel(QWidget):
         self.empty.setVisible(count == 0)
         self.overview.setText(i18n.tr('需要处理 · {v0}', v0=count) if count else "")
         self.overview.setVisible(bool(count) and getattr(self, "_show_overview", True))
+
+    def _apply_blocking(self, count: int, anchor: object) -> None:
+        """交付门禁的阻断项：有几项、第一处在哪一段（点了就定位过去）。"""
+        self._blocking = max(0, int(count or 0))
+        self._blocking_anchor = int(anchor) if isinstance(anchor, int) else None
+        self.blocking_card.setVisible(self._blocking > 0)
+        if self._blocking <= 0:
+            return
+        text = i18n.tr('交付门禁还有 {v0} 个必须处理的问题，处理完才能冻结交付。',
+                       v0=self._blocking)
+        if self._blocking_anchor is not None:
+            text += " " + i18n.tr('第一处位于第 {v0} 段。', v0=self._blocking_anchor + 1)
+        self.blocking_card.summary.setText(text)
+        self.blocking_button.setVisible(self._blocking_anchor is not None)
+
+    def _locate_blocking(self) -> None:
+        if self._blocking_anchor is not None:
+            self.locateRequested.emit(int(self._blocking_anchor))
 
     def set_show_overview(self, shown: bool) -> None:
         """「需要处理 · N」那一行（放进带数字的盾牌下拉卡片时不需要）。"""

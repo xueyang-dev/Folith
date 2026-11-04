@@ -1,4 +1,4 @@
-# Folith·译页 品牌与视觉基准
+# Folith · 译页 品牌与视觉基准
 
 本文以用户提供的品牌标准图 `docs/assets/folith-brand-standard.png` 为文字与版式参考，
 **图标几何以 2026-10-16 修正版为唯一标准**（见文末「图标几何修正」）。仓库里只有这一个
@@ -12,7 +12,11 @@ App 图标都从它派生；旧几何的文件已全部删除，不再保留备�
 | English | `Folith` | `Agentic Translation Workspace` |
 | 中文 | `译页` | `智能体翻译工作台` |
 
-组合字标统一写 `Folith·译页`；正文可根据语言写 `Folith` 或 `译页`。
+组合字标统一写 `Folith · 译页`——拉丁与中文之间留一个**细空格**：中拉丁紧贴时
+`h` 的下伸与 `译` 的横画会撞在一起，细空格同时提示这是两个词、不是拼写错误。
+（用户可见的组合字标是一张位图 lockup，见 §1；这里的写法约束的是**文字版**字标：
+窗口标题、设置页品牌行、README 与打包描述。）
+正文可根据语言写 `Folith` 或 `译页`。
 不要把品牌扩展成 `Folith AI`、`译页AI` 或普通的 AI Translator。
 
 ## 1. Logo
@@ -29,7 +33,7 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 
 ### 品牌标准图
 
-![Folith·译页品牌标准图](assets/folith-brand-standard.png)
+![Folith · 译页 品牌标准图](assets/folith-brand-standard.png)
 
 ### 资产矩阵
 
@@ -52,8 +56,9 @@ lockup 的字标是用户提供的位图，**不要**重绘或换比例；只允
 
 ## 2. 色板
 
-色值取自 icon mark；`folith/ui/theme_tokens.py` 的日间（`light`）token 与
-`gui.py` 的 Streamlit 主题必须与这里一致，`tests/brand_assets_test.py` 会检查：
+色值取自 icon mark；日间界面主色 `#2B5FD1` 就是 `folith/ui/theme_tokens.py` 里 `light` 的
+`accent`（夜间是 `#82ACFF`）。`tests/brand_assets_test.py` 守的是**资产**
+（几何、尺寸、位图是否存在、README 引用），**不校验色值**——色板目前没有测试兜底。
 
 | 名称 | 色值 | 用途 |
 | --- | --- | --- |
@@ -89,11 +94,13 @@ lockup 的字标是用户提供的位图，**不要**重绘或换比例；只允
 
 - 取值集中在 `folith/ui/theme_tokens.py` 的 `TOKENS`：两套主题的 key 完全相同，
   `ROLE_ALIASES` 把历史 `--tp-*` 名绑到语义 token 上，组件 CSS 无需一次性改写。
-- `folith/ui/themes.py` 生成 `:root` 并追加在样式表之后，因此靠级联生效，
-  不需要 `!important` 去修补某个主题。
-- 历史样式表里写死的字面色（`#hex`）在夜间下由 `normalize_legacy()` 归一到
-  角色引用；**`rgba()` 字面量不会被归一**，所以焦点光圈、玻璃面这类半透明色必须
-  直接写成 token（见 `--focus-halo` / `--surface-glass` / `--overlay-veil`）。
+- `folith/ui/theme_tokens.py` 的 `root_css(theme)` 生成 `:root` 块（语义 token + `--tp-*` 别名），
+  消费方把它追加在历史样式表之后，靠级联生效，不需要 `!important` 去修补某个主题。
+- 桌面端（Qt）没有"历史字面色按主题自动归一"这一层：`folith/qt/theme.py` 的 `tokens()`
+  只在换主题色时重算 `accent-soft / accent-border / focus-ring / focus-halo` 等派生项，
+  所以**任何半透明色都必须直接取 token**，不要手写 `rgba()` 字面量
+  （`QColor("rgba(...)")` 在 Qt 里解析失败会静默变黑，必须走 `folith.qt.theme.qcolor()`）。
+  焦点光圈、玻璃面这类半透明色的 token 是 `--focus-halo` / `--surface-glass` / `--overlay-veil`。
 
 **品牌蓝只属于 logo。** 日间主题的交互色是界面蓝 `#2B5FD1`，夜间是浅蓝 `#82ACFF`；
 石板主题色沿用纸面的**墨蓝灰** `#4C5A66`。它们都不允许把 logo 的饱和钴蓝复制到按钮、
@@ -101,7 +108,8 @@ lockup 的字标是用户提供的位图，**不要**重绘或换比例；只允
 
 #### 纸面（Paper）取值：已从桌面端废弃，留给 Android
 
-完整 token 见提交 `7d565d80` 的 `folith/ui/theme_tokens.py`。
+当前 `folith/ui/theme_tokens.py` 只保留 `light` / `dark` 两套 token（纸面整套已删）；
+下表数值取自退役前的提交 `7d565d80`，只作 Android 端的取色参考，桌面端不加载。
 
 | 语义 token | 值 | 说明 |
 | --- | --- | --- |
@@ -156,14 +164,50 @@ AppKit 用自己的一套中性石墨灰绘制，深蓝黑的内容区因此看�
 一张卡片"（透明底 + 无边框 + 无圆角），以及按下态不再变蓝。日间的样式表
 **逐字节不变**（`sha256(build_qss('light'))` 作为回归基线）。
 
+### 2.2 界面里还没进 token 的字面色（F20 待收）
+
+下面这些颜色现在写死在控件里，换主题 / 换主题色时不会跟着变。按 F20 的口径应当收敛成
+token（`folith/ui/theme_tokens.py` 一处取值，Qt 侧经 `folith.qt.theme.qcolor()` 取用）。
+**本节只登记，不动代码**（由 Lead 与 `style-tokens` 实施）。
+
+| 色值 | 用在哪 | 现状 | 应收敛到 |
+| --- | --- | --- | --- |
+| `#ffe08a` 背景 / `#202124` 文字 | PDF 原页与搜索命中高亮（`folith/qt/source_panel.py:23` 的 `_HIGHLIGHT_STYLE`） | 写死在 HTML 片段里，两套主题共用同一个值 | `--highlight-mark` / `--highlight-on-mark`，两套主题各一份（可由 `warning` 派生） |
+| `#1f7a4d` / `#ffffff` | 译文差异片段「插入」（`folith/qt/segment_assist.py:602`） | 写死 | `--diff-insert-bg` / `--diff-insert-fg` |
+| `#7a1f1f` / `#e8b4b4` | 译文差异片段「删除」（`folith/qt/segment_assist.py:604`） | 写死 | `--diff-delete-bg` / `--diff-delete-fg` |
+| `#fdfcf8` / `#efe8d8` / `#cfc7b6` / `#dcd8cf` | 任务卡纸页封面与页影（`folith/qt/components.py:1141 / 1208 / 1352`） | 纸面主题退役后剩下的暖白，夜间在控件里另开 `dark` 分支 | 换成 light 主题 `surface` 的派生值（或显式 token），不要留在控件里 |
+| `#ffffff` / `rgba(255,255,255,…)` / `#ff9f9a` / `#8fe6ad` | 深色玻璃封面上的文字与状态色（`folith/qt/style.py:149-150`） | 写死，只有夜间分支 | 由 `--bg-*` 与语义色派生 |
+| `#ffffff` / `#1f2328` / `#3d434b` | 文档缩略图里画「一页纸」（`folith/qt/thumbnails.py:126 / 139`） | 写死，但**是刻意的**：缩略图画的是文档纸面，不是界面色 | 保留，代码注释里写明理由即可 |
+
 ## 3. 字体与副标题
 
-- 主字体：Manrope `400/500/600/700/800`，字标使用 `800`；
-- 中文回退：`PingFang SC` → `Hiragino Sans GB` → `Microsoft YaHei` → `Noto Sans SC`；
+桌面端**不随包任何字体文件**，一律使用系统字体栈（`folith/qt/theme.py` 的 `FONT_STACK`）：
+
+```
+SF Pro Text -> Segoe UI -> Helvetica Neue -> PingFang SC -> Hiragino Sans GB
+-> Microsoft YaHei -> Geeza Pro -> Arial -> Noto Sans Arabic -> Noto Sans SC
+```
+
+- 拉丁：`SF Pro Text`（macOS 默认）→ `Segoe UI`（Windows）→ `Helvetica Neue` / `Arial`；
+- 中文：`PingFang SC` → `Hiragino Sans GB` → `Microsoft YaHei` → `Noto Sans SC`；
+- 阿拉伯语：`Geeza Pro` → `Noto Sans Arabic`；
+- 等宽（日志 / 诊断 / 代码类）：`SF Mono` → `Menlo` → `Monaco` → `Courier New`；
+- 字号只取 7 档：`11 / 12 / 13 / 14 / 17 / 22 / 28`（`theme.py` 的 `FONT_STEPS`），
+  层级靠「大小 + 粗细 + 颜色」表达，不靠把一切加粗。
+
+**阅读字体是设置项**（设置 · 阅读）：候选只列本机已安装的字族，默认「跟随界面字体」，
+不写死任何平台的字体；阅读区的行距是规则不是开关——拉丁 ≈1.5、中文 ≈1.7。
+
+**字标不是排版出来的字**：`Folith · 译页` 的组合字标是用户提供的**位图 lockup**
+（`folith-lockup-transparent.png` / `folith-lockup-transparent-dark.png`，见 §1 资产矩阵），
+所以字标没有"字体族 + 字重"可规定；侧栏 / 页头里与标记并排的文字走上面的系统字体栈。
+历史上 Web 端（Streamlit）用过 Google Fonts 的 Manrope，那套界面已退役，
+仓库里既没有 Manrope 字体文件、Qt 字体栈里也没有它，本文不再保留这个说法。
+
 - 英文副标题：`Agentic Translation Workspace`；
 - 中文副标题：`智能体翻译工作台`。
 
-界面和品牌资产使用同一字体栈，中文副标题保留现有字距规则。
+中文副标题保留现有字距规则；界面与品牌位图共处一张画面时，以系统字体栈的默认字距为准。
 
 ## 4. 资源生成与回归
 
@@ -184,7 +228,7 @@ python -m pytest tests/brand_assets_test.py -q
 
 侧栏、页面图标、启动器和导出署名使用同一个标准标记：侧栏品牌位使用透明 lockup（日间 / 夜间各一份）或 `folith-mark*.svg`，
 页面图标 = `folith-mark.png`；Qt App 图标 = `folith-app-icon-white.png`，由 `scripts/build_app_icon.py` 从高清母版合成。组合字标统一为
-`Folith·译页`。README 首屏展示 `folith-lockup.png`。页面仍保持既有侧栏、任务步骤、
+`Folith · 译页`。README 首屏展示 `folith-lockup.png`。页面仍保持既有侧栏、任务步骤、
 内容面、圆角、间距和颜色，不借 rebrand 之机改动导航或交互流程。
 
 ## 6. 兼容边界

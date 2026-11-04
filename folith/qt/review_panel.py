@@ -85,7 +85,7 @@ def _escape(text: object) -> str:
 
 
 def _term_card_title(item: dict) -> str:
-    """术语卡的标题：术语、冻结译法、影响段数——不写某一处的段号。"""
+    """术语卡的标题：术语、锁定译法、影响段数——不写某一处的段号。"""
     source = str(item.get("term_source") or "").strip()
     target = str(item.get("term_target") or "").strip()
     count = int(item.get("term_segment_total") or 0)
@@ -98,16 +98,16 @@ def _term_card_title(item: dict) -> str:
 
 
 def _decision_reference_html(frozen: str, previous: str, total: int) -> str:
-    """两类术语卡共用的决定参考行：冻结译法、旧译法、影响段落（#277）。
+    """两类术语卡共用的决定参考行：锁定译法、旧译法、影响段落（#277）。
 
     过期译法卡（#102）与概念决策卡都走这里，避免各写一套。缺值不占位：
-    没有冻结译法、或旧译法与冻结译法一致时就不画那一行——不留一个空字段
+    没有锁定译法、或旧译法与锁定译法一致时就不画那一行——不留一个空字段
     冒充有值。
     """
     sep = _colon()
     parts = []
     if frozen:
-        parts.append(f"<p><b>{_escape(i18n.tr('冻结译法'))}{sep}</b>{_escape(frozen)}</p>")
+        parts.append(f"<p><b>{_escape(i18n.tr('锁定译法'))}{sep}</b>{_escape(frozen)}</p>")
     if previous and previous != frozen:
         parts.append(f"<p><b>{_escape(i18n.tr('旧译法'))}{sep}</b>{_escape(previous)}</p>")
     parts.append(f"<p><b>{_escape(i18n.tr('影响段落'))}{sep}</b>"
@@ -362,7 +362,8 @@ class ReviewPanel(QWidget):
         self.retranslate_button = button(i18n.tr('重译本段'), "refresh")
         self.retranslate_button.clicked.connect(self._emit_retranslate)
         # 风格类问题：把这条建议确认成项目风格规则，以后的任务也按它译。
-        self.style_rule_button = button(i18n.tr('保存为项目风格规则…'), "sparkles")
+        # 这是人的决定，不是 AI 动作，所以不用星芒（F17）。
+        self.style_rule_button = button(i18n.tr('保存为项目风格规则…'), "sliders")
         self.style_rule_button.clicked.connect(
             lambda: self.styleRuleRequested.emit(self.selected_item() or {},
                                                  self.note_edit.text().strip()))
@@ -875,7 +876,7 @@ class ReviewPanel(QWidget):
                      if entity.get("source") == source), {}) if source else {}
 
     def _term_html(self, item: dict) -> str:
-        """一张术语卡：术语、冻结/旧译法、受影响段落并排对照。"""
+        """一张术语卡：术语、锁定/旧译法、受影响段落并排对照。"""
         source = str(item.get("term_source") or "").strip()
         target = str(item.get("term_target") or "").strip()
         previous = str(item.get("term_previous_target") or "").strip()
@@ -891,7 +892,7 @@ class ReviewPanel(QWidget):
             cells = []
             for row in shown:
                 mark = "" if row.get("uses_frozen", True) else (
-                    f" <b>【{_escape(i18n.tr('未用冻结译法'))}】</b>")
+                    f" <b>【{_escape(i18n.tr('未用锁定译法'))}】</b>")
                 cells.append(
                     "<tr>"
                     f"<td valign=\"top\"><b>{_escape(i18n.tr('第 {v0} 段', v0=row.get('number')))}</b></td>"
@@ -937,7 +938,7 @@ class ReviewPanel(QWidget):
         parts = []
         if item.get("entity_source"):
             # #277: 概念决策类术语卡补上决定参考字段，渲染与 #102 过期译法卡同源。
-            # 没有锁定译法时投影里就是空值，这里自然不画冻结/旧译法两行。
+            # 没有锁定译法时投影里就是空值，这里自然不画锁定/旧译法两行。
             total = int(item.get("term_segment_total") or 0)
             if total > 0:
                 parts.append(_decision_reference_html(

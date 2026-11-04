@@ -824,7 +824,9 @@ def test_a_long_translated_description_lives_in_the_tooltip(data_env, qt_app):
         assert scroll.horizontalScrollBar().maximum() == 0
         option = panel.mode_selector.button("快速")
         assert option._description.isHidden(), "说明不再占卡片的一行"
-        assert option._description.fullText() == long_description
+        # F18 之后模式卡是共享的 components.ModeCard（标题/说明是普通 QLabel，
+        # 没有 PresetOption 时代的 fullText()）；断言意图不变：完整译文仍在。
+        assert option._description.text() == long_description
         assert long_description in option.toolTip()
     finally:
         scroll.close()
@@ -1438,7 +1440,7 @@ def test_a_translated_display_name_is_never_used_as_a_value(
         qt_app.processEvents()
         try:
             # 显示名确实换成了译文……
-            assert panel.mode_selector.button("学术增强")._title.fullText() == "Fine"
+            assert panel.mode_selector.button("学术增强")._title.text() == "Fine"
             assert panel.batch_seg.button("快速").text() == "Throughput"
             assert panel.delivery_seg.button("complete").text() == "Complete"
             assert panel.ocr_backend_box.itemText(0) == "Vision (VLM, default)"

@@ -18,7 +18,8 @@ import time
 from contextlib import contextmanager
 
 from PySide6.QtCore import QEvent, QMargins, QRect, QRectF, QSize, QTimer, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QPen
+from PySide6.QtGui import (QAction, QColor, QFontMetrics, QKeySequence, QPainter, QPen,
+                           QTextLayout)
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QFrame,
     QGridLayout,
@@ -48,6 +49,7 @@ from .setup_panel import TaskSetupPanel
 from .task_details_panel import TaskDetailsPanel
 from .stagebar import StageBar
 from . import stage as stage_model
+from . import status_voice
 from . import style as style_module
 from . import theme as theme_module
 from . import segment_assist
@@ -154,60 +156,63 @@ def _segment_tone(row) -> str:
     return "muted"
 
 
-#: `core.task_status_label()` 能给出的全部标签 -> 语义色调。
-#: **顺序即优先级**：`工作版本已偏离冻结交付 v2` 里也含"已冻结交付"三个字，
-#: 若先匹配"已冻结交付"就会把"偏离"显示成成功的绿色。
-TASK_STATUS_TONES = (
-    ("无法读取", "danger"),
-    ("工作版本已偏离冻结交付", "warn"),
-    ("已冻结交付", "ok"),
-    ("可以冻结交付", "ok"),
-    ("待审校", "warn"),
-    ("待学术复核", "warn"),
-    ("待术语确认", "warn"),
-    ("暂不满足交付条件", "warn"),
-    ("处理中断", "warn"),
-    ("待处理", "muted"),
-)
-
-#: `job_repository` 的 `headline_status` 标签 -> 运行状态芯片的色调。
-#: 需要用户注意的状态（暂无运行信号 / 未完成 / 待术语确认）不能是中性灰。
-RUNTIME_STATUS_TONES = {
-    "已完成": "ok",
-    "正在运行": "info",
-    "正在恢复任务": "info",
-    "正在取消": "warn",
-    "正在暂停": "warn",
-    "已暂停": "warn",
-    "上次运行已中断": "warn",
-    "未完成": "warn",
-    "待术语确认": "warn",
-    "暂无运行信号": "danger",
-    "当前步骤失败": "danger",
-    "任务已取消": "muted",
-    "空闲": "muted",
-}
-
-
-def status_tone_for_label(label: str) -> str:
-    """把一个任务状态标签映射成语义色调（未知标签按中性处理）。"""
-    text = str(label or "")
-    for needle, tone in TASK_STATUS_TONES:
-        if needle in text:
-            return tone
-    return "muted"
+#: 状态措辞的唯一出口（2026-11-04 审校 F4）。两张表和判定都搬到了
+#: `folith.qt.status_voice`；这里保留同名别名，因为既有测试与外部探针读的是
+#: `views.TASK_STATUS_TONES` / `views.RUNTIME_STATUS_TONES`。
+TASK_STATUS_TONES = status_voice.TASK_STATUS_TONES
+RUNTIME_STATUS_TONES = status_voice.RUNTIME_STATUS_TONES
+status_tone_for_label = status_voice.tone_for_label
 
 
 def _status_tone(row) -> str:
-    """任务状态 -> 语义色调（供状态列与芯片共用）。"""
-    if getattr(row, "active", False):
-        return "info"
-    return status_tone_for_label(getattr(row, "status_label", ""))
+    """任务状态 -> 旧词汇色调（供状态列与芯片共用）。
+
+    运行状态**不再**在这里抢走任务语气：跑完一次翻译不等于任务做完（F4）。
+    需要五种语气时用 :func:`status_voice.voice_for_row`。
+    """
+    return status_voice.voice_for_row(row).qss_state
 
 
 def _elide(text: str, limit: int = 90) -> str:
     flat = " ".join(str(text or "").split())
     return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+def _fit_lines(text: str, font, width: int, lines: int = 2) -> str:
+    """把一段文字排成最多 ``lines`` 行，放不下的部分在最后一行尾省略。
+
+    F8：卡片上的文件名原来在窄玻璃条里做中间省略，只剩头尾几个字符，相似文件分不清。
+    现在文字在纸页下方、按 13–14px 排两行，第二行放不下的用「…」收尾。
+    """
+    metrics = QFontMetrics(font)
+    flat = " ".join(str(text or "").split()) or "—"
+    width = max(40, int(width))
+    if metrics.horizontalAdvance(flat) <= width:
+        return flat
+    rows: list[tuple[int, int]] = []
+    layout = QTextLayout(flat, font)
+    layout.beginLayout()
+    try:
+        while len(rows) < max(1, lines):
+            line = layout.createLine()
+            if not line.isValid():
+                break
+            line.setLineWidth(width)
+            rows.append((line.textStart(), line.textLength()))
+    finally:
+        layout.endLayout()
+    if not rows:
+        return metrics.elidedText(flat, Qt.TextElideMode.ElideRight, width)
+    out: list[str] = []
+    consumed = 0
+    for index, (start, length) in enumerate(rows):
+        chunk = flat[start:start + length]
+        consumed = start + length
+        last = index == len(rows) - 1
+        if last and consumed < len(flat):
+            chunk = metrics.elidedText(flat[start:], Qt.TextElideMode.ElideRight, width)
+        out.append(chunk.strip())
+    return "\n".join(out)
 
 
 # ================= 交付资产清单 =================
@@ -448,21 +453,23 @@ def translation_source_label(pair, *, human_edited: bool):
 
 def _segment_status_tone(row) -> str:
     """一段的状态语气（theme.STATUS_TONES）：已审校 = 完成；草稿基于旧译文 = 需处理；
-    待翻译 / 已排除 = 未开始；其余（待审校、人工修改）= 进行中。"""
-    if getattr(row, "stale_draft", False):
-        return "attention"
-    status = str(getattr(row, "status", "") or "")
-    if getattr(row, "excluded", False) or status in (i18n.tr("待翻译"), i18n.tr("已排除")):
-        return "idle"
-    if status == i18n.tr("已审校"):
-        return "done"
-    return "active"
+    待翻译 / 已排除 = 未开始；其余（待审校、人工修改）= 进行中。
+
+    判定在 :func:`status_voice.voice_for_segment`，与任务卡片、项目页共用同一套语气。
+    """
+    return status_voice.voice_for_segment(row).tone
 
 
 def _row_format(row) -> str:
     name = str(getattr(row, "filename", "") or "")
     suffix = name.rsplit(".", 1)[-1] if "." in name else ""
     return suffix.upper()[:4] if suffix else ""
+
+
+#: 左栏（原页 / 术语）打开时，检查器让位的宽度阈值（F13，2026-11-04 审校）。
+#: 原来的 1200 太窄：1440 宽的窗口里打开左栏，检查器仍占着约 350px，网格被挤到
+#: 每段 5–7 行，而检查器下半部分是空的。宽于一屏时二选一：看原页就不看检查器。
+INSPECTOR_YIELD_WIDTH = 1500
 
 
 class _TaskCard(QFrame):
@@ -506,19 +513,30 @@ class _TaskCard(QFrame):
         unreadable = bool(str(getattr(row, "error", "") or "").strip())
         self.paper = components.CoverArt(self, faded=unreadable)
         self.paper.set_document(row.filename, row.segment_count)
+        # F9：文字已经移到纸页下方，底部那两层磨砂玻璃 / 暗色蒙层只会把纸染脏；
+        # 夜间再把白纸压暗（全屏约 5.8% 的像素亮度 >200，看久了刺眼）。
+        self.paper.set_glass_enabled(False)
+        self.paper.set_night_dim(0.85 if style_module.night_mode() else 0.0)
         self.paper.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
-        # ---- 浮在玻璃上的文字 ------------------------------------------------
-        self.overlay = QWidget(self)
-        self.overlay.setObjectName("coverOverlay")
-        self.overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        text = QVBoxLayout(self.overlay)
-        text.setContentsMargins(14, 0, 14, 12)
+        # ---- 纸页**下**方的文字（F8） ---------------------------------------
+        # 2026-11-04 审校 F8：文字压在模糊正文上，17px 的文件名被省略成
+        # 「Why Lon…ce.docx」，相似文件根本分不清；F9 又指出夜间的白色蒙层把标题区染脏。
+        # 现在纸页保持干净，文件名/元信息/状态排在纸页下方，像书架上一本书的标签；
+        # 文字离开纸面后，那层磨砂玻璃与暗色蒙层都不再需要。
+        self.text_panel = QWidget(self)
+        self.text_panel.setObjectName("coverText")
+        self.text_panel.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        text = QVBoxLayout(self.text_panel)
+        text.setContentsMargins(2, 0, 2, 0)
         text.setSpacing(2)
-        text.addStretch(1)
-        self.title = style_module.ElideLabel(row.title or i18n.tr("未命名任务"),
-                                             mode=Qt.TextElideMode.ElideMiddle)
+        self._title_text = row.title or i18n.tr("未命名任务")
+        self.title = QLabel()
         self.title.setObjectName("coverTitle")
+        self.title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # 文件名最多两行，超出部分在第二行尾省略（13–14px，见 style 的 name 角色）。
+        style_module.set_text_role(self.title, "name")
+        self._apply_title_text()
         meta_parts = [part for part in (
             _row_format(row),
             i18n.tr("{v0} 段", v0=f"{row.segment_count:,}") if row.segment_count else "",
@@ -527,20 +545,18 @@ class _TaskCard(QFrame):
         self.meta = style_module.ElideLabel(" · ".join(meta_parts) or "—",
                                             mode=Qt.TextElideMode.ElideRight)
         self.meta.setObjectName("coverMeta")
+        self.meta.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        style_module.set_text_role(self.meta, "meta")
 
         run_tone, run_line = library_run_view(row)
-        tone = {"running": "info", "waiting": "info", "retrying": "warn",
-                "stalled": "warn", "failed": "danger", "done": "ok",
-                "paused": "muted", "idle": "muted"}.get(run_tone, tone)
-        if row.runtime_status == "unreadable":
-            tone = "danger"
-        # 卡片语气 → 统一的状态语气（theme.STATUS_TONES），颜色与检查器、设置里的状态点一致。
-        status_tone = {"ok": "done", "warn": "attention", "danger": "error",
-                       "info": "active", "brand": "active"}.get(tone, "idle")
-        dot = components.StatusDot(theme_module.STATUS_TONES[status_tone], hollow=False)
-        status_text = (run_line if run_tone in ("running", "waiting", "retrying", "stalled", "failed", "paused")
-                       else i18n.tr_dynamic(row.status_label)) or "—"
-        percent = _row_percent(row)
+        # 语气只看**任务**状态（F4）：运行跑完了不等于任务做完了。运行失败 / 停滞
+        # 仍然把语气往上推，但 "completed" 不再把「待审校」染成绿色。
+        voice = status_voice.voice_for_row(row, run_line=run_line, run_state=run_tone,
+                                           progress=_row_percent(row))
+        tone = voice.qss_state
+        dot = components.StatusDot(theme_module.STATUS_TONES[voice.tone], hollow=False)
+        percent = voice.progress
+        status_text = voice.label
         if row.active and percent is not None and f"{percent}%" not in status_text:
             status_text = f"{status_text} · {percent}%"
         self.status_label = style_module.ElideLabel(status_text, mode=Qt.TextElideMode.ElideRight)
@@ -548,20 +564,27 @@ class _TaskCard(QFrame):
         self.status_label.setProperty("state", tone)
         status_row = QHBoxLayout()
         status_row.setSpacing(6)
+        status_row.setContentsMargins(0, 0, 0, 0)
         status_row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
         status_row.addWidget(self.status_label, 1)
         text.addWidget(self.title)
         text.addWidget(self.meta)
-        text.addSpacing(3)
+        text.addSpacing(2)
         text.addLayout(status_row)
         self.progress = None
         if percent is not None:
-            self.progress = components.ProgressLine(percent, token=components.PROGRESS_TONES[run_tone])
-            self.progress.on_glass = True
-            text.addSpacing(5)
+            # 进度条的颜色跟"这次运行"走，但任务还没做完时不许是绿色的：满格绿条
+            # 配一个「待审校」正是 F4 里"读起来像已经好了"的那一条。
+            bar_state = run_tone
+            if bar_state in ("done", "idle") and voice.tone != status_voice.DONE:
+                bar_state = {"attention": "stalled", "error": "failed",
+                             "active": "running"}.get(voice.tone, run_tone)
+            self.progress = components.ProgressLine(percent, token=components.PROGRESS_TONES[bar_state])
+            text.addSpacing(4)
             text.addWidget(self.progress)
+        self._voice = voice
 
-        # 问题数：浮在玻璃右下角，单独可点（不随文字层透明）。
+        # 问题数：浮在纸页右上角，单独可点。
         self.attention = CheckStatusButton(self)
         self.attention.set_count(row.attention_count, row.attention_tone or "warning")
         self.attention.setVisible(bool(row.attention_count))
@@ -575,27 +598,60 @@ class _TaskCard(QFrame):
         self.set_tile_width(self.MIN_WIDTH + 20)
 
     # ---- 尺寸与摆放 -------------------------------------------------------
+    #: 纸页与下方文字之间的间距。
+    TEXT_GAP = 10
+    #: 文件名最多显示的行数（F8：两行折行，不再省略成头尾几个字符）。
+    TITLE_LINES = 2
+
+    def _paper_height(self, inner: int) -> int:
+        return round(max(40, inner) * self.ASPECT)
+
+    def _text_height(self) -> int:
+        layout = self.text_panel.layout()
+        if layout is not None:
+            layout.activate()
+        return max(24, self.text_panel.sizeHint().height())
+
+    def _apply_title_text(self) -> None:
+        width = max(40, getattr(self, "_inner_width", self.MIN_WIDTH) - 4)
+        text = _fit_lines(self._title_text, self.title.font(), width, self.TITLE_LINES)
+        if self.title.text() != text:
+            self.title.setText(text)
+        # 始终占两行高：同类卡片高度一致，网格不会因为一个短名字参差。
+        self.title.setFixedHeight(
+            self.TITLE_LINES * max(12, self.title.fontMetrics().lineSpacing()))
+
     def set_tile_width(self, width: int) -> None:
-        inner = width - self.PAD.left() - self.PAD.right()
-        self.setFixedSize(width, round(inner * self.ASPECT) + self.PAD.top() + self.PAD.bottom())
+        inner = max(60, width - self.PAD.left() - self.PAD.right())
+        self._inner_width = inner
+        self._apply_title_text()
+        height = (self.PAD.top() + self._paper_height(inner) + self.TEXT_GAP
+                  + self._text_height() + self.PAD.bottom())
+        self.setFixedSize(width, height)
         self._place()
 
     def setFixedWidth(self, width: int) -> None:  # noqa: N802 - keeps HomeView's call sites
         self.set_tile_width(width)
 
-    def _cover_rect(self) -> QRect:
+    def _paper_rect(self) -> QRect:
         rise = round(self.LIFT * self._lift)
-        return QRect(self.PAD.left(), self.PAD.top() - rise,
-                     self.width() - self.PAD.left() - self.PAD.right(),
-                     self.height() - self.PAD.top() - self.PAD.bottom())
+        inner = max(60, self.width() - self.PAD.left() - self.PAD.right())
+        return QRect(self.PAD.left(), self.PAD.top() - rise, inner, self._paper_height(inner))
+
+    def _cover_rect(self) -> QRect:
+        """兼容旧名：投影与选中描边围绕纸页（文字在纸下方，不参与描边）。"""
+        return self._paper_rect()
 
     def _place(self) -> None:
-        rect = self._cover_rect()
+        rect = self._paper_rect()
         self.paper.setGeometry(rect)
-        self.overlay.setGeometry(rect)
+        inner = max(60, self.width() - self.PAD.left() - self.PAD.right())
+        self.text_panel.setGeometry(self.PAD.left(),
+                                    self.PAD.top() + self._paper_height(inner) + self.TEXT_GAP,
+                                    inner, self._text_height())
         if self.attention.isVisibleTo(self):
             hint = self.attention.sizeHint()
-            # 右上角：封面上方没有文字，角标不会压住文件名（试用反馈 41 号，整改 H3）。
+            # 右上角：纸页上方没有文字，角标不会压住文件名（试用反馈 41 号，整改 H3）。
             self.attention.move(rect.right() - hint.width() - 8, rect.top() + 8)
             self.attention.raise_()
         self.update()
@@ -778,7 +834,7 @@ class HomeView(QWidget):
         self.tasks_button.clicked.connect(self.tasksRequested.emit)
         self.manage_projects_button = nav_button(i18n.tr('项目'), "folder", checkable=True)
         self.manage_projects_button.setToolTip(
-            i18n.tr('项目：术语库、翻译记忆和待审核的候选术语都在项目里'))
+            i18n.tr('项目：术语库、翻译记忆和待确认的候选术语都在项目里'))
         self.manage_projects_button.clicked.connect(self.manageProjectsRequested.emit)
         # 待审核的候选术语总数：角标挂在「项目」上（原来的「术语与翻译记忆」页并进了项目）。
         self.pending_badge = components.CountBadge("", "info", self.manage_projects_button)
@@ -1051,7 +1107,7 @@ class HomeView(QWidget):
         # 三个禁用按钮）。它的按钮是次级的：主行动是侧栏顶部的「导入文档」。
         self.empty_state = style_module.EmptyState(
             icon="file-text", page=True, title=i18n.tr('还没有任务'),
-            hint=i18n.tr('点击「导入文档」选择 PDF 或 DOCX，即可开始翻译。'),
+            hint=i18n.tr('点击「导入文档」选择 PDF、DOCX、EPUB、TXT 或 Markdown，即可开始翻译。'),
             action=i18n.tr('导入文档'))
         self.empty_state.actionTriggered.connect(self.importRequested.emit)
         self.empty_state.setVisible(False)
@@ -1236,8 +1292,8 @@ class HomeView(QWidget):
         self.pending_badge.setText(str(count) if count < 1000 else "999+")
         self.pending_badge.setVisible(count > 0)
         self.manage_projects_button.setToolTip(
-            i18n.tr('项目：术语库、翻译记忆和待审核的候选术语都在项目里')
-            + (" · " + i18n.tr('{v0} 条待审核', v0=count) if count else ""))
+            i18n.tr('项目：术语库、翻译记忆和待确认的候选术语都在项目里')
+            + (" · " + i18n.tr('{v0} 条待确认', v0=count) if count else ""))
         self._place_badge()
 
     def _place_badge(self) -> None:
@@ -2696,9 +2752,14 @@ class WorkbenchView(QWidget):
         self.details_tab.setVisible(False)
 
         # 运行控制单独放进一个零边距容器：全部隐藏时整组收掉，不留空槽位。
-        run_controls = QHBoxLayout()
+        #
+        # F1（2026-11-04 审校）：顶栏这一组按钮是**整个窗口最小宽度的唯一成因**。
+        # 四个按钮横排时俄语界面把窗口撑到 1451px（1920×1080@150% 只有 1280）。
+        # 换成可折行的 FlowRow：放不下就折到第二行，最小宽度降到 874/1072/1123/1149，
+        # 四种语言都 ≤1280。交付页的四个按钮早就是这么排的（F1 证据见
+        # docs/ui-overhaul/10-f1-width-evidence.md）。
+        run_controls = components.FlowRow(spacing=theme_module.SPACE["sm"], fill=False)
         run_controls.setContentsMargins(0, 0, 0, 0)
-        run_controls.setSpacing(theme_module.SPACE["sm"])
         for button in (self.start_button, self.pause_button,
                        self.cancel_button, self.retry_button, self.stage_action_button):
             run_controls.addWidget(button)
@@ -2952,7 +3013,7 @@ class WorkbenchView(QWidget):
         style_module.set_button(self.copy_source_button, "plain")
         self.copy_source_button.clicked.connect(self._copy_source_to_target)
         self.save_next_button = QPushButton(i18n.tr('保存并下一段'))
-        self.save_next_button.setToolTip(i18n.tr('保存这一段并进入下一个未确认的段（{v0}）', v0=platform_ui.shortcut_text("save_next")))
+        self.save_next_button.setToolTip(i18n.tr('保存这一段并进入下一个待处理的段（{v0}）', v0=platform_ui.shortcut_text("save_next")))
         self.save_next_button.clicked.connect(self.save_and_next)
         self.submit_button = QPushButton(i18n.tr('保存'))
         self.submit_button.setToolTip(i18n.tr('保存并提交这一段（{v0}）', v0=platform_ui.shortcut_text("save")))
@@ -3193,9 +3254,34 @@ class WorkbenchView(QWidget):
         ops.setContentsMargins(0, 0, 0, 0)
         ops.setSpacing(theme_module.SPACE["xs"])
         ops.addWidget(style_module.SectionLabel(i18n.tr('段落操作')))
+        # F12：常驻动作只留三四个。「排除」是不可逆操作里最重的一个，原来又常驻、
+        # 又用危险色、窄窗时独占一整行；收进「更多」菜单（确认框仍然会拦一次）。
+        self.segment_more_button = QToolButton()
+        self.segment_more_button.setText(i18n.tr('更多'))
+        self.segment_more_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.segment_more_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup)
+        style_module.set_button(self.segment_more_button, "plain", small=True)
+        more_menu = QMenu(self.segment_more_button)
+        exclude_action = more_menu.addAction(icons.icon("eye-off", 16, "danger"),
+                                             i18n.tr('排除本段…'))
+        exclude_action.setToolTip(self.exclude_button.toolTip())
+        exclude_action.triggered.connect(self.exclude_button.click)
+        # 旧的 exclude_button 只保留成"动作的宿主"（测试与既有调用点仍然点它），
+        # 它不再挂在任何布局里：一旦被 show 就会变成顶层窗口，所以由菜单动作负责
+        # 启用态与文案，按钮本身永远隐藏。
+        self.exclude_action = exclude_action
+        # 按钮本身挂到工作台上并永久隐藏：它不再属于任何布局，但必须有一个 QObject
+        # 父级，否则会变成顶层窗口（既会被 conftest 的"无父窗口"守门抓，也会在
+        # 销毁顺序上出问题）。
+        self.exclude_button.setParent(self)
+        self.exclude_button.setVisible(False)
+        self.segment_more_button.setMenu(more_menu)
+        self.segment_more_button.setToolTip(i18n.tr('更多段落操作'))
         ops.addLayout(row_of(self.copy_source_button, self.restore_button,
                              self.structure_button, self.view_source_button,
-                             self.exclude_button))
+                             self.segment_more_button))
         single.addWidget(self.segment_ops_section)
         inspector_layout.addWidget(self.single_segment_section)
 
@@ -3400,11 +3486,20 @@ class WorkbenchView(QWidget):
         self.deliver_button = style_module.ElideButton(i18n.tr('审校完成后冻结交付'))
         style_module.set_button(self.deliver_button, "primary")
         self.deliver_button.clicked.connect(self.deliverRequested.emit)
+        # F3：门禁页最响的应该是「去处理」，不是「接受风险并交付」。有阻断项时
+        # 主位换成这一枚，直接跳到第一处必须处理的段落。
+        self.fix_button = style_module.ElideButton(i18n.tr('去处理必须处理的问题'))
+        style_module.set_button(self.fix_button, "primary")
+        self.fix_button.setIcon(icons.icon("shield-check", 16, "text-on-accent"))
+        self.fix_button.setIconSize(QSize(16, 16))
+        self.fix_button.clicked.connect(self._go_fix_blocking)
+        self.fix_button.setVisible(False)
         # 交付说明：写进交付快照的批准记录（以前固定写"桌面端人工确认"）。
         self.delivery_note = QLineEdit()
         self.delivery_note.setPlaceholderText(i18n.tr('交付说明（可选，例如：已完成人工审校）'))
         self.risk_button = style_module.ElideButton(i18n.tr('接受风险并交付…'))
-        style_module.set_button(self.risk_button, "danger")
+        # F3：绕过门禁是下策，样式从"红色实心按钮"降为普通按钮（对话框仍会拦一次）。
+        style_module.set_button(self.risk_button, "plain")
         self.risk_button.setToolTip(
             i18n.tr('仍有必须处理的问题时，写下说明并确认后继续交付；问题不会被删除'))
         self.risk_button.clicked.connect(self.deliverWithRiskRequested.emit)
@@ -3463,6 +3558,7 @@ class WorkbenchView(QWidget):
         # 四个动作按钮放一行：中文放得下，外语放不下就折行（每个按钮保留自己的
         # 宽度，不铺满），按钮文字不会被裁掉半句。
         delivery_actions = components.FlowRow(spacing=8, fill=False)
+        delivery_actions.addWidget(self.fix_button)
         delivery_actions.addWidget(self.deliver_button)
         delivery_actions.addWidget(self.risk_button)
         delivery_actions.addWidget(self.export_button)
@@ -3473,6 +3569,30 @@ class WorkbenchView(QWidget):
         delivery_layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
                                            theme_module.SPACE["xl"], theme_module.SPACE["lg"])
         delivery_layout.setSpacing(theme_module.SPACE["md"])
+        # F11：走完一本书，交付页不该只是一张表单。冻结之后，成品回到画面里——
+        # 左边是这本书的封面，右边是版本与文件名，与下面的文件清单并列。
+        self.delivery_cover = components.DocThumb()
+        self.delivery_cover.setFixedWidth(64)
+        self.delivery_cover.setVisible(False)
+        self.delivery_product = QLabel("")
+        self.delivery_product.setObjectName("cardTitle")
+        self.delivery_product.setWordWrap(True)
+        self.delivery_product_detail = QLabel("")
+        self.delivery_product_detail.setObjectName("hint")
+        self.delivery_product_detail.setWordWrap(True)
+        product_column = QVBoxLayout()
+        product_column.setSpacing(2)
+        product_column.addWidget(self.delivery_product)
+        product_column.addWidget(self.delivery_product_detail)
+        product_column.addStretch(1)
+        self.delivery_product_row = QWidget()
+        product_row = QHBoxLayout(self.delivery_product_row)
+        product_row.setContentsMargins(0, 0, 0, 0)
+        product_row.setSpacing(theme_module.SPACE["md"])
+        product_row.addWidget(self.delivery_cover, 0, Qt.AlignmentFlag.AlignTop)
+        product_row.addLayout(product_column, 1)
+        self.delivery_product_row.setVisible(False)
+        delivery_layout.addWidget(self.delivery_product_row)
         delivery_layout.addWidget(self.delivery_label)
         delivery_layout.addWidget(self.delivery_note)
         delivery_layout.addLayout(delivery_actions)
@@ -3520,6 +3640,9 @@ class WorkbenchView(QWidget):
             icon="check-circle", title=i18n.tr('没有被排除的段落'),
             hint=i18n.tr('排除的段落会出现在这里，并附在交付包中；恢复后段落回到工作台。'))
         excluded_card = Card()
+        # F11：0 条时整张卡片不出现（原来一个空状态占满一张卡）。
+        self.excluded_card = excluded_card
+        excluded_card.setVisible(False)
         excluded_layout = QVBoxLayout(excluded_card)
         excluded_layout.setContentsMargins(16, 14, 16, 14)
         excluded_layout.setSpacing(8)
@@ -4759,7 +4882,7 @@ class WorkbenchView(QWidget):
         self._motion.stop("translation-columns")
         drawer_open = False  # 检查与修复是浮层，不占右栏
         source = self.left_open()
-        narrow = self.width() and self.width() < 1200
+        narrow = self.width() and self.width() < INSPECTOR_YIELD_WIDTH
         self.source_clip.setVisible(source)
         self.source_clip.freeze(None)
         self.right_panel.settle(drawer_open)
@@ -4803,7 +4926,7 @@ class WorkbenchView(QWidget):
         # 打开抽屉时网格不重排（设计审校 40 号 3.8）。
         side = 0
         minimum = self._sync_inspector_min()
-        if drawer_open or not (source and self.width() < 1200):
+        if drawer_open or not (source and self.width() < INSPECTOR_YIELD_WIDTH):
             side = max(self._inspector_width, minimum)
         pdf = 0
         if source:
@@ -4823,7 +4946,7 @@ class WorkbenchView(QWidget):
         if self._motion.running("translation-columns"):
             self._layout_translation_columns()
         if self.left_open():
-            narrow = self.width() < 1200
+            narrow = self.width() < INSPECTOR_YIELD_WIDTH
             if self.inspector_scroll.isVisibleTo(self) == narrow:
                 self._layout_translation_columns()
 
@@ -4864,12 +4987,27 @@ class WorkbenchView(QWidget):
                           ("qa", i18n.tr('合规与 QA'))))
         self.stage_bar.set_more_pages(pages)
 
+    def blocking_items(self) -> list[dict]:
+        """尚未解决的**阻断级**检查项——交付门禁、审校步骤、页头与交付页共用的那一份。
+
+        2026-11-04 审校 F2：四个界面各自数了一遍，结果互相打架（审校页说完成、页头写
+        「已完成」、交付页却拦 1 个必须处理的问题）。现在只在这里数一次。
+        """
+        if not self._state:
+            return []
+        try:
+            return adapter.unresolved_blocking(self.job_id, self._state)
+        except Exception:  # noqa: BLE001 - 只读投影，坏了不该拖垮整个界面
+            return []
+
     def _render_stage(self) -> None:
         """用审校投影、交付预检与运行视图重算阶段步骤条与"下一步"。"""
+        blocking = self.blocking_items()
         view = stage_model.stage_view(
             started=self._task_started(), runtime=self._last_runtime,
             state=self._state, review=self.review_panel.view(),
-            delivery=self._delivery_preview, terms_blocked=self._terms_blocked)
+            delivery=self._delivery_preview, terms_blocked=self._terms_blocked,
+            blocking=len(blocking))
         self.stage_bar.set_stages(view)
         # 术语、检查与修复、任务详情与"更多"里的页面只对已经开始的任务有意义：
         # 准备阶段没有术语表、没有记录。
@@ -5099,7 +5237,7 @@ class WorkbenchView(QWidget):
             self.terms_gate.set_text("")
             return
         self.terms_gate.set_text(i18n.tr(
-            '严格术语治理：还有 {v0} 个候选术语未确认，翻译不会开始。冻结术语表后才能继续。',
+            '严格术语治理：还有 {v0} 个候选术语待确认，翻译不会开始。锁定术语表后才能继续。',
             v0=(view or {}).get("pending_count", 0)))
         self.terms_gate.set_action(i18n.tr('前往术语页'), self.show_terms)
 
@@ -5908,6 +6046,12 @@ class WorkbenchView(QWidget):
         tone, line = run_status_view(runtime, note=note, running=running,
                                      completed=completed, total=total,
                                      unit=str(stage_progress.get("unit") or ""))
+        # F2：这一次运行跑完了，不等于这个任务做完了。只要交付门禁还挂着未解决的
+        # 阻断项，页头就不能说「已完成」——它与交付页、审校步骤条必须同一个数。
+        blocking = self.blocking_items()
+        if tone == "done" and blocking:
+            tone = "attention"
+            line = i18n.tr('运行已完成 · 还有 {v0} 个问题必须处理', v0=len(blocking))
         # 跑完了就不要进度条：没有阶段进度时它停在 0，和下面的"已完成"自相矛盾；
         # 有进度时它是一根满条，也只是把"已完成"再说一遍。文字行仍可点开运行记录。
         self.run_status.track.setVisible(tone != "done")
@@ -6097,11 +6241,34 @@ class WorkbenchView(QWidget):
             delivery_tone = "idle"
         # 译文里的说明以分隔符开头（原来接在状态后面）；单独成行时去掉它。
         self.delivery_label.set_status(status, delivery_tone, detail.strip().lstrip("；;؛、 ").strip())
+        # F2/F3：阻断项只数一次（与页头、审校步骤条同一个数），门禁页的主位给「去处理」。
+        blocking = self.blocking_items()
+        already_frozen = bool((preview.get("snapshot") or {}).get("current"))
+        show_fix = bool(blocking) and not already_frozen
+        self.fix_button.setVisible(show_fix)
+        if blocking:
+            self.fix_button.setText(
+                i18n.tr('去处理 {v0} 个必须处理的问题', v0=len(blocking)))
+        self.deliver_button.setVisible(not show_fix)
         self.deliver_button.setEnabled(bool(preview.get("can_deliver")))
-        self.risk_button.setVisible(bool(preview.get("can_accept_risk")))
+        self.risk_button.setVisible(bool(preview.get("can_accept_risk")) or show_fix)
         self.delivery_note.setEnabled(bool(preview.get("can_deliver")
                                            or preview.get("can_accept_risk")))
         snapshot = preview.get("snapshot") or {}
+        # F11：冻结之后把成品放回画面中央——左边封面，右边版本与文件名。
+        frozen = bool(snapshot.get("current"))
+        self.delivery_product_row.setVisible(frozen)
+        if frozen:
+            filename = str(self._state.get("filename") or "")
+            if getattr(self, "_delivery_cover_name", None) != filename:
+                self._delivery_cover_name = filename
+                self.delivery_cover.set_document(filename, len(self._state.get("pairs") or []))
+            version = (snapshot.get("latest") or {}).get("snapshot_version")
+            self.delivery_product.setText(
+                i18n.tr('已冻结交付 v{v0}', v0=version) if version is not None
+                else i18n.tr('已冻结交付'))
+            self.delivery_product_detail.setText(i18n.tr(
+                '{v0} · 交付包里的文件见下方清单。', v0=filename or i18n.tr('未命名任务')))
         if snapshot.get("current"):
             self.deliver_button.setText(
                 i18n.tr('已冻结交付 v{v0}', v0=snapshot.get('latest', {}).get('snapshot_version')))
@@ -6123,6 +6290,16 @@ class WorkbenchView(QWidget):
         offer = bool(snapshot.get("current") or preview.get("can_deliver"))
         self._fill_supplements(adapter.supplementable_outputs(self.job_id, self._state)
                                if offer and self.job_id else [])
+
+    def _go_fix_blocking(self) -> None:
+        """F3：从门禁页一步跳到第一处必须处理的段落（并留在审校/翻译页上处理）。"""
+        items = self.blocking_items()
+        if not items:
+            return
+        index = items[0].get("segment_index")
+        self.show_page("translate")
+        if isinstance(index, int) and index >= 0 and hasattr(self.segment_list, "select_segment"):
+            self.segment_list.select_segment(index)
 
     def _fill_supplements(self, items: list[dict]) -> None:
         """按"还能补生成的文件"重建按钮（每秒刷新：清单没变就不动控件）。"""
@@ -6272,6 +6449,10 @@ class WorkbenchView(QWidget):
             self.excluded_hint.setVisible(has_records)
             self.restore_excluded_button.setVisible(has_records)
             self.excluded_empty.setVisible(not has_records)
+            # F11：0 条时整张卡片都不占地方（原先一个空状态占满一张卡）。
+            card = getattr(self, "excluded_card", None)
+            if card is not None:
+                card.setVisible(has_records)
 
     def _rebuild_excluded(self, records: list[dict]) -> None:
         self.excluded_list.clear()
@@ -6289,6 +6470,30 @@ class WorkbenchView(QWidget):
         self.excluded_title.setText(i18n.tr('已排除段落（{v0}）', v0=len(records)))
         self.restore_excluded_button.setEnabled(
             any(record.get("restorable", True) for record in records))
+
+    def _sync_exclude_action(self, *, enabled: bool, excluded: bool = False) -> None:
+        """「更多」菜单里「排除/恢复本段」的启用态与文案（F12）。
+
+        每次刷新都会调用（选中段变化、轮询），所以只在状态真的变化时才动 QAction：
+        反复 setIcon 会在长会话里制造大量无谓的 QIcon 重建。
+        """
+        action = getattr(self, "exclude_action", None)
+        if action is None:
+            self.exclude_button.setEnabled(enabled)
+            return
+        state = (bool(enabled), bool(excluded))
+        if getattr(self, "_exclude_action_state", None) == state:
+            return
+        self._exclude_action_state = state
+        self.exclude_button.setEnabled(enabled)
+        action.setEnabled(enabled)
+        action.setText(i18n.tr('恢复本段…') if excluded else i18n.tr('排除本段…'))
+        cache = getattr(self, "_exclude_action_icons", None)
+        if cache is None:
+            cache = {"exclude": icons.icon("eye-off", 16, "danger"),
+                     "restore": icons.icon("refresh", 16, "text-secondary")}
+            self._exclude_action_icons = cache
+        action.setIcon(cache["restore" if excluded else "exclude"])
 
     def _sync_structure_menu(self, row) -> None:
         """结构菜单：哪些操作此刻可用，由这一段和最近一次操作决定。"""
@@ -6332,7 +6537,7 @@ class WorkbenchView(QWidget):
                           self.fact_terms, self.fact_excluded):
                 label.setText("—")
             self.retranslate_button.setEnabled(False)
-            self.exclude_button.setVisible(True)
+            self._sync_exclude_action(enabled=True)
             self.discard_draft_button.setVisible(False)
             self.restore_button.setVisible(False)
             self._activate_position(-1)
@@ -6353,7 +6558,7 @@ class WorkbenchView(QWidget):
         self.copy_source_button.setEnabled(not row.excluded)
         self.review_button.setEnabled(not row.excluded)
         self.retranslate_button.setEnabled(not row.excluded)
-        self.exclude_button.setVisible(not row.excluded)
+        self._sync_exclude_action(enabled=not row.excluded, excluded=bool(row.excluded))
         self._sync_structure_menu(row)
         self.pdf_panel.set_segment(row.index)
         self.source_panel.set_segment(row.index)
@@ -6572,6 +6777,8 @@ class WorkbenchView(QWidget):
         key = (source, target, widths)
         cached = self._height_cache.get(key)
         if cached is None:
+            # 网格行高按字体天然行距量（与网格绘制同口径）。展开那一行的编辑框
+            # 自己用阅读行距（F6），高度由 _place_inline_editor 单独算。
             metrics = table.fontMetrics()
             tallest = 0
             for text, width in ((source, widths[0]), (target, widths[1])):
@@ -6897,7 +7104,7 @@ class WorkbenchView(QWidget):
             button.setVisible(not multiple)
         if multiple:
             self.selection_title.setText(i18n.tr('已选 {v0} 段', v0=len(indexes)))
-            self.exclude_button.setVisible(False)
+            self._sync_exclude_action(enabled=False)
             self.restore_button.setVisible(False)
             self.view_source_button.setVisible(False)
         elif 0 <= self._current_index:
@@ -6905,7 +7112,8 @@ class WorkbenchView(QWidget):
             row = next((item for item in self._all_rows
                         if item.index == self._current_index), None)
             if row is not None:
-                self.exclude_button.setVisible(not row.excluded)
+                self._sync_exclude_action(enabled=not row.excluded,
+                                          excluded=bool(row.excluded))
                 self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
             self.view_source_button.setVisible(
                 bool(getattr(self, "_source_available", False))

@@ -2308,6 +2308,17 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         recovery = {}
     busy = bool(core._job_execution_alive(job_id))
     failures = run_facts(state)["failures"]
+    # F2（2026-11-04 审校）：检查浮层也要看得见交付门禁挂着的阻断项——它原来只看
+    # 流水线健康，于是「浮层说没问题、交付页拦住 1 项」。数与交付门禁同一个函数。
+    from folith import delivery as _delivery
+    try:
+        blocking_rows = list(_delivery.unresolved_blocking(state))
+    except Exception:  # noqa: BLE001 - 只读投影
+        blocking_rows = []
+    blocking_count = len(blocking_rows)
+    blocking_anchor = next((int(item["segment_index"]) for item in blocking_rows
+                            if isinstance(item, dict) and item.get("segment_index") is not None),
+                           None)
     return {
         # 翻译协议失败、还没被当前译文补上的批次（"重试当前步骤"会补译它们）。
         "failures": failures,
@@ -2323,10 +2334,13 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         # 读失败、至今没补读成功的扫描页：译稿缺页，挡住交付。
         "scan_pages": {"pages": scan_pages},
         "busy": busy,
+        "blocking": blocking_count,
+        "blocking_anchor": blocking_anchor,
         "has_work": bool(
             understanding.get("status") == "degraded" or scan_pages
             or annotation.get("status") == "partial" or entities or failures
-            or recovery.get("current_batch") or profile_view["missing"]),
+            or recovery.get("current_batch") or profile_view["missing"]
+            or blocking_count),
     }
 
 
@@ -2916,7 +2930,7 @@ def _promote_accepted_term(row: dict, source: str) -> str:
         raise AdapterError(f"候选已接受并写入任务术语表，但收进项目术语库失败：{exc}") from exc
     name = project.get("name") or "未命名项目"
     if report.get("conflicts"):
-        return f"和项目「{name}」术语库里的译名不一致，已放进待审核，没有覆盖"
+        return f"和项目「{name}」术语库里的译名不一致，已放进待确认，没有覆盖"
     return f"已收进项目「{name}」的术语库"
 
 
@@ -3121,7 +3135,7 @@ def _term_usage(project_jobs: list[dict]) -> dict[str, list[tuple[str, int]]]:
     return usage
 
 
-_ORIGIN_TEXT = {"review": "审核收进", "manual": "手动添加", "import": "导入",
+_ORIGIN_TEXT = {"review": "确认收进", "manual": "手动添加", "import": "导入",
                 "move": "随任务带来"}
 
 
@@ -3156,7 +3170,7 @@ def project_detail(project_id: str, *, basis: str = "all",
             "domain": entry.get("domain") or "", "note": entry.get("note") or "",
             "forbidden": list(entry.get("forbidden") or []),
             "origin_how": origin.get("how") or "", "origin_job": origin.get("job_name") or "",
-            "origin_text": _ORIGIN_TEXT.get(origin.get("how") or "", "审核收进"),
+            "origin_text": _ORIGIN_TEXT.get(origin.get("how") or "", "确认收进"),
             "status": "confirmed",
             "used_tasks": hit_tasks, "used_total": sum(n for _name, n in hit_tasks)})
     terms.sort(key=lambda t: t["source"].casefold())

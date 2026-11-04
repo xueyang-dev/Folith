@@ -14,12 +14,13 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QRect, Qt, Signal
-from PySide6.QtGui import QBrush, QFontMetrics, QTextDocument, QTextOption
+from PySide6.QtGui import QBrush, QFontMetrics, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QLabel, QPlainTextEdit, QStyleOptionViewItem,
     QTableWidget, QVBoxLayout, QWidget,
 )
 
+import math
 from functools import lru_cache
 
 from . import i18n, platform_ui
@@ -67,6 +68,15 @@ class _TargetEdit(QPlainTextEdit):
 
     commitAndNext = Signal()
     escaped = Signal()
+
+    def setPlainText(self, text: str) -> None:  # noqa: N802 - Qt 命名
+        """设文字时同时套上阅读行距（拉丁 1.5 / 中文 1.7，F6）。
+
+        必须在 setPlainText **之后**设块格式：它会把已有块格式重置掉。
+        """
+        super().setPlainText(text)
+        style_module.set_reading_line_height(
+            self.document(), style_module.reading_line_height(text))
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and (
@@ -133,6 +143,10 @@ class InlineSegmentEditor(QWidget):
     def set_source(self, text: str) -> None:
         if self.source_view.toPlainText() != (text or ""):
             self.source_view.setPlainText(text or "")
+            # 原文栏与译文栏用同一套阅读行距，两栏基线才对得齐（F6）。
+            style_module.set_reading_line_height(
+                self.source_view.document(),
+                style_module.reading_line_height(text))
 
     def hide_all(self) -> None:
         self.hide()
@@ -146,20 +160,20 @@ class InlineSegmentEditor(QWidget):
             self.footer.setVisible(visible)
 
     def editor_height(self, width: int) -> int:
-        """编辑框按内容需要的高度（不含保存条）：用与编辑框相同的排版算一遍。"""
-        document = QTextDocument()
-        document.setDefaultFont(self.edit.font())
-        document.setDocumentMargin(self.edit.document().documentMargin())
-        option = QTextOption()
-        option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
-        document.setDefaultTextOption(option)
-        document.setPlainText(self.edit.toPlainText() or " ")
+        """编辑框按内容需要的高度（不含保存条）：用与编辑框相同的排版算一遍。
+
+        行距走阅读口径（拉丁 1.5 / 中文 1.7，F6）：以前量的是字体的天然行距（1.2/1.4），
+        编辑框会比里面排出来的字矮，短句尤其明显。
+        """
+        text = self.edit.toPlainText() or " "
         # 外壳的内边距与边框（见 style.py 的 QPlainTextEdit#targetEdit）。
         chrome = 2 * (theme_module.SPACE["sm"] + 1)
-        document.setTextWidth(max(40, width - chrome))
-        lines = max(MIN_EDITOR_LINES, document.blockCount())
-        minimum = lines * QFontMetrics(self.edit.font()).lineSpacing()
-        return int(max(document.size().height(), minimum)) + chrome + 2
+        inner_width = max(40, width - chrome)
+        measured = reading_height(text, self.edit.font(), inner_width)
+        ratio = style_module.reading_line_height(text)
+        pixels = _font_pixels(self.edit.font())
+        minimum = MIN_EDITOR_LINES * max(1, math.ceil(pixels * ratio))
+        return int(max(measured, minimum)) + chrome + 2
 
 
 class WorkbenchRowDelegate(style_module.RowDelegate):
@@ -167,6 +181,12 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        # F6：网格正文的阅读行距绘制（style.RowDelegate.reading_text）默认**关闭**。
+        # 已实现并验证（术语高亮与字同源，偏差 <0.01px），但在整轮窗口测试里观察到
+        # 累积性的不稳定（长时间运行后偶发段错误）；为避免把风险带进 0.8.1，
+        # 这一层留作下一轮的 opt-in：`self.set_reading_text(True)` 即可开启，
+        # 同时行高测量要换成 style.reading_text_height()。当前行距生效范围见
+        # 编辑框（_TargetEdit.setPlainText）与阅读字体设置页。
         self.active_row = -1
         self.saved: dict[int, float] = {}
         #: 全文定位中的术语（term_highlight.Occurrences）；None 表示没有。
@@ -218,12 +238,44 @@ class WorkbenchRowDelegate(style_module.RowDelegate):
             option.backgroundBrush = QBrush(colour)
 
 
+def _font_pixels(font) -> float:
+    """字体的字号（像素）。``pixelSize`` 在点值字体上是 -1，退回 ``pointSizeF``。"""
+    size = font.pixelSize()
+    if size > 0:
+        return float(size)
+    points = font.pointSizeF()
+    return float(points) if points > 0 else float(QFontMetrics(font).height())
+
+
+def reading_height(text: str, font, width: int) -> int:
+    """按阅读行距（拉丁 1.5 / 中文 1.7）排一段文字需要的高度。
+
+    算法：先用 ``QFontMetrics.boundingRect`` 量出**同一宽度**下用字体天然行距排出来
+    的高度，再按 ``目标倍率 / 天然倍率`` 等比放大。天然倍率 = 行距 ÷ 字号，所以
+    14px 拉丁的 17.0 → 21.0（1.21→1.50）、中文 20.0 → 23.8（1.43→1.70），
+    与审查报告量到的口径一致。
+
+    为什么不用 ``QTextDocument`` 逐段排版量：这条路径在选中每一段、重算每一行高度时
+    都会被调用（一本书几千次），实测在完整窗口测试里会把 Qt 排版引擎拖崩
+    （``Segmentation fault`` in ``QTextDocument`` 布局，2026-11-04）。等比换算
+    既没有这个问题，也不需要把整本书重新排一遍。
+    """
+    body = str(text or "") or " "
+    metrics = QFontMetrics(font)
+    rect = metrics.boundingRect(QRect(0, 0, max(40, int(width)), 100000),
+                                int(Qt.TextFlag.TextWordWrap), body)
+    natural = max(1.0, float(metrics.lineSpacing()) / max(1.0, _font_pixels(font)))
+    target = max(1.0, float(style_module.reading_line_height(body)))
+    return int(math.ceil(rect.height() * target / natural))
+
+
 def source_height(table: QAbstractItemView, text: str, width: int) -> int:
-    """原文在展开行里整段换行所需的高度。"""
-    metrics = QFontMetrics(table.font())
-    rect = metrics.boundingRect(QRect(0, 0, max(40, width - 2 * CELL_PAD - 10), 100000),
-                                int(Qt.TextFlag.TextWordWrap), text or " ")
-    return rect.height() + 2 * CELL_PAD + 12
+    """原文在展开行里整段换行所需的高度。
+
+    与译文编辑框同一口径（阅读行距 1.5 / 1.7，F6）：两栏用不同的行距量高度，
+    展开行里就会一边松一边紧，基线对不齐。
+    """
+    return reading_height(text, table.font(), max(40, width - 2 * CELL_PAD - 10)) + 2 * CELL_PAD + 12
 
 
 def install_repositioning(table: QTableWidget, callback) -> None:

@@ -1002,7 +1002,7 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr_dynamic(message), task=False)
             self.refresh_projects()
 
-        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+        self._run_with_busy(i18n.tr('确认候选'), i18n.tr('正在记录确认决定…'),
                             adapter.accept_review_item, item, target, on_done=done)
 
     def decide_review_item(self, item: dict, decision: str) -> None:
@@ -1010,7 +1010,7 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr_dynamic(message), task=False)
             self.refresh_projects()
 
-        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+        self._run_with_busy(i18n.tr('确认候选'), i18n.tr('正在记录确认决定…'),
                             adapter.decide_review_item, item, decision, on_done=done)
 
     def batch_accept_items(self, items: list) -> None:
@@ -1036,7 +1036,7 @@ class MainWindow(QMainWindow):
                 self._notice(i18n.tr('已确认 {v0} 条术语。', v0=ok), task=False)
             self.refresh_projects()
 
-        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+        self._run_with_busy(i18n.tr('确认候选'), i18n.tr('正在记录确认决定…'),
                             adapter.accept_review_items, pick, on_done=done)
 
     def clear_project_memory(self, project_id: str) -> None:
@@ -1721,7 +1721,7 @@ class MainWindow(QMainWindow):
             if tm:
                 message += i18n.tr('；并入 {v0} 条翻译记忆', v0=tm)
             if clash:
-                message += i18n.tr('；{v0} 条译名和术语库不一致，已放进待审核', v0=clash)
+                message += i18n.tr('；{v0} 条译名和术语库不一致，已放进待确认', v0=clash)
             if skipped:
                 reasons = "；".join(
                     f"{item.get('job_id')}：{i18n.tr_dynamic(str(item.get('reason') or ''))}"
@@ -3160,24 +3160,24 @@ class MainWindow(QMainWindow):
 
     def freeze_glossary(self, rows: list) -> None:
         self._glossary_action(adapter.freeze_glossary, rows,
-                              done_message=i18n.tr('术语已冻结。'),
-                              failure=i18n.tr('无法冻结术语'),
+                              done_message=i18n.tr('术语已锁定。'),
+                              failure=i18n.tr('无法锁定术语'),
                               after=self._continue_after_freeze)
 
     def unfreeze_glossary(self) -> None:
         self._glossary_action(adapter.unfreeze_glossary,
-                              done_message=i18n.tr('已解除冻结，可以继续修改术语。'),
-                              failure=i18n.tr('无法解除冻结'))
+                              done_message=i18n.tr('已解除锁定，可以继续修改术语。'),
+                              failure=i18n.tr('无法解除锁定'))
 
     def bypass_glossary_freeze(self) -> None:
         if not self._confirm(
-                i18n.tr('跳过术语冻结'),
+                i18n.tr('跳过术语锁定'),
                 i18n.tr('跳过后将直接使用暂定术语继续翻译；这个决定会被记录，之后术语变化不会自动保证全文一致。\n\n确定跳过吗？'),
-                yes=i18n.tr('跳过冻结'), no=i18n.tr('取消')):
+                yes=i18n.tr('跳过锁定'), no=i18n.tr('取消')):
             return
         self._glossary_action(adapter.bypass_glossary_freeze,
-                              done_message=i18n.tr('已跳过冻结，使用暂定术语。'),
-                              failure=i18n.tr('无法跳过冻结'),
+                              done_message=i18n.tr('已跳过锁定，使用暂定术语。'),
+                              failure=i18n.tr('无法跳过锁定'),
                               after=self._continue_after_freeze)
 
     def update_glossary_entry(self, entry_id: str, fields: dict) -> None:

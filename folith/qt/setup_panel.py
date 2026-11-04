@@ -21,7 +21,8 @@
   收起时标题右侧的摘要已经把答案写出来了。
 * **样式只走向两个地方**：既有样式类（Card / SegmentedControl / ComboBox /
   CheckBox / SectionLabel / field_label / linkAction / hairline），加上
-  ``build_qss`` 里两组通用规则 ``#presetOption`` 与 ``#disclosureHeader``。
+  ``build_qss`` 里的通用规则 ``#disclosureHeader``。翻译模式卡是共享组件
+  :class:`components.ModeCards`（F18：与设置页同一个，``#optionCard`` 外观）。
   两组都只取 token、不用任何字面色，所以三套主题天然一致，
   也不存在"夜间专属色漏进浅色主题"的风险（见 ``qt-desktop-visual.md``）。
 * **显示名可以翻译，取值一个都不许动**：目录里的标签统一经 ``i18n.tr()`` 显示，
@@ -34,8 +35,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from . import adapter
@@ -417,205 +418,6 @@ def _ratio(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
-class PresetOption(QPushButton):
-    """一个翻译模式选项：图标 + 标题 + 一排工作流步骤小图标。
-
-    一行摘要不再显示（仍保存在 ``_description`` 与悬停提示里）：模式之间的差别
-    就是工作流的差别，用"包含哪几步"的小图标表达，比一句形容词更准确。
-
-    ⚠️ ``QPushButton`` 的 ``sizeHint`` 是按**文字/图标**算的，看不见里面的布局 ——
-    所以必须自己覆盖 ``sizeHint``/``minimumSizeHint``，否则三个选项会被压到
-    "一个字都没写"的高度（内容全被裁掉）。同理 QSS 只管盒子，内边距在代码里给。
-
-    两个标签都是 :class:`ElidedLabel`：一行说明在窄处省略而不是被切掉。
-    """
-
-    def __init__(self, key: str, title: str, description: str, icon_name: str,
-                 parent: QWidget | None = None, *,
-                 steps: tuple[tuple[str, str, bool], ...] = ()) -> None:
-        super().__init__(parent)
-        self.setObjectName("presetOption")
-        self.setCheckable(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(72)
-        # 无障碍名走 accessibleName：按钮自己的文字永远是空的（文案由内部的两个
-        # 标签承担），读屏与自动化却仍能读到这个选项叫什么。
-        self.setAccessibleName(title)
-        self.key = str(key)
-        self._icon_name = icon_name
-
-        # 分段控件里的一段：只有名称。模式之间的差别由面板在下方用一句话说明
-        # （:meth:`TaskSetupPanel._sync_mode_summary`），不靠小图标解释。
-        column = QVBoxLayout(self)
-        column.setContentsMargins(theme_module.SPACE["md"], 5, theme_module.SPACE["md"], 5)
-        column.setSpacing(0)
-        self._icon = None
-        self._title = ElidedLabel(title, self)
-        self._title.setObjectName("presetTitle")
-        self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        head = QVBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.addWidget(self._title)
-        self._description = ElidedLabel(description, self)
-        self._description.setObjectName("presetDesc")
-        self._description.setVisible(False)
-        column.addLayout(head)
-        # 名称下三行预估：调用、输入 token 与耗时；窄窗口也能逐项比较。
-        # 分两行是因为三段并排时每段只有一百多像素宽，放一行会被省略。
-        self._estimate_calls = ElidedLabel("", self)
-        self._estimate = ElidedLabel("", self)
-        self._estimate_time = ElidedLabel("", self)
-        for label in (self._estimate_calls, self._estimate, self._estimate_time):
-            label.setObjectName("presetDesc")
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setVisible(False)
-            column.addWidget(label)
-        # 工作流步骤只作为数据保存（悬停提示与面板的一句话说明都读它），不画图标。
-        self.steps: dict[str, bool] = {label: bool(on) for _icon_name, label, on in steps}
-        included = [label for label, on in self.steps.items() if on]
-        self.toggled.connect(self._sync_icon)
-        self._sync_icon(False)
-        tip = [title]
-        if description:
-            tip.append(description)
-        if included:
-            tip.append(" · ".join(included))
-        self._base_tooltip = "\n".join(tip)
-        self.setToolTip(self._base_tooltip)
-        self.setAccessibleDescription(self._base_tooltip)
-
-    def set_estimate(self, tokens: str, duration: str = "", calls: str = "") -> None:
-        """这个模式在这份文档上的大约成本（acceptance-feedback 13.6-3）。"""
-        self._estimate_text = " · ".join(part for part in (calls, tokens, duration) if part)
-        self._estimate_calls.setText(calls)
-        self._estimate_calls.setVisible(bool(calls))
-        self._estimate.setText(tokens)
-        self._estimate.setVisible(bool(tokens))
-        self._estimate_time.setText(duration)
-        self._estimate_time.setVisible(bool(duration))
-        self.setToolTip("\n".join(part for part in (
-            self._base_tooltip, self._estimate_text) if part))
-        self.setAccessibleDescription(self.toolTip())
-        self.updateGeometry()
-
-    def estimate(self) -> str:
-        """完整的预估文字（标签在窄处会省略显示）。"""
-        return getattr(self, "_estimate_text", "")
-
-    def setText(self, value: str) -> None:  # noqa: N802 - Qt 命名
-        """按钮自己的文字永远是空的：文案由内部的两个标签承担。
-
-        Qt 会把 ``QPushButton.text()`` 当默认 ``sizeHint`` 的输入；这里显式挡掉，
-        免得有人顺手 ``setText`` 之后得到一个"文字叠在布局上"的按钮。
-        选项名走 :meth:`setAccessibleName`，不靠按钮文字。
-        """
-        return
-
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
-        return self.layout().sizeHint()
-
-    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
-        return self.layout().minimumSize()
-
-    def _sync_icon(self, checked: bool) -> None:
-        """选中态由描边表达（QSS）；图标块自身颜色不随选中变化。"""
-        return
-
-
-class ModeSelector(QWidget):
-    """三个翻译模式并排；选中的那个是"当前模板"。
-
-    ``changed`` 只在**真的换了模式**时发出（与 :class:`style.SegmentedControl` 同
-    语义）：重复点已选中的那个不该产生任何副作用。`value()` 为空表示当前配置不对应
-    任何预设（用户改到哪儿都算"自定义"，界面据此不高亮任何一项）。
-    """
-
-    changed = Signal(str)
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._group = QButtonGroup(self)
-        self._group.setExclusive(True)
-        self._options: dict[str, PresetOption] = {}
-        self._value = ""
-        # 一条分段轨道（与页面上其它分段控件同一种语法）。
-        self.setObjectName("modeTrack")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._row = QHBoxLayout(self)
-        self._row.setContentsMargins(2, 2, 2, 2)
-        self._row.setSpacing(2)
-
-    def set_options(self, options: list[dict]) -> None:
-        """按目录重建选项（``set_choices`` 时调一次）。
-
-        每项是 ``{"key", "label", "description"}``；图标名由本模块的
-        :data:`_MODE_ICONS` 决定（表现层的事，不进共享模块）。
-        """
-        for button in self._options.values():
-            self._group.removeButton(button)
-            button.hide()  # before detaching (see segment_assist._clear)
-            button.setParent(None)
-            button.deleteLater()
-        self._options = {}
-        self._value = ""
-        for item in options:
-            key = str(item.get("key") or "")
-            if not key:
-                continue
-            # 标签与摘要都在这里过 i18n（本组件是面板的显示层）；模式的**键**仍是
-            # 内部取值（快速/标准/学术增强），不受翻译影响。
-            config = dict(item.get("config") or {})
-            steps = tuple((icon_name, i18n.tr(label), bool(config.get(flag)))
-                          for icon_name, label, flag in _MODE_STEPS) if config else ()
-            button = PresetOption(
-                key, i18n.tr(str(item.get("label") or key)),
-                i18n.tr(str(item.get("description") or "")),
-                _MODE_ICONS.get(key, "check"), steps=steps)
-            button.clicked.connect(lambda _checked=False, k=key: self._pick(k))
-            self._group.addButton(button)
-            self._row.addWidget(button, 1)
-            self._options[key] = button
-
-    def _pick(self, key: str) -> None:
-        if key == self._value:
-            return
-        self._value = key
-        self.changed.emit(key)
-
-    def value(self) -> str:
-        return self._value
-
-    def set_value(self, key: str) -> None:
-        """选中某个模式；空值表示**不选中任何一项**（见类文档）。"""
-        key = str(key or "")
-        if key == self._value:
-            return
-        if not key:
-            self._group.setExclusive(False)
-            for button in self._options.values():
-                button.setChecked(False)
-            self._group.setExclusive(True)
-            self._value = ""
-            return
-        button = self._options.get(key)
-        if button is None:
-            return
-        button.setChecked(True)
-        self._value = key
-
-    def button(self, key: str) -> PresetOption | None:
-        return self._options.get(key)
-
-    def set_estimates(self, texts: dict[str, tuple[str, str, str]]) -> None:
-        for key, button in self._options.items():
-            tokens, duration, calls = texts.get(key) or ("", "", "")
-            button.set_estimate(tokens, duration, calls)
-
-    def options(self) -> tuple[str, ...]:
-        return tuple(self._options)
-
-
 class TaskSetupPanel(QWidget):
     """译前准备：输入与上下文 / 翻译设置 / 交付内容 / 开始翻译。"""
 
@@ -681,7 +483,15 @@ class TaskSetupPanel(QWidget):
 
         # 两栏：左边是这份文档（agent 读到了什么），右边是要做的决定。
         # 右栏自上而下按"必须 → 常用 → 可以不管"排列，「开始翻译」紧跟在决定之后。
-        page = QHBoxLayout(self)
+        # F5（2026-11-04 UI 审查）：主行动「开始翻译」原来跟着内容一起滚，1238×720 的
+        # 首屏看不到它——而它是整个任务的起点。现在内容放进面板**自己的**滚动区，
+        # 主行动条留在滚动区外吸底：矮窗口滚的是内容，按钮的位置不动。
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.body = QWidget()
+        self.body.setObjectName("transparent")
+        page = QHBoxLayout(self.body)
         page.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["md"],
                                 theme_module.SPACE["lg"], theme_module.SPACE["lg"])
         page.setSpacing(theme_module.SPACE["xl"] + 8)
@@ -705,9 +515,9 @@ class TaskSetupPanel(QWidget):
         options = self._build_context_card()
         # ① 必须：原文语言 → 目标语言（这一页仅有的两个大号控件）。
         # 原文语言默认"自动识别"；智能画像识别出来后先填上，用户看到不对再改。
+        # F18：下拉统一 13px（正文号）。这里原来是 #primaryCombo（17px + 40px 高），
+        # 紧挨着的「归入项目」却是 13px——同一屏两种字号，读起来像两张表单拼在一起。
         self.source_box = style_module.ComboBox()
-        self.source_box.setObjectName("primaryCombo")
-        self.source_box.setMinimumHeight(40)
         self.source_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.source_box.setToolTip(i18n.tr(
             '读扫描页时会告诉视觉模型这是哪种语言；共用一套字母的语言'
@@ -749,8 +559,27 @@ class TaskSetupPanel(QWidget):
         delivery_group = SettingsGroup()
         delivery_group.add_row(self.delivery_section)
         column.addWidget(delivery_group)
-        column.addWidget(self._build_footer())
         column.addStretch(1)
+
+        # 滚动区：内容比窗口高时自己滚，不把窗口顶出屏幕。
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.viewport().setAutoFillBackground(False)
+        self.scroll.setWidget(self.body)
+        root.addWidget(self.scroll, 1)
+
+        # 吸底动作条：一条发丝线 + 主按钮。它不属于滚动内容，滚多远都在。
+        self.footer_host = QWidget()
+        self.footer_host.setObjectName("transparent")
+        footer_column = QVBoxLayout(self.footer_host)
+        footer_column.setContentsMargins(theme_module.SPACE["lg"], theme_module.SPACE["sm"],
+                                         theme_module.SPACE["lg"], theme_module.SPACE["md"])
+        footer_column.setSpacing(theme_module.SPACE["sm"])
+        footer_column.addWidget(_hairline())
+        footer_column.addWidget(self._build_footer())
+        root.addWidget(self.footer_host)
 
         # 示例译文跟着目标语言走（只有简体中文 / 日语 / 西班牙语有示例）。
         self.target_box.currentTextChanged.connect(lambda _text: self._sync_style_samples())
@@ -793,10 +622,8 @@ class TaskSetupPanel(QWidget):
         self.project_box.setSizePolicy(QSizePolicy.Policy.Expanding,
                                        QSizePolicy.Policy.Fixed)
 
-        # 目标语言是这一页唯一必须做的决定：放在右栏最上方、用大号控件
-        # （见 ``__init__``）。其余是可以不管的选项，进同一个分组，存在感一致地低。
-        self.target_box.setObjectName("primaryCombo")
-        self.target_box.setMinimumHeight(40)
+        # 目标语言是这一页唯一必须做的决定：放在右栏最上方。字号与其它下拉一致
+        # （13px，F18）；主次靠**位置**和旁边的分组标题表达，不再靠更大的字号。
         self.project_box.setFixedWidth(200)
 
         group = SettingsGroup()
@@ -807,6 +634,29 @@ class TaskSetupPanel(QWidget):
         group.add_row(self.doc_section)
         self.options_group = group
         return group
+
+    def _mode_options(self) -> list[dict]:
+        """准备页的模式卡数据：图标与"包含哪几步"是本页的表现，**键**仍是核心的预设键。
+
+        图标名只在 Qt 侧有意义，所以不进共享的 ``components.ModeCards``；共享组件
+        只管外观与选中态，内容由每个页面自己给（设置页给的是步骤，这里给的是成本）。
+        """
+        options: list[dict] = []
+        for item in self._choices.get("strategy_presets") or []:
+            key = str(item.get("key") or "")
+            if not key:
+                continue
+            config = dict(item.get("config") or {})
+            steps = tuple((icon_name, i18n.tr(label), bool(config.get(flag)))
+                          for icon_name, label, flag in _MODE_STEPS) if config else ()
+            options.append({
+                "key": key,
+                "label": i18n.tr(str(item.get("label") or key)),
+                "description": i18n.tr(str(item.get("description") or "")),
+                "icon": _MODE_ICONS.get(key, "check"),
+                "steps": steps,
+            })
+        return options
 
     def _build_glossary_row(self) -> QWidget:
         """术语库：一行只读事实（标签在左、取值在右）。
@@ -954,7 +804,8 @@ class TaskSetupPanel(QWidget):
         body.addWidget(_group_header(i18n.tr('翻译模式')))
 
         # ---- 翻译模式：一条分段轨道 + 一句话说明（只决定工作流；交付另算） -----------
-        self.mode_selector = ModeSelector()
+        # F18：准备页与设置页共用同一个模式卡组件（components.ModeCards）。
+        self.mode_selector = components.ModeCards()
         self.mode_selector.changed.connect(self._on_strategy_preset)
         body.addWidget(self.mode_selector)
         self.mode_summary = QLabel("")
@@ -1019,7 +870,7 @@ class TaskSetupPanel(QWidget):
             i18n.tr('译后自动审校'), i18n.tr('完成初译后进行额外检查'),
             self.review_box))
         advanced.addWidget(ToggleRow(
-            i18n.tr('审定并锁定术语'), i18n.tr('审查候选术语，锁定已确认的译名'),
+            i18n.tr('确认并锁定术语'), i18n.tr('确认候选术语，锁定要沿用的译名'),
             self.strict_terms_box))
         self.knowledge_box = style_module.CheckBox("")
         advanced.addWidget(ToggleRow(
@@ -1054,7 +905,9 @@ class TaskSetupPanel(QWidget):
 
         内容由 :meth:`_build_style_card` 填进来，放在「输入与上下文」的最后一行。
         """
-        self.style_section = DisclosureSection(i18n.tr('翻译风格'), icon="sparkles")
+        # 星芒只代表 AI 动作（F17）：这一节是"选风格 / 定语气"，不是模型能力，
+        # 用滑杆图标；旁边「智能画像」按钮才是真的 AI 动作，那里保留星芒。
+        self.style_section = DisclosureSection(i18n.tr('翻译风格'), icon="sliders")
         return self.style_section
 
     def _build_style_card(self) -> QWidget:
@@ -1464,16 +1317,12 @@ class TaskSetupPanel(QWidget):
         row.addWidget(self.start_button)
         return self.footer_bar
 
-    def detach_footer(self) -> QWidget:
-        """把底部的「开始翻译」条交给外层放到滚动区之外。
+    def footer_bar_widget(self) -> QWidget:
+        """吸底动作条（主按钮 + 连接提示）。
 
-        面板比窗口高、要放进滚动区；主行动若跟着内容滚动，首屏就看不到它
-        （实测 900px 高的窗口里它在第 980px）。宿主调用这个方法把它钉在滚动区下方。
+        它已经不在滚动内容里（F5），外层不需要再搬动它；保留这个取值口给测试与
+        ``qt_review_layout_a11y`` 这类需要量它位置的用例。
         """
-        layout = self.layout()
-        if layout is not None:
-            layout.removeWidget(self.footer_bar)
-        self.footer_bar.setParent(None)
         return self.footer_bar
 
     # ================= 数据 =================
@@ -1520,8 +1369,7 @@ class TaskSetupPanel(QWidget):
             self.theory_box.clear()
             for label, value in _THEORY_CHOICES:
                 self.theory_box.addItem(i18n.tr(label), value)
-            self.mode_selector.set_options(
-                self._choices.get("strategy_presets") or [])
+            self.mode_selector.set_options(self._mode_options())
             self.batch_seg.set_options([
                 (str(profile["key"]),
                  i18n.tr(str(profile.get("label") or profile["key"])))
@@ -1911,21 +1759,29 @@ class TaskSetupPanel(QWidget):
         text = "、".join(included)
         if excluded:
             text = (text + " · " if text else "") + i18n.tr('不含{v0}', v0="、".join(excluded))
-        # 按**当前配置**（含自定义）估这份文档的成本（acceptance-feedback 13.6-3）。
+        # 成本数字**只在卡片上写一次**（F18：原来卡片三行数字 + 这行再说一遍，同一屏
+        # 两处"约 4 次调用 · 620 token · 不到 1 分钟"）。这里只补卡片没有的信息：
+        # 与「标准」相比的倍数；当前配置是自定义（不对应任何一张卡）时，卡片没有数字可读，
+        # 才在这一行把绝对值写出来。
         estimate = self._current_estimate()
         if estimate.get("calls"):
-            line = i18n.tr('预估：约 {v0} 次模型调用 · 输入约 {v1} token · {v2}',
-                           v0=format(estimate["calls"], ","),
-                           v1=_compact_count(estimate["input_tokens"]),
-                           v2=_duration(estimate["minutes"]))
             base = adapter.strategy_estimates(self._size).get("标准") or {}
             standard = self._preset_config("标准")
+            custom = not self.mode_selector.value()
+            line = ""
+            if custom:
+                line = i18n.tr('预估：约 {v0} 次模型调用 · 输入约 {v1} token · {v2}',
+                               v0=format(estimate["calls"], ","),
+                               v1=_compact_count(estimate["input_tokens"]),
+                               v2=_duration(estimate["minutes"]))
             if base.get("input_tokens") and any(
                     self._strategy_value(key) != value for key, value in standard.items()
                     if key in _MANAGED_STRATEGY_KEYS):
-                line += i18n.tr('（约为「标准」的 {v0} 倍）', v0=_ratio(
-                    estimate["input_tokens"] / base["input_tokens"]))
-            text += "\n" + line
+                ratio = _ratio(estimate["input_tokens"] / base["input_tokens"])
+                line += (i18n.tr('（约为「标准」的 {v0} 倍）', v0=ratio) if line
+                         else i18n.tr('约为「标准」的 {v0} 倍', v0=ratio))
+            if line:
+                text += "\n" + line
         self.mode_summary.setText(text)
         if self._size:
             tip = i18n.tr('按本文约 {v0} 段、{v1} 字符和基准实测比例估算，只计输入 token；'

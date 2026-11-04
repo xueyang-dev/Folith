@@ -1636,7 +1636,11 @@ def test_workbench_excludes_a_segment_and_restores_it_from_the_delivery_tab(clie
     # 排除第二段（确认框在自动化下直接通过）。
     assert workbench.select_segment(1) is True
     app.processEvents()
-    assert workbench.exclude_button.isVisible() is True
+    # F12（2026-11-04 审校）：常驻动作只留三四个，「排除」收进「更多」菜单；
+    # 这里改断言「更多」按钮在场且带着段落操作，动作本身仍走同一个 exclude_button。
+    assert workbench.segment_more_button.isVisible() is True
+    assert workbench.segment_more_button.menu() is not None
+    assert workbench.segment_more_button.menu().actions()
     workbench.exclude_button.click()
     assert _pump(app, 120, lambda: workbench.visible_segment_count() == 2)
     assert workbench.segment_row_text(0, 1) == "第一段。"

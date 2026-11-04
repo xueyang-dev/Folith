@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QTextLayout, QTextOption
-from PySide6.QtWidgets import QStyle, QWidget
+from PySide6.QtWidgets import QWidget
 
 from . import theme as theme_module
 
@@ -62,20 +62,67 @@ def occurrences(rows, focus: Focus, target_of) -> Occurrences:
 
 
 # ---------------------------------------------------------------- 网格里的高亮 --
-def text_rects(option, text: str, ranges: list[tuple[int, int]], widget) -> list[QRectF]:
-    """委托画字时同样的排版下，``ranges`` 覆盖的矩形（用来在字上铺一层荧光笔）。
+def layout_char_rects(layout, ranges, origin: QPointF) -> list[QRectF]:
+    """在**已经排好**的 ``QTextLayout`` 上，把 ``ranges`` 映射成矩形（布局坐标 + ``origin``）。
 
-    与 Qt 的 ``viewItemDrawText`` 同一套参数：文本区由样式给出，左右各留
-    ``PM_FocusFrameHMargin + 1``，按词换行、顶部对齐。
+    与 :func:`text_rects` 的区别：这里不重新排版。行距改成 1.5 / 1.7 之后，
+    "另建一份 layout 去估" 会把荧光笔画到上一行去——所以绘制方（``style.RowDelegate``）
+    把画字用的那份 layout 交给这里，位置天然一致。
+    """
+    result: list[QRectF] = []
+    if not ranges or layout is None:
+        return result
+    for start, end in ranges:
+        if start >= end:
+            continue
+        for number in range(layout.lineCount()):
+            line = layout.lineAt(number)
+            first = line.textStart()
+            last = first + line.textLength()
+            lo, hi = max(start, first), min(end, last)
+            if lo >= hi:
+                continue
+            # cursorToX 收的是**整段文字里的绝对位置**（传相对位置会被夹到行首）。
+            x1, _ = line.cursorToX(lo)
+            x2, _ = line.cursorToX(hi)
+            left = origin.x() + line.x() + min(x1, x2)
+            width = max(1.0, abs(x2 - x1))
+            result.append(QRectF(left, origin.y() + line.y(), width, line.height()))
+    return result
+
+
+def _painted_layout(option, text: str, widget):
+    """绘制方（``style.RowDelegate``）刚画这一格时用的 layout；没有就返回 ``None``。"""
+    try:
+        delegate = widget.itemDelegate() if widget is not None else None
+    except (AttributeError, RuntimeError):
+        return None, None
+    layout = getattr(delegate, "painted_layout", None)
+    if layout is None:
+        return None, None
+    painted_text = getattr(delegate, "painted_text", None)
+    cell = getattr(delegate, "painted_cell_rect", None)
+    if painted_text != text or (cell is not None and cell != option.rect):
+        return None, None
+    text_rect = getattr(delegate, "painted_text_rect", None)
+    return layout, text_rect
+
+
+def text_rects(option, text: str, ranges: list[tuple[int, int]], widget) -> list[QRectF]:
+    """``ranges`` 覆盖的矩形（用来在字上铺一层荧光笔）。
+
+    **优先用绘制方刚刚用过的那份 layout**（设置 · 阅读 开了阅读行距之后，行距由
+    委托自己排）；没有就退回旧路径：与 Qt 的 ``viewItemDrawText`` 同一套参数
+    （文本区由样式给出，左右各留 ``PM_FocusFrameHMargin + 1``，按词换行、顶部对齐）。
     """
     if not ranges or not text:
         return []
-    style = widget.style() if widget is not None else None
-    if style is None:
+    painted, text_rect = _painted_layout(option, text, widget)
+    if painted is not None and text_rect is not None:
+        return layout_char_rects(painted, ranges, QPointF(text_rect.topLeft()))
+    if widget is None:
         return []
-    rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, option, widget)
-    margin = style.pixelMetric(QStyle.PixelMetric.PM_FocusFrameHMargin, None, widget) + 1
-    rect = rect.adjusted(margin, 0, -margin, 0)
+    text_area = _style_item_text_rect(option, widget)
     layout = QTextLayout(text, option.font)
     text_option = QTextOption()
     text_option.setWrapMode(QTextOption.WrapMode.WordWrap)
@@ -87,7 +134,7 @@ def text_rects(option, text: str, ranges: list[tuple[int, int]], widget) -> list
         line = layout.createLine()
         if not line.isValid():
             break
-        line.setLineWidth(rect.width())
+        line.setLineWidth(text_area.width())
         line.setPosition(QPointF(0, height))
         height += line.height()
         lines.append(line)
@@ -101,10 +148,16 @@ def text_rects(option, text: str, ranges: list[tuple[int, int]], widget) -> list
                 continue
             x1, _ = line.cursorToX(lo)
             x2, _ = line.cursorToX(hi)
-            result.append(QRectF(rect.left() + x1, rect.top() + line.y(),
+            result.append(QRectF(text_area.left() + x1, text_area.top() + line.y(),
                                  max(1.0, x2 - x1), line.height()))
     return result
 
+
+def _style_item_text_rect(option, widget) -> QRectF:
+    """单元格文字区（与 Qt 画字时同一个口径；定义在 ``style`` 里，避免两处各写一遍）。"""
+    from . import style as style_module
+
+    return style_module.item_text_rect(option, widget)
 
 def paint_marks(painter: QPainter, rects: list[QRectF], tone: str) -> None:
     """荧光笔：半透明底色 + 一条底线（在字已经画好之后叠上去）。"""

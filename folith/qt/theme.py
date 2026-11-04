@@ -61,6 +61,49 @@ FONT_SIZES = {
 }
 
 
+#: 阅读区的**块级行距倍率**（F6，2026-11-04 UI 审查），按文字系统分两档。
+#:
+#: 同一套 14px 字号下，拉丁文一行是字体自己的行距（实测 ≈17px，倍率 1.2），
+#: 中文走回退字体后 ≈20px（≈1.4）：两栏并排时基线对不齐，拉丁那一栏也偏紧，
+#: 而这正是用户盯几个小时的地方。明写倍率之后，绘制方按同一基准排：
+#: **拉丁 1.5、中文 1.7**（含日文假名 / 韩文音节 / 全角标点）。
+#: 代价（tmp/overhaul-tokens/f6_reading_cost.py 实测，14px、网格可视 620px）：
+#: 拉丁每行 17→21px，一屏约 36→29 行；中文 20→23.8px，31→26 行 —— 一屏少约 1/6 到 1/5。
+READING_LINE_HEIGHT = {"latin": 1.5, "cjk": 1.7}
+
+#: 阅读字体偏好（设置 · 阅读）：空串 = 跟随界面字体。
+#: 只存**族名**，不存任何一套平台的既定字体——默认值就是系统界面字体，
+#: 所以 macOS / Windows / Linux 各自落到自己的界面字体上。
+READING_FONT_KEY = "appearance/reading_font"
+_reading_font = ""
+
+
+def reading_font() -> str:
+    """用户选的阅读字体族名；空串 = 跟随界面字体。"""
+    return _reading_font
+
+
+def set_reading_font(family: str) -> None:
+    global _reading_font
+    _reading_font = str(family or "").strip()
+
+
+def reading_font_stack() -> tuple[str, ...]:
+    """阅读字体的回退链：选中的族在最前，后面接界面字体栈（中文 / 阿拉伯 / 西里尔）。
+
+    为什么要把整条链写进 QSS：Qt 只会沿**给出的族列表**找字，用户挑了一个没有
+    中文字形的西文字体时，不写回退链会得到一片方框。
+
+    没选（默认）时返回**空元组**：QSS 里不写 ``font-family``，阅读区就继承应用字体
+    ——也就是系统界面字体 + `FONT_STACK` 回退链（``style.font_for`` 设的）。
+    这样"跟随界面字体"不依赖任何平台字体名，也不会把 ``Sans Serif`` 这类
+    Qt 通用别名写进样式表（那会让 Qt 在启动时为它做一次字体别名枚举）。
+    """
+    if not _reading_font:
+        return ()
+    return tuple(dict.fromkeys(name for name in (_reading_font, *FONT_STACK) if name))
+
+
 #: 三层表面（E 层次 v2，``docs/ui-audit/40-design-review-2026-10-16`` 第十二节）：
 #:
 #: * ``shell`` —— 窗口底与侧栏：最深的一层灰（token ``bg-shell-start/end``）；
@@ -77,9 +120,12 @@ ELEVATION = {
     # 悬停抬起 / 弹出层：影子更远、更散。
     "floating": ((0.5, 0.0, 0.08), (2.0, 2.0, 0.06), (4.0, 4.0, 0.045), (7.0, 6.0, 0.03)),
 }
-#: 投影需要的留白（px）：卡片在自己的矩形里内缩这么多来画影子（左/上/右/下）。
-#: 上方几乎不留（影子朝下），下方留得最多。
-ELEVATION_PAD = (4, 2, 4, 7)
+#: 投影需要的留白（px）：卡片只把影子画在**下方**（纸压在一张桌面上），
+#: 左右不再内缩——见 2026-11-04 UI 审查 F14：卡片的可见面曾经比布局给的矩形窄 4px，
+#: 于是同一列里"有卡片的控件"与"没卡片的控件"左边线差 4px，准备页同列出现三条线
+#: （x=759/764/768）。现在纸面 = 布局矩形，影子落在它下面那圈留白里，
+#: 左边线与同列其它控件对齐。投影层最深到 ``spread + offset = 8.5``，留 9px。
+ELEVATION_PAD = (0, 0, 0, 9)
 ELEVATION_NIGHT_GAIN = 2.6
 #: 选中环：白色间隙 + 半透明主色环（不再是 2px 实心粗边，审校"控件语言不统一"）。
 SELECTION_RING = {"gap": 2.0, "width": 2.0, "alpha": 0.45}

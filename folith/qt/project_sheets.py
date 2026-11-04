@@ -1,7 +1,7 @@
 """项目页用到的几张面板：移到项目、新建项目、语言方向、批量收进预览。
 
 「移到项目」是任务改归属的**唯一入口**（任务库、项目页、未分类都用它）。面板在点按钮之前
-就把结果摆出来：随任务带过去几条术语、哪几条和术语库不一致（不会覆盖，标为待审核）、
+就把结果摆出来：随任务带过去几条术语、哪几条和术语库不一致（不会覆盖，标为待确认）、
 几条暂定术语留在任务里、翻译记忆并入几条；方向不同时说明什么不会带过去，并给出
 方向相同的项目。预览来自适配层的干跑，和真正执行用同一套判断。
 """
@@ -217,7 +217,7 @@ class BatchAcceptDialog(QDialog):
         if same:
             rows.append(("idle", i18n.tr('{v0} 条和术语库里已有的一致，不重复添加', v0=len(same))))
         if differs:
-            rows.append(("attention", i18n.tr('{v0} 条和术语库里的译名不一致：不会覆盖，仍是「待审核」由你决定',
+            rows.append(("attention", i18n.tr('{v0} 条和术语库里的译名不一致：不会覆盖，仍是「待确认」由你决定',
                                               v0=len(differs))))
         for tone, text in rows:
             row = QHBoxLayout()
@@ -476,7 +476,7 @@ class MoveToProjectSheet(QDialog):
         self.carry_terms_title.setText(
             i18n.tr('{v0} 条已锁定的术语，收进项目术语库', v0=counts["locked"]))
         self.carry_terms_hint.setText(
-            i18n.tr('这个项目以后的新任务会自动使用；另外 {v0} 条暂定术语随任务过去，在术语库里是「待审核」，确认后才会用',
+            i18n.tr('这个项目以后的新任务会自动使用；另外 {v0} 条暂定术语随任务过去，在术语库里是「待确认」，确认后才会用',
                     v0=counts["provisional"]))
         self.carry_tm_title.setText(
             i18n.tr('这个任务的 {v0} 条翻译记忆，复制一份', v0=counts["tm"]))
@@ -616,15 +616,15 @@ class MoveToProjectSheet(QDialog):
                 box.addWidget(self._bullet("ok", i18n.tr('{v0} 条术语收进项目术语库', v0=added)))
             if conflicts and not added:
                 box.addWidget(self._bullet("warn", i18n.tr(
-                    '术语都和项目现有译名不一致：不覆盖，在术语库里标为「待审核」由你决定')))
+                    '术语都和项目现有译名不一致：不覆盖，在术语库里标为「待确认」由你决定')))
             elif conflicts:
                 box.addWidget(self._bullet("warn", i18n.tr(
-                    '{v0} 条和项目现有译名不一致：不覆盖，在术语库里标为「待审核」由你决定', v0=len(conflicts))))
+                    '{v0} 条和项目现有译名不一致：不覆盖，在术语库里标为「待确认」由你决定', v0=len(conflicts))))
             if conflicts:
                 box.addWidget(_amber(self._conflict_table(conflicts)))
             if report["terms_provisional"]:
                 box.addWidget(self._bullet("idle", i18n.tr(
-                    '{v0} 条暂定术语随任务过去，在术语库里是「待审核」', v0=report["terms_provisional"]), muted=True))
+                    '{v0} 条暂定术语随任务过去，在术语库里是「待确认」', v0=report["terms_provisional"]), muted=True))
         if self.carry_tm.isChecked() and (report["tm_added"] or report["tm_skipped"]):
             parts = []
             if report["tm_added"]:
