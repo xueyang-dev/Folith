@@ -208,9 +208,15 @@ def _current_finding(state: Mapping[str, Any], finding: Mapping[str, Any], *,
     segment_id = _segment_id(finding)
     if segment_id is None:
         return False
+    finding_event = str(finding.get("review_event_id") or "")
+    if not finding_event:
+        # 旧式发现项：写进了 state["findings"]，但没有对应的审校收据可对。
+        # 它**仍然拦着交付**，所以必须留在队列里可见、可处理——否则交付页说
+        # 「还有 1 个必须处理的问题」，审校页却一片干净（2026-11-04 审查阻断项）。
+        # 它不会自己过期；人在队列里点「确认问题已解决」后 `resolved` 生效即消失。
+        return True
     event = translation_evidence.current_review_event(state, segment_id, index=index)
-    return bool(event and event.get("review_event_id") == finding.get(
-        "review_event_id"))
+    return bool(event and event.get("review_event_id") == finding_event)
 
 
 def _identity_detail(context: Mapping[str, Any]) -> str:

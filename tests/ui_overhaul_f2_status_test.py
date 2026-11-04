@@ -176,7 +176,13 @@ def test_all_four_surfaces_report_same_blocking(synthetic_job):
     assert review["readiness"]["status"] == "current"          # 收据本身是完整的
     assert review["queue_counts"]["blocking"] == blocking
     assert "必须处理的问题" in review["readiness"]["label"]
-    assert review["primary_action"]["label"] == review["readiness"]["label"]
+    # 旧式阻断项进入队列之后，主操作从"没有条目、只能看文案"变成真正的
+    # `handle_finding`（带 item_id，点了就能选中那一条）。
+    action = review["primary_action"]
+    assert action["kind"] == "handle_finding", action
+    assert action.get("item_id"), action
+    assert "1" in str(action["label"]), action
+    assert "1" in str(review["readiness"]["label"])
     # 审校页的交付摘要：有阻断项时不说「已完成」。
     assert review["delivery"]["title"] != "翻译审校已完成"
     assert str(blocking) in review["delivery"]["detail"] or \
@@ -212,3 +218,52 @@ def test_followup_panel_counts_blocking():
     assert "blocking" in source, (
         "FollowupPanel 还没有消费 followup_view[\"blocking\"]："
         "需要在 issue_cards()/issue_count() 里把它算进去，否则角标仍是 0")
+
+
+def test_a_legacy_blocking_finding_is_visible_and_handled_in_the_review_queue():
+    """旧式阻断项必须**同时**出现在交付门禁与审校队列里。
+
+    2026-11-04 审查阻断项：这类发现项没有审校收据，`_current_finding` 会把它当作
+    "已被后续审校取代"过滤掉——于是交付页说「还有 1 个必须处理的问题」，审校页
+    一片干净，用户点「去处理」跳过去只看到绿色的「已审校」。
+    """
+    from folith import workbench_view
+
+    state = {
+        "p1_done": True, "p2_done": True, "report_enabled": False,
+        "paras": ["a", "b", "c"],
+        "pairs": [{"source": "a", "target": "A", "segment_id": "seg-0",
+                   "segment_uid": "seg-0", "reviewed": True},
+                  {"source": "b", "target": "B", "segment_id": "seg-1",
+                   "segment_uid": "seg-1", "reviewed": True},
+                  {"source": "c", "target": "C", "segment_id": "seg-2",
+                   "segment_uid": "seg-2", "reviewed": True}],
+        "translation_core_review_required": True,
+        "review_evidence": [{
+            "review_event_id": "rev-1", "review_scope": "current_translation",
+            "segment_ids": [0, 1, 2], "created_at": "2026-11-04T10:00:00+08:00",
+            "completion_receipt": {"status": "completed",
+                                   "reviewed_segment_ids": [0, 1, 2]},
+        }],
+        "findings": [{
+            "type": "review", "category": "terminology", "severity": "blocking",
+            "status": "open", "segment_index": 0, "segment_id": 0,
+            "summary": "术语漂移", "target_span": "漂移",
+            "input_fingerprint": "fp-1", "finding_id": "legacy-f1",
+            "resolved": False,
+        }],
+        "delivery_config": {},
+    }
+    from folith import delivery
+
+    view = workbench_view.review_workbench_view(state)
+    blocking_items = [item for item in view["queue_items"]
+                      if item["kind"] == "finding" and item["severity"] == "blocking"]
+    assert view["progress"]["blocking"] == 1, view["progress"]
+    assert len(blocking_items) == 1, [item["id"] for item in view["queue_items"]]
+    item = blocking_items[0]
+    assert item["segment_id"] == 0
+    assert item["decidable"] is True, "旧式阻断项要能就地确认已解决"
+    assert view["delivery"]["title"] == "暂时无法交付"
+    # 与交付门禁同一个数。
+    assert len(delivery.unresolved_blocking(state)) == 1

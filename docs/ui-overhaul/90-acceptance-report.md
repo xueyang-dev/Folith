@@ -92,7 +92,7 @@
 | 审查发现 | 性质 | 处理 |
 | --- | --- | --- |
 | 「去处理」不跳转（`segment_list.select_segment` 不存在 + `hasattr` 兜底） | 真阻断 | 改为 `self.select_segment(index)`；新增 `qt_design_review_p0_test::test_delivery_fix_button_jumps_to_the_blocking_segment` |
-| 旧式阻断项无法就地处理 | 真阻断（未完全解决） | 现在能定位到段，但该段仍显示「已审校」且检查器无对应条目——**本轮未修**：需要把旧式 findings 合进审校队列的呈现层，属下一轮 |
+| 旧式阻断项无法就地处理 | 真阻断 | **已按方案 1 修**：`workbench_view._current_finding` 不再把「没有审校收据」的发现项当成已被取代——它继续拦交付，就必须留在审校队列里可见可处理。队列 blocking 与门禁 blocking 同数，条目 `decidable=True`；人点「确认问题已解决」后 `resolved` 生效即从两处同时消失。回归测试 `test_a_legacy_blocking_finding_is_visible_and_handled_in_the_review_queue` |
 | 有阻断时页头主按钮变「审校全部段落」 | 真回归 | `stage._action` 增加 `kind == "delivery"` 分支（返回 None），不再落到 `review_all` |
 | 交付封面从不显示 | 实现与审查结论不一致 | 在 `test_declared_delivery_formats_are_the_ones_produced` 里断言通过（冻结后可见）。仍按审查意见加固：只要有冻结快照就显示，不依赖 `snapshot.current`；该测试已加断言 |
 | `resize(870,529)` 得到 871×537 | 真回归 | 根因：`minimumSizeHint()` 比布局真实下限小（QMainWindow 不算中央部件里分数宽度向上取整），Qt 于是把 resize 顶到 871×537。`MainWindow._sync_minimum_size()` 取 `minimumSizeHint().expandedTo(layout().minimumSize())`，在 show / resize / 每次 workbench 刷新时同步；用例恢复通过（最小尺寸那一档保留 1px 取整容差并有注释） |
@@ -113,7 +113,7 @@
   真正原因未定论。`scripts/run_tests.py` 仍保留（串行本身是对的），但不再宣称它是段错误的原因。
 * 「分块跑 118/118 全绿」这句话掩盖了 `resize` 用例的确定性失败（它不在被分块的那一份里）。已修。
 * 「1 次时序 flaky」不成立：那条是确定性回归，已修。
-* F6 网格行距仍未启用——这条理由（长会话不稳定）目前**没有复现证据**，下一轮应先复现再决定。
+* F6 网格行距仍未启用——这条理由（长会话不稳定）目前**没有稳定复现**，下一轮应先复现再决定。
 
 
 ## 修正后的测试结果（2026-11-04 22:2x）
@@ -124,3 +124,9 @@
 | 契约/界面套件 16 文件 | **362 passed / 1 failed**（仍是既有的顺序相关 `test_workbench_stays_at_980px_with_terms_open_and_closed`，干净 HEAD 同红） |
 | `scripts/qt_i18n_coverage.py --strict` | **1739/1739**（7 个目录，0 缺译） |
 | `scripts/check_ui_locales.py` | 0 errors / 0 TODOs |
+
+
+## 遗留风险：偶发段错误（未根因）
+
+`qt_client_window_test` 分 3 块跑：第 1、2 块稳定 40/40、40/40；第 3 块（后 38 条）在 3 次运行里**崩过 1 次**（其余 2 次 38 passed）。崩溃无稳定复现步骤，崩点也不同。
+结论：这个 heisenbug 存在，但既不是「必崩」，也还没有根因。**在找到根因之前不建议发布**，后续应单独开一条排查（`faulthandler` + 最小化到具体控件生命周期）。
