@@ -56,7 +56,7 @@ def night_mode() -> bool:
     """当前是否夜间主题。
 
     夜间有一小组**结构性**差异（表格整块不再是一个盒子、按下不再变蓝…）。
-    这些规则只挂在夜间：浅色与纸面的观感是既定基线，本轮不动它们
+    这些规则只挂在夜间：浅色的观感是既定基线，本轮不动它们
     （见任务约束"不要改变现有 Light Mode"）。
     """
     return current_theme() == "dark"
@@ -1319,7 +1319,7 @@ def apply_theme(app, theme: str, *, system_dark: bool = False) -> str:
     if resolved == "dark":
         # 只有夜间需要补齐这些角色：不补时它们落回**平台（浅色）调色板**，
         # 一个没被 QSS 覆盖的控件（占位文字、原生边框、链接）就会在深色界面上
-        # 露出浅色底。浅色/纸面下平台值本来就是浅色的，补了反而改动既有观感，
+        # 露出浅色底。浅色下平台值本来就是浅色的，补了反而改动既有观感，
         # 所以它们不在这两套主题里出现。
         palette.setColor(QPalette.ColorRole.PlaceholderText, qcolor(t["text-muted"]))
         palette.setColor(QPalette.ColorRole.Link, qcolor(t["accent"]))
@@ -2516,16 +2516,16 @@ def icon_button(name: str, tooltip: str = "", *, size: int = 16,
 
 
 class RowDelegate(QStyledItemDelegate):
-    """表格行观感：底部发丝分隔线、整行悬停（夜间）、选中行左侧强调条（浅色/纸面）。
+    """表格行观感：底部发丝分隔线、整行悬停（夜间）、选中行左侧强调条（浅色）。
 
     QSS 画不出"每行之间的细线"，而这条线正是表格"有秩序"的来源，所以由委托补一笔。
-    选中行的左侧亮蓝竖线只有浅色/纸面还画：夜间用 bg-selected（accent 低透明度渍）
+    选中行的左侧亮蓝竖线只有浅色还画：夜间用 bg-selected（accent 低透明度渍）
     表达选中，再加一条高饱和竖线就回到 Web 后台表格的观感了。
 
     **悬停必须是整行的**：``::item:hover`` 是"格"级选择器，只染鼠标所在的那一格
     （真实窗口截图里，鼠标停在"状态"列时整行只有这一格亮起来）。macOS 的列表悬停
     是"行"级的，因此这里由委托记住当前悬停行、按行铺满；夜间同时把格级的那层关掉
-    （见 :func:`_night_surface_rules`），浅色/纸面不参与，观感与基线逐字节一致。
+    （见 :func:`_night_surface_rules`），浅色不参与，观感与基线逐字节一致。
     """
 
     def __init__(self, parent=None) -> None:

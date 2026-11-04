@@ -42,7 +42,7 @@ logo 继续使用两页、文/A 字形和白色指针组成的 icon mark：
 | 图标高清母版 | `folith-mark-hires.png` | 标准向量源渲染（1254×1254，透明底） | App 图标母版、位图回退 |
 | 页面图标 | `folith-mark.png` | `scripts/render_brand_assets.py` 从母版缩放（256×256） | 浏览器标签页、安装入口 |
 | App 图标 | `folith-app-icon-white.png` | `scripts/build_app_icon.py` 从母版合成 | Qt 应用 / 关于 / 欢迎、Windows `.ico`、macOS `.icns`；1024px 透明画布、824px 纯白连续曲线底板、品牌标宽约 70% |
-| 透明横向组合 | `folith-lockup-transparent.png` | 用户提供的字标 + 标准图标 | 日间与纸面主题侧栏；lockup 母版 |
+| 透明横向组合 | `folith-lockup-transparent.png` | 用户提供的字标 + 标准图标 | 日间主题侧栏；lockup 母版 |
 | 夜间透明横向组合 | `folith-lockup-transparent-dark.png` | 母版仅调整文字颜色（`scripts/extract_brand_png.py`） | 夜间主题侧栏 |
 | 白底横向组合 | `folith-lockup.png` | 母版叠在白底上（`scripts/extract_brand_png.py`） | README 首屏 |
 
@@ -75,28 +75,33 @@ lockup 的字标是用户提供的位图，**不要**重绘或换比例；只允
 最高彩度，放在白底的小按钮和描边上会"发颤"。语义色统一到同一明度（OKLCH L 0.55）：
 成功 `#25855B`、警告 `#9D621E`、危险 `#BD423A`、信息 `#7761B0`。
 
-### 2.1 三套主题与语义 token（2026-10-02）
+### 2.1 外观、主题色与语义 token
 
-界面有 **日间 / 夜间 / 纸面** 三套主题。三者是**平级的 token 集合**，不是
-"日间样式 + 覆盖"：
+桌面端的外观是 **日间 / 夜间 / 跟随系统**，主题色是 **蓝色 / 翠绿 / 石板**。日间与夜间是
+**平级的 token 集合**，不是"日间样式 + 覆盖"；主题色只覆盖 `ACCENT_TOKENS` 里的强调色：
+
+**纸面与翠绿整套主题已于 2026-11-04 从桌面端废弃**：设置里早已选不到，旧偏好继续迁移成
+日间加石板 / 翠绿主题色。纸面的色值保留在下文，供以后的 Android 端取用。
 
 ```
 组件选择器  ->  --tp-<role>（历史角色名）  ->  --<semantic token>  ->  主题取值
 ```
 
-- 取值集中在 `folith/ui/theme_tokens.py` 的 `TOKENS`：三套主题的 key 完全相同，
+- 取值集中在 `folith/ui/theme_tokens.py` 的 `TOKENS`：两套主题的 key 完全相同，
   `ROLE_ALIASES` 把历史 `--tp-*` 名绑到语义 token 上，组件 CSS 无需一次性改写。
 - `folith/ui/themes.py` 生成 `:root` 并追加在样式表之后，因此靠级联生效，
   不需要 `!important` 去修补某个主题。
-- 历史样式表里写死的字面色（`#hex`）在夜间/纸面下由 `normalize_legacy()` 归一到
+- 历史样式表里写死的字面色（`#hex`）在夜间下由 `normalize_legacy()` 归一到
   角色引用；**`rgba()` 字面量不会被归一**，所以焦点光圈、玻璃面这类半透明色必须
   直接写成 token（见 `--focus-halo` / `--surface-glass` / `--overlay-veil`）。
 
-**品牌蓝只属于 logo。** 日间主题的交互色是界面蓝 `#2B5FD1`；纸面主题的交互色是**墨蓝灰**
-`#4C5A66`，夜间是浅蓝 `#82ACFF`。三者都不允许把 logo 的饱和钴蓝复制到按钮、
+**品牌蓝只属于 logo。** 日间主题的交互色是界面蓝 `#2B5FD1`，夜间是浅蓝 `#82ACFF`；
+石板主题色沿用纸面的**墨蓝灰** `#4C5A66`。它们都不允许把 logo 的饱和钴蓝复制到按钮、
 单选、导航当前项或状态点上。
 
-#### 纸面（Paper）取值
+#### 纸面（Paper）取值：已从桌面端废弃，留给 Android
+
+完整 token 见提交 `7d565d80` 的 `folith/ui/theme_tokens.py`。
 
 | 语义 token | 值 | 说明 |
 | --- | --- | --- |
@@ -116,7 +121,6 @@ lockup 的字标是用户提供的位图，**不要**重绘或换比例；只允
 
 纸面**不是**「日间 + 米黄背景」：正文、面、边、强调、状态色全部重新取值，
 所以遮住 logo 也应当能感到这是一套独立的阅读主题。
-`tests/ui_preferences_test.py` 会断言纸面归一化后的组件样式表里不再出现饱和品牌蓝。
 
 #### 夜间（Night）取值（2026-10-08 改为中性 graphite）
 
@@ -149,7 +153,7 @@ AppKit 用自己的一套中性石墨灰绘制，深蓝黑的内容区因此看�
 
 夜间还额外做了两处**只作用于夜间**的结构简化（`build_qss` 末尾的
 `_night_surface_rules()` 与 `style.night_mode()`）：任务表格 / 列表不再是"页面里的
-一张卡片"（透明底 + 无边框 + 无圆角），以及按下态不再变蓝。日间与纸面的样式表
+一张卡片"（透明底 + 无边框 + 无圆角），以及按下态不再变蓝。日间的样式表
 **逐字节不变**（`sha256(build_qss('light'))` 作为回归基线）。
 
 ## 3. 字体与副标题
@@ -200,7 +204,7 @@ python -m pytest tests/brand_assets_test.py -q
 
 ### 侧栏透明 PNG（2026-10-01）
 
-日间与纸面使用 `folith-lockup-transparent.png`，夜间使用 `folith-lockup-transparent-dark.png`。两者从正式原图逐像素去白底，保留图标内白色文字与箭头；夜间版只调整文字颜色，尺寸与 alpha 轮廓相同。不再使用 SVG 派生图或主题放大。
+日间使用 `folith-lockup-transparent.png`，夜间使用 `folith-lockup-transparent-dark.png`。两者从正式原图逐像素去白底，保留图标内白色文字与箭头；夜间版只调整文字颜色，尺寸与 alpha 轮廓相同。不再使用 SVG 派生图或主题放大。
 
 重建命令：`python3 scripts/extract_brand_png.py`（维护环境需 Pillow、NumPy、SciPy）。原图保留，不覆盖。
 

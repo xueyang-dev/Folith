@@ -6,7 +6,7 @@ Section Card + Card Header Strip、Icon Badge。
 约束（与 ``style.py`` 一致）：
 
 * **颜色只来自语义 token**。控件里不出现颜色字面值；图标只携带 token 名
-  （见 :mod:`folith.qt.icons`），因此主题切换（日间 / 夜间 / 纸面 / 以后的自定义主题色）
+  （见 :mod:`folith.qt.icons`），因此主题切换（日间 / 夜间 / 以后的自定义主题色）
   不需要重建任何控件。
 * **QSS 能表达的交给 QSS**（规则在 ``style.build_qss`` 的"组件库"一节）；QSS 画不出来的
   （进度条的圆头、卡片投影、背景渐变）在这里自绘，并且在**绘制时**读当前主题。

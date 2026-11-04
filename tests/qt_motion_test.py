@@ -209,7 +209,7 @@ def test_reference_scroll_area_is_readable_in_dark_theme(bench, app):
 
 
 def test_drawer_styles_use_valid_tokens_in_every_theme():
-    for name in ("light", "dark", "paper", "green"):
+    for name in ("light", "dark"):
         assert "QFrame#followupDrawer" in style.build_qss(name)
 
 
