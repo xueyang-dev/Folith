@@ -603,7 +603,7 @@ QListWidget#issueList {{ background: {t['bg-surface-sunken']}; border: none;
     border-radius: {r['md']}px; font-size: {f['caption']}px; }}
 /* 审校队列：与"检查与修复"的列表同一套沉底面板，不用输入框的描边盒子。 */
 QListWidget#reviewQueue {{ background: transparent; border: none;
-    border-radius: 0; font-size: {f['caption']}px; }}
+    border-radius: 0; font-size: {f['label']}px; }}
 QListWidget#reviewQueue::item {{ border-radius: 0; padding: 4px 12px; }}
 QListWidget#reviewQueue::item:selected {{ background: {t['qa-selected']};
     color: {t['text-primary']}; }}
@@ -948,13 +948,15 @@ QTextBrowser#qaView {{
 QTextBrowser#reviewDetail {{
     background: {t['qa-section']};
     border: none;
-    min-height: 300px;
+    min-height: 0;
     padding: {sp['xs']}px;
     font-size: {f['reading']}px;
     color: {t['text-primary']};
 }}
 /* Scoped workspace materials; the rest of Folith retains its existing surfaces. */
 QFrame#qaToolbar {{ background: {t['qa-toolbar']}; border-bottom: 1px solid {t['qa-border']}; }}
+QFrame#qaToolbar QLabel#statLabel {{ font-size: {f['label']}px; color: {t['text-secondary']}; }}
+QFrame#qaToolbar QLabel#statValue {{ font-size: {f['body']}px; font-weight: 600; }}
 QFrame#qaQueue {{ background: {t['qa-queue']}; border: none; }}
 QFrame#qaWorkspace {{ background: {t['qa-workspace']};
     border-left: 1px solid {t['qa-border']}; border-right: 1px solid {t['qa-border']}; }}

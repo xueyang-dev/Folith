@@ -360,3 +360,103 @@ full native macOS application/title-bar acceptance or Windows acceptance.
   cause is fixed. No assertions were weakened.
 - The test-generated DOCX fixture changes were restored after the run. The
   interrupted earlier run does not count as a completed suite result.
+
+## v3.1 — editorial reading and terminology refinement
+
+The three-panel architecture remains. The central `ReadingTextBrowser` uses the
+current Qt font metrics to cap line length, coalesces document-size updates,
+and sizes short content to its contents (long content scrolls at the 420 px cap).
+The finding summary precedes source/target, while the full explanation and
+recommendation follow them. Source and current translation are distinct, and a
+missing target is explicitly labelled. The target is still read-only here;
+editing uses the existing action.
+
+Terminology cards show the projected term, frozen and previous variants, status,
+count, and bounded occurrence rows. The rows distinguish matching and outdated
+forms with words as well as links; the links use the existing segment navigation
+path. The `previous_target` field is now carried through the read-only projection
+for glossary-stale findings. The existing `NameConflictWidget` remains responsible
+for entity-variant choice and repair preview; no direct replacement path was added.
+A conflicting term card does not promote confirmation as its primary action.
+
+Action controls are arranged in a primary/decision row and a secondary/utility
+row. Empty targets, authoritative translation-completion findings, style findings,
+and pending automatic candidates favor editing when there is no suggestion;
+a suggestion favors staging. Informational records have no promoted action.
+The pending candidate label is based on projected candidate status, not text
+equality. All original availability and decision guards remain in force.
+
+### Fixture provenance and comparison
+
+[`fixtures.py`](ui-audit/qa-decision-studio-v3.1/fixtures.py) builds actual job
+state and projects it via `workbench_view.review_workbench_view` before rendering
+`ReviewPanel`. Empty and identical targets use `core.check_translation_batch`;
+staged and committed number repairs use `stage_auto_resolution` and
+`commit_auto_resolution` in a temporary job; verified-safe uses `classify` and
+`record` with producing orthographic evidence. Tests assert the target text,
+candidate status, audit provenance, and shortcut guards.
+
+Style suggestions and glossary-stale findings are explicitly **visual-only
+review-result fixtures**: their document text and findings are hand-authored,
+then projected by the production code. They do not prove a model or detector
+produced those findings. The [entity decision](ui-audit/qa-decision-studio-v3.1/after-entity-options.png)
+and [selected-variant preview](ui-audit/qa-decision-studio-v3.1/after-entity-preview.png)
+use `EntityRegistry.observe`, `entity_consistency_queue`, the adapter projection,
+and `preview_entity_repair`; no replacement is committed by the capture.
+
+Equivalent v3 and v3.1 fixtures: [short style before](ui-audit/qa-decision-studio-v3.1/before-short-light-en-1440.png)
+/ [after](ui-audit/qa-decision-studio-v3.1/after-short-light-en-1440.png),
+[empty target before](ui-audit/qa-decision-studio-v3.1/before-empty_target-light-en-1440.png)
+/ [after](ui-audit/qa-decision-studio-v3.1/after-empty_target-light-en-1440.png),
+and [term card before](ui-audit/qa-decision-studio-v3.1/before-term-light-en-1440.png)
+/ [after](ui-audit/qa-decision-studio-v3.1/after-term-light-en-1440.png). The long suggestion was corrected after the v3 baseline capture; no equivalent
+long-text comparison is claimed here. In the inspected short
+comparison, source and target appear before the secondary explanation, the
+reading measure is narrower, and the action groups are distinct. In the term
+comparison the old and frozen forms, status, and each occurrence are explicit.
+
+### Visual acceptance matrix
+
+All captures below are offscreen Qt renders, inspected for hierarchy, line
+length, selection, scroll boundaries, action grouping and panel geometry:
+
+| Scenario | Capture | Inspection |
+| --- | --- | --- |
+| 1440 Light / Dark / Paper | [Light](ui-audit/qa-decision-studio-v3.1/after-short-light-en-1440.png), [Dark](ui-audit/qa-decision-studio-v3.1/after-short-dark-en-1440.png), [Paper](ui-audit/qa-decision-studio-v3.1/after-short-paper-en-1440.png) | Same reading and panel hierarchy; selected row and controls remain visible. |
+| 980 Light / German | [Light](ui-audit/qa-decision-studio-v3.1/after-short-light-en-980.png), [German](ui-audit/qa-decision-studio-v3.1/after-short-light-de-980.png) | Actions wrap, inspector is switched rather than squeezed, no horizontal clipping observed. |
+| 1280 Arabic / mixed script | [Arabic](ui-audit/qa-decision-studio-v3.1/after-arabic-light-ar-1280.png) | Panels mirror and Arabic/Latin paragraphs retain their text direction. |
+| Short / long | [Short](ui-audit/qa-decision-studio-v3.1/after-short-light-en-1440.png), [long](ui-audit/qa-decision-studio-v3.1/after-long-light-en-1440.png) | Short content is compact; long content uses a scrollable reading region. |
+| Missing / identical | [Empty](ui-audit/qa-decision-studio-v3.1/after-empty_target-light-en-1440.png), [identical](ui-audit/qa-decision-studio-v3.1/after-identical-light-en-1440.png) | Empty target is labelled; identical text remains visible as text, not presented as missing. |
+| Terminology | [Card](ui-audit/qa-decision-studio-v3.1/after-term-light-en-1440.png), [options](ui-audit/qa-decision-studio-v3.1/after-entity-options.png), [preview](ui-audit/qa-decision-studio-v3.1/after-entity-preview.png) | Variants and projected occurrence status are visible; preview is separate from application. |
+| Machine audit / safe / staged | [Committed](ui-audit/qa-decision-studio-v3.1/after-audit-light-en-1440.png), [verified safe](ui-audit/qa-decision-studio-v3.1/after-safe-light-en-1440.png), [staged](ui-audit/qa-decision-studio-v3.1/after-staged-light-en-1440.png) | Committed repair shows before/after/current; verified-safe states no translation change; staged is not called adopted. |
+| Empty / inspector collapsed | [Empty](ui-audit/qa-decision-studio-v3.1/after-empty_queue-light-en-1440.png), [collapsed](ui-audit/qa-decision-studio-v3.1/after-short-light-en-1440-collapsed.png) | Empty state is truthful; hidden inspector gives width back. |
+
+The generated numeric-finding copy and generated term-card summary can still
+contain Chinese in a non-Chinese UI because the current projection supplies
+fully formatted text without structured localized templates. Document content
+and model-provided text are intentionally not rewritten. This is an outstanding
+localization limitation, visible in the audit and term screenshots.
+
+### Performance and remaining acceptance
+
+The reading view is one browser per panel, not one widget per finding. Document
+height measurement is coalesced, the queue remains lazily populated, and term
+occurrences are limited to the existing preview bound. No book-length performance
+benchmark was run for this change. Remaining native acceptance includes real
+Windows behavior and full macOS application/title-bar and individual-key checks:
+the macOS automation could click the inspector but could not reliably capture the
+native window or deliver individual keystrokes. Qt key-event tests cover the
+shortcut and text-entry paths but are not native acceptance.
+
+The 980×523 terminology-sidebar overlap is a **release blocker for that
+configuration**. It reproduces with a styled application in Light and Green,
+including `qt_client_style_test.py` followed by the narrow-layout test, while
+the same test passes in isolation without the stylesheet. At the short height,
+the editor-card bottom measured 241 px and the navigation top 204 px. This is
+an existing sidebar layout issue, not resolved by the Decision Studio changes.
+An initial combined focused run crashed in Qt during the concept-dialog /
+inline-editor test. A subsequent full-suite attempt also crashed during window
+destruction; the same destruction test passed on the unmodified v3 baseline.
+Replacing the reading view's unowned deferred callback with a widget-owned
+timer made the destruction test pass twice and the previously crashing combined
+focused sequence pass; the full-suite rerun is the remaining broader check.

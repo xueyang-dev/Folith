@@ -2508,5 +2508,7 @@
   "当前译文与原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。": "The translation is identical to the source; unless it is an explicit preserve item, it may be unfinished.",
   "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。": "Confirm whether this segment is an intended preserve item; if not, retranslate and keep necessary proper nouns.",
   "译文与源段完全相同，疑似整段未翻译": "Translation equals the source; the segment may be untranslated",
-  "此项目没有额外证据。": "No additional evidence for this item."
+  "此项目没有额外证据。": "No additional evidence for this item.",
+  "符合冻结译法": "Matches frozen translation",
+  "译文为空": "Translation is empty"
 }

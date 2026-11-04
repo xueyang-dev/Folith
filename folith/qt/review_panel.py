@@ -16,7 +16,7 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -222,6 +222,44 @@ def _localized_task_copy(item: dict) -> dict:
         "重新运行此段审校，生成与当前译文一致的新结果。")}
 
 
+class ReadingTextBrowser(QTextBrowser):
+    """A bounded, content-sized reading column using the current Qt font metrics."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._fit_timer = QTimer(self)
+        self._fit_timer.setSingleShot(True)
+        self._fit_timer.timeout.connect(self._fit_document)
+        self.setMaximumHeight(420)
+        self.document().documentLayout().documentSizeChanged.connect(self._schedule_fit)
+        self.textChanged.connect(self._schedule_fit)
+        self._set_reading_width()
+
+    def _set_reading_width(self) -> None:
+        self.setMaximumWidth(max(1, self.fontMetrics().horizontalAdvance("n" * 82)))
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        from PySide6.QtCore import QEvent
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange):
+            self._set_reading_width()
+            self._schedule_fit()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._schedule_fit()
+
+    def _schedule_fit(self, *_args) -> None:
+        if not self._fit_timer.isActive():
+            self._fit_timer.start(0)
+
+    def _fit_document(self) -> None:
+        height = int(self.document().size().height() + 2 * self.frameWidth() + 12)
+        height = max(self.fontMetrics().lineSpacing() * 4, min(420, height))
+        if self.minimumHeight() != height or self.maximumHeight() != height:
+            self.setFixedHeight(height)
+
+
 class ReviewPanel(QWidget):
     """审校队列与详情。"""
 
@@ -383,12 +421,11 @@ class ReviewPanel(QWidget):
         self.item_title.setObjectName("reviewItemTitle")
         self.item_title.setWordWrap(True)
         self.item_chip = style_module.Chip("", "info")
-        self.item_body = QTextBrowser()
+        self.item_body = ReadingTextBrowser()
         self.item_body.setObjectName("reviewDetail")
         self.item_body.setOpenExternalLinks(False)
-        self.item_body.setMinimumHeight(300)
-        # 内容自适应：短段落按内容高度、长段落限高后内部滚动，避免一整块空文本框。
-        self.item_body.setMaximumHeight(420)
+        self.item_body.setOpenLinks(False)
+        self.item_body.anchorClicked.connect(self._reading_link)
         self.item_body.setSizePolicy(QSizePolicy.Policy.Preferred,
                                      QSizePolicy.Policy.Maximum)
         self.item_body.setAccessibleName(i18n.tr('审校详情'))
@@ -468,12 +505,14 @@ class ReviewPanel(QWidget):
         self.audit_revoke_button.clicked.connect(self._emit_audit_revoke)
         self.audit_revoke_button.setVisible(False)
         action_row = components.FlowRow(spacing=6, fill=False)
-        for widget in (self.apply_button, self.open_button, self.confirm_button,
-                       self.confirm_source_button, self.preserve_button,
-                       self.review_button, self.edit_button,
-                       self.retranslate_button, self.style_rule_button,
+        for widget in (self.apply_button, self.edit_button, self.confirm_button,
+                       self.confirm_source_button, self.review_button,
                        self.audit_revoke_button):
             action_row.addWidget(widget)
+        alternative_row = components.FlowRow(spacing=6, fill=False)
+        for widget in (self.open_button, self.preserve_button,
+                       self.retranslate_button, self.style_rule_button):
+            alternative_row.addWidget(widget)
 
         # 名字译法不一：同一个部件（与「检查与修复」抽屉共用），代替逐段的动作行。
         self.conflict = NameConflictWidget()
@@ -517,6 +556,7 @@ class ReviewPanel(QWidget):
         action_layout.setSpacing(8)
         action_layout.addWidget(self.note_edit)
         action_layout.addLayout(action_row)
+        action_layout.addLayout(alternative_row)
         action_layout.addWidget(self.hint)
         action_layout.addWidget(self.shortcut_hint)
 
@@ -1040,7 +1080,7 @@ class ReviewPanel(QWidget):
                      if entity.get("source") == source), {}) if source else {}
 
     def _term_html(self, item: dict) -> str:
-        """一张术语卡：术语、冻结/旧译法、受影响段落并排对照。"""
+        """Bounded, navigable occurrences using only the projected term state."""
         source = str(item.get("term_source") or "").strip()
         target = str(item.get("term_target") or "").strip()
         previous = str(item.get("term_previous_target") or "").strip()
@@ -1051,31 +1091,44 @@ class ReviewPanel(QWidget):
         if source:
             parts.append(f"<p><b>{_escape(i18n.tr('术语'))}{sep}</b>{_escape(source)}</p>")
         parts.append(_decision_reference_html(target, previous, total))
+        status = i18n.tr_dynamic(str(item.get("decision_label") or item.get("status_label") or ""))
+        if status:
+            parts.append(f"<p><b>{_escape(i18n.tr('状态'))}{sep}</b>{_escape(status)}</p>")
         shown = rows[:TERM_ROWS_SHOWN]
         if shown:
-            cells = []
+            parts.append(f"<p><b>{_escape(i18n.tr('影响段落'))}</b></p>")
             for row in shown:
-                mark = "" if row.get("uses_frozen", True) else (
-                    f" <b>【{_escape(i18n.tr('未用冻结译法'))}】</b>")
-                cells.append(
-                    "<tr>"
-                    f"<td valign=\"top\"><b>{_escape(i18n.tr('第 {v0} 段', v0=row.get('number')))}</b></td>"
-                    f"<td valign=\"top\">{_escape(_trim(row.get('source')))}</td>"
-                    f"<td valign=\"top\">{_escape(_trim(row.get('target')))}{mark}</td>"
-                    "</tr>")
-            parts.append(
-                "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"3\">"
-                f"<tr><td></td><td><b>{_escape(i18n.tr('原文'))}</b></td>"
-                f"<td><b>{_escape(i18n.tr('当前译文'))}</b></td></tr>"
-                + "".join(cells) + "</table>")
+                index = row.get("index")
+                title = _escape(i18n.tr('第 {v0} 段', v0=row.get('number')))
+                if isinstance(index, int) and not isinstance(index, bool):
+                    title = f'<a href="segment:{index}">{title}</a>'
+                current = str(row.get("target") or "").strip()
+                mark = (i18n.tr('（未翻译）') if not current else
+                        i18n.tr('符合冻结译法') if target and row.get("uses_frozen") else
+                        i18n.tr('未用冻结译法') if target else "")
+                parts.append(f"<p><b>{title}</b> · {_escape(mark)}<br>"
+                             f"{_escape(i18n.tr('原文'))}{sep}{_escape(_trim(row.get('source')))}<br>"
+                             f"{_escape(i18n.tr('当前译文'))}{sep}{_escape(_trim(current) or i18n.tr('（未翻译）'))}</p>")
         if total > len(shown):
             parts.append(f"<p>{_escape(i18n.tr('另有 {v0} 段未列出', v0=total - len(shown)))}</p>")
         return "".join(parts)
+
+    def _reading_link(self, url) -> None:
+        if url.scheme() != "segment":
+            return
+        try:
+            index = int(url.path())
+        except ValueError:
+            return
+        indexes = {row.get("index") for row in self.selected_item().get("term_segments", [])}
+        if index in indexes:
+            self._locate_segment(index)
 
     def _translation_html(self, item: dict) -> str:
         """工作区里把原文、当前译文、建议译文各画成独立区块（不是一整块灰）。"""
         from folith.textual import text_direction
         muted = style_module.html_color("text-secondary", over="bg-surface")
+        rule = style_module.html_color("border-subtle", over="bg-surface")
         blocks: list[str] = []
         for label, key, span_key in (("原文", "source", "source_span"),
                                      ("当前译文", "target", "target_span"),
@@ -1090,11 +1143,11 @@ class ReviewPanel(QWidget):
             # The empty-target label is UI copy, not document text or evidence.
             span = str(item.get(span_key) or "") if span_key and item.get(key) else ""
             if blocks:
-                blocks.append("<hr/>")
+                blocks.append(f'<hr style="color:{rule}; background-color:{rule}"/>')
             blocks.append(
-                f"<p style=\"font-size:11px;font-weight:700;color:{muted};"
+                f"<p style=\"font-size:12px;font-weight:700;color:{muted};"
                 f"margin-bottom:2px\">{_escape(i18n.tr(label))}</p>"
-                f"<p{block} style=\"margin-top:0\">"
+                f"<p{block} style=\"margin-top:0;line-height:145%\">"
                 f"{self._highlight(value, span)}</p>")
         return "".join(blocks)
 
@@ -1242,7 +1295,6 @@ class ReviewPanel(QWidget):
                 parts.append(self._block("当前译文", current))
         self.item_body.setHtml("".join(parts))
         # 审计要完整展示前/后/当前/状态：给正文更大的最小高度（普通短内容仍是自适应）。
-        self.item_body.setMinimumHeight(360)
         evidence_lines = []
         for entry in item.get("triage_evidence") or []:
             if not isinstance(entry, dict):
@@ -1296,7 +1348,6 @@ class ReviewPanel(QWidget):
             self._render_audit()
             return
         self.audit_revoke_button.setVisible(False)
-        self.item_body.setMinimumHeight(300)
         item = self.selected_item()
         has = bool(item)
         for widget in (self.item_title, self.item_chip, self.item_body,
@@ -1341,9 +1392,20 @@ class ReviewPanel(QWidget):
                 override = task_copy.get(key) if task_item else ""
                 value = override or i18n.tr_dynamic(value)
             if value and not any(value in part for part in problem_parts):
+                muted = style_module.html_color("text-secondary", over="bg-surface")
                 problem_parts.append(
-                    f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
-        self.item_body.setHtml("".join(problem_parts) + self._translation_html(item))
+                    f'<p style="font-size:12px;color:{muted};line-height:140%">'
+                    f"<b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
+        # Keep the concise finding first, then prioritize bilingual reading;
+        # the complete explanation remains available below it in the same view.
+        summary = problem_parts[:1]
+        details = problem_parts[1:]
+        staged = (item.get("triage_candidate_id") and not item.get("triage_committed")
+                  and item.get("triage_candidate_status") == "pending")
+        if staged:
+            summary.append(self._block("状态", i18n.tr('仅暂存未采用')))
+        self.item_body.setHtml("".join(summary) + self._translation_html(item)
+                               + "".join(details))
         # 证据检查器：术语参考 / 已记录决定 / 分组摘要；空则给说明，不留白。
         self._set_evidence(self._evidence_html(item, sep))
         self.audit_hint.setText("")
@@ -1456,7 +1518,8 @@ class ReviewPanel(QWidget):
             return
         style_module.set_button(button, kind)
         icon_name = {"_apply_kind": "sparkles", "_edit_kind": "translate",
-                     "_confirm_kind": "check"}.get(cache)
+                     "_confirm_kind": "check", "_review_kind": "shield-check",
+                     "_source_kind": "check-circle"}.get(cache)
         if icon_name:
             button.setIcon(icons.icon(icon_name, 16,
                                      "text-on-accent" if kind == "primary"
@@ -1492,19 +1555,33 @@ class ReviewPanel(QWidget):
         # 有建议 → 暂存候选；整段未翻译、或无法安全记录人工决定（证据/定位不足）→
         # 主行动是“修改译文”，把“确认已解决”降为次要；其余可判定项才把“确认已解决”
         # 作为主行动。
-        source_text = str(item.get("source") or "").strip()
         target_text = str(item.get("target") or "").strip()
-        untranslated = bool(source_text) and (not target_text or source_text == target_text)
-        edit_primary = (not suggestion) and (not source) and has_segment and (
-            untranslated or not decidable)
+        informational = str(item.get("severity") or "") == "informational"
+        completion_finding = (item.get("category") == "translation_completion"
+                              and not item.get("handled") and not item.get("decision"))
+        staged = (item.get("triage_candidate_id") and not item.get("triage_committed")
+                  and item.get("triage_candidate_status") == "pending")
+        term_conflict = bool(item.get("term_card") and any(
+            row.get("target") and not row.get("uses_frozen", True)
+            for row in item.get("term_segments") or []))
+        edit_primary = (not informational and not suggestion and not source and not task and has_segment
+                        and (not target_text or completion_finding or staged or not decidable
+                             or item.get("category") == "style"))
         self._set_button_kind(
-            self.apply_button, "primary" if suggestion else "secondary", "_apply_kind")
+            self.apply_button, "primary" if suggestion and not informational else "secondary", "_apply_kind")
         self._set_button_kind(
             self.edit_button, "primary" if edit_primary else "secondary", "_edit_kind")
         self._set_button_kind(
             self.confirm_button,
-            "primary" if (decision and not suggestion and not edit_primary)
+            "primary" if (decision and not informational and not suggestion
+                          and not edit_primary and not term_conflict)
             else "secondary", "_confirm_kind")
+        self._set_button_kind(self.review_button,
+                              "primary" if task and has_segment and not informational else "secondary",
+                              "_review_kind")
+        self._set_button_kind(self.confirm_source_button,
+                              "primary" if source and not informational else "secondary",
+                              "_source_kind")
         if task:
             self.review_button.setText(i18n.tr({
                 "failed": "重试审校本段", "stale": "重新审校本段",

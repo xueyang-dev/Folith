@@ -420,6 +420,9 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
         # 其余发现项保持逐字节不变。
         item.update(_entity_term_fields(finding, locked_entities or {},
                                         fallback_segment=segment_id))
+    if finding.get("type") == "glossary_stale" and finding.get("previous_target"):
+        # Read-only projection of the recorded previous variant for the term card.
+        item["previous_target"] = str(finding["previous_target"])
     return item
 
 

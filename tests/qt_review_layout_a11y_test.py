@@ -119,11 +119,12 @@ def test_panel_fits_the_default_window_in_every_ui_language(qt_app, lang):
         panel.close()
 
 
-def test_confirm_is_the_only_primary_action_without_a_suggestion(qt_app):
+def test_style_finding_without_suggestion_prioritizes_edit(qt_app):
     panel = _panel(_item(suggested_target=""))
     try:
         assert panel.apply_button.property("kind") == "secondary"
-        assert panel.confirm_button.property("kind") == "primary"
+        assert panel.confirm_button.property("kind") == "secondary"
+        assert panel.edit_button.property("kind") == "primary"
     finally:
         panel.close()
 

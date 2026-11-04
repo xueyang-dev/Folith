@@ -2509,5 +2509,7 @@
   "当前译文与原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。": "Die Übersetzung ist identisch mit der Quelle; außer bei bewusst beibehaltenen Inhalten ist sie evtl. unfertig.",
   "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。": "Bestätige, ob dieses Segment bewusst beibehalten wird; falls nicht, neu übersetzen und nötige Eigennamen behalten.",
   "译文与源段完全相同，疑似整段未翻译": "Übersetzung gleich der Quelle; Segment evtl. unübersetzt",
-  "此项目没有额外证据。": "Für diesen Eintrag liegen keine weiteren Belege vor."
+  "此项目没有额外证据。": "Für diesen Eintrag liegen keine weiteren Belege vor.",
+  "符合冻结译法": "Entspricht der festgelegten Übersetzung",
+  "译文为空": "Übersetzung ist leer"
 }
