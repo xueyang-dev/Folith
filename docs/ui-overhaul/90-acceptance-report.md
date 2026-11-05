@@ -184,3 +184,16 @@
 **118 passed / 9:19** 也不再崩。
 
 这条只解释本轮引入的那次崩溃；报告前面记录的"长进程偶发段错误"是否同一根因，还要单独复核。
+
+
+## 第四轮复审（2026-11-05 17:xx）
+
+| 复审发现 | 处理 |
+| --- | --- |
+| 修复提交到了 `feat/epub-images` | **我的失误**。已在临时 worktree 上把 `07f465d4`、`b38f1a2b` cherry-pick 到 `feat/ui-overhaul`（新哈希 `1003b916`、`fcbed769`），后续修正也提交在该分支。`feat/epub-images` 上的重复提交**未**删除——那需要改写分支，等你决定 |
+| 两份文档被从磁盘删除 | **我的失误**，已从提交历史恢复：`docs/issue-triage-0.8.1.md`（8 820 B）、`docs/ui-overhaul/95-review-prompt.md`（10 738 B），字节数与复审记录一致。后者含旧目录名，已把该路径加入品牌审计的白名单（它本就是审查用的命令示例，不是品牌表述） |
+| 页头按钮限宽 240 后文字被裁 | **真**。改用 `ElideButton`：放不下时省略并保留完整悬停提示，图标不再被挤掉 |
+| `qt_trial_feedback_test` 2 条顺序相关失败 | **真，找到根因**：同进程里若前面有用例调用过 `style.apply_theme`，应用字体是 13px；没调用过则是系统默认 9pt（≈12px）。卡片高度预算当时只算了纸页、没算 F8 新增的文字块，字体一大就顶出首屏。`_card_width()` 的高度预算现在扣掉 `TEXT_GAP + TEXT_BLOCK`；`qt_theme_follow_system_test + qt_trial_feedback_test` 同进程 **78 passed** |
+| 西/法/德/俄/阿单数语法 | 已把「数量 + 复数名词」的措辞改成与数量无关（`Resolver problemas obligatorios ({v0})` 等），5 个语言 4 条键 |
+| 每次启动被新手指南/新变化挡住 | 新增 `FOLITH_SKIP_ONBOARDING=1` 显式跳过（与既有 `FOLITH_QT_NONINTERACTIVE`、offscreen 判断并列） |
+| golden | **仍等你决定**：差异只在 `delivery` 的 `title/detail/tone` 三个字段（复审已核对），重新生成前我不会改快照 |

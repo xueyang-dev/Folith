@@ -936,7 +936,7 @@
   "必须处理": "Doit résoudre",
   "必须处理 0": "À traiter impérativement 0",
   "必须处理 {v0}": "À traiter impérativement {v0}",
-  "必须处理的问题 {v0} 个": "{v0} problèmes requis",
+  "必须处理的问题 {v0} 个": "Problèmes obligatoires : {v0}",
   "必须处理的问题 {v0} 个#one": "{v0} problème bloquant",
   "快捷键": "Raccourci",
   "快照里有 {v0} 个文件在磁盘上缺失（{v1}{v2}）：冻结快照不可修改，请重新冻结交付或从备份恢复。": "{v0} fichiers de l'instantané sont manquants sur le disque ({v1}{v2}) : les instantanés figés sont non modifiables ; veuillez figer à nouveau la livraison ou restaurer depuis une sauvegarde.",
@@ -1703,7 +1703,7 @@
   "继续": "Continuer",
   "继续上次的工作": "Reprendre là où vous vous étiez arrêté",
   "继续处理": "Continuer",
-  "继续处理 {v0} 个必须处理的问题": "Continuer à traiter {v0} problèmes requis",
+  "继续处理 {v0} 个必须处理的问题": "Traiter les problèmes obligatoires ({v0})",
   "继续时从上次保存的位置接着翻译。": "La reprise se poursuit à partir du dernier emplacement enregistré.",
   "继续时只重做这一批剩下的 {v0} 段，已保存的批次不会重做。": "La reprise ne refait que les {v0} segment(s) restant(s) de ce lot ; les lots enregistrés sont conservés.",
   "继续生成需要先在「设置」里配置当前模型的 API Key。": "Pour continuer la génération, vous devez d'abord configurer la clé API du modèle actuel dans les « Paramètres ».",
@@ -1909,7 +1909,7 @@
   "返回应用": "Retour à l'application",
   "返回检查": "Retour à la vérification",
   "还不能翻译：{v0}": "Impossible de traduire pour le moment : {v0}",
-  "还有 {v0} 个必须处理的问题": "Il reste encore {v0} problème(s) obligatoire(s)",
+  "还有 {v0} 个必须处理的问题": "Problèmes obligatoires restants : {v0}",
   "还有 {v0} 个，在任务库中查看": "{v0} autres — voir dans la bibliothèque de tâches",
   "还有 {v0} 条": "Encore {v0}",
   "还有 {v0} 段尚未完成审校": "{v0} segment(s) ne sont pas encore révisé(s)",
@@ -2485,5 +2485,5 @@
   "约为「标准」的 {v0} 倍": "environ {v0}× le réglage « Standard »",
   "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Les enregistrements de révision sont complets, mais le contrôle de livraison comporte encore des problèmes bloquants non résolus ; ne gelez qu'après les avoir traités.",
   "阅读": "Lecture",
-  "还有 {v0} 个问题待处理": "{v0} problèmes à traiter"
+  "还有 {v0} 个问题待处理": "Problèmes restants : {v0}"
 }

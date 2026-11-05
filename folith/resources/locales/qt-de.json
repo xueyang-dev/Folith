@@ -936,7 +936,7 @@
   "必须处理": "Muss behoben werden",
   "必须处理 0": "Zwingend zu bearbeiten: 0",
   "必须处理 {v0}": "Zwingend zu bearbeiten: {v0}",
-  "必须处理的问题 {v0} 个": "{v0} zwingend zu bearbeitende Probleme",
+  "必须处理的问题 {v0} 个": "Zu behebende Probleme: {v0}",
   "必须处理的问题 {v0} 个#one": "{v0} erforderliches Problem",
   "快捷键": "Tastaturkürzel",
   "快照里有 {v0} 个文件在磁盘上缺失（{v1}{v2}）：冻结快照不可修改，请重新冻结交付或从备份恢复。": "{v0} Dateien im Snapshot fehlen auf dem Datenträger ({v1}{v2}): Eingefrorene Snapshots können nicht geändert werden; bitte die Lieferung erneut einfrieren oder aus einem Backup wiederherstellen.",
@@ -1703,7 +1703,7 @@
   "继续": "Fortsetzen",
   "继续上次的工作": "Dort weitermachen, wo Sie aufgehört haben",
   "继续处理": "Fortfahren",
-  "继续处理 {v0} 个必须处理的问题": "{v0} erforderliche Probleme weiter bearbeiten",
+  "继续处理 {v0} 个必须处理的问题": "Zu behebende Probleme lösen ({v0})",
   "继续时从上次保存的位置接着翻译。": "Beim Fortsetzen wird an der zuletzt gespeicherten Position weiter übersetzt.",
   "继续时只重做这一批剩下的 {v0} 段，已保存的批次不会重做。": "Beim Fortsetzen werden nur die verbleibenden {v0} Segmente dieses Stapels wiederholt; gespeicherte Stapel bleiben unverändert.",
   "继续生成需要先在「设置」里配置当前模型的 API Key。": "Um die Generierung fortzusetzen, muss zuerst der API-Schlüssel des aktuellen Modells in den „Einstellungen“ konfiguriert werden.",
@@ -1909,7 +1909,7 @@
   "返回应用": "Zurück zur Anwendung",
   "返回检查": "Zurück zur Prüfung",
   "还不能翻译：{v0}": "Kann noch nicht übersetzen: {v0}",
-  "还有 {v0} 个必须处理的问题": "Es verbleiben noch {v0} erforderliche Probleme",
+  "还有 {v0} 个必须处理的问题": "Noch zu behebende Probleme: {v0}",
   "还有 {v0} 个，在任务库中查看": "Noch {v0} weitere – in der Aufgabenbibliothek anzeigen",
   "还有 {v0} 条": "Noch {v0} weitere",
   "还有 {v0} 段尚未完成审校": "{v0} Segmente sind noch nicht überprüft",
@@ -2485,5 +2485,5 @@
   "约为「标准」的 {v0} 倍": "etwa {v0}× der Einstellung „Standard“",
   "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Die Prüfeinträge sind vollständig, aber das Liefer-Gate hat noch ungelöste blockierende Probleme; erst danach einfrieren.",
   "阅读": "Lesen",
-  "还有 {v0} 个问题待处理": "Noch {v0} offene Probleme"
+  "还有 {v0} 个问题待处理": "Offene Probleme: {v0}"
 }

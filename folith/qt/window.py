@@ -3842,7 +3842,12 @@ class MainWindow(QMainWindow):
         """首次启动：全新用户看欢迎窗口，老用户只看一页「新变化」。返回显示了哪一种。"""
         from . import onboarding
 
-        if onboarding._automatic():
+        import os as _os
+
+        # 脚本化 / 开发环境：显式跳过，别再让"新手指南/新变化"挡住每一次启动。
+        # `FOLITH_SKIP_ONBOARDING=1` 优先于一切；offline/offscreen 与
+        # `FOLITH_QT_NONINTERACTIVE=1` 走 `_automatic()`。
+        if _os.environ.get("FOLITH_SKIP_ONBOARDING") == "1" or onboarding._automatic():
             return ""
         try:
             has_jobs = bool(adapter.list_jobs())

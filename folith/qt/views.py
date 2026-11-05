@@ -605,6 +605,9 @@ class _TaskCard(QFrame):
     TEXT_GAP = 6
     #: 文件名最多显示的行数（F8：两行折行，不再省略成头尾几个字符）。
     TITLE_LINES = 2
+    #: 纸页下方文字块的估算高度（两行标题 + 元信息 + 状态行 + 两处间距）。
+    #: 卡片按高度收窄时要把它算进去，否则"第一排整张看见"会被文字块顶掉。
+    TEXT_BLOCK = 68
 
     def _paper_height(self, inner: int) -> int:
         return round(max(40, inner) * self.ASPECT)
@@ -1818,7 +1821,8 @@ class HomeView(QWidget):
         viewport = self.card_scroll.viewport().height() if hasattr(self, "card_scroll") else 0
         if viewport > 0:
             pad = _TaskCard.PAD
-            room = viewport - self.CARD_HEADING_ROOM - pad.top() - pad.bottom()
+            room = (viewport - self.CARD_HEADING_ROOM - pad.top() - pad.bottom()
+                    - _TaskCard.TEXT_GAP - _TaskCard.TEXT_BLOCK)
             by_height = int(room / _TaskCard.ASPECT) + pad.left() + pad.right()
             width = min(width, max(self.CARD_MIN_SHORT_WIDTH, by_height))
         return width
@@ -2720,13 +2724,15 @@ class WorkbenchView(QWidget):
             lambda: self.reviewSelectedRequested.emit(self.selected_indexes()))
 
         # 推荐的下一步：随阶段变化（重试失败的审校 / 处理问题 / 冻结并交付）。
-        self.stage_action_button = _icon_button(QPushButton(""), "arrow-right", "text-on-accent")
+        # ElideButton：外语文案放不下时省略（"…"）并把完整文字放进悬停提示，
+        # 普通 QPushButton 只会把字裁掉（俄语实测少半句、数字看不见）。
+        self.stage_action_button = _icon_button(style_module.ElideButton(""), "arrow-right",
+                                                "text-on-accent")
         style_module.set_button(self.stage_action_button, "primary")
         # F1：这是顶栏里最宽的按钮，文案带数字（「继续处理 1 个必须处理的问题」），
         # 它的 minimumSizeHint 直接决定工作台——进而窗口——的最小宽度，会把首页
         # 也一起撑宽（俄语 1418px）。给一个上限，放不下时按钮自己省略（有完整提示）。
         self.stage_action_button.setMaximumWidth(240)
-        self.stage_action_button.setToolTip("")
         self.stage_action_button.clicked.connect(self._run_stage_action)
         self.stage_action_button.setVisible(False)
         self._stage_action: dict | None = None

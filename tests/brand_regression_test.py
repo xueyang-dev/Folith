@@ -196,7 +196,10 @@ def _iter_text_files():
                            # checkout directory name. Not shipped source, not a
                            # brand statement.
                            "research/", "promo/", "promo-fact-check-20261031/",
-                           "promo-fact-check-20261101/")):
+                           "promo-fact-check-20261101/",
+                           # 审查提示词里带着示例用的仓库绝对路径（含旧目录名），
+                           # 那是给审查者执行命令用的，不是品牌表述。
+                           "docs/ui-overhaul/95-review-prompt.md")):
             continue
         if rel.endswith(".egg-info/SOURCES.txt") or ".egg-info/" in rel:
             continue
