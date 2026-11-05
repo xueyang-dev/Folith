@@ -489,12 +489,12 @@ class _TaskCard(QFrame):
     #: 卡片宽度范围（px）：列数 = 可用宽度能放下几张；再宽只会让书面变成海报。
     MIN_WIDTH = 180
     #: 236 → 200：与 `ASPECT` 一起把卡片高度收回来（980×640 下第一张卡要完整可见）。
-    MAX_WIDTH = 200
+    MAX_WIDTH = 236
     #: 书面四周给投影与抬起留的空间。
     PAD = QMargins(8, 8, 8, 12)
     #: 书面的高 / 宽。F8 把文字移到纸页下方之后整卡变高，980×640 下第一张卡会掉出
     #: 首屏（qt_trial_feedback_test）；比例收到 1.14、上限 200 把高度还回去。
-    ASPECT = 1.14
+    ASPECT = 1.34
     LIFT = 6
 
     def __init__(self, row: adapter.JobRow, *, tone: str,
