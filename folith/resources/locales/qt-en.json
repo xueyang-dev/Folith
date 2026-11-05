@@ -2473,5 +2473,10 @@
   "{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段": "{v0} group {v1} · {v2} occurrences · {v3} segments affected",
   "需要调查": "Needs investigation",
   "作用于：{v0}": "Applies to: {v0}",
-  "辅助": "Auxiliary"
+  "辅助": "Auxiliary",
+  "自动处理有确定依据的问题（实验）": "Auto-handle evidenced findings (experimental)",
+  "只对本任务生效。有确定依据的发现会移入「自动处理（审计）」组，每条都能撤销；不修改译文，不调用模型，也不放宽交付门禁。": "Applies to this task only. Findings with deterministic evidence move to the “Automatic handling (audit)” group, and each one can be revoked. The translation is not changed, no model is called, and the delivery gate is not relaxed.",
+  "无法切换自动处理": "Could not switch automatic handling",
+  "已开启自动处理：{v0} 条发现有确定依据，已移入审计组。": "Automatic handling is on: {v0} findings have deterministic evidence and moved to the audit group.",
+  "已关闭自动处理：所有发现回到人工队列。": "Automatic handling is off: all findings are back in the human queue."
 }

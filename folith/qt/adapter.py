@@ -2046,6 +2046,19 @@ def resolve_findings(job_id: str, finding_ids: Sequence[str], action: str,
     return state
 
 
+def set_auto_handling(job_id: str, enabled: bool) -> dict:
+    """打开或关闭这个任务的自动处理（QA 分诊）。不改译文，也不放宽交付门禁。"""
+    from folith import finding_triage as _triage
+    from folith.engine import triage_resolution
+
+    if enabled and not _triage.enabled({_triage.ENABLED_KEY: True}):
+        raise AdapterError(f"环境变量 {_triage.ENV_SWITCH} 已关闭 QA 分诊。")
+    try:
+        return triage_resolution.set_triage_enabled(job_id, enabled)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
 def revoke_auto_handling(job_id: str, record_key: str,
                          reason: str = "人工在审计列表撤销") -> dict:
     """撤销一条自动处理结论（#289）：这一项回到人工队列。
