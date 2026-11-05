@@ -1083,5 +1083,62 @@ def test_epub_docx_falls_back_to_text_when_source_association_cannot_be_bound():
     assert report["image_count"] == 0
     assert any("纯文字重建" in warning and "来源关联" in warning
                for warning in report["warnings"])
+    # The fallback must not keep claiming that images were preserved.
+    assert not any("按原阅读顺序保留" in warning or "图片已保留" in warning
+                   or "图片内部文字保持原样" in warning
+                   for warning in report["warnings"])
     texts = [paragraph.text for paragraph in document.paragraphs][1:]
     assert texts == [pair["target"] for pair in state["pairs"]]
+
+
+def test_epub_svg_wrapper_with_embedded_bitmap_is_unwrapped_for_epub_and_docx():
+    inner = illustration()
+    wrapper = (b'<svg xmlns="http://www.w3.org/2000/svg" '
+               b'xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 240 120">'
+               b'<image xlink:href="inner.png" width="240" height="120"/></svg>')
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>A</p><div><img src="../images/wrap.svg"/></div><p>B</p>'}],
+        {"images/wrap.svg": wrapper, "images/inner.png": inner})
+    state = translated_state("book.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["image_count"] == report["image_reference_count"] == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("EPUB/images/")]
+        assert len(media) == 1
+        assert media[0].endswith(".png")
+        assert archive.read(media[0]) == inner
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        assert not any(item.get("media-type") == "image/svg+xml"
+                       for item in package.findall("o:manifest/o:item", OPF))
+    payload, docx_report = build_translation_docx(state, source)
+    document = Document(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload))
+    assert len(document.inline_shapes) == 1
+    assert docx_report["image_count"] == 1
+    with ZipFile(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload)) as archive:
+        media_parts = [archive.read(name) for name in archive.namelist()
+                       if name.startswith("word/media/")]
+    assert media_parts == [inner]
+
+
+@pytest.mark.parametrize("href,reason", [
+    ("missing.png", "missing"),
+    ("https://example.com/remote.png", "external"),
+])
+def test_epub_svg_wrapper_without_a_readable_bitmap_is_skipped(href, reason):
+    wrapper = (f'<svg xmlns="http://www.w3.org/2000/svg" '
+               f'xmlns:xlink="http://www.w3.org/1999/xlink">'
+               f'<image xlink:href="{href}" width="10" height="10"/></svg>').encode()
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>A</p><div><img src="../images/wrap.svg"/></div><p>B</p>'}],
+        {"images/wrap.svg": wrapper})
+    data, report = build_translation_epub(translated_state("book.epub", source), source)
+    validate_package(data)
+    assert report["image_count"] == 0
+    assert report["source_image_reference_count"] == 1
+    assert report["skipped_image_count"] == 1
+    assert report["skipped_image_reasons"] == {reason: 1}
+    assert any("未纳入译文" in warning for warning in report["warnings"])
+    assert content(data).count("<img ") == 0

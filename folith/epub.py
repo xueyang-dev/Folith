@@ -329,6 +329,36 @@ def _svg_embedded_image(book, svg_path: str, data: bytes, encrypted, paths: set)
     return None
 
 
+def _svg_unresolved_reason(book, svg_path: str, hrefs, encrypted) -> str:
+    """Why an SVG that references a bitmap cannot be turned into a bitmap.
+
+    ``_svg_embedded_image`` returns ``None`` for several different failures;
+    the report must name the actual one so a missing resource is not presented
+    as an inline vector graphic.
+    """
+    for href in hrefs:
+        text = str(href or "").strip()
+        if not text:
+            return "missing"
+        if urlsplit(text).scheme or text.startswith("//"):
+            return "external"
+        target = _zip_target(svg_path, text)
+        if target is None:
+            return "missing"
+        if target in encrypted:
+            return "encrypted"
+        if target not in book.namelist():
+            return "missing"
+        try:
+            inner = book.read(target)
+        except Exception:  # noqa: BLE001 - report the package failure instead of a blank image
+            return "unreadable"
+        kind = _image_type(inner)
+        if kind is None or kind[0] == "svg":
+            return "unsupported"
+    return "unsupported"
+
+
 def _epub_cover(book, package_path: str, package, manifest: dict, encrypted,
                 media: dict, seen: dict, warnings: list[str]):
     """Find the declared cover (EPUB 3 property or EPUB 2 meta) and load it."""
@@ -454,9 +484,23 @@ def _epub_source(source: bytes, *, stats: dict | None = None):
                 if kind is None:
                     skip("unsupported")
                     continue
-                # ``<img src="x.svg">`` stays an SVG file in the translated
-                # EPUB (EPUB 3 core media type); the DOCX rebuild rasterizes
-                # it and skips + reports the one it cannot convert.
+                if kind[0] == "svg":
+                    hrefs = _svg_image_hrefs(data)
+                    if hrefs:
+                        # An SVG wrapper around an in-package bitmap is
+                        # unwrapped so the EPUB carries the actual image.  A
+                        # wrapper whose only references are missing/external
+                        # must not become a blank SVG picture.
+                        embedded = _svg_embedded_image(
+                            book, target, data, encrypted, set())
+                        if embedded is None:
+                            skip(_svg_unresolved_reason(
+                                book, target, hrefs, encrypted))
+                            continue
+                        data, kind = embedded
+                    # A pure vector SVG (no <image>) stays as-is: it is a core
+                    # EPUB media type. The DOCX rebuild rasterizes it and skips
+                    # + reports the one it cannot convert.
                 name = _register_media(media, seen, data, *kind)
                 positions[offset + int(record["at"])].append(name)
 

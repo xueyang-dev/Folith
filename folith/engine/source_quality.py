@@ -95,10 +95,17 @@ def _build_extraction_report(filename, paragraphs, *, ocr_used=False,
     if unsupported:
         notes.append("未纳入翻译的内容已在下方逐项列出；它们保留在源文件里，"
                      "不会出现在译文文档中。")
-    notes.append("导出是**重建的译文文档**，不是原文件的格式保真输出："
-                 "排版、表格与样式不还原。源文件有图时，图片仅保留在译文 EPUB、"
-                 "纯译文 DOCX 和原格式 PDF/DOCX（对应来源）交付中；"
-                 "双语对照 DOCX 与纯译文 PDF 不含图片。")
+    if ext in {".epub", ".docx", ".pdf"}:
+        notes.append("导出是**重建的译文文档**，不是原文件的格式保真输出："
+                     "排版、表格与样式不还原。源文件有图时，图片仅保留在译文 EPUB、"
+                     "纯译文 DOCX 和原格式 PDF/DOCX（对应来源）交付中；"
+                     "双语对照 DOCX 与纯译文 PDF 不含图片。")
+    elif ext in {".md", ".markdown"}:
+        notes.append("导出是**重建的译文文档**，不是原文件的格式保真输出："
+                     "排版、表格与样式不还原，Markdown 图片不纳入翻译。")
+    else:
+        notes.append("导出是**重建的译文文档**，不是原文件的格式保真输出："
+                     "排版、表格、图片与样式不还原。")
     return {
         "version": _c.EXTRACTION_REPORT_VERSION,
         "format": ext.lstrip("."),

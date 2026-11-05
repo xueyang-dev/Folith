@@ -386,7 +386,13 @@ def build_translation_docx(state, source, *, roundtrip: bool = False):
             # (for example a legacy structure edit without source refs) used
             # to deliver a plain-text DOCX before image support.  Keep that
             # deliverable instead of turning the missing association into a
-            # hard failure; the report says exactly what was not kept.
+            # hard failure; the report says exactly what was not kept.  The
+            # source warnings still describe what could have been preserved,
+            # so drop their image-retention claims before adding the fallback.
+            report["warnings"] = [
+                warning for warning in report["warnings"]
+                if "图片按原阅读顺序保留" not in warning
+                and "图片内部文字保持原样" not in warning]
             report["warnings"].append(
                 message + " 已改为纯文字重建，不保留图片。")
             report.update(image_count=0, image_reference_count=0)

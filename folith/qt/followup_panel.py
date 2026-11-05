@@ -300,7 +300,7 @@ class FollowupPanel(QWidget):
         self.extraction_note.setText(i18n.tr(
             '导出是重建的译文文档，不是原文件的格式保真输出：排版、表格与样式不会还原。'
             '源文件有图时，图片仅保留在译文 EPUB、纯译文 DOCX 和原格式 PDF/DOCX（对应来源）'
-            '交付中；双语对照 DOCX 与纯译文 PDF 不含图片。'))
+            '交付中；双语对照 DOCX 与纯译文 PDF 不含图片，Markdown 图片不纳入。'))
         for widget in (self.extraction_warning, self.extraction_details, self.extraction_note):
             self.extraction_card.details_layout.addWidget(widget)
 
