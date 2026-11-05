@@ -1124,10 +1124,12 @@ def preview_term_revision(state: dict, source_term: str, old_target: str,
                           forbidden: Sequence[str] = ()) -> dict:
     """术语修订预览（纯函数）：原文锚定、逐段分类，不改任何状态。"""
     from folith import term_revision as _tr
+    from folith import consistency as _consistency
 
     return _tr.preview_term_revision(
         source_term, old_target, new_target, state.get("pairs") or [],
-        forbidden=forbidden)
+        forbidden=forbidden,
+        known_forms=_consistency.collect_known_forms(state))
 
 
 def replace_term_targets(job_id: str, source_term: str, old_target: str,
