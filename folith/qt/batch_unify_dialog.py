@@ -475,7 +475,9 @@ class BatchUnifyDialog(QDialog):
         item.takeChildren()
         if not snippets:
             no_ch = QTreeWidgetItem(item)
-            no_ch.setText(1, i18n.tr("（该实体当前译文已全部一致，无需修改）"))
+            # setFirstColumnSpanned 使首列横跨全宽；文本必须放在 col 0，
+            # 否则 col 1 的内容被 col 0 遮挡，行显示空白。
+            no_ch.setText(0, i18n.tr("（该实体当前译文已全部一致，无需修改）"))
             self._span_child(item, no_ch)
             return
 
@@ -494,19 +496,19 @@ class BatchUnifyDialog(QDialog):
 
             seg_label = i18n.tr("第 {v0} 段", v0=s["segment_index"] + 1)
 
-            # 旧片段行（首列横跨所有列，避免受列宽截断）
+            # 旧片段行：文本放 col 0（span 列），否则行空白。
             old_row = QTreeWidgetItem(item)
-            old_row.setText(1, seg_label + "  " + i18n.tr("旧：{v0}", v0=old_display))
+            old_row.setText(0, seg_label + "  " + i18n.tr("旧：{v0}", v0=old_display))
             self._span_child(item, old_row)
 
             # 新片段行
             new_row = QTreeWidgetItem(item)
-            new_row.setText(1, "→  " + i18n.tr("新：{v0}", v0=new_display))
+            new_row.setText(0, "→  " + i18n.tr("新：{v0}", v0=new_display))
             self._span_child(item, new_row)
 
         if hidden > 0:
             more_row = QTreeWidgetItem(item)
-            more_row.setText(1, i18n.tr("…还有 {v0} 处未显示", v0=hidden))
+            more_row.setText(0, i18n.tr("…还有 {v0} 处未显示", v0=hidden))
             self._span_child(item, more_row)
 
     def _span_child(self, parent_item: QTreeWidgetItem,

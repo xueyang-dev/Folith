@@ -292,14 +292,14 @@ class TestBatchUnifyDialogWidget:
         dialog.tree.expandItem(top)
         qt_app.processEvents()
 
-        # 收集所有子行文本
-        child_texts = [top.child(i).text(1) for i in range(top.childCount())]
+        # 收集所有子行的 col 0 文本（span 列；text(1) は空になる）
+        child_texts = [top.child(i).text(0) for i in range(top.childCount())]
 
-        # 旧形式（艾米莉）和新形式（艾米丽）都必须可见于对应的子行文本中。
+        # 旧形式（艾米莉）和新形式（艾米丽）都必须可见于对应的子行 col 0 中。
         # _split_snippet 将 "艾米莉"/"艾米丽" 拆解为公共前缀 "艾米" + 变化字符
         # "莉"/"丽"，以 [莉]/[丽] 标注；因此要分别检验前缀与变化字符均存在。
         old_texts = [t for t in child_texts if "旧：" in t]
-        new_texts = [t for t in child_texts if "新：" in t]
+        new_texts = [t for t in child_texts if "→" in t and "新：" in t]
         assert old_texts, f"未找到旧片段子行；child_texts={child_texts}"
         assert new_texts, f"未找到新片段子行；child_texts={child_texts}"
         # 公共前缀 "艾米" 在两行都可见；变化字符 "莉" 在旧行，"丽" 在新行
@@ -309,6 +309,75 @@ class TestBatchUnifyDialogWidget:
         assert any("艾米" in t and "丽" in t for t in new_texts), (
             f"新形式字符 '艾米...丽' 未出现在新片段行中；new_texts={new_texts}"
         )
+        dialog.deleteLater()
+
+    def test_snippet_rows_paint_visible_text(self, qt_app):
+        """Spanning child rows must paint visible text, not blank areas.
+
+        Root cause of commit 8c3e2b7b: setFirstColumnSpanned makes col 0 span
+        all columns; the delegate paints only col 0 content. Text was in col 1
+        → col 0 was empty → blank row.  After the fix, text is in col 0.
+
+        Two checks:
+        1. text(0) has content (fails on 8c3e2b7b where text(0)=="").
+        2. Grab of tree widget: child-row pixels are not uniformly one colour
+           (a blank row is solid background; a text row has foreground pixels).
+
+        Limitation: offscreen renderer; confirms paint path, not native HiDPI.
+        """
+        from folith.qt.batch_unify_dialog import BatchUnifyDialog
+
+        state = self._make_simple_state("Emily", ["艾米丽", "艾米莉"])
+        from folith.entity_registry import EntityRegistry
+        reg = EntityRegistry(state["entity_registry"])
+        entities = reg.consistency_findings(state["pairs"])
+        dialog = BatchUnifyDialog(entities, state)
+        dialog.resize(800, 400)
+        dialog.show()
+        qt_app.processEvents()
+
+        top = dialog.tree.topLevelItem(0)
+        dialog.tree.expandItem(top)
+        qt_app.processEvents()
+
+        assert top.childCount() >= 2, "Expected old and new snippet rows"
+        old_row = top.child(0)
+
+        # Check 1: text must be in col 0 (the spanning column).
+        # On 8c3e2b7b: text(0)=="" → assertion FAILS.
+        # After fix:   text(0)="第 N 段  旧：…" → passes.
+        assert old_row.text(0), (
+            f"Spanning row must have text in col 0 — "
+            f"text(0)={old_row.text(0)!r}  text(1)={old_row.text(1)!r}. "
+            "If text is in col 1, setFirstColumnSpanned hides it (blank row)."
+        )
+        assert old_row.text(1) == "", (
+            f"Col 1 must be empty for spanning row; got {old_row.text(1)!r}"
+        )
+
+        # Check 2: grab → child-row area not uniformly one colour.
+        # A blank row (8c3e2b7b) paints only the background colour → 1 value.
+        # A text row paints foreground + background → ≥ 2 distinct values.
+        pixmap = dialog.tree.grab()
+        assert not pixmap.isNull(), "grab() returned null pixmap"
+        image = pixmap.toImage()
+        rect = dialog.tree.visualItemRect(old_row)
+        assert rect.height() > 0, "visualItemRect has zero height"
+
+        y_scan = rect.top() + rect.height() // 2
+        unique_rgb = set()
+        for x in range(rect.left(), min(rect.right(), image.width()), 3):
+            if 0 <= y_scan < image.height():
+                # strip alpha; compare RGB only
+                unique_rgb.add(image.pixel(x, y_scan) & 0x00FFFFFF)
+
+        # On 8c3e2b7b: blank row → 1 colour → assertion FAILS.
+        # After fix: text row → foreground + background → ≥ 2 colours.
+        assert len(unique_rgb) >= 2, (
+            f"Child row {rect} appears blank: only {len(unique_rgb)} RGB "
+            f"colour(s) in horizontal scan at y={y_scan}"
+        )
+
         dialog.deleteLater()
 
     def test_rtl_layout_for_arabic(self, qt_app, monkeypatch):
