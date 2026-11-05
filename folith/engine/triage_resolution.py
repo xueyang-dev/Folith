@@ -170,6 +170,27 @@ def _write(state: Dict[str, Any], finding: Mapping[str, Any], *,
 
 
 # ---------------------------------------------------------------------------
+# per-task switch
+# ---------------------------------------------------------------------------
+
+@_serialized_job_mutation
+def set_triage_enabled(job_id: str, enabled: bool) -> Dict[str, Any]:
+    """Turn triage on or off for one task and persist the choice.
+
+    Turning it on settles what the deterministic evidence can settle right away.
+    Turning it off keeps the records, which are then ignored: every finding
+    returns to the human queue, so switching off can only add human work.
+    """
+    state = _c.load_job_state(job_id)
+    if state is None:
+        raise ValueError(f"找不到任务 {job_id}")
+    state[_triage.ENABLED_KEY] = bool(enabled)
+    summary = _triage.apply_deterministic(state)
+    _c.save_job_state(job_id, state)
+    return {"enabled": _triage.enabled(state), **summary}
+
+
+# ---------------------------------------------------------------------------
 # staging
 # ---------------------------------------------------------------------------
 

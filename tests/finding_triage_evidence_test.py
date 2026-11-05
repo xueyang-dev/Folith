@@ -90,6 +90,82 @@ def _frozen(entries, version=2):
     return {"version": version, "entries": entries, "glossary_hash": "h"}
 
 
+def _bracket_state(source_form, preferred, bracket_form, seg_pref=0, seg_bracket=2,
+                   **state_kwargs):
+    """State with pairs and registry for bracket-equivalence evidence tests.
+
+    ``seg_pref`` holds the preferred (unbracketed) form, ``seg_bracket`` holds
+    the bracket form.  Any keyword args are forwarded to ``_state()``.
+    """
+    n = max(seg_pref, seg_bracket) + 1
+    pairs = [{"source": "dummy", "target": "dummy", "initial_target": "dummy"}
+             for _ in range(n)]
+    pairs[seg_pref] = {"source": source_form, "target": preferred,
+                       "initial_target": preferred}
+    pairs[seg_bracket] = {"source": source_form, "target": bracket_form,
+                          "initial_target": bracket_form}
+    registry = [{
+        "source_form": source_form,
+        "preferred_target": preferred,
+        "aliases": [],
+        "accepted_variants": [],
+        "observations": [
+            {"target": preferred, "segment_id": seg_pref},
+            {"target": bracket_form, "segment_id": seg_bracket},
+        ],
+        "occurrences": [seg_pref, seg_bracket],
+    }]
+    return _state(pairs=pairs, registry=registry, **state_kwargs)
+
+
+def _concept_state_simple(source_form, preferred, observed_in_pair=None, decisions=None,
+                          accepted_variants=None, **state_kwargs):
+    """State for concept_decision tests: single-segment entity at index 0."""
+    obs = list(observed_in_pair or [preferred])
+    target = " ".join(obs)
+    pairs = [{"source": source_form, "target": target, "initial_target": target}]
+    registry = [{
+        "source_form": source_form,
+        "preferred_target": preferred,
+        "aliases": [],
+        "accepted_variants": list(accepted_variants or []),
+        "observations": [{"target": t, "segment_id": 0} for t in obs],
+        "occurrences": [0],
+    }]
+    return _state(decisions=decisions, pairs=pairs, registry=registry, **state_kwargs)
+
+
+def _seg_state(source_form, preferred, segment_variants, decisions=None,
+               accepted_variants=None):
+    """State for multi-segment entity tests.
+
+    ``segment_variants`` is a list of ``(segment_index, [variant, ...])``.
+    """
+    max_seg = max(seg for seg, _ in segment_variants)
+    pairs = [{"source": "dummy", "target": "dummy", "initial_target": "dummy"}
+             for _ in range(max_seg + 1)]
+    observations = []
+    occurrences = []
+    for seg, variants in segment_variants:
+        pairs[seg] = {
+            "source": source_form,
+            "target": " ".join(variants),
+            "initial_target": " ".join(variants),
+        }
+        for v in variants:
+            observations.append({"target": v, "segment_id": seg})
+        occurrences.append(seg)
+    registry = [{
+        "source_form": source_form,
+        "preferred_target": preferred,
+        "aliases": [],
+        "accepted_variants": list(accepted_variants or []),
+        "observations": observations,
+        "occurrences": occurrences,
+    }]
+    return _state(decisions=decisions, pairs=pairs, registry=registry)
+
+
 def _store_entry(state, finding, disposition, evidence, actor_type="rule"):
     """Handcraft a stored record, bypassing record()'s write guards."""
     finding_id = ft._finding_id(finding)
@@ -126,20 +202,26 @@ def test_allowlist_vocabulary_is_closed():
     })
 
 
-def test_orthographic_key_folds_only_orthography():
-    for left, right in (("増淵", "增渊"), ("〈奏谳书〉", "奏谳书"),
-                        ("前漢", "前汉"), ("《奏谳书》", "奏谳书")):
-        assert ft.orthographic_key(left) == ft.orthographic_key(right), (left, right)
-    for left, right in (("文帝期", "文帝时期"), ("前汉", "西汉")):
-        assert ft.orthographic_key(left) != ft.orthographic_key(right), (left, right)
+def test_outer_bracket_key_folds_only_brackets():
+    # Positive: forms differ only by matched outer brackets.
+    for left, right in (("〈奏谳书〉", "奏谳书"), ("〔奏谳书〕", "奏谳书"),
+                        ("【汉书】", "汉书"), ("《奏谳书》", "奏谳书")):
+        assert ft.outer_bracket_key(left) == ft.outer_bracket_key(right), (left, right)
+    # Negative: character differences are NOT bracket-only.
+    for left, right in (("増淵", "增渊"), ("河東", "河东"),
+                        ("Polish", "polish"), ("非十二子》篇", "非十二子篇"),
+                        ("文帝期", "文帝时期"), ("前汉", "西汉")):
+        assert ft.outer_bracket_key(left) != ft.outer_bracket_key(right), (left, right)
 
 
 def test_detector_side_is_unchanged():
     # consistency.spelling still does NOT strip 〈〉; the triage fold is separate.
     assert consistency.spelling("〈奏谳书〉") == "〈奏谳书〉"
     assert consistency.spelling("《奏谳书》") == "奏谳书"
-    # The triage fold strips it, so the two layers disagree on purpose.
-    assert ft.orthographic_key("〈奏谳书〉") == ft.orthographic_key("奏谳书")
+    # outer_bracket_key strips matched outer brackets; character differences stay.
+    assert ft.outer_bracket_key("〈奏谳书〉") == ft.outer_bracket_key("奏谳书")
+    # Traditional/simplified char differences are not bracket-only.
+    assert ft.outer_bracket_key("増淵") != ft.outer_bracket_key("増渊")
     # 文帝期 / 文帝时期 are still two distinct spellings on the detector side.
     assert consistency._distinct_variants({"文帝期", "文帝时期"}) == {"文帝期", "文帝时期"}
 
@@ -148,13 +230,15 @@ def test_detector_side_is_unchanged():
 # orthographic_equivalence
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("source,preferred,observed", [
-    ("増淵", "增渊", ["増淵", "增渊"]),
-    ("奏讞書", "奏谳书", ["〈奏谳书〉", "奏谳书"]),
+@pytest.mark.parametrize("source,preferred,bracket_form", [
+    # 〈〉 brackets: consistency.spelling does NOT strip them, so the full bracket
+    # form is preserved as a distinct variant in current_occurrences.
+    ("奏讞書", "奏谳书", "〈奏谳书〉"),
+    ("汉書", "汉书", "〈汉书〉"),
 ])
-def test_orthographic_equivalence_yields_verified_safe(source, preferred, observed):
-    state = _state()
-    finding = _entity("f-ortho", source, preferred, observed)
+def test_orthographic_equivalence_yields_verified_safe(source, preferred, bracket_form):
+    state = _bracket_state(source, preferred, bracket_form)
+    finding = _entity("f-ortho", source, preferred, [bracket_form, preferred])
     result = ft.classify(state, finding)
     assert result["disposition"] == "verified_safe"
     assert result["evidence"][0]["kind"] == "orthographic_equivalence"
@@ -192,7 +276,7 @@ def test_identical_source_and_target_is_not_evidence():
 # --------------------------------------------------------------------------
 
 def test_concept_decision_produces_verified_safe_when_all_observed_match():
-    state = _state(decisions=_card(["前漢"], "前汉"))
+    state = _concept_state_simple("前漢", "前汉", decisions=_card(["前漢"], "前汉"))
     finding = _entity("f-card", "前漢", "前汉", ["前汉"])
     result = ft.classify(state, finding)
     assert result["disposition"] == "verified_safe"
@@ -224,9 +308,13 @@ def test_concept_decision_keep_variants_only_is_not_evidence():
                   evidence=[{"kind": "concept_decision", "ref": "concept-test01"}])
 
 
-def test_concept_decision_allows_accepted_variants_without_occurrences():
-    state = _state(decisions=_card(["汉武帝"], "汉武帝"),
-                   registry=_registry("汉武帝", ["孝武皇帝"]))
+def test_concept_decision_allows_accepted_variants_via_live_rows():
+    # ``孝武皇帝`` is an accepted variant of 汉武帝 and appears in the current text.
+    state = _concept_state_simple(
+        "汉武帝", "汉武帝", observed_in_pair=["汉武帝", "孝武皇帝"],
+        decisions=_card(["汉武帝"], "汉武帝"),
+        accepted_variants=["孝武皇帝"],
+    )
     finding = _entity("f-accepted", "汉武帝", "汉武帝", ["汉武帝", "孝武皇帝"])
     result = ft.classify(state, finding)
     assert result["disposition"] == "verified_safe"
@@ -239,13 +327,10 @@ def test_segment_exception_does_not_cover_another_segment():
     # segment 5, where no exception applies -> a genuine conflict.
     decisions = _card(["汉武帝"], "汉武帝",
                       exceptions=[{"scope": "segment:0", "target": "汉文帝"}])
-    state = _state(decisions=decisions)
-    finding = _entity(
-        "f-seg-a", "汉武帝", "汉武帝", ["汉武帝", "汉文帝"],
-        occurrences=[
-            {"index": 0, "variants": ["汉武帝"]},
-            {"index": 5, "variants": ["汉文帝"]},
-        ])
+    state = _seg_state("汉武帝", "汉武帝",
+                       [(0, ["汉武帝"]), (5, ["汉文帝"])],
+                       decisions=decisions)
+    finding = _entity("f-seg-a", "汉武帝", "汉武帝", ["汉武帝", "汉文帝"])
     assert ft.classify(state, finding)["disposition"] == "human_required"
     with pytest.raises(ValueError):
         ft.record(state, finding, disposition="verified_safe", actor_type="rule",
@@ -256,13 +341,10 @@ def test_segment_exception_covers_only_the_segment_it_is_declared_for():
     # The exception is declared for segment 5, exactly where 汉文帝 appears.
     decisions = _card(["汉武帝"], "汉武帝",
                       exceptions=[{"scope": "segment:5", "target": "汉文帝"}])
-    state = _state(decisions=decisions)
-    finding = _entity(
-        "f-seg-b", "汉武帝", "汉武帝", ["汉武帝", "汉文帝"],
-        occurrences=[
-            {"index": 0, "variants": ["汉武帝"]},
-            {"index": 5, "variants": ["汉文帝"]},
-        ])
+    state = _seg_state("汉武帝", "汉武帝",
+                       [(0, ["汉武帝"]), (5, ["汉文帝"])],
+                       decisions=decisions)
+    finding = _entity("f-seg-b", "汉武帝", "汉武帝", ["汉武帝", "汉文帝"])
     result = ft.classify(state, finding)
     assert result["disposition"] == "verified_safe"
     assert ft.record(state, finding, **result) is not None
@@ -271,7 +353,7 @@ def test_segment_exception_covers_only_the_segment_it_is_declared_for():
 
 def test_changed_preferred_with_the_same_card_id_invalidates_stored_verified_safe():
     decisions = _card(["汉武帝"], "汉武帝")
-    state = _state(decisions=decisions)
+    state = _concept_state_simple("汉武帝", "汉武帝", decisions=decisions)
     finding = _entity("f-change", "汉武帝", "汉武帝", ["汉武帝"])
     ft.record(state, finding, **ft.classify(state, finding))
     assert ft.disposition_of(state, finding) == "verified_safe"
@@ -289,7 +371,7 @@ def test_concept_decision_absent_is_human_required():
 
 
 def test_removing_the_concept_card_makes_a_stored_verified_safe_stale():
-    state = _state(decisions=_card(["前漢"], "前汉"))
+    state = _concept_state_simple("前漢", "前汉", decisions=_card(["前漢"], "前汉"))
     finding = _entity("f-fade", "前漢", "前汉", ["前汉"])
     ft.record(state, finding, **ft.classify(state, finding))
     assert ft.disposition_of(state, finding) == "verified_safe"
@@ -305,8 +387,11 @@ def test_retention_policy_requires_a_frozen_preserve_entry():
     entry = {"id": "g-china", "source": "China", "target": "China",
              "preferred": "China", "behavior": "preserve", "status": "locked"}
     finding = _residue("f-keep", "China")
+    # The pair's target must contain "China" for the retention policy to cover it.
+    china_pair = [{"source": "China is here", "target": "The term China remains.",
+                   "initial_target": "The term China remains."}]
 
-    frozen = _state(frozen=_frozen([entry]))
+    frozen = _state(frozen=_frozen([entry]), pairs=china_pair)
     result = ft.classify(frozen, finding)
     assert result["disposition"] == "verified_safe"
     assert result["evidence"][0]["kind"] == "retention_policy"
@@ -315,19 +400,21 @@ def test_retention_policy_requires_a_frozen_preserve_entry():
     assert ft.disposition_of(frozen, finding) == "verified_safe"
 
     # Same entry, glossary never frozen -> a proposal, not a decision.
-    unfrozen = _state(frozen=None)
+    unfrozen = _state(frozen=None, pairs=china_pair)
     assert ft.classify(unfrozen, finding)["disposition"] == "human_required"
 
     # Frozen but not a preserve entry -> not a retention decision.
     translate_entry = dict(entry, behavior="translate")
-    assert ft.classify(_state(frozen=_frozen([translate_entry])), finding)[
-        "disposition"] == "human_required"
+    assert ft.classify(_state(frozen=_frozen([translate_entry]), pairs=china_pair),
+                       finding)["disposition"] == "human_required"
 
 
 def test_refreeze_bumps_the_retention_ref_and_invalidates_the_record():
     entry = {"id": "g-x", "source": "Foo", "target": "Foo",
              "behavior": "preserve", "status": "locked"}
-    state = _state(frozen=_frozen([entry], version=2))
+    foo_pair = [{"source": "Foo appears here.", "target": "Foo is kept.",
+                 "initial_target": "Foo is kept."}]
+    state = _state(frozen=_frozen([entry], version=2), pairs=foo_pair)
     finding = _residue("f-refreeze", "Foo")
     ft.record(state, finding, **ft.classify(state, finding))
     assert ft.disposition_of(state, finding) == "verified_safe"
@@ -384,8 +471,8 @@ def test_model_actor_cannot_write_elevated_dispositions():
 
 
 def test_model_reported_confidence_is_not_evidence():
-    state = _state()
-    finding = _entity("f-conf", "増淵", "增渊", ["増淵", "增渊"])
+    state = _bracket_state("奏讞書", "奏谳书", "〈奏谳书〉")
+    finding = _entity("f-conf", "奏讞書", "奏谳书", ["〈奏谳书〉", "奏谳书"])
     with pytest.raises(ValueError):
         ft.record(state, finding, disposition="verified_safe", actor_type="rule",
                   evidence=[{"kind": "confidence", "ref": "0.99", "detail": "model says"}])
@@ -400,8 +487,8 @@ def test_model_reported_confidence_is_not_evidence():
 # --------------------------------------------------------------------------
 
 def test_verified_safe_requires_allowlisted_evidence_that_holds():
-    state = _state()
-    finding = _entity("f-ev", "増淵", "增渊", ["増淵", "增渊"])
+    state = _bracket_state("奏謞書", "奏谳书", "〈奏谳书〉")
+    finding = _entity("f-ev", "奏謞書", "奏谳书", ["〈奏谳书〉", "奏谳书"])
     with pytest.raises(ValueError):
         ft.record(state, finding, disposition="verified_safe", actor_type="rule", evidence=[])
     with pytest.raises(ValueError):
@@ -446,8 +533,8 @@ def test_non_producing_kinds_never_justify_verified_safe():
 # --------------------------------------------------------------------------
 
 def test_revoke_returns_verified_safe_to_human_required():
-    state = _state()
-    finding = _entity("f-revoke", "増淵", "增渊", ["増淵", "增渊"])
+    state = _bracket_state("奏謞書", "奏谳书", "〈奏谳书〉")
+    finding = _entity("f-revoke", "奏謞書", "奏谳书", ["〈奏谳书〉", "奏谳书"])
     ft.record(state, finding, **ft.classify(state, finding))
     assert ft.disposition_of(state, finding) == "verified_safe"
     assert ft.revoke(state, "f-revoke", reason="changed my mind",
@@ -467,9 +554,9 @@ def test_triage_never_writes_a_finding_status_or_decision():
 
 
 def test_switch_off_writes_nothing_and_reads_human_required():
-    state = _state()
+    state = _bracket_state("奏謞書", "奏谳书", "〈奏谳书〉")
     state["qa_triage_enabled"] = False
-    finding = _entity("f-off", "増淵", "增渊", ["増淵", "增渊"])
+    finding = _entity("f-off", "奏謞書", "奏谳书", ["〈奏谳书〉", "奏谳书"])
     assert ft.classify(state, finding)["disposition"] == "verified_safe"  # read-only
     assert ft.record(state, finding, **ft.classify(state, finding)) is None
     assert ft.STATE_KEY not in state
