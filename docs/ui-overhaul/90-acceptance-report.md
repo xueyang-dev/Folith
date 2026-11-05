@@ -193,7 +193,8 @@
 | 修复提交到了 `feat/epub-images` | **我的失误**。已在临时 worktree 上把 `07f465d4`、`b38f1a2b` cherry-pick 到 `feat/ui-overhaul`（新哈希 `1003b916`、`fcbed769`），后续修正也提交在该分支。`feat/epub-images` 上的重复提交**未**删除——那需要改写分支，等你决定 |
 | 两份文档被从磁盘删除 | **我的失误**，已从提交历史恢复：`docs/issue-triage-0.8.1.md`（8 820 B）、`docs/ui-overhaul/95-review-prompt.md`（10 738 B），字节数与复审记录一致。后者含旧目录名，已把该路径加入品牌审计的白名单（它本就是审查用的命令示例，不是品牌表述） |
 | 页头按钮限宽 240 后文字被裁 | **真**。改用 `ElideButton`：放不下时省略并保留完整悬停提示，图标不再被挤掉 |
-| `qt_trial_feedback_test` 2 条顺序相关失败 | **真，找到根因**：同进程里若前面有用例调用过 `style.apply_theme`，应用字体是 13px；没调用过则是系统默认 9pt（≈12px）。卡片高度预算当时只算了纸页、没算 F8 新增的文字块，字体一大就顶出首屏。`_card_width()` 的高度预算现在扣掉 `TEXT_GAP + TEXT_BLOCK`；`qt_theme_follow_system_test + qt_trial_feedback_test` 同进程 **78 passed** |
+| `qt_trial_feedback_test` 2 条顺序相关失败 | **真**。根因**不是**我先前判断的"应用字体不同"（复审指出：单独跑时先应用浅色/深色主题都能过，失败与通过时字体都是 13px）。真正的污染源是本分支新增的 `tests/qt_reading_grid_test.py`：它在 import 时就 `os.environ.setdefault("QT_SCALE_FACTOR", "2")`，而 pytest 收集阶段会 import 全部模块，于是**整个进程被放大 2×**，几何类断言（tether 偏 24px、首屏卡片偏 ~15px）随之漂移。已删掉那行（矩形与绘制同源，1× 下该模块 11 条全过）。另：`_card_width()` 仍需要把 F8 的文字块算进高度预算——把卡片还原到 1.34/236 时首屏两条用例真的会红，把文字块从预算里去掉时「setup banner」那条也会红，两处都不是噪声 |
 | 西/法/德/俄/阿单数语法 | 已把「数量 + 复数名词」的措辞改成与数量无关（`Resolver problemas obligatorios ({v0})` 等），5 个语言 4 条键 |
 | 每次启动被新手指南/新变化挡住 | 新增 `FOLITH_SKIP_ONBOARDING=1` 显式跳过（与既有 `FOLITH_QT_NONINTERACTIVE`、offscreen 判断并列） |
-| golden | **仍等你决定**：差异只在 `delivery` 的 `title/detail/tone` 三个字段（复审已核对），重新生成前我不会改快照 |
+| golden | **仍等用户决定**：差异只在 `delivery` 的 `title/detail/tone` 三个字段（复审已核对），重新生成前我不会改快照 |
+| 误带的 9 个 docx 夹具 | 已 `git checkout 93b1de02 -- tests/fixtures/docx_contract` 还原（同尺寸、不同字节，是测试写回的产物） |
