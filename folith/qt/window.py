@@ -1680,7 +1680,10 @@ class MainWindow(QMainWindow):
         self._sync_minimum_size()
         # 布局在下一个事件循环才真正落定：再同步一次，否则窗口最小尺寸会停在
         # 上一页的那一档（实测回首页后仍是 1057，于是缩不回去）。
-        QTimer.singleShot(0, self._sync_minimum_size)
+        # **必须**把 self 传给 singleShot：窗口在定时器到期前被销毁时，Qt 会自己取消，
+        # 否则会调用已析构对象的绑定方法（qt_client_window_test 的
+        # test_destroyed_window_drops_delayed_tips 就是这么崩的）。
+        QTimer.singleShot(0, self, self._sync_minimum_size)
 
     def _sync_minimum_size(self) -> None:
         """让窗口的 minimumSize 与当前布局的 minimumSizeHint 一致。

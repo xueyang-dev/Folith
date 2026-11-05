@@ -168,7 +168,19 @@
 
 | 组 | 结果 |
 | --- | --- |
-| 1（30 文件） | 见下方补跑 |
+| 1（30 文件） | **494 passed / 3 skipped**（修掉下条的定时器归属问题后稳定） |
 | 2（30 文件） | 469 passed，1 failed（**golden，待用户决定**） |
 | 3（30 文件） | 391 passed，1 failed（`test_workbench_stays_at_980px_with_terms_open_and_closed`，**干净 HEAD 上顺序相关同红**） |
 | 4（10 文件） | 129 passed |
+
+
+### 段错误的直接来源（本轮新增，已修）
+
+分组跑时第 1 组在 `qt_client_window_test::test_destroyed_window_drops_delayed_tips`
+崩了两次，栈指针就在这条用例上。原因是我为 F1 加的"布局落定后再同步一次最小尺寸"
+用了 `QTimer.singleShot(0, self._sync_minimum_size)`——窗口在许多用例里**先被销毁**，
+定时器随后到期就去调用已析构对象的绑定方法。改成 `QTimer.singleShot(0, self, slot)`
+（把 self 作为上下文，Qt 在对象销毁时自动取消）之后，该组 **494 passed**，单文件
+**118 passed / 9:19** 也不再崩。
+
+这条只解释本轮引入的那次崩溃；报告前面记录的"长进程偶发段错误"是否同一根因，还要单独复核。
