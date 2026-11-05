@@ -18,7 +18,10 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ.setdefault("QT_SCALE_FACTOR", "2")
+# 不要在这里设 QT_SCALE_FACTOR：pytest 在**收集**阶段就 import 本模块，这个变量会
+# 泄漏给同一进程里的所有用例，把窗口几何整体放大（qt_trial_feedback_test 的 tether
+# 用例因此偏 24px）。高亮矩形与绘制用的都是同一份坐标，DPR 不影响这条断言，实测在
+# 1× 下全部通过。
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
