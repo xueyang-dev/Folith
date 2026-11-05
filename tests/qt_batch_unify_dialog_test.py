@@ -211,6 +211,39 @@ class TestBatchUnifyDialogWidget:
         assert combo is not None and combo.currentText() == "启章"
         dialog.deleteLater()
 
+    def test_applied_row_removed_prevents_second_click(self, qt_app):
+        """mark_applied 移除行后，Apply 按钮禁用，二次点击不会触发假报错。
+
+        模拟 apply 完成后的 mark_applied 调用：
+        - 对话框最初有1行（Emily），应用后调用 mark_applied("Emily")。
+        - 行从树中消失，selected_repairs() 返回空列表。
+        - Apply 按钮被禁用（防止二次点击引发"没有需要修改的段落"错误）。
+        """
+        from folith.qt.batch_unify_dialog import BatchUnifyDialog
+
+        state = self._make_simple_state("Emily", ["艾米丽", "艾米莉"])
+        from folith.entity_registry import EntityRegistry
+        reg = EntityRegistry(state["entity_registry"])
+        entities = reg.consistency_findings(state["pairs"])
+        dialog = BatchUnifyDialog(entities, state)
+
+        # 初始状态：1 行，Apply 按钮启用
+        assert dialog.tree.topLevelItemCount() == 1
+        assert dialog.apply_btn.isEnabled()
+
+        # 模拟 apply 成功后的 mark_applied 调用
+        dialog.mark_applied("Emily")
+        qt_app.processEvents()
+
+        # 行已移除，Apply 按钮禁用（防止二次点击）
+        assert dialog.tree.topLevelItemCount() == 0, \
+            "mark_applied 应从树中移除该行"
+        assert dialog.selected_repairs() == [], \
+            "mark_applied 后 selected_repairs 应为空"
+        assert not dialog.apply_btn.isEnabled(), \
+            "无可应用行时 Apply 按钮应禁用（防止二次点击引发假错误）"
+        dialog.deleteLater()
+
     def test_rtl_layout_for_arabic(self, qt_app, monkeypatch):
         """阿拉伯语界面时对话框应设置从右到左的布局方向。"""
         from folith.qt import i18n as i18n_module
@@ -294,3 +327,51 @@ class TestBatchUnifySignalChain:
         qt_app.processEvents()
         assert panel.batch_unify_button.isHidden(), \
             "只有1条符合条件时 batch_unify_button 不应可见"
+
+    def test_button_visible_via_real_job_e2e(self, client, qt_app):
+        """通过真实任务状态（磁盘 IO + 完整 adapter 管线）验证按钮可见。
+
+        区别于 test_button_visible_when_two_eligible（手写 view dict）：
+        此测试把含实体冲突的状态写入磁盘，再由 adapter.review_queue 从磁盘
+        读出并经 entity_consistency_queue 管线计算视图，最后由 panel.apply 渲染。
+        覆盖了实际 IO 路径和完整实体检测管线，而不仅仅是按钮逻辑。
+
+        限制：与同组其他测试一样，仍为离屏渲染，不是本机 Cocoa/Windows 验收。
+        """
+        from folith.qt import adapter as _adapter
+
+        window = client["window"]
+        core = client["core"]
+        pairs = [
+            {"source": "Emily", "target": "艾米丽", "reviewed": False},
+            {"source": "Emily", "target": "艾米莉", "reviewed": False},
+            {"source": "Ella", "target": "埃拉", "reviewed": False},
+            {"source": "Ella", "target": "艾拉", "reviewed": False},
+        ]
+        entity_conflicts = [
+            {"source": "Emily", "observed_targets": ["艾米丽", "艾米莉"],
+             "preferred_target": "艾米丽"},
+            {"source": "Ella", "observed_targets": ["埃拉", "艾拉"],
+             "preferred_target": "埃拉"},
+        ]
+        # 把含实体冲突的状态写入磁盘
+        state = _entity_state(pairs, entity_conflicts)
+        job_id = "entity-e2e-btn-visible"
+        core.save_job_state(job_id, state)
+
+        # adapter.review_queue 经完整管线（包括 entity_consistency_queue）计算视图
+        view = _adapter.review_queue(job_id)
+        entities_in_view = view.get("entities") or []
+        assert len(entities_in_view) >= 2, (
+            f"review_queue 管线未正确填充 entities，实际 {len(entities_in_view)} 条；"
+            "请检查 findings 中是否有 type='entity_conflict' 条目"
+        )
+
+        # panel.apply 经真实 view 渲染（非手写 dict）
+        panel = window.workbench.review_panel
+        panel.apply(view, busy=False)
+        qt_app.processEvents()
+
+        assert not panel.batch_unify_button.isHidden(), (
+            "batch_unify_button 在有 2 条符合条件的实体（真实任务状态）时应可见"
+        )

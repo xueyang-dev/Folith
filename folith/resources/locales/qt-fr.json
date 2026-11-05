@@ -2490,5 +2490,7 @@
   "正在读取任务数据…": "Chargement des données de la tâche…",
   "无法生成预览：{v0}": "Impossible de générer la prévisualisation : {v0}",
   "没有需要修改的段落。": "Aucun segment ne doit être modifié.",
-  "当前译法": "Traductions actuelles"
+  "当前译法": "Traductions actuelles",
+  "建议人工确认": "Révision manuelle recommandée",
+  "统一所选（{v0} 项，{v1} 段）": "Unifier la sélection ({v0} termes, {v1} segments)"
 }

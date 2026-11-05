@@ -2489,5 +2489,7 @@
   "正在读取任务数据…": "Loading task data…",
   "无法生成预览：{v0}": "Could not generate preview: {v0}",
   "没有需要修改的段落。": "No segments need to be changed.",
-  "当前译法": "Current translations"
+  "当前译法": "Current translations",
+  "建议人工确认": "Manual review recommended",
+  "统一所选（{v0} 项，{v1} 段）": "Unify selected ({v0} terms, {v1} segments)"
 }

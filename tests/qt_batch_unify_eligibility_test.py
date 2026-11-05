@@ -6,8 +6,13 @@
     通过：Emily 艾米丽/艾米莉, Ella 埃拉/艾拉, Tessa 泰莎/苔莎,
            Nadia 纳迪亚/纳迪娅, Xiangyu 向宇/项宇。
 (b) 恰好两种译法，其中一种含繁体/日文字形汉字（可编码为 shift_jis 但不可
-    编码为 gb2312），另一种全简体，且两种译法同长。
+    编码为 gb2312，或在 _FORCED_TRUE 中），另一种全简体，且两种译法同长，
+    **且所有不同位置上的字符在繁体那种里均为非简体字**（加强版：PR #308 修订），
+    且差异为少数（diff*2 ≤ n）。
     默认目标必须是简体那种。
+    剩余限制（无字形转换表时无法解决）：非简体字与无关简体字配对无法排除，
+    例如 賢人（贤人繁体）/圣人（聖人简体），两者互不为对应，仍会通过规则 (b)。
+    展开行的修改预览是最终确认手段。
 
 不应默认勾选（但仍然列出）：中原/中国，汉家故事/汉家旧例，
 新年决心/新年计划，儒教一尊/儒教独尊，驱斥围栏/驱避围栏，
@@ -346,3 +351,68 @@ def test_default_target_prefers_preferred_target():
     item = _item("艾米丽", "艾米莉", source="Emily")
     item["preferred_target"] = "艾米莉"
     assert default_target(item) == "艾米莉"
+
+
+# ===========================================================================
+# 规则 (b) 加强版：所有不同位置在繁体形式中均须为非简体字；少数差异约束
+#
+# 新增测试（PR #308 修订）：
+# - 若非简体字仅在相同位置（非差异处），则不满足加强规则 (b)。
+# - 差异超过一半则不满足少数约束。
+# ===========================================================================
+
+def test_trad_mixed_simplified_diff_unchecked():
+    """非简体字在繁体形式中存在，但差异位置的字符是简体字 → 加强规则 (b) 不满足。
+
+    東山/东上：
+    - 位置 0：東（非简体）vs 东（简体）→ 差异位置字符是非简体 ✓
+    - 位置 1：山（简体，gb2312 可编码）vs 上（简体）→ 差异位置字符是简体 ✗
+    整体：并非所有差异位置均有非简体字 → 不勾选。
+    """
+    checked, reason = should_default_check(_item("東山", "东上"))
+    assert not checked, f"expected unchecked (diff pos 1 is simplified), got {reason!r}"
+    assert "trad_simplified_weak" in reason
+
+
+def test_trad_majority_diff_rule_b_unchecked():
+    """规则 (b)：所有差异位置均为非简体字，但差异超过一半 → 少数约束不满足。
+
+    龍東/龙东：
+    - 两个位置都不同，diff=2，n=2，2*2=4 > 2 → 少数约束失败。
+    - 两个差异位置（龍、東）均为非简体字，满足位置约束，但少数约束不满足。
+    """
+    checked, reason = should_default_check(_item("龍東", "龙东"))
+    assert not checked, f"expected unchecked (majority diff), got {reason!r}"
+    assert "trad_simplified_weak" in reason
+
+
+def test_trad_exactly_half_diff_rule_b_checked():
+    """规则 (b)：差异恰好一半（diff*2 == n），且所有差异位置均为非简体字 → 应勾选。
+
+    龍東者/龙东者：diff=2, n=3, 2*2=4 > 3 → 少数约束失败。
+    啓章/启章：diff=1, n=2, 1*2=2 <= 2 → 应勾选（已有 test_traditional_simplified_checked）。
+    """
+    # diff*2 == n: 2 diff out of 4 chars, all non-simplified at diff positions
+    # 龍東豹虎 (n=4, diff=2): 龍/龙 (diff), 東/东 (diff), 豹/豹 same, 虎/虎 same
+    checked, reason = should_default_check(_item("龍東豹虎", "龙东豹虎"))
+    assert checked, f"expected checked (diff=2/4, all non-simplified at diff), got {reason!r}"
+    assert reason == "trad_simplified"
+
+
+def test_remaining_limit_unrelated_trad_simp_still_passes():
+    """剩余限制：非简体字与无关简体字配对时，仍然通过规则 (b)。
+
+    这是已知的无字形转换表时无法解决的情况：
+    例如 賢人/圣人 — 賢 是贤的繁体（非简体），圣 是聖的简体，两者语义无关。
+    规则 (b) 仍然通过，因为差异位置（位置 0：賢）的字符在繁体形式中是非简体字。
+    修改预览是最终确认手段。
+    """
+    # 賢 (U+8CE2) is traditional for 贤; 圣 is simplified for 聖. Semantically unrelated.
+    checked, reason = should_default_check(_item("賢人", "圣人"))
+    # We expect this to pass (known remaining limit), not to fail
+    assert checked, (
+        f"remaining limit: 賢人/圣人 passes rule (b) because 賢 is non-simplified "
+        f"at diff position; without a conversion table this case cannot be excluded. "
+        f"Got reason={reason!r}"
+    )
+    assert reason == "trad_simplified"

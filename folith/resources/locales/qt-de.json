@@ -2490,5 +2490,7 @@
   "正在读取任务数据…": "Aufgabendaten werden geladen…",
   "无法生成预览：{v0}": "Vorschau konnte nicht erstellt werden: {v0}",
   "没有需要修改的段落。": "Es müssen keine Segmente geändert werden.",
-  "当前译法": "Aktuelle Übersetzungen"
+  "当前译法": "Aktuelle Übersetzungen",
+  "建议人工确认": "Manuelle Prüfung empfohlen",
+  "统一所选（{v0} 项，{v1} 段）": "Auswahl vereinheitlichen ({v0} Einträge, {v1} Segmente)"
 }
