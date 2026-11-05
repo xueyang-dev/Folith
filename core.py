@@ -885,6 +885,7 @@ from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keep
     _globalize_batch_findings,
     _local_name,
     _termbase_df_to_entries,
+    _SHORT_HAN_THRESHOLD,
     check_glossary_compliance,
     check_token_structure,
     extract_auto_terms,
@@ -894,6 +895,11 @@ from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keep
     glossary_to_terms,
     import_tmx,
     is_incomplete_translation,
+    is_no_translation_needed,
+    is_simplified_chinese_target,
+    _qualifies_for_han_check,
+    _non_simplified_chars,
+    _content_len_for_threshold,
     normalize_glossary,
     parse_termbase,
     parse_termbase_csv,
@@ -3017,13 +3023,55 @@ def check_translation_batch(sources, targets, glossary, target_lang,
         if target_lang != "English" and source_has_text \
                 and re.sub(r"\s+", " ", src or "").strip().casefold() \
                 == re.sub(r"\s+", " ", tgt or "").strip().casefold() \
-                and not whole_source_preserved:
-            findings.append(_deterministic_finding(
-                i, "actionable", "translation_completion", "译文仍保留整段源文",
-                "当前译文与原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。",
-                "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。",
-                source_span=src, target_span=tgt,
-                reason="译文与源段完全相同，疑似整段未翻译"))
+                and not whole_source_preserved \
+                and not is_no_translation_needed(src):
+            src_norm = re.sub(r"\s+", " ", src or "").strip()
+            if is_simplified_chinese_target(target_lang) and _qualifies_for_han_check(src_norm):
+                # Han-aware branch: codec-based non-simplified character detection.
+                non_simp = _non_simplified_chars(src_norm)
+                if non_simp:
+                    # Actionable: specific chars that are not in Simplified Chinese.
+                    char_list = "、".join(non_simp)
+                    findings.append(_deterministic_finding(
+                        i, "actionable", "translation_completion",
+                        "源文包含非简体汉字",
+                        f"译文与源文完全相同，但源文含有非简体中文字符「{char_list}」，"
+                        "可能未完成转换。",
+                        "请将上列非简体字符改为对应简体字后重新检查，"
+                        "或确认为项目规定的保留形式。",
+                        source_span=src, target_span=tgt,
+                        reason=f"非简体汉字「{char_list}」未转换",
+                        kind="han_not_simplified"))
+                elif (
+                    _content_len_for_threshold(src_norm) <= _SHORT_HAN_THRESHOLD
+                    and not leader_line
+                ):
+                    # Informational: short, all chars already valid Simplified/shared,
+                    # and NOT a dot-leader line (those are real text that must be
+                    # flagged even when short).
+                    findings.append(_deterministic_finding(
+                        i, "informational", "translation_completion",
+                        "译文仍保留整段源文",
+                        "当前译文与原文完全相同，字符均为简体字形，"
+                        "但该段可能因汉字共用而与源文字面相同；建议人工确认是否属于保留项。",
+                        "若该段是故意保留的姓名、地名或专有词，可忽略；否则请补译。",
+                        source_span=src, target_span=tgt,
+                        reason="同形汉字段（短），降级为信息性提示"))
+                else:
+                    # Long and unchanged — keep original actionable finding.
+                    findings.append(_deterministic_finding(
+                        i, "actionable", "translation_completion", "译文仍保留整段源文",
+                        "当前译文与原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。",
+                        "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。",
+                        source_span=src, target_span=tgt,
+                        reason="译文与源段完全相同，疑似整段未翻译"))
+            else:
+                findings.append(_deterministic_finding(
+                    i, "actionable", "translation_completion", "译文仍保留整段源文",
+                    "当前译文与原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。",
+                    "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。",
+                    source_span=src, target_span=tgt,
+                    reason="译文与源段完全相同，疑似整段未翻译"))
         leaked = {} if whole_source_preserved else _leaked_scripts(src, tgt, target_lang)
         if leaked:
             names = "、".join(f"{script} {count} 个字" for script, count in sorted(leaked.items()))
