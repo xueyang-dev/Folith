@@ -32,76 +32,19 @@ from PySide6.QtWidgets import (
 )
 
 from . import i18n, style as _style
+from folith.engine.glossary_checks import _non_simplified_chars
 
 
 # ---------------------------------------------------------------------------
-# 非简体汉字检测（镜像自 PR #309 glossary_checks._non_simplified_chars）
-#
-# 与 PR #309 保持完全相同的 _FORCED_TRUE / _EXCEPTIONS 集合，以免两者行为
-# 在合并前出现分叉。合并后应由共享函数替代本实现。
+# 非简体汉字检测
 # ---------------------------------------------------------------------------
-
-_FORCED_TRUE: frozenset[str] = frozenset({
-    '後',  # U+5F8C: GB2312 中有但属繁体/日文字形（后的繁体）
-    '浜',  # U+6D5C: GB2312 中有但属日文新字体（濱的日本简化形）
-})
-
-_EXCEPTIONS: frozenset[str] = frozenset({
-    '塚',  # 日文地名/人名组字（一里塚、塚田），无标准简体对应
-    '潟',  # 日文地名（新潟 = Niigata），无简体对应
-    '昇',  # 人名组字；古典文献中亦作升的异体
-    '祐',  # 人名组字（天祐、祐子），常见于专有名词
-    '楯',  # 文学/命名用"盾"的异体；简体人名中使用
-    '祇',  # 佛教术语祇园（Jetavana），简体学术文献常见
-    '畤',  # 古典汉语中祭坛术语（史记中的四畤），仅见于专名
-})
-
-_HAN_RE = frozenset.__or__  # 仅作类型注释用途
-
-
-def _is_sjis_encodable(c: str) -> bool:
-    try:
-        c.encode('shift_jis')
-        return True
-    except (UnicodeEncodeError, LookupError):
-        return False
-
-
-def _is_gb2312_encodable(c: str) -> bool:
-    try:
-        c.encode('gb2312')
-        return True
-    except (UnicodeEncodeError, LookupError):
-        return False
-
 
 def _is_han(c: str) -> bool:
-    """单字符是否为汉字（CJK统一表意文字 + 扩充A区）。"""
-    return '一' <= c <= '鿿' or '㐀' <= c <= '䶿'
-
-
-def _non_simplified_chars(text: str) -> list[str]:
-    """返回 text 中的非简体汉字列表（去重，按出现顺序）。
-
-    判定为非简体的条件（满足其一）：
-    1. 字符在 _FORCED_TRUE 中（GB2312 兼容但属繁体/日文字形）；
-    2. 字符可编码为 shift_jis 但不可编码为 gb2312，且不在 _EXCEPTIONS 中。
-
-    与 PR #309 glossary_checks._non_simplified_chars 完全相同的逻辑。
-    合并后由共享函数替代。
+    """单字符是否为汉字（CJK统一表意文字 + 扩充A区，仅 BMP 范围）。
+    仅用于 _has_han（规则 a 的汉字来源判断）；
+    非简体字检测直接委托给 folith.engine.glossary_checks._non_simplified_chars。
     """
-    seen: set[str] = set()
-    result: list[str] = []
-    for c in str(text or ''):
-        if c in seen or not _is_han(c):
-            continue
-        if c in _FORCED_TRUE:
-            seen.add(c)
-            result.append(c)
-        elif c not in _EXCEPTIONS and _is_sjis_encodable(c) and not _is_gb2312_encodable(c):
-            seen.add(c)
-            result.append(c)
-    return result
+    return '一' <= c <= '鿿' or '㐀' <= c <= '䶿'
 
 
 def _has_non_simplified_han(text: str) -> bool:
