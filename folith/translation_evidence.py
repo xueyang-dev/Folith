@@ -577,7 +577,9 @@ def record_runtime_human_decision(
         "record_type": "human_decision",
         "action": record["decision"],
         "timestamp": record["decided_at"],
-        "review_event_id": event.get("review_event_id"),
+        # 旧式发现项所在段落可能**没有**审校记录（event 为 None）；审计记录里
+        # 如实留空，不要让界面在处置最后一步抛 AttributeError。
+        "review_event_id": (event or {}).get("review_event_id"),
     }
     state.setdefault("human_actions", []).append(audit)
     return state, finding, audit

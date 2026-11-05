@@ -488,13 +488,12 @@ class _TaskCard(QFrame):
     attentionRequested = Signal(str)
     #: 卡片宽度范围（px）：列数 = 可用宽度能放下几张；再宽只会让书面变成海报。
     MIN_WIDTH = 180
-    #: 236 → 200：F8 把文字移到纸下之后整卡变高，980×640 下第一张卡会掉出首屏
-    #: （qt_trial_feedback_test）。收窄一点换回高度，纸页比例仍是 1.20。
+    #: 236 → 200：与 `ASPECT` 一起把卡片高度收回来（980×640 下第一张卡要完整可见）。
     MAX_WIDTH = 200
     #: 书面四周给投影与抬起留的空间。
     PAD = QMargins(8, 8, 8, 12)
     #: 书面的高 / 宽。F8 把文字移到纸页下方之后整卡变高，980×640 下第一张卡会掉出
-    #: 首屏（qt_trial_feedback_test）；比例收到 1.20 把高度还回去，纸页仍是"一页"。
+    #: 首屏（qt_trial_feedback_test）；比例收到 1.14、上限 200 把高度还回去。
     ASPECT = 1.14
     LIFT = 6
 
@@ -3580,8 +3579,7 @@ class WorkbenchView(QWidget):
         delivery_layout.setSpacing(theme_module.SPACE["md"])
         # F11：走完一本书，交付页不该只是一张表单。冻结之后，成品回到画面里——
         # 左边是这本书的封面，右边是版本与文件名，与下面的文件清单并列。
-        self.delivery_cover = components.DocThumb()
-        self.delivery_cover.setFixedWidth(64)
+        self.delivery_cover = components.DocThumb(width=88, height=116)
         self.delivery_cover.setVisible(False)
         self.delivery_product = QLabel("")
         self.delivery_product.setObjectName("cardTitle")
@@ -3598,8 +3596,11 @@ class WorkbenchView(QWidget):
         product_row = QHBoxLayout(self.delivery_product_row)
         product_row.setContentsMargins(0, 0, 0, 0)
         product_row.setSpacing(theme_module.SPACE["md"])
-        product_row.addWidget(self.delivery_cover, 0, Qt.AlignmentFlag.AlignTop)
-        product_row.addLayout(product_column, 1)
+        # 成品居中：封面 + 版本/文件名成一组，两侧留白把它放到画面中间（F11）。
+        product_row.addStretch(1)
+        product_row.addWidget(self.delivery_cover, 0, Qt.AlignmentFlag.AlignVCenter)
+        product_row.addLayout(product_column)
+        product_row.addStretch(1)
         self.delivery_product_row.setVisible(False)
         delivery_layout.addWidget(self.delivery_product_row)
         delivery_layout.addWidget(self.delivery_label)
@@ -6282,6 +6283,7 @@ class WorkbenchView(QWidget):
             if getattr(self, "_delivery_cover_name", None) != filename:
                 self._delivery_cover_name = filename
                 self.delivery_cover.set_document(filename, len(self._state.get("pairs") or []))
+                self._request_delivery_cover(filename)
             version = (snapshot.get("latest") or {}).get("snapshot_version")
             self.delivery_product.setText(
                 i18n.tr('已冻结交付 v{v0}', v0=version) if version is not None
@@ -6309,6 +6311,24 @@ class WorkbenchView(QWidget):
         offer = bool(snapshot.get("current") or preview.get("can_deliver"))
         self._fill_supplements(adapter.supplementable_outputs(self.job_id, self._state)
                                if offer and self.job_id else [])
+
+    def _request_delivery_cover(self, filename: str) -> None:
+        """交付页的成品封面：用文档真实的第一页（与首页卡片同一个预览缓存）。"""
+        from . import thumbnails
+
+        loader = thumbnails.loader()
+        if not getattr(self, "_delivery_preview_connected", False):
+            loader.ready.connect(self._delivery_cover_ready)
+            self._delivery_preview_connected = True
+        image = loader.request(self.job_id, adapter.source_path(self.job_id), filename)
+        if image is not None and not image.isNull():
+            self.delivery_cover.set_image(image)
+
+    def _delivery_cover_ready(self, job_id: str) -> None:
+        if job_id != self.job_id or self.delivery_cover.isHidden():
+            return
+        filename = str(self._state.get("filename") or "")
+        self._request_delivery_cover(filename)
 
     def _go_fix_blocking(self) -> None:
         """F3：从门禁页一步跳到第一处必须处理的段落（并留在审校/翻译页上处理）。"""

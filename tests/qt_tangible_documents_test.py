@@ -127,7 +127,9 @@ def test_task_tile_is_the_cover_itself(app):
     card.set_tile_width(220)
     cover = card.paper.geometry()
     assert abs(cover.height() / cover.width() - views._TaskCard.ASPECT) < 0.02
-    assert card.overlay.geometry() == cover, "the text floats on the cover"
+    # F8：文字从封面上移到纸页下方，封面保持干净。
+    assert not hasattr(card, "overlay"), "文字不再浮在封面上"
+    assert card.text_panel.geometry().top() >= cover.bottom(), "文字排在纸页下方"
     assert card.title.text() == "Survey.pdf" and "700 段" in card.meta.text()
     assert cover.contains(card.attention.geometry().center()), "problems badge sits on the glass"
     resting = card.paper.y()
