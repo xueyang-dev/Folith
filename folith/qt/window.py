@@ -282,9 +282,10 @@ class MainWindow(QMainWindow):
         shell_layout.addWidget(self.sheet, 1)
         self.setCentralWidget(shell)
         self._shell_layout = shell_layout
-        # 页面栈的最小宽度取所有页的最大值：打开过一次宽任务，首页就再也缩不回去
-        # （实测 zh 934 → 1289，俄语 1418）。`QWidgetItem` 对 `Ignored` 策略的页面
-        # 不计算最小尺寸，所以只让**当前页**参与窗口下限（F1）。
+        # 页面栈的最小宽度取所有页的最大值：打开过一次宽任务，回首页也缩不回去
+        # （实测 en 1410 / ru 1441，合同要求 ≤1280）。`QWidgetItem` 对 `Ignored`
+        # 策略的页面不算最小尺寸，所以只让**当前页**参与窗口下限（F1，第三轮复审）。
+        self.stack.currentChanged.connect(self._sync_page_policies)
         self._extend_shell_under_title_bar()
         # 顶部那条外壳（标题栏 + 页面上方的间隙）任意位置都能拖动窗口。
         self._shell_drag = components.WindowDragArea(
@@ -1656,6 +1657,31 @@ class MainWindow(QMainWindow):
             return
         self.show_home()
 
+    def _sync_page_policies(self, *_args) -> None:
+        """只让当前页参与窗口最小尺寸，其余页面在切回来时要回自己的下限。"""
+        from PySide6.QtWidgets import QSizePolicy
+
+        current = self.stack.currentWidget()
+        for page in (self.home, self.workbench, self.projects):
+            if page is None:
+                continue
+            policy = page.sizePolicy()
+            horizontal = (QSizePolicy.Policy.Preferred if page is current
+                          else QSizePolicy.Policy.Ignored)
+            vertical = (QSizePolicy.Policy.Preferred if page is current
+                        else QSizePolicy.Policy.Ignored)
+            if (policy.horizontalPolicy(), policy.verticalPolicy()) != (horizontal, vertical):
+                page.setSizePolicy(horizontal, vertical)
+        layout = self.stack.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        self.stack.updateGeometry()
+        self._sync_minimum_size()
+        # 布局在下一个事件循环才真正落定：再同步一次，否则窗口最小尺寸会停在
+        # 上一页的那一档（实测回首页后仍是 1057，于是缩不回去）。
+        QTimer.singleShot(0, self._sync_minimum_size)
+
     def _sync_minimum_size(self) -> None:
         """让窗口的 minimumSize 与当前布局的 minimumSizeHint 一致。
 
@@ -1667,9 +1693,13 @@ class MainWindow(QMainWindow):
             return
         # `minimumSizeHint()` 有时比布局的真实下限小（QMainWindow 不算中央部件里
         # 分数宽度向上取整的那一位），所以两个都问，取较大者。
+        central = self.centralWidget()
+        if central is not None and central.layout() is not None:
+            central.layout().activate()
         hint = self.minimumSizeHint()
         layout = self.layout()
         if layout is not None:
+            layout.activate()
             hint = hint.expandedTo(layout.minimumSize())
         if not hint.isValid():
             return

@@ -296,3 +296,45 @@ def test_a_legacy_blocking_finding_can_actually_be_resolved(synthetic_job):
     assert resolved.get("resolved") is True, resolved
     assert workbench_view.delivery.unresolved_blocking(live) == [], \
         "处置之后交付门禁仍然挂着这条阻断项"
+
+
+def test_a_legacy_finding_on_a_segment_without_any_review_can_be_resolved(tmp_path):
+    """所在段落**完全没有审校记录**时也要能处置（第三轮复审回归）。
+
+    旧式发现项常见于"审校记录被删掉"的旧任务：`current_review_event()` 返回 None。
+    处置最后写审计记录时若直接 `event.get(...)` 就会抛 AttributeError，而
+    adapter / window 都不捕获它——用户只会看到按钮没反应。
+    """
+    import os
+
+    from folith.qt import bootstrap
+
+    data_dir = tmp_path / "data"
+    bootstrap.prepare_environment(data_dir=data_dir, log_dir=tmp_path / "logs")
+    from folith.qt import adapter
+
+    core = adapter.core
+    state = core.new_job_state("no-review.docx")
+    state.update({
+        "p1_done": True, "p2_done": True,
+        "paras": ["a"], "source_paras": ["a"],
+        "pairs": [{"source": "a", "target": "A", "segment_id": "seg-0",
+                   "segment_uid": "seg-0", "reviewed": True}],
+        "findings": [{
+            "type": "review", "category": "terminology", "severity": "blocking",
+            "status": "open", "segment_index": 0, "segment_id": 0,
+            "summary": "旧阻断项", "input_fingerprint": "fp-nr",
+            "finding_id": "legacy-nr", "resolved": False,
+        }],
+        "review_evidence": [],          # 没有任何审校记录
+        "delivery_config": core.default_delivery_config(),
+    })
+    core.save_job_state("no-review.docx", state)
+
+    result = adapter.resolve_findings("no-review.docx", ["legacy-nr"],
+                                      adapter.RESOLVE_CONFIRMED, note="无审校记录")
+    assert isinstance(result, dict), result
+    live = dict(adapter.load_state("no-review.docx"))
+    resolved = next(item for item in live["findings"]
+                    if str(item.get("finding_id")) == "legacy-nr")
+    assert resolved.get("resolved") is True, resolved

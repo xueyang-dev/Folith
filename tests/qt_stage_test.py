@@ -175,7 +175,7 @@ def test_blocking_findings_still_count_when_independent_review_is_off():
 
 
 @pytest.mark.parametrize(("label", "expected"), [
-    ("继续处理 4 个必须处理的问题", "Resolve 4 required issues"),
+    ("继续处理 4 个必须处理的问题", "Resolve required issues (4)"),
     ("检查 2 个建议", "Check 2 suggestions"),
 ])
 def test_review_finding_action_is_localized(label, expected):
