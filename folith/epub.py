@@ -5,8 +5,11 @@ structure edits; image positions are paragraph boundaries, not target offsets.
 """
 from __future__ import annotations
 
+import base64
 import collections
+import hashlib
 import io
+import posixpath
 import re
 import zipfile
 from copy import deepcopy
@@ -14,8 +17,10 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, unquote_to_bytes, urlsplit
 
 import fitz
+from defusedxml import ElementTree as SafeElementTree
 from docx import Document
 from docx.oxml.ns import qn
 
@@ -224,6 +229,257 @@ def _docx_source(source: bytes):
     cover = None
     if nodes and nodes[0]["kind"] == "image":
         cover = nodes.pop(0)["name"]
+    return paragraphs, nodes, media, warnings, cover
+
+
+_IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "png", "image/png"),
+    (b"\xff\xd8", "jpg", "image/jpeg"),
+    (b"GIF87a", "gif", "image/gif"),
+    (b"GIF89a", "gif", "image/gif"),
+    (b"BM", "bmp", "image/bmp"),
+    (b"II*\x00", "tiff", "image/tiff"),
+    (b"MM\x00*", "tiff", "image/tiff"),
+)
+
+_SKIP_IMAGE_LABELS = {
+    "missing": "资源缺失",
+    "encrypted": "资源已加密",
+    "external": "外链图片（未联网下载）",
+    "unreadable": "资源无法读取",
+    "unsupported": "图片格式无法识别",
+    "vector_svg": "无内嵌位图的矢量 SVG",
+}
+
+
+def _image_type(data: bytes):
+    """Return ``(extension, media type)`` from the actual bytes, not the manifest."""
+    if not data:
+        return None
+    for signature, extension, mime in _IMAGE_SIGNATURES:
+        if data.startswith(signature):
+            return extension, mime
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    head = data[:2048].lstrip().lower()
+    if b"<svg" in head:
+        return "svg", "image/svg+xml"
+    return None
+
+
+def _register_media(media: dict, seen: dict, data: bytes, extension: str, mime: str) -> str:
+    """One package file per distinct image; repeated references reuse the name."""
+    digest = hashlib.sha256(data).hexdigest()
+    name = seen.get(digest)
+    if name is None:
+        name = f"images/image-{len(media) + 1:04d}.{extension}"
+        media[name] = (data, mime)
+        seen[digest] = name
+    return name
+
+
+def _svg_attributes_href(element) -> str:
+    for key in ("href", "{http://www.w3.org/1999/xlink}href"):
+        value = element.get(key)
+        if value:
+            return str(value)
+    for key, value in element.attrib.items():
+        if str(key).lower().endswith("href") and value:
+            return str(value)
+    return ""
+
+
+def _svg_image_hrefs(data: bytes) -> list[str]:
+    try:
+        root = SafeElementTree.fromstring(data)
+    except Exception:  # noqa: BLE001 - a malformed SVG is reported as broken
+        return []
+    return [_svg_attributes_href(node) for node in root.iter()
+            if str(node.tag).split("}")[-1].split(":")[-1].lower() == "image"]
+
+
+def _zip_target(base_path: str, href) -> str | None:
+    """Resolve a relative image href to a ZIP entry name (POSIX semantics only)."""
+    text = str(href or "").strip()
+    if not text:
+        return None
+    parts = urlsplit(text)
+    if parts.scheme or text.startswith("//"):
+        return None
+    path = unquote(parts.path or "")
+    if not path:
+        return None
+    return posixpath.normpath(posixpath.join(posixpath.dirname(base_path), path))
+
+
+def _svg_embedded_image(book, svg_path: str, data: bytes, encrypted, paths: set):
+    """Unwrap an SVG that only wraps a bitmap (the sample cover does this)."""
+    for href in _svg_image_hrefs(data):
+        target = _zip_target(svg_path, href)
+        if not target or target in encrypted or target not in book.namelist():
+            continue
+        try:
+            inner = book.read(target)
+        except Exception:  # noqa: BLE001 - one unreadable wrapper must not block delivery
+            continue
+        kind = _image_type(inner)
+        if kind is not None and kind[0] != "svg":
+            paths.add(target)
+            return inner, kind
+    return None
+
+
+def _epub_cover(book, package_path: str, package, manifest: dict, encrypted,
+                media: dict, seen: dict, warnings: list[str]):
+    """Find the declared cover (EPUB 3 property or EPUB 2 meta) and load it."""
+    item = next((value for value in manifest.values()
+                 if "cover-image" in (value.get("properties") or "").split()), None)
+    if item is None:
+        meta = package.find("./{*}metadata/{*}meta[@name='cover']")
+        if meta is not None:
+            item = manifest.get(str(meta.get("content") or "").strip())
+    if item is None or not item.get("href"):
+        return None, frozenset()
+    from .text_import import epub_item_path
+
+    path = epub_item_path(package_path, item.get("href"))
+    if path in encrypted:
+        warnings.append("EPUB 封面图片已加密，未纳入译文。")
+        return None, frozenset()
+    if path not in book.namelist():
+        warnings.append("EPUB 封面图片缺失，未纳入译文。")
+        return None, frozenset()
+    try:
+        data = book.read(path)
+    except Exception:  # noqa: BLE001 - the cover is optional, never block delivery
+        warnings.append("EPUB 封面图片无法读取，未纳入译文。")
+        return None, frozenset()
+    paths = {path}
+    kind = _image_type(data)
+    if kind is not None and kind[0] == "svg":
+        embedded = _svg_embedded_image(book, path, data, encrypted, paths)
+        if embedded is None:
+            warnings.append("EPUB 封面是无内嵌位图的矢量 SVG，未纳入译文。")
+            return None, frozenset()
+        data, kind = embedded
+    if kind is None:
+        warnings.append("EPUB 封面图片格式无法识别，未纳入译文。")
+        return None, frozenset()
+    return _register_media(media, seen, data, *kind), frozenset(paths)
+
+
+def _decode_data_uri(uri: str) -> bytes | None:
+    try:
+        header, payload = uri.split(",", 1)
+    except ValueError:
+        return None
+    try:
+        if ";base64" in header.lower():
+            return base64.b64decode(payload, validate=False)
+        return unquote_to_bytes(payload)
+    except Exception:  # noqa: BLE001 - a broken data URI is skipped with a warning
+        return None
+
+
+def _epub_source(source: bytes, *, stats: dict | None = None):
+    """Read source order, paragraph breaks and images from an EPUB payload.
+
+    Returns the same five-tuple as :func:`_docx_source`.  Image positions are
+    source paragraph boundaries (independent blocks sit between paragraphs,
+    inline images follow their complete paragraph), never offsets inside a
+    translated paragraph.  Every reference is kept even when the package stores
+    one file; the cover is returned separately and is not repeated in the body.
+    """
+    from .text_import import _html_paragraphs, epub_spine_entries, open_epub
+
+    if stats is None:
+        stats = {}
+    stats.setdefault("reference_count", 0)
+    stats.setdefault("cover_reference_count", 0)
+    skipped = stats.setdefault("skipped_reasons", {})
+    paragraphs: list[str] = []
+    media: dict[str, tuple[bytes, str]] = {}
+    positions: dict[int, list[str]] = collections.defaultdict(list)
+    warnings: list[str] = []
+    seen: dict[str, str] = {}
+
+    def skip(reason: str) -> None:
+        skipped[reason] = int(skipped.get(reason, 0)) + 1
+
+    with open_epub(source) as (book, package_path, package, manifest, spine, encrypted):
+        cover, cover_paths = _epub_cover(
+            book, package_path, package, manifest, encrypted, media, seen, warnings)
+        for _item, path, content in epub_spine_entries(
+                book, package_path, manifest, spine, encrypted):
+            if content is None:
+                continue
+            images: list[dict] = []
+            chapter, _omitted = _html_paragraphs(content, images=images)
+            offset = len(paragraphs)
+            paragraphs.extend(chapter)
+            for record in images:
+                stats["reference_count"] += 1
+                if record.get("tag") == "vector-svg":
+                    skip("vector_svg")
+                    continue
+                href = str(record.get("href") or "").strip()
+                if href.lower().startswith("data:"):
+                    data = _decode_data_uri(href)
+                    kind = _image_type(data or b"")
+                    if kind is None:
+                        skip("unsupported")
+                        continue
+                    name = _register_media(media, seen, data, *kind)
+                    positions[offset + int(record["at"])].append(name)
+                    continue
+                target = _zip_target(path, href)
+                if target is None:
+                    skip("external" if href else "missing")
+                    continue
+                if cover and target in cover_paths:
+                    stats["cover_reference_count"] += 1
+                    continue
+                if target in encrypted:
+                    skip("encrypted")
+                    continue
+                if target not in book.namelist():
+                    skip("missing")
+                    continue
+                try:
+                    data = book.read(target)
+                except Exception:  # noqa: BLE001 - one bad package entry must not block delivery
+                    skip("unreadable")
+                    continue
+                kind = _image_type(data)
+                if kind is None:
+                    skip("unsupported")
+                    continue
+                if kind[0] == "svg":
+                    embedded = _svg_embedded_image(book, target, data, encrypted, set())
+                    if embedded is None:
+                        skip("vector_svg")
+                        continue
+                    data, kind = embedded
+                name = _register_media(media, seen, data, *kind)
+                positions[offset + int(record["at"])].append(name)
+
+    warnings.append("EPUB 译文按阅读顺序重建，不保留源书排版。")
+    if media:
+        warnings.append("EPUB 图片按原阅读顺序保留；图片内部文字保持原样。")
+    skipped_count = sum(int(count) for count in skipped.values())
+    if skipped_count:
+        details = "、".join(
+            f"{_SKIP_IMAGE_LABELS.get(reason, reason)} {count} 处"
+            for reason, count in skipped.items())
+        warnings.append(f"EPUB 有 {skipped_count} 处图片未纳入译文：{details}。")
+    nodes: list[dict] = []
+    for index in range(len(paragraphs) + 1):
+        for name in positions.get(index, ()):
+            nodes.append({"kind": "image", "name": name})
+        if index < len(paragraphs):
+            nodes.append({"kind": "text", "ref": index, "role": "body"})
+    stats["body_image_reference_count"] = sum(len(names) for names in positions.values())
+    stats["skipped_image_count"] = skipped_count
     return paragraphs, nodes, media, warnings, cover
 
 
@@ -475,6 +731,7 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
     if validation["blocking"]:
         raise EpubExportError("EPUB 译文未通过正文格式检查。")
     filename = state.get("filename") or ""
+    stats: dict = {}
     try:
         if filename.lower().endswith(".docx"):
             paragraphs, nodes, media, warnings, cover = _docx_source(source)
@@ -483,14 +740,17 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
                 paragraphs, nodes, media, warnings, cover = _visual_pdf_source(state, source)
             else:
                 paragraphs, nodes, media, warnings, cover = _pdf_source(source)
-        elif filename.lower().endswith((".epub", ".txt", ".md", ".markdown")):
+        elif filename.lower().endswith(".epub"):
+            paragraphs, nodes, media, warnings, cover = _epub_source(source, stats=stats)
+        elif filename.lower().endswith((".txt", ".md", ".markdown")):
             from .text_import import extract_text_source
             paragraphs, omitted, _facts = extract_text_source(filename, source)
             paragraphs = [_text(text) for text in paragraphs]
             nodes = [{"kind": "text", "ref": index, "role": "body"}
                      for index in range(len(paragraphs))]
             media, cover = {}, None
-            warnings = ["此来源导出为重建的纯文字 EPUB；不保留源书排版、图片或音视频。"]
+            warnings = ["TXT / Markdown 来源导出为重建的纯文字 EPUB；"
+                        "不保留源书排版，Markdown 图片与音视频未纳入译文。"]
             warnings.extend(f'{item["label"]}（{item["count"]}）未纳入译文。' for item in omitted)
         else:
             raise EpubExportError("EPUB 导出不支持此来源格式。")
@@ -559,15 +819,24 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
     warnings = list(dict.fromkeys(warnings))
     if caption_count:
         warnings.append(f"{caption_count} 条 PDF 图注保留原文；图片内部文字保持原样。")
-    elif media:
+    elif media and not filename.lower().endswith(".epub"):
         warnings.append("图片内部文字保持原样。")
     missing = sum(bool(str(pair.get("source") or "").strip()) and not str(pair.get("target") or "").strip() for pair in pairs)
     if missing:
         warnings.append(f"{missing} 个翻译单元尚无译文，正文中留空。")
+    body_image_count = sum(node["kind"] == "image" for node in nodes)
+    source_image_count = int(stats.get("reference_count") or 0) or len(media)
     report = {"format": "EPUB 3", "layout": "reflowable", "source_filename": filename,
-              "image_count": len(media), "has_cover": bool(cover), "original_caption_count": caption_count,
+              "image_count": len(media), "image_reference_count": body_image_count,
+              "source_image_reference_count": source_image_count,
+              "cover_reference_count": int(stats.get("cover_reference_count") or 0),
+              "skipped_image_count": int(stats.get("skipped_image_count") or 0),
+              "skipped_image_reasons": {str(key): int(value)
+                                        for key, value in (stats.get("skipped_reasons") or {}).items()},
+              "has_cover": bool(cover), "original_caption_count": caption_count,
               "chapter_count": len(chapters), "linked_toc_count": len(group_links), "missing_translation_count": missing,
-              "placement": "图片位于对应完整段落之后；跨图片合并的译文整体位于图片之前。",
+              "placement": "图片位于原文段落边界（独立图片块在前后段落之间，段内图片在该完整段落之后）；"
+                           "跨图片合并的译文整体位于图片之前。",
               "language": language, "direction": direction,
               "warnings": warnings}
     identifier = "urn:folith:" + (job_id or "translation")

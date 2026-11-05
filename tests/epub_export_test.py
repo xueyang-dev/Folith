@@ -1,8 +1,10 @@
 """Source-to-delivery EPUB regressions with actual PDF/DOCX image fixtures."""
 import io
 import json
+import re
 from copy import deepcopy
 from pathlib import PurePosixPath
+from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_STORED, ZipFile
 
@@ -12,7 +14,10 @@ from docx import Document
 from docx.shared import Inches
 
 import core
-from folith.epub import SOURCE_REFS, EpubExportError, bind_source_references, build_translation_epub
+from folith.engine.document_export import build_translation_docx
+from folith.epub import (
+    SOURCE_REFS, EpubExportError, _epub_source, bind_source_references, build_translation_epub,
+)
 
 XHTML = {"h": "http://www.w3.org/1999/xhtml"}
 OPF = {"o": "http://www.idpf.org/2007/opf"}
@@ -51,6 +56,110 @@ def pdf_source():
         page.insert_image(fitz.Rect(70, 150, 430, 330), stream=illustration())
         page.insert_text((80, 350), "Figure 1. A blue illustration.", fontsize=9)
         return doc.tobytes()
+
+
+_EPUB_XHTML = ('<?xml version="1.0" encoding="UTF-8"?>'
+               '<html xmlns="http://www.w3.org/1999/xhtml" '
+               'xmlns:xlink="http://www.w3.org/1999/xlink">'
+               '<head><title>Chapter</title></head><body>{}</body></html>')
+
+_IMAGE_MEDIA_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                      "gif": "image/gif", "webp": "image/webp",
+                      "svg": "image/svg+xml", "bmp": "image/bmp"}
+
+
+def jpeg_image(rgb=(0.75, 0.2, 0.2)):
+    with fitz.open() as document:
+        page = document.new_page(width=48, height=36)
+        page.draw_rect(page.rect, color=rgb, fill=rgb)
+        return page.get_pixmap(alpha=False).tobytes("jpg")
+
+
+def colored_png(rgb):
+    with fitz.open() as document:
+        page = document.new_page(width=32, height=24)
+        page.draw_rect(page.rect, color=rgb, fill=rgb)
+        return page.get_pixmap(alpha=False).tobytes("png")
+
+
+def webp_image(rgb=(0.2, 0.7, 0.3)):
+    from PIL import Image
+
+    stream = io.BytesIO()
+    Image.new("RGB", (12, 9), tuple(round(value * 255) for value in rgb)).save(stream, "WEBP")
+    return stream.getvalue()
+
+
+def synthetic_epub(chapters, images=None, *, cover=None, cover_meta=False,
+                   cover_property=True, encryption=()):
+    """Build a synthetic EPUB in memory; no sample book is committed.
+
+    ``chapters`` items are dicts with ``href``/``body`` plus optional ``zip_name``,
+    ``linear`` and ``media_type``.  ``images`` maps package-relative ZIP names to
+    bytes; their manifest href is percent-encoded.  ``cover`` selects one of
+    those names for the cover declaration.
+    """
+    from urllib.parse import quote
+
+    images = dict(images or {})
+    files = {}
+    manifest = []
+    spine = []
+    for index, chapter in enumerate(chapters):
+        href = chapter["href"]
+        zip_name = chapter.get("zip_name") or unquote(href)
+        media_type = chapter.get("media_type", "application/xhtml+xml")
+        content = (_EPUB_XHTML.format(chapter["body"])
+                   if media_type == "application/xhtml+xml" else chapter["body"])
+        files[zip_name] = content.encode("utf-8")
+        manifest.append(f'<item id="text-{index}" href="{quote(href, safe="/")}" '
+                        f'media-type="{media_type}"/>')
+        linear = ' linear="no"' if chapter.get("linear") == "no" else ""
+        spine.append(f'<itemref idref="text-{index}"{linear}/>')
+    image_ids = {}
+    for index, (name, data) in enumerate(images.items()):
+        item_id = f"image-{index}"
+        image_ids[name] = item_id
+        extension = name.rsplit(".", 1)[-1].lower()
+        media_type = _IMAGE_MEDIA_TYPES.get(extension, "application/octet-stream")
+        properties = ' properties="cover-image"' if cover == name and cover_property else ""
+        manifest.append(f'<item id="{item_id}" href="{quote(name)}" '
+                        f'media-type="{media_type}"{properties}/>')
+        files[name] = data
+    cover_meta_xml = ""
+    if cover and cover_meta:
+        cover_meta_xml = f'<meta name="cover" content="{image_ids[cover]}"/>'
+    encryption_xml = ""
+    if encryption:
+        refs = "".join(
+            '<EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData>'
+            f'<CipherReference URI="OEBPS/{quote(name)}"/></CipherData></EncryptedData>'
+            for name in encryption)
+        encryption_xml = ('<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                          + refs + '</encryption>')
+    package = ('<?xml version="1.0"?>'
+               '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+               f'<metadata>{cover_meta_xml}</metadata>'
+               f'<manifest>{"".join(manifest)}</manifest>'
+               f'<spine>{"".join(spine)}</spine></package>')
+    stream = io.BytesIO()
+    with ZipFile(stream, "w") as book:
+        book.writestr("mimetype", "application/epub+zip")
+        book.writestr(
+            "META-INF/container.xml",
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<rootfiles><rootfile full-path="OEBPS/book.opf" '
+            'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        if encryption_xml:
+            book.writestr("META-INF/encryption.xml", encryption_xml)
+        book.writestr("OEBPS/book.opf", package)
+        for name, content in files.items():
+            book.writestr("OEBPS/" + name, content)
+    return stream.getvalue()
+
+
+def image_sources(book):
+    return [match.group(1) for match in re.finditer(r'<img src="([^"]+)"', book)]
 
 
 def translated_state(filename, source):
@@ -437,3 +546,376 @@ def test_contents_entries_link_to_source_matched_chapter_anchors():
         assert "Unmatched title" in "".join(root.itertext())
         package = ET.fromstring(archive.read("EPUB/content.opf"))
         assert not any(item.get("properties") == "cover-image" for item in package.findall("o:manifest/o:item", OPF))
+
+
+# ---------------------------------------------------------------------------
+# EPUB source: images keep their source paragraph boundary
+# ---------------------------------------------------------------------------
+
+def test_epub_images_restored_at_source_paragraph_boundaries():
+    photo = illustration()
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>First paragraph.</p><div><img src="../images/pic.png"/></div>'
+                  '<p>Figure 1.1: A caption.</p><p>Last paragraph.</p>'}],
+        {"images/pic.png": photo})
+    state = translated_state("book.epub", source)
+    before = deepcopy(state)
+    data, report = build_translation_epub(state, source, job_id="epub-images")
+    validate_package(data)
+    assert state == before
+    assert report["image_count"] == report["image_reference_count"] == 1
+    assert report["source_image_reference_count"] == 1
+    assert report["skipped_image_count"] == 0
+    book = content(data)
+    first = next(pair["target"] for pair in state["pairs"] if "First paragraph" in pair["source"])
+    caption = next(pair["target"] for pair in state["pairs"] if "Figure 1.1" in pair["source"])
+    last = next(pair["target"] for pair in state["pairs"] if "Last paragraph" in pair["source"])
+    assert book.index(first) < book.index("<img ") < book.index(caption) < book.index(last)
+    assert book.count("<img ") == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("EPUB/images/")]
+        assert len(media) == 1
+        assert archive.read(media[0]) == photo
+
+
+def test_epub_inline_image_follows_complete_paragraph_and_keeps_tail_text():
+    photo = illustration()
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>Before <img src="../images/pic.png"/> after tail.</p>'
+                  '<p>Next paragraph.</p>'}],
+        {"images/pic.png": photo})
+    paragraphs, _warnings, _report = core.extract_document_paragraphs_with_report(
+        "book.epub", source)
+    assert paragraphs == ["Before after tail.", "Next paragraph."]
+    state = translated_state("book.epub", source)
+    data, _ = build_translation_epub(state, source)
+    book = content(data)
+    assert book.count("<img ") == 1
+    before = next(pair["target"] for pair in state["pairs"] if "Before" in pair["source"])
+    nxt = next(pair["target"] for pair in state["pairs"] if "Next paragraph" in pair["source"])
+    assert "after tail." in before
+    assert book.index(before) < book.index("<img ") < book.index(nxt)
+
+
+def test_epub_chapter_boundaries_and_image_only_chapter_keep_reading_order():
+    side_a = colored_png((1, 0, 0))
+    side_b = colored_png((0, 1, 0))
+    side_c = colored_png((0, 0, 1))
+    source = synthetic_epub(
+        [{"href": "text/c1.xhtml",
+          "body": '<p><img src="../images/a.png"/></p><p>Chapter one text.</p>'},
+         {"href": "text/c2.xhtml", "body": '<div><img src="../images/b.png"/></div>'},
+         {"href": "text/c3.xhtml",
+          "body": '<p>Chapter three text.</p><p><img src="../images/c.png"/></p>'}],
+        {"images/a.png": side_a, "images/b.png": side_b, "images/c.png": side_c})
+    paragraphs, _warnings, _report = core.extract_document_paragraphs_with_report(
+        "book.epub", source)
+    assert paragraphs == ["Chapter one text.", "Chapter three text."]
+    state = translated_state("book.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["image_count"] == report["image_reference_count"] == 3
+    book = content(data)
+    one = next(pair["target"] for pair in state["pairs"] if "Chapter one" in pair["source"])
+    three = next(pair["target"] for pair in state["pairs"] if "Chapter three" in pair["source"])
+    first_img = 'src="images/image-0001.png"'
+    second_img = 'src="images/image-0002.png"'
+    third_img = 'src="images/image-0003.png"'
+    assert (book.index(first_img) < book.index(one) < book.index(second_img)
+            < book.index(three) < book.index(third_img))
+
+
+def test_epub_repeated_image_keeps_each_position_and_stores_one_file():
+    logo = colored_png((0.4, 0.6, 0.2))
+    source = synthetic_epub(
+        [{"href": "text/c1.xhtml",
+          "body": '<p>One.</p><div><img src="../images/logo.png"/></div><p>Two.</p>'},
+         {"href": "text/c2.xhtml",
+          "body": '<p>Three.</p><div><img src="../images/logo.png"/></div><p>Four.</p>'}],
+        {"images/logo.png": logo})
+    state = translated_state("book.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["image_count"] == 1
+    assert report["image_reference_count"] == 2
+    book = content(data)
+    assert book.count("<img ") == 2
+    assert image_sources(book) == ["images/image-0001.png", "images/image-0001.png"]
+    with ZipFile(io.BytesIO(data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("EPUB/images/")]
+        assert len(media) == 1
+        assert archive.read(media[0]) == logo
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        items = [item for item in package.findall("o:manifest/o:item", OPF)
+                 if item.get("properties") != "nav"]
+        image_items = [item for item in items
+                       if str(item.get("media-type") or "").startswith("image/")]
+        assert len(image_items) == 1
+
+
+def test_epub_percent_encoded_and_nested_image_paths():
+    photo = colored_png((0.2, 0.3, 0.9))
+    source = synthetic_epub(
+        [{"href": "text/sub/ch.xhtml",
+          "body": '<p>Start.</p><div><img src="../../assets/pic%20one.png#frag"/></div>'
+                  '<p>End.</p>'}],
+        {"assets/pic one.png": photo})
+    state = translated_state("book.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["image_count"] == report["image_reference_count"] == 1
+    assert content(data).count("<img ") == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("EPUB/images/")]
+        assert len(media) == 1
+        assert archive.read(media[0]) == photo
+
+
+def test_epub_svg_cover_wrapper_becomes_cover_and_is_not_repeated():
+    cover_bytes = jpeg_image((0.8, 0.1, 0.1))
+    body_picture = colored_png((0.1, 0.7, 0.4))
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" '
+           'xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 1920">'
+           '<image xlink:href="../images/cover.jpg" width="1200" height="1920"/></svg>')
+    source = synthetic_epub(
+        [{"href": "text/cover.xhtml", "body": svg},
+         {"href": "text/ch1.xhtml",
+          "body": '<p>Text.</p><div><img src="../images/pic.png"/></div>'}],
+        {"images/cover.jpg": cover_bytes, "images/pic.png": body_picture},
+        cover="images/cover.jpg")
+    state = translated_state("book.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["has_cover"] is True
+    assert report["image_count"] == 2
+    assert report["source_image_reference_count"] == 2
+    assert report["cover_reference_count"] == 1
+    assert report["image_reference_count"] == 1
+    book = content(data)
+    assert book.count("<img ") == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        manifest = {item.get("id"): item
+                    for item in package.findall("o:manifest/o:item", OPF)}
+        cover_item = next(item for item in manifest.values()
+                          if item.get("properties") == "cover-image")
+        assert archive.read("EPUB/" + cover_item.get("href")) == cover_bytes
+        first = package.find("o:spine/o:itemref", OPF).get("idref")
+        assert manifest[first].get("href") == "cover.xhtml"
+        assert cover_item.get("href") not in content(data)
+
+
+def test_epub_manifest_cover_meta_is_used_without_body_reference():
+    cover_bytes = jpeg_image((0.1, 0.2, 0.8))
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "body": '<p>Only text.</p>'}],
+        {"images/cover.jpg": cover_bytes}, cover="images/cover.jpg",
+        cover_meta=True, cover_property=False)
+    data, report = build_translation_epub(translated_state("book.epub", source), source)
+    validate_package(data)
+    assert report["has_cover"] is True
+    assert report["image_count"] == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        cover_item = next(item for item in package.findall("o:manifest/o:item", OPF)
+                          if item.get("properties") == "cover-image")
+        assert archive.read("EPUB/" + cover_item.get("href")) == cover_bytes
+
+
+def test_epub_svg_cover_resource_is_unwrapped_to_its_bitmap():
+    cover_bytes = jpeg_image((0.3, 0.6, 0.3))
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" '
+           'xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10">'
+           '<image xlink:href="cover.jpg" width="10" height="10"/></svg>').encode()
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "body": '<p>Only text.</p>'}],
+        {"images/wrap.svg": svg, "images/cover.jpg": cover_bytes},
+        cover="images/wrap.svg")
+    data, report = build_translation_epub(translated_state("book.epub", source), source)
+    validate_package(data)
+    assert report["has_cover"] is True
+    assert report["image_count"] == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        cover_item = next(item for item in package.findall("o:manifest/o:item", OPF)
+                          if item.get("properties") == "cover-image")
+        assert cover_item.get("media-type") == "image/jpeg"
+        assert archive.read("EPUB/" + cover_item.get("href")) == cover_bytes
+
+
+def test_epub_bad_images_are_skipped_with_reasons_not_blocking_delivery():
+    good = colored_png((0.2, 0.5, 0.8))
+    locked = colored_png((0.6, 0.1, 0.1))
+    body = ('<p>Before.</p>'
+            '<div><img src="../images/missing.png"/></div>'
+            '<div><img src="https://example.com/remote.png"/></div>'
+            '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'
+            '<div><img src="../images/locked.png"/></div>'
+            '<div><img src="../images/broken.png"/></div>'
+            '<div><img src="../images/good.png"/></div><p>After.</p>')
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "body": body}],
+        {"images/locked.png": locked, "images/broken.png": b"not an image",
+         "images/good.png": good},
+        encryption=("images/locked.png",))
+    state = translated_state("book.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["image_count"] == report["image_reference_count"] == 1
+    assert report["source_image_reference_count"] == 6
+    assert report["skipped_image_count"] == 5
+    assert report["skipped_image_reasons"] == {
+        "missing": 1, "external": 1, "vector_svg": 1,
+        "encrypted": 1, "unsupported": 1}
+    warning = next(item for item in report["warnings"] if "未纳入译文" in item)
+    for label in ("资源缺失", "外链", "矢量 SVG", "已加密", "格式无法识别"):
+        assert label in warning
+    assert content(data).count("<img ") == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("EPUB/images/")]
+        assert len(media) == 1 and archive.read(media[0]) == good
+
+
+def test_epub_paragraph_sequence_and_image_boundaries_are_stable():
+    pictures = [colored_png(rgb) for rgb in
+                ((1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0))]
+    body = ('<p>Alpha</p><p><img src="../images/a.png"/></p>'
+            '<p><img src="../images/b.png"/>Beta</p>'
+            '<p>Gamma<img src="../images/c.png"/>Delta</p><p> </p>'
+            '<div><img src="../images/d.png"/><p>Nested</p></div><p>Omega</p>')
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "body": body}],
+        {"images/a.png": pictures[0], "images/b.png": pictures[1],
+         "images/c.png": pictures[2], "images/d.png": pictures[3]})
+    paragraphs, _warnings, _report = core.extract_document_paragraphs_with_report(
+        "book.epub", source)
+    assert paragraphs == ["Alpha", "Beta", "GammaDelta", "Nested", "Omega"]
+    epub_paragraphs, nodes, _media, _source_warnings, _cover = _epub_source(source)
+    assert epub_paragraphs == paragraphs
+    shape = [node["ref"] if node["kind"] == "text" else "IMG" for node in nodes]
+    assert shape == [0, "IMG", 1, "IMG", 2, "IMG", 3, "IMG", 4]
+
+
+def test_legacy_epub_task_without_source_refs_exports_images_to_both_formats():
+    photo = colored_png((0.9, 0.4, 0.1))
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>First paragraph.</p><div><img src="../images/pic.png"/></div>'
+                  '<p>Last paragraph.</p>'}],
+        {"images/pic.png": photo})
+    paragraphs, _warnings, _report = core.extract_document_paragraphs_with_report(
+        "legacy.epub", source)
+    state = {"filename": "legacy.epub", "source_paras": list(paragraphs),
+             "target_lang": "简体中文",
+             "pairs": [{"source": text, "target": f"译：{text}"}
+                       for text in paragraphs]}
+    data, report = build_translation_epub(state, source)
+    assert report["image_reference_count"] == 1
+    book = content(data)
+    assert book.count("<img ") == 1
+    assert book.index("译：First paragraph.") < book.index("<img ") < book.index("译：Last paragraph.")
+    payload, docx_report = build_translation_docx(state, source)
+    document = Document(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload))
+    assert len(document.inline_shapes) == 1
+    assert docx_report["image_count"] == 1
+    texts = [paragraph.text for paragraph in document.paragraphs]
+    first = next(index for index, text in enumerate(texts) if "译：First" in text)
+    last = next(index for index, text in enumerate(texts) if "译：Last" in text)
+    picture = next(index for index, text in enumerate(texts) if not text and index > first)
+    assert first < picture < last
+
+
+def test_epub_cat_split_merge_and_exclusion_keep_every_image_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    first_picture = colored_png((1, 0, 0))
+    second_picture = colored_png((0, 0, 1))
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>First paragraph.</p><div><img src="../images/a.png"/></div>'
+                  '<p>Middle paragraph.</p><div><img src="../images/b.png"/></div>'
+                  '<p>Last paragraph.</p>'}],
+        {"images/a.png": first_picture, "images/b.png": second_picture})
+    state = translated_state("cat.epub", source)
+    core.save_source("catepub", source)
+    core.save_job_state("catepub", state)
+    state = core.mutate_translation_segments(
+        "catepub", 0, "split", source_a="First", source_b="paragraph.",
+        target_a="图前第一部分", target_b="图前第二部分")
+    data, _ = build_translation_epub(state, source)
+    assert content(data).count("<img ") == 2
+    assert content(data).index("图前第一部分") < content(data).index("<img ")
+    state = core.mutate_translation_segments("catepub", 0, "merge")
+    data, _ = build_translation_epub(state, source)
+    assert content(data).count("<img ") == 2
+    assert "图前第一部分" in content(data)
+    state = core.mutate_translation_segments("catepub", 1, "exclude", exclude_reason="测试排除")
+    data, _ = build_translation_epub(state, source)
+    assert content(data).count("<img ") == 2
+    assert "译文2：" not in content(data)
+    state = core.mutate_translation_segments(
+        "catepub", 1, "include",
+        excluded_id=state["excluded_segments"][0]["excluded_id"])
+    data, _ = build_translation_epub(state, source)
+    assert content(data).count("<img ") == 2
+    assert "译文2：" in content(data)
+
+
+def test_epub_docx_export_converts_webp_and_skips_unconvertible_image():
+    pytest.importorskip("PIL")
+    good = colored_png((0.2, 0.5, 0.8))
+    webp = webp_image()
+    broken_webp = b"RIFF\x20\x00\x00\x00WEBP" + b"garbage"
+    body = ('<p>Before.</p>'
+            '<div><img src="../images/photo.webp"/></div>'
+            '<div><img src="../images/bad.webp"/></div>'
+            '<div><img src="../images/pic.png"/></div><p>After.</p>')
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "body": body}],
+        {"images/photo.webp": webp, "images/bad.webp": broken_webp,
+         "images/pic.png": good})
+    state = translated_state("convert.epub", source)
+    epub_data, epub_report = build_translation_epub(state, source)
+    validate_package(epub_data)
+    assert epub_report["image_count"] == 3
+    with ZipFile(io.BytesIO(epub_data)) as archive:
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        webp_item = next(item for item in package.findall("o:manifest/o:item", OPF)
+                         if item.get("media-type") == "image/webp")
+        assert archive.read("EPUB/" + webp_item.get("href")) == webp
+    payload, report = build_translation_docx(state, source)
+    document = Document(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload))
+    assert len(document.inline_shapes) == 2
+    assert report["image_count"] == 2
+    assert report["skipped_image_count"] == 1
+    assert report["skipped_image_reasons"] == {"unsupported_format": 1}
+    assert any("1 张图片格式不受支持" in warning for warning in report["warnings"])
+
+
+def test_epub_without_images_falls_back_to_plain_text_docx():
+    source = synthetic_epub([{"href": "text/ch1.xhtml", "body": '<p>Plain text.</p>'}])
+    state = translated_state("plain.epub", source)
+    payload, report = build_translation_docx(state, source)
+    document = Document(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload))
+    assert not document.inline_shapes
+    assert report["image_count"] == 0
+    assert any("没有可保留的图片" in warning for warning in report["warnings"])
+    assert [paragraph.text for paragraph in document.paragraphs][1:] == [
+        pair["target"] for pair in state["pairs"]]
+
+
+def test_epub_non_linear_spine_items_are_skipped_like_text():
+    note_picture = colored_png((0.5, 0.5, 0.5))
+    source = synthetic_epub(
+        [{"href": "text/c1.xhtml", "body": '<p>Body text.</p>'},
+         {"href": "text/notes.xhtml", "linear": "no",
+          "body": '<p>Note text.</p><div><img src="../images/note.png"/></div>'}],
+        {"images/note.png": note_picture})
+    paragraphs, _warnings, _report = core.extract_document_paragraphs_with_report(
+        "book.epub", source)
+    assert paragraphs == ["Body text."]
+    data, report = build_translation_epub(translated_state("book.epub", source), source)
+    assert report["image_count"] == 0
+    assert report["image_reference_count"] == 0
+    assert "Note text." not in content(data)

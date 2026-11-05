@@ -283,7 +283,8 @@ DELIVERY_TRANSLATION_ITEMS: Tuple[Dict[str, Any], ...] = (
     },
     {
         "key": "deliver_epub", "title": "译文电子书", "format": "EPUB",
-        "detail": "保留原图与段落顺序，支持阅读器调整字号；适用于普通 PDF / DOCX。",
+        "detail": "保留原图与段落顺序，支持阅读器调整字号；适用于 EPUB、普通 PDF / DOCX"
+                  "（TXT、Markdown 为纯文字重建）。",
         "file_units": (("EPUB", 1),),
     },
 )

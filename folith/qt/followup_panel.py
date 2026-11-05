@@ -298,7 +298,8 @@ class FollowupPanel(QWidget):
         self.extraction_details = label(muted=True, rich=True)
         self.extraction_note = label(muted=True)
         self.extraction_note.setText(i18n.tr(
-            '导出是重建的译文文档，不是原文件的格式保真输出：排版、表格、图片与样式不会还原。'))
+            '导出是重建的译文文档，不是原文件的格式保真输出：排版、表格与样式不会还原；'
+            'EPUB / PDF / DOCX 来源的原图按阅读顺序保留（Markdown 图片不纳入）。'))
         for widget in (self.extraction_warning, self.extraction_details, self.extraction_note):
             self.extraction_card.details_layout.addWidget(widget)
 

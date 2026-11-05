@@ -2485,5 +2485,7 @@
   "约为「标准」的 {v0} 倍": "environ {v0}× le réglage « Standard »",
   "审校记录齐全，但交付门禁仍挂着未解决的阻断项；处理完才能冻结交付。": "Les enregistrements de révision sont complets, mais le contrôle de livraison comporte encore des problèmes bloquants non résolus ; ne gelez qu'après les avoir traités.",
   "阅读": "Lecture",
-  "还有 {v0} 个问题待处理": "{v0} problèmes à traiter"
+  "还有 {v0} 个问题待处理": "{v0} problèmes à traiter",
+  "保留原图与段落顺序，支持阅读器调整字号；适用于 EPUB、普通 PDF / DOCX（TXT、Markdown 为纯文字重建）。": "Préserve les images originales et l'ordre des paragraphes, avec une taille de police réglable par le lecteur ; pour les fichiers EPUB et PDF/DOCX ordinaires (TXT et Markdown sont reconstruits en texte brut).",
+  "导出是重建的译文文档，不是原文件的格式保真输出：排版、表格与样式不会还原；EPUB / PDF / DOCX 来源的原图按阅读顺序保留（Markdown 图片不纳入）。": "L'exportation est un document de traduction reconstruit, et non une copie préservant le format de l'original. La mise en page, les tableaux et les styles ne sont pas restaurés ; les images d'origine des sources EPUB / PDF / DOCX sont conservées dans l'ordre de lecture (les images Markdown ne sont pas incluses)."
 }

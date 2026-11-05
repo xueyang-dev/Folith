@@ -95,8 +95,13 @@ def _build_extraction_report(filename, paragraphs, *, ocr_used=False,
     if unsupported:
         notes.append("未纳入翻译的内容已在下方逐项列出；它们保留在源文件里，"
                      "不会出现在译文文档中。")
-    notes.append("导出是**重建的译文文档**，不是原文件的格式保真输出："
-                 "排版、表格、图片与样式不还原。")
+    if ext in {".epub", ".docx", ".pdf"}:
+        notes.append("导出是**重建的译文文档**，不是原文件的格式保真输出："
+                     "排版、表格与样式不还原；源文件图片按阅读顺序保留"
+                     "（图片内部文字不翻译）。")
+    else:
+        notes.append("导出是**重建的译文文档**，不是原文件的格式保真输出："
+                     "排版、表格、图片与样式不还原。")
     return {
         "version": _c.EXTRACTION_REPORT_VERSION,
         "format": ext.lstrip("."),

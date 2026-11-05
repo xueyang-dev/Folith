@@ -280,6 +280,49 @@ def translations_to_word(pairs, target_lang=None):
     return out
 
 
+_DOCX_NATIVE_IMAGE_FORMATS = frozenset({"png", "jpg", "gif", "bmp", "tiff"})
+
+
+def _docx_image_bytes(data):
+    """Return bytes python-docx can embed, converting formats it cannot read.
+
+    ``_docx_source`` converts through MuPDF; the same fallback applies to EPUB
+    resources (for example WebP).  Pillow is used only when it is available
+    (release builds bundle it).  ``None`` means "skip and report" - one bad
+    picture must never block the whole delivery.
+    """
+    from folith.epub import _image_type
+
+    kind = _image_type(data)
+    if kind is None:
+        return None
+    extension = kind[0]
+    if extension in _DOCX_NATIVE_IMAGE_FORMATS:
+        return data
+    try:
+        if extension == "svg":
+            with fitz.open(stream=data, filetype="svg") as document:
+                pixmap = document[0].get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                return pixmap.tobytes("png")
+        pixmap = fitz.Pixmap(data)
+        if pixmap.colorspace and pixmap.colorspace.n > 3:
+            pixmap = fitz.Pixmap(fitz.csRGB, pixmap)
+        return pixmap.tobytes("png")
+    except Exception:  # noqa: BLE001 - fall through to the optional Pillow path
+        pass
+    try:
+        from PIL import Image
+    except Exception:  # noqa: BLE001 - Pillow is an optional release-build fallback
+        return None
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            output = io.BytesIO()
+            image.convert("RGB").save(output, "PNG")
+            return output.getvalue()
+    except Exception:  # noqa: BLE001 - a corrupt picture is skipped with a warning
+        return None
+
+
 def build_translation_docx(state, source, *, roundtrip: bool = False):
     """Rebuild translated DOCX in source order, retaining supported pictures.
 
@@ -293,25 +336,42 @@ def build_translation_docx(state, source, *, roundtrip: bool = False):
 
     """Rebuild translated DOCX in source order, retaining supported pictures."""
     from folith.epub import (
-        EpubExportError, ImageOnlySourceError, _docx_source, _pdf_source, _join_targets,
-        _translation_groups,
+        EpubExportError, ImageOnlySourceError, _docx_source, _epub_source, _pdf_source,
+        _join_targets, _translation_groups,
     )
     from docx.shared import Emu
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     filename = str(state.get("filename") or "").lower()
     pairs = state.get("pairs") or []
-    report = {"image_count": 0, "warnings": []}
-    if not source or not filename.endswith((".pdf", ".docx")):
+    is_epub = filename.endswith(".epub")
+    stats: dict = {}
+    report = {"image_count": 0, "image_reference_count": 0,
+              "skipped_image_count": 0, "skipped_image_reasons": {}, "warnings": []}
+    if not source or not filename.endswith((".pdf", ".docx", ".epub")):
         report["warnings"] = ["缺少原始文件，无法恢复图片。" if not source else
                               "此来源的译文 DOCX 为纯文字重建，不保留源文件图片。"]
         return translations_to_word(pairs, state.get("target_lang")), report
     try:
-        paragraphs, nodes, media, warnings, cover = (
-            _docx_source(source) if filename.endswith(".docx") else _pdf_source(source))
-        report.update(image_count=len(media), warnings=[
-            warning.replace("EPUB", "译文 DOCX") for warning in warnings])
+        if filename.endswith(".docx"):
+            paragraphs, nodes, media, warnings, cover = _docx_source(source)
+        elif is_epub:
+            paragraphs, nodes, media, warnings, cover = _epub_source(source, stats=stats)
+        else:
+            paragraphs, nodes, media, warnings, cover = _pdf_source(source)
+        body_reference_count = sum(node["kind"] == "image" for node in nodes)
+        source_skipped = int(stats.get("skipped_image_count") or 0)
+        source_reasons = {str(key): int(value) for key, value
+                          in (stats.get("skipped_reasons") or {}).items()}
+        rebrand = (lambda warning: warning) if is_epub else (
+            lambda warning: warning.replace("EPUB", "译文 DOCX"))
+        report.update(image_count=len(media), image_reference_count=body_reference_count,
+                      skipped_image_count=source_skipped,
+                      skipped_image_reasons=source_reasons,
+                      warnings=[rebrand(warning) for warning in warnings])
         if not media:
+            if is_epub:
+                report["warnings"].append("源 EPUB 没有可保留的图片，按纯文字重建。")
             return translations_to_word(pairs, state.get("target_lang")), report
         groups, groups_by_ref = _translation_groups(state, paragraphs)
     except ImageOnlySourceError as exc:
@@ -331,6 +391,7 @@ def build_translation_docx(state, source, *, roundtrip: bool = False):
         report["warnings"].append(
             message.replace("EPUB", "译文 DOCX")
             + " 已改为纯文字重建，不保留图片。")
+        report.update(image_count=0, image_reference_count=0)
         return translations_to_word(pairs, state.get("target_lang")), report
     except Exception as exc:
         raise RuntimeError(f"译文 DOCX 无法读取源文件：{exc}") from exc
@@ -344,6 +405,8 @@ def build_translation_docx(state, source, *, roundtrip: bool = False):
     # Leave space for the picture paragraph's line box and spacing.
     max_height -= Emu(360000)
     emitted = set()
+    inserted_images = 0
+    skipped_pictures = 0
     if cover:
         nodes = [{"kind": "image", "name": cover}] + nodes
     for node in nodes:
@@ -358,23 +421,56 @@ def build_translation_docx(state, source, *, roundtrip: bool = False):
                              else doc.add_paragraph(target))
                 _apply_paragraph_direction(paragraph, state.get("target_lang"))
         elif node["kind"] == "image":
+            picture_data = _docx_image_bytes(media[node["name"]][0])
+            if picture_data is None:
+                skipped_pictures += 1
+                continue
             paragraph = doc.add_paragraph()
             paragraph.paragraph_format.first_line_indent = 0
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            picture = paragraph.add_run().add_picture(io.BytesIO(media[node["name"]][0]))
+            try:
+                picture = paragraph.add_run().add_picture(io.BytesIO(picture_data))
+            except Exception:  # noqa: BLE001 - one bad picture must not block delivery
+                element = paragraph._element
+                element.getparent().remove(element)
+                skipped_pictures += 1
+                continue
             scale = min(1, max_width / picture.width, max_height / picture.height)
             picture.width = Emu(round(picture.width * scale))
             picture.height = Emu(round(picture.height * scale))
+            inserted_images += 1
         elif node["kind"] == "caption":
             paragraph = doc.add_paragraph(node["text"], style="Caption")
             _apply_paragraph_direction(paragraph, state.get("source_lang"))
     if len(emitted) != len(groups):
         raise RuntimeError("译文 DOCX 有译文无法定位到原文，已停止导出以避免遗漏。")
-    report["placement"] = "图片位于对应完整段落之后；跨图片合并的译文整体位于图片之前。"
+    if skipped_pictures:
+        warnings.append(f"译文 DOCX 有 {skipped_pictures} 张图片格式不受支持，已跳过。")
+    report["placement"] = (
+        "图片位于原文段落边界（独立图片块在前后段落之间，段内图片在该完整段落之后）；"
+        "跨图片合并的译文整体位于图片之前。" if is_epub else
+        "图片位于对应完整段落之后；跨图片合并的译文整体位于图片之前。")
+    if filename.endswith(".pdf"):
+        notes = ["图片内部文字保持原样，PDF 图注保留原文。"]
+    elif is_epub:
+        # The EPUB source warnings already state the rebuilt layout and that
+        # image text stays as-is.
+        notes = []
+    else:
+        notes = ["图片内部文字保持原样。"]
+    if not is_epub:
+        notes.append("文档重新排版，不保留原页码和坐标。")
+    rebrand = (lambda warning: warning) if is_epub else (
+        lambda warning: warning.replace("EPUB", "译文 DOCX"))
     report["warnings"] = list(dict.fromkeys(
-        [warning.replace("EPUB", "译文 DOCX") for warning in warnings]
-        + ["图片内部文字保持原样，PDF 图注保留原文；文档重新排版，不保留原页码和坐标。"]
-    ))
+        [rebrand(warning) for warning in warnings] + notes))
+    report["image_count"] = inserted_images
+    report["source_image_count"] = len(media)
+    report["has_cover"] = bool(cover)
+    report["skipped_image_count"] = source_skipped + skipped_pictures
+    if skipped_pictures:
+        report["skipped_image_reasons"] = {
+            **source_reasons, "unsupported_format": skipped_pictures}
     out = io.BytesIO()
     doc.save(out)
     out.seek(0)

@@ -1671,5 +1671,7 @@
   "保留原文件的版式、图形与表格，译文就位；未完成的区域会在页面上标出。": "Conserve la mise en page source, les figures et les tableaux avec la traduction en place ; les zones inachevées sont marquées sur la page.",
   "保留原版式、图形与表格，译文就位": "Conserve la mise en page originale, les figures et les tableaux avec la traduction en place",
   "支持 PDF、DOCX、EPUB、TXT、Markdown · 单文件最大 200 MB": "PDF, DOCX, EPUB, TXT, Markdown · jusqu'à 200 Mo par fichier",
-  "支持 PDF、DOCX、EPUB、TXT 和 Markdown，可一次添加多个文件": "Prend en charge PDF, DOCX, EPUB, TXT et Markdown ; ajouter plusieurs fichiers à la fois"
+  "支持 PDF、DOCX、EPUB、TXT 和 Markdown，可一次添加多个文件": "Prend en charge PDF, DOCX, EPUB, TXT et Markdown ; ajouter plusieurs fichiers à la fois",
+  "保留原图与段落顺序，支持阅读器调整字号；适用于 EPUB、普通 PDF / DOCX（TXT、Markdown 为纯文字重建）。": "Préserve les images originales et l'ordre des paragraphes, avec une taille de police réglable par le lecteur ; pour les fichiers EPUB et PDF/DOCX ordinaires (TXT et Markdown sont reconstruits en texte brut).",
+  "导出是重建的译文文档，不是原文件的格式保真输出：排版、表格与样式不会还原；EPUB / PDF / DOCX 来源的原图按阅读顺序保留（Markdown 图片不纳入）。": "L'exportation est un document de traduction reconstruit, et non une copie préservant le format de l'original. La mise en page, les tableaux et les styles ne sont pas restaurés ; les images d'origine des sources EPUB / PDF / DOCX sont conservées dans l'ordre de lecture (les images Markdown ne sont pas incluses)."
 }
