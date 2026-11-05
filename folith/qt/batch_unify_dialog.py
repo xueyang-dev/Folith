@@ -165,6 +165,33 @@ def _find_record_in_list(registry_list: list, source_form: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# 片段差异定位（纯函数）
+# ---------------------------------------------------------------------------
+
+def _split_snippet(old: str, new: str) -> tuple[str, str, str, str, str, str]:
+    """找出 old 和 new 两个片段之间发生变化的区域。
+
+    返回 (old_pre, old_changed, old_post, new_pre, new_changed, new_post)。
+    两字符串相同时 old_changed / new_changed 均为空串。
+    """
+    if old == new:
+        return (old, "", "", new, "", "")
+    # 从左找首个不同位置
+    i = 0
+    while i < len(old) and i < len(new) and old[i] == new[i]:
+        i += 1
+    # 从右找首个不同位置
+    j_old, j_new = len(old) - 1, len(new) - 1
+    while j_old >= i and j_new >= i and old[j_old] == new[j_new]:
+        j_old -= 1
+        j_new -= 1
+    return (
+        old[:i], old[i:j_old + 1], old[j_old + 1:],
+        new[:i], new[i:j_new + 1], new[j_new + 1:],
+    )
+
+
+# ---------------------------------------------------------------------------
 # 预计算段落变更数（在工作线程中调用）
 # ---------------------------------------------------------------------------
 
@@ -391,16 +418,49 @@ class BatchUnifyDialog(QDialog):
         item.takeChildren()
         if not snippets:
             no_ch = QTreeWidgetItem(item)
-            no_ch.setText(1, i18n.tr("（该实体当前译文已全部一致，无需修改）"))
+            # setFirstColumnSpanned 使首列横跨全宽；文本必须放在 col 0，
+            # 否则 col 1 的内容被 col 0 遮挡，行显示空白。
+            no_ch.setText(0, i18n.tr("（该实体当前译文已全部一致，无需修改）"))
+            self._span_child(item, no_ch)
             return
 
-        for s in snippets[:200]:
-            child = QTreeWidgetItem(item)
-            # col 0: 空（与顶级行对齐），col 1: 段号，col 2: 旧片段，col 3: 新片段
-            child.setText(0, "")
-            child.setText(1, i18n.tr("第 {v0} 段", v0=s["segment_index"] + 1))
-            child.setText(2, s["old_snippet"])
-            child.setText(3, s["new_snippet"])
+        cap = 200
+        shown = snippets[:cap]
+        hidden = len(snippets) - len(shown)
+
+        for s in shown:
+            old_text = s["old_snippet"]
+            new_text = s["new_snippet"]
+            pre_old, mid_old, post_old, pre_new, mid_new, post_new = _split_snippet(
+                old_text, new_text)
+            # 用 [ ] 标注变化区域（不依赖颜色）
+            old_display = f"{pre_old}[{mid_old}]{post_old}" if mid_old else old_text
+            new_display = f"{pre_new}[{mid_new}]{post_new}" if mid_new else new_text
+
+            seg_label = i18n.tr("第 {v0} 段", v0=s["segment_index"] + 1)
+
+            # 旧片段行：文本放 col 0（span 列），否则行空白。
+            old_row = QTreeWidgetItem(item)
+            old_row.setText(0, seg_label + "  " + i18n.tr("旧：{v0}", v0=old_display))
+            self._span_child(item, old_row)
+
+            # 新片段行
+            new_row = QTreeWidgetItem(item)
+            new_row.setText(0, "→  " + i18n.tr("新：{v0}", v0=new_display))
+            self._span_child(item, new_row)
+
+        if hidden > 0:
+            more_row = QTreeWidgetItem(item)
+            more_row.setText(0, i18n.tr("…还有 {v0} 处未显示", v0=hidden))
+            self._span_child(item, more_row)
+
+    def _span_child(self, parent_item: QTreeWidgetItem,
+                    child_item: QTreeWidgetItem) -> None:
+        """使子行首列横跨所有列，避免文本受列宽截断。"""
+        parent_idx = self.tree.indexFromItem(parent_item)
+        row = parent_item.indexOfChild(child_item)
+        if row >= 0:
+            self.tree.setFirstColumnSpanned(row, parent_idx, True)
 
     def _on_target_changed(self, row_idx: int) -> None:
         """目标译名改变：重算段落变更数，清除已展开的子片段。"""
