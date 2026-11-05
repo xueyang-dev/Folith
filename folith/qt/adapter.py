@@ -2632,6 +2632,20 @@ def accept_entity_variants(job_id: str, source: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+def batch_apply_entity_repair(job_id: str, source: str, target: str) -> dict:
+    """批量统一流程用：在同一个动作里计算预览再应用（无需调用方持有预览列表）。
+
+    核心的 apply_entity_repair 会在写入前再次验证预览，所以这里的 preview 只是
+    "调用方看过的那份"，两步之间若有其他写入则核心会抛异常，由批量流程记为失败。
+    """
+    from . import i18n
+    state = load_state(job_id)
+    preview = entity_repair_preview(job_id, source, target, state=state)
+    if not preview:
+        raise AdapterError(i18n.tr("没有需要修改的段落。"))
+    return apply_entity_repair(job_id, source, target, preview)
+
+
 # ================= 活动记录（运行时事件） =================
 #
 # 旧界面有一个"运行抽屉"：任务卡在哪一步、最近发生了什么。Qt 原来只有诊断包。
