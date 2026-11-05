@@ -2474,5 +2474,21 @@
   "{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段": "{v0}-Gruppe {v1} · {v2} Vorkommen · {v3} Abschnitte betroffen",
   "需要调查": "Untersuchung erforderlich",
   "作用于：{v0}": "Wirkt auf: {v0}",
-  "辅助": "Auxiliär"
+  "辅助": "Auxiliär",
+  "批量统一译名": "Namen gebündelt vereinheitlichen",
+  "批量统一译名（{v0}）": "Namen vereinheitlichen ({v0})",
+  "仅推荐默认勾选人名音译异写和繁简变体；其余条目已列出，可手动勾选。请展开行查看各段修改预览再确认。": "Nur Transliterationsvarianten von Personennamen und vereinfacht/traditionelle Paare sind vorausgewählt. Andere Einträge können manuell ausgewählt werden. Zeile aufklappen, um Änderungen vor der Bestätigung zu prüfen.",
+  "原文实体": "Ausgangseinheit",
+  "统一为": "Vereinheitlichen auf",
+  "影响段数": "Segmente",
+  "统一所选（{v0}）": "Auswahl vereinheitlichen ({v0})",
+  "展开查看修改预览…": "Aufklappen, um Änderungsvorschau zu sehen…",
+  "（该实体当前译文已全部一致，无需修改）": "(Alle aktuellen Übersetzungen dieser Einheit sind konsistent; keine Änderungen nötig.)",
+  "建议人工确认：{v0}": "Manuelle Prüfung empfohlen: {v0}",
+  "正在统一…": "Wird vereinheitlicht…",
+  "已统一 {v0} 项，失败 {v1} 项。": "{v0} vereinheitlicht, {v1} fehlgeschlagen.",
+  "正在读取任务数据…": "Aufgabendaten werden geladen…",
+  "无法生成预览：{v0}": "Vorschau konnte nicht erstellt werden: {v0}",
+  "没有需要修改的段落。": "Es müssen keine Segmente geändert werden.",
+  "当前译法": "Aktuelle Übersetzungen"
 }

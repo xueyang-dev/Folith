@@ -231,6 +231,7 @@ class ReviewPanel(QWidget):
     entityRepairRequested = Signal(str, str, list)  # source, target, preview
     entityAcceptRequested = Signal(str)             # source
     conceptRequested = Signal()
+    batchUnifyRequested = Signal()
     #: #289: 审计列表的撤销——面板只发信号（triage 记录键），写状态的是
     #: 窗口层经适配器调用既有核心函数；面板自己不写状态。
     triageRevokeRequested = Signal(str)             # triage record key
@@ -277,6 +278,9 @@ class ReviewPanel(QWidget):
         self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
         self.concept_button = button(i18n.tr('概念决策'), "list")
         self.concept_button.clicked.connect(self.conceptRequested.emit)
+        self.batch_unify_button = button(i18n.tr('批量统一译名（{v0}）', v0=0), "check-circle")
+        self.batch_unify_button.clicked.connect(self.batchUnifyRequested.emit)
+        self.batch_unify_button.setVisible(False)
         top = QHBoxLayout()
         text_column = QVBoxLayout()
         text_column.setSpacing(2)
@@ -454,7 +458,11 @@ class ReviewPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(10)
-        layout.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignRight)
+        top_actions = QHBoxLayout()
+        layout.addLayout(top_actions)
+        top_actions.addStretch()
+        top_actions.addWidget(self.batch_unify_button)
+        top_actions.addWidget(self.concept_button)
         layout.addWidget(self.content, 1)
         layout.addWidget(self.empty_state, 1)
 
@@ -520,6 +528,14 @@ class ReviewPanel(QWidget):
         self._view = view or {}
         self._busy = busy
         self.concept_button.setEnabled(not busy)
+        # 批量统一按钮：有 ≥2 条符合默认勾选条件的未处理 entity_conflict 才显示。
+        from .batch_unify_dialog import should_default_check
+        entities = list(self._view.get("entities") or [])
+        eligible_count = sum(1 for e in entities if should_default_check(e)[0])
+        self.batch_unify_button.setText(
+            i18n.tr('批量统一译名（{v0}）', v0=eligible_count))
+        self.batch_unify_button.setVisible(eligible_count >= 2)
+        self.batch_unify_button.setEnabled(not busy)
         self._items = list(self._view.get("queue_items") or [])
         self._handled = list(self._view.get("handled_items") or [])
         # #289: 审计列表。开关关闭时视图里没有 `auto_handled_items` 这个键，

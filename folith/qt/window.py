@@ -427,6 +427,9 @@ class MainWindow(QMainWindow):
         from .concept_dialog import open_concept_workflow
         self.workbench.review_panel.conceptRequested.connect(
             lambda: open_concept_workflow(self))
+        from .batch_unify_dialog import open_batch_unify_dialog
+        self.workbench.review_panel.batchUnifyRequested.connect(
+            lambda: open_batch_unify_dialog(self))
         self.workbench.rescanRequested.connect(self.rescan_source)
         self.workbench.reportRepairRequested.connect(self.repair_report)
         self.workbench.reportAnswerRequested.connect(self.answer_report_question)
