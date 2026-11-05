@@ -9,7 +9,7 @@
     nav.setIcon(icons.icon("projects", 18, "accent", duotone=True))
 
 返回的 ``QIcon`` 背后是 :class:`ThemedIconEngine`，每次绘制都向当前主题要这个 token 的
-值，所以日间 / 夜间 / 纸面切换、以后的"自定义主题色"都不需要重建任何图标；
+值，所以日间 / 夜间切换、以后的"自定义主题色"都不需要重建任何图标；
 禁用态自动换成 ``disabled-ink``。想要固定颜色（极少数场景）传 ``QColor`` 或 ``#hex``。
 
 ``duotone=True`` 给闭合形状加一层 16% 透明度的同色底（参考设计稿里"描边 + 浅色填充"

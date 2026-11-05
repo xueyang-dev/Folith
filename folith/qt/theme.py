@@ -1,6 +1,6 @@
 """Qt 客户端的主题取值：直接复用既有语义 token，不另立一套配色。
 
-真值来源是 :mod:`folith.ui.theme_tokens`（旧界面的三套主题也用它）。这里只做三件事：
+真值来源是 :mod:`folith.ui.theme_tokens`。这里只做三件事：
 
 * 把 token 字典取出来给 QSS 生成器用；
 * 提供 Qt 需要而 token 里没有的量（字体栈、字号、圆角、间距）；
@@ -15,14 +15,12 @@ from functools import lru_cache
 
 from folith.ui import theme_tokens
 
-THEME_ORDER = theme_tokens.THEME_ORDER          # ('light', 'dark', 'paper', 'green')
+THEME_ORDER = theme_tokens.THEME_ORDER          # ('light', 'dark')
 FOLLOW_SYSTEM = "system"
 THEME_LABELS = {
     FOLLOW_SYSTEM: "跟随系统",
     "light": "日间",
     "dark": "夜间",
-    "paper": "纸面",
-    "green": "翠绿",
 }
 
 # Qt 需要、而语义 token 不表达的量。
@@ -129,8 +127,8 @@ ACCENT_LABELS = (("blue", "蓝色"), ("green", "翠绿"), ("slate", "石板"))
 
 
 def accent_swatch(name: str) -> str:
-    source = {"green": "green", "slate": "paper"}.get(name, "light")
-    return theme_tokens.TOKENS[source]["accent"]
+    palette = theme_tokens.ACCENT_TOKENS.get(name) or theme_tokens.TOKENS["light"]
+    return palette["accent"]
 
 
 def accent() -> str:
@@ -148,12 +146,9 @@ def tokens(theme: str) -> dict[str, str]:
     """某一套主题的 token（未知主题名回退到日间）。"""
     name = theme if theme in THEME_ORDER else "light"
     result = dict(theme_tokens.TOKENS[name])
-    if _accent != "blue" and name in ("light", "dark"):
-        source = theme_tokens.TOKENS["green" if _accent == "green" else "paper"]
-        keys = [k for k in result if k.startswith("accent") or k.startswith("hero")]
-        keys += ["text-on-accent", "text-on-hero", "focus-ring", "focus-halo"]
-        for key in keys:
-            result[key] = source[key]
+    if _accent != "blue":
+        source = theme_tokens.ACCENT_TOKENS[_accent]
+        result.update(source)
         if name == "dark":
             colour = qcolor(source["accent"]).lighter(190)
             result["accent"] = colour.name()
