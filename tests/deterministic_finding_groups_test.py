@@ -289,3 +289,350 @@ def test_local_grouping_cost_is_bounded():
     assert len(groups) == 7
     assert sum(group["occurrence_count"] for group in groups) == 2000
     assert elapsed_ms < 500, f"grouping 2000 findings took {elapsed_ms:.1f} ms"
+
+
+# ---------------------------------------------------------------------------
+# is_no_translation_needed: suppression of whole-segment machine identifiers
+# and pure numbers from the identical-to-source (translation_completion) check.
+# ---------------------------------------------------------------------------
+
+def _identical_findings(src, lang="简体中文"):
+    """translation_completion findings for a segment whose target equals its source."""
+    return [f for f in core.check_translation_batch([src], [src], [], lang)
+            if f.get("category") == "translation_completion"]
+
+
+# --- positive cases: each in-scope category must NOT fire ---
+
+def test_bare_email_address_is_not_flagged():
+    assert not _identical_findings("avaswani@google.com")
+    assert not _identical_findings("user.name+tag@sub.example.co.uk")
+    assert not _identical_findings("illia.polosukhin@gmail.com")
+
+
+def test_bare_url_is_not_flagged():
+    assert not _identical_findings("https://www.example.com/path?q=1")
+    assert not _identical_findings("http://arxiv.org/abs/1706.03762")
+    assert not _identical_findings("www.stmartins.com")
+
+
+def test_bare_doi_is_not_flagged():
+    assert not _identical_findings("10.1234/abc.efg-hij")
+    assert not _identical_findings("10.18653/v1/2020.acl-main.100")
+
+
+def test_isbn_issn_is_not_flagged():
+    # ISBN-13 with Japanese NDC catalogue code
+    assert not _identical_findings("ISBN978-4-7629-6638-5 C3022")
+    assert not _identical_findings("ISBN978-4-8140-0137-8 C3322")
+    assert not _identical_findings("ISSN 1234-567X")
+
+
+def test_pure_ascii_number_is_not_flagged():
+    assert not _identical_findings("2024")
+    assert not _identical_findings("3.14")
+    assert not _identical_findings("2024/01/01")
+    assert not _identical_findings("1-100")
+    assert not _identical_findings("12,345.67")
+
+
+def test_table_row_of_pure_identifiers_is_not_flagged():
+    # Pipe-delimited row whose every cell is in-scope
+    assert not _identical_findings("user@a.com | 10.1234/x | 2024")
+    # Tab-delimited: numbers only (also passes via _NO_TRANS_NUMBER on the joined string)
+    assert not _identical_findings("2024\t3.14\t100")
+
+
+def test_tab_delimited_url_row_is_not_flagged():
+    """Tab-delimited row of URLs must be suppressed.
+
+    After space-normalisation "https://a.com https://b.org" does NOT match the
+    URL regex (two tokens joined by a space) so the row was incorrectly flagged
+    before the dead-tab-branch fix.  The fix checks ``raw`` for '\\t' so the
+    correct per-cell check is applied.
+    """
+    assert not _identical_findings("https://a.com\thttps://b.org")
+    assert not _identical_findings("user@a.com\tuser@b.com")
+
+
+# --- negative controls: these MUST still fire ---
+
+def test_sentence_containing_url_still_fires():
+    # A sentence that merely contains a URL is not suppressed.
+    assert _identical_findings("Visit https://x.com now")
+    assert _identical_findings("See http://example.org for details.")
+
+
+def test_number_with_unit_word_still_fires():
+    # Digits plus a unit abbreviation that is a Latin word trigger source_has_text.
+    # "9.00 a.m." has two Latin words (a and m separated); fires as before.
+    assert _identical_findings("9.00 a.m.")
+    # A phrase with unit words clearly has text — not a bare number.
+    assert _identical_findings("The result is 42 kg per hour")
+
+
+def test_date_with_month_name_still_fires():
+    # Month names are Latin words; a phrase with 2+ words triggers source_has_text.
+    assert _identical_findings("January report 2024")
+    assert _identical_findings("15 March deadline 2023")
+
+
+def test_han_term_still_fires():
+    # CJK text must keep firing.
+    assert _identical_findings("太田秀通")
+    assert _identical_findings("二 戦争と根こそぎ労働動員")
+
+
+def test_index_line_still_fires():
+    # May hide untranslated names; keep firing.
+    assert _identical_findings("1. Introduction to the volume")
+
+
+def test_latin_words_still_fire():
+    # Runs of Latin words are out of scope.
+    assert _identical_findings("Introduction to the volume")
+
+
+def test_era_plus_number_still_fires():
+    # Japanese eras contain CJK and are out of scope.
+    assert _identical_findings("死亡月日 昭和二十年一月二十日")
+
+
+def test_blocking_finding_is_never_suppressed():
+    # A blocking completeness finding (empty target) must never be suppressed.
+    # This verifies the fix only touches the translation_completion check.
+    blocking = [f for f in core.check_translation_batch(
+        ["some text"], [""], [], "简体中文")
+                if f.get("severity") == "blocking"]
+    assert blocking, "empty target must still produce a blocking finding"
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — Han-script awareness for Simplified Chinese target
+# ---------------------------------------------------------------------------
+
+def _han_findings(src, lang="简体中文"):
+    """translation_completion findings for src==tgt."""
+    return [f for f in core.check_translation_batch([src], [src], [], lang)
+            if f.get("category") == "translation_completion"]
+
+
+def _has_kind(findings, kind):
+    return any(f.get("kind") == kind for f in findings)
+
+
+# --- branch (a): Traditional/JP chars → actionable, kind="han_not_simplified" ---
+
+def test_traditional_char_causes_han_not_simplified():
+    # 賢 (U+8CE2) is Traditional Chinese; not in GB2312, only in Shift-JIS.
+    findings = _han_findings("大里健賢")
+    assert findings, "should fire"
+    assert _has_kind(findings, "han_not_simplified"), f"expected han_not_simplified, got {findings}"
+    assert any(f.get("severity") == "actionable" for f in findings)
+
+
+def test_jp_shinjitai_causes_han_not_simplified():
+    # 嶋 (U+5D8B) is Shift-JIS-only and not in _EXCEPTIONS; must trigger.
+    findings = _han_findings("小嶋茂稔")
+    assert findings
+    assert _has_kind(findings, "han_not_simplified")
+
+
+def test_mixed_jp_trad_chars_all_named():
+    # 鍋 (U+934B) and 輝 (U+8F1D) are both Shift-JIS-only; both must be named.
+    findings = _han_findings("尾鍋輝彦")
+    assert findings
+    assert _has_kind(findings, "han_not_simplified")
+    # Both 鍋 and 輝 should appear in the reason / detail text.
+    combined = " ".join(f.get("reason", "") + f.get("detail", "") for f in findings)
+    assert "鍋" in combined or "锅" in combined
+    assert "輝" in combined or "辉" in combined
+
+
+def test_jp_shinjitai_with_浜():
+    # 浜 (U+6D5C) is in _FORCED_TRUE (GB2312-compatible but Traditional/JP form).
+    findings = _han_findings("浜田省吾")
+    assert findings
+    assert _has_kind(findings, "han_not_simplified")
+
+
+# --- branch (b): short, unchanged → informational ---
+
+def test_short_unchanged_han_is_informational():
+    # 谷角常子: all chars are already valid Simplified/shared; 4 chars → short.
+    findings = _han_findings("谷角常子")
+    assert findings, "must still appear"
+    assert any(f.get("severity") == "informational" for f in findings), (
+        f"expected informational, got {findings}")
+    assert not _has_kind(findings, "han_not_simplified")
+
+
+def test_渡口重国_is_informational():
+    findings = _han_findings("渡口重国")
+    assert findings
+    assert any(f.get("severity") == "informational" for f in findings)
+
+
+def test_short_all_simplified_chars_is_informational():
+    # Short segment whose chars are all valid Simplified/shared — no conversion
+    # needed — should produce an informational finding, not actionable.
+    # ("手紙" alone is only 2 chars so source_has_text is False; use 4+ chars.)
+    findings = _han_findings("天地人和德")  # 5 chars, all Simplified/shared, no conversion
+    assert findings, "must still appear"
+    assert any(f.get("severity") == "informational" for f in findings)
+    assert not _has_kind(findings, "han_not_simplified")
+
+
+# --- branch (c): long and unchanged → actionable (no "han_not_simplified") ---
+
+def test_long_unchanged_han_stays_actionable():
+    # 篇第三章 is 4 chars (short → informational in isolation), but we can
+    # construct a longer segment to verify the long-path stays actionable.
+    # Use a segment of > _SHORT_HAN_THRESHOLD chars that do not need conversion.
+    long_seg = "山川大地风云变幻，一切皆为过眼云烟"  # 16 chars, all Simplified
+    findings = _han_findings(long_seg)
+    assert findings
+    assert any(f.get("severity") == "actionable" for f in findings)
+    assert not _has_kind(findings, "han_not_simplified")
+
+
+# --- source has kana → falls through to original behaviour ---
+
+def test_source_with_kana_does_not_enter_han_check():
+    # Kana disqualifies the Han check; falls through to standard actionable.
+    findings = _han_findings("太田さん")
+    assert findings
+    # Should be standard actionable, not han_not_simplified
+    assert any(f.get("severity") == "actionable" for f in findings)
+    assert not _has_kind(findings, "han_not_simplified")
+
+
+def test_source_with_latin_does_not_enter_han_check():
+    # Latin in source → standard path (not han_not_simplified).
+    # Need enough words/letters to clear source_has_text first.
+    findings = _han_findings("Introduction 第一章 overview guide")
+    assert findings
+    assert not _has_kind(findings, "han_not_simplified")
+
+
+def test_jp_corner_brackets_bypass_han_check():
+    # 「」marks Japanese prose → standard path (not han_not_simplified).
+    # Need enough Han chars (≥4) to clear source_has_text.
+    findings = _han_findings("「第一章」天下大地万事可追")
+    assert findings
+    assert not _has_kind(findings, "han_not_simplified")
+
+
+# --- non-Simplified-Chinese target → original behaviour ---
+
+def test_non_simplified_target_stays_actionable():
+    # For Traditional Chinese target, standard actionable (no Han check).
+    findings = _han_findings("大里健賢", lang="繁体中文")
+    assert findings
+    assert any(f.get("severity") == "actionable" for f in findings)
+    assert not _has_kind(findings, "han_not_simplified")
+
+
+def test_english_target_never_produces_han_not_simplified():
+    # English target is exempt from the identical-to-source check
+    # (target_lang != "English" gate), so han_not_simplified must not fire.
+    # (Other checks such as script_leak may still fire for Han chars in an
+    # English target — that is intended behaviour.)
+    findings = _han_findings("大里健賢", lang="English")
+    assert not _has_kind(findings, "han_not_simplified")
+
+
+# --- preserve entry suppresses the whole check ---
+
+def test_preserve_entry_suppresses_han_check():
+    glossary = [{"source": "大里健賢", "behavior": "preserve", "status": "locked"}]
+    findings = [f for f in core.check_translation_batch(
+        ["大里健賢"], ["大里健賢"], glossary, "简体中文")
+                if f.get("category") == "translation_completion"]
+    assert not findings, "preserve entry must suppress the check"
+
+
+# --- GB2312 filter: false-alarm chars removed, allowlist chars kept -----------
+
+def test_gb2312_false_alarm_chars_do_not_trigger():
+    """GB2312-valid chars (沪疏醋欠予芸) are legitimate Simplified Chinese;
+    they must not cause a han_not_simplified finding even when src == tgt."""
+    # Need ≥4 Han letters to clear source_has_text.  Pad each char with
+    # neutral Simplified Chinese chars (人地方年 are all shared/Simplified).
+    for c in ('沪', '疏', '醋', '欠', '予', '芸'):
+        src = c + "人地方"   # 4 chars; all Simplified
+        findings = _han_findings(src)
+        assert not _has_kind(findings, "han_not_simplified"), (
+            f"{c!r} (U+{ord(c):04X}) is a valid GB2312 Simplified char and must "
+            f"not trigger han_not_simplified (got {findings})"
+        )
+
+
+def test_gb2312_allowlist_chars_still_trigger():
+    """後 is in GB2312 for compatibility but is a Traditional form; 浜 is a
+    JP shinjitai; both must still trigger han_not_simplified."""
+    # 後藤武雄: 後 (U+5F8C) → 后; 4 chars clears source_has_text.
+    findings_go = _han_findings("後藤武雄")
+    assert _has_kind(findings_go, "han_not_simplified"), (
+        "後 is in GB2312 allowlist; should still trigger han_not_simplified"
+    )
+    assert any("後" in f.get("reason", "") for f in findings_go), \
+        "reason should name 後"
+
+    # 浜田省吾: existing test covers 浜; verify here too for the allowlist invariant.
+    findings_hama = _han_findings("浜田省吾")
+    assert _has_kind(findings_hama, "han_not_simplified"), \
+        "浜 is in GB2312 allowlist; should still trigger han_not_simplified"
+
+
+def test_codec_rule_must_trigger_list():
+    """Codec rule must trigger for the coordinator's must-trigger list:
+    鍋 輝 賢 嶋 瀬 論 増 淵 龍 啓 浜 後."""
+    from folith.engine.glossary_checks import _non_simplified_chars
+    must_trigger = ['鍋', '輝', '賢', '嶋', '瀬', '論', '増', '淵', '龍', '啓', '浜', '後']
+    for c in must_trigger:
+        result = _non_simplified_chars(c)
+        assert result, (
+            f"{c!r} (U+{ord(c):04X}) must trigger but _non_simplified_chars returned empty"
+        )
+
+
+def test_codec_rule_must_not_trigger_list():
+    """Codec rule must NOT trigger for the coordinator's must-not-trigger list:
+    沪 疏 醋 欠 予 芸 豨 磾 卬 蚡 镕 喆."""
+    from folith.engine.glossary_checks import _non_simplified_chars
+    must_not_trigger = ['沪', '疏', '醋', '欠', '予', '芸', '豨', '磾', '卬', '蚡', '镕', '喆']
+    for c in must_not_trigger:
+        result = _non_simplified_chars(c)
+        assert not result, (
+            f"{c!r} (U+{ord(c):04X}) must NOT trigger but "
+            f"_non_simplified_chars returned {result!r}"
+        )
+
+
+# --- page-number length fix --------------------------------------------------
+
+def test_index_line_with_long_page_list_is_informational():
+    """An index entry like '杉村伸二 15, 26-30' should be informational
+    (content is 4 chars) not actionable (which the page-number suffix would
+    cause without the _content_len_for_threshold fix)."""
+    # Without the fix: len("杉村伸二 15, 26-30") > _SHORT_HAN_THRESHOLD → actionable.
+    # With the fix: content_len = len("杉村伸二") = 4 ≤ 10 → informational.
+    findings = _han_findings("杉村伸二 15, 26-30")
+    assert findings, "index line should fire"
+    assert any(f.get("severity") == "informational" for f in findings), (
+        f"index line with page numbers should be informational; got {findings}"
+    )
+
+
+def test_long_name_without_page_numbers_stays_actionable():
+    """A name longer than the threshold without a page list stays actionable."""
+    # "山田太郎次郎三郎四郎" = 10 chars, no conversion needed, no page list.
+    # _content_len_for_threshold = 10 = threshold → boundary: 10 ≤ 10 → informational.
+    # But "山田太郎次郎三郎四郎五郎" = 12 → actionable.
+    long_name = "山田太郎次郎三郎四郎五郎"  # 12 Simplified/shared chars
+    findings = _han_findings(long_name)
+    assert findings
+    assert any(f.get("severity") == "actionable" for f in findings), (
+        f"long unchanged Han segment without page numbers must stay actionable; got {findings}"
+    )

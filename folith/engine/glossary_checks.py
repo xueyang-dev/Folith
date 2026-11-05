@@ -355,6 +355,247 @@ def _globalize_batch_findings(findings, offset):
 
 
 # ---------------------------------------------------------------------------
+# No-translation-needed suppression
+#
+# A segment whose whole content is a machine identifier or pure number does not
+# need translation.  The identical-to-source check (translation_completion) must
+# not fire for these; they are definitionally correct when target == source.
+#
+# In scope (whole-segment match only):
+#   • bare email address, URL (http/https/www), DOI, or ISBN/ISSN
+#   • pure numbers / numeric dates / ranges: ASCII digits and structural
+#     punctuation only — no letters, no CJK, no Eastern Arabic numerals
+#   • table rows (pipe- or tab-delimited) where every non-empty cell is one
+#     of the above
+#
+# Out of scope (keeps firing):
+#   • Chinese/Japanese/Korean text, Latin words, era+number, index lines,
+#     anything with a unit word, any sentence that merely contains a URL or
+#     a number
+#
+# Numerals decision: only ASCII digits [0-9] qualify as "pure numbers".
+# Eastern Arabic digit strings (٠-٩, ۰-۹) are excluded so that identical
+# Eastern Arabic digits for a non-Arabic target still fire (the digits should
+# have been converted by the translation pipeline).
+# ---------------------------------------------------------------------------
+
+_NO_TRANS_EMAIL = re.compile(r'^[\w.+-]+@[\w-]+(?:\.[\w-]+)+$', re.IGNORECASE)
+_NO_TRANS_URL = re.compile(r'^(?:https?://\S+|www\.\S+)$', re.IGNORECASE)
+_NO_TRANS_DOI = re.compile(r'^10\.\d{4,9}/\S+$', re.IGNORECASE)
+# ISBN or ISSN with optional separators; also handles Japanese "ISBN<13 digits> C<4 digits>"
+# NDC catalogue codes (e.g. "C3022") that follow the ISBN on the same line.
+_NO_TRANS_ISBN_ISSN = re.compile(
+    r'^(?:ISBN[-\s:]?[\d\s-]+(?:\s+[A-Z]\d{4})?|ISSN[-\s:]?\d{4}-\d{3}[\dXx])$',
+    re.IGNORECASE,
+)
+# Pure numbers: ASCII digits plus structural punctuation only.
+# No letters (Latin or other), no CJK, no Eastern Arabic digits.
+_NO_TRANS_NUMBER = re.compile(
+    r'^[0-9\s\-–—./,:;()[\]{}<>+%°\'"#$€£¥₩₽₺₿∞×*÷‰′″~^|@!?،]+$'
+)
+
+
+def _is_no_trans_cell(text: str) -> bool:
+    """True if *text* (stripped) is a bare machine identifier or pure number."""
+    s = text.strip()
+    return bool(
+        s and (
+            _NO_TRANS_EMAIL.match(s)
+            or _NO_TRANS_URL.match(s)
+            or _NO_TRANS_DOI.match(s)
+            or _NO_TRANS_ISBN_ISSN.match(s)
+            or _NO_TRANS_NUMBER.match(s)
+        )
+    )
+
+
+def is_no_translation_needed(src: str) -> bool:
+    """Return True if the whole source segment deterministically needs no translation.
+
+    Suppresses the identical-to-source check for bare emails, URLs, DOIs,
+    ISBNs/ISSNs, pure ASCII numbers/dates/ranges, and table rows whose every
+    cell is one of those.  Every other case — Han text, Latin words, index
+    lines, era+number, unit phrases, sentences containing a URL — returns False
+    so the check keeps firing.
+    """
+    raw = str(src or '')
+    s = re.sub(r'\s+', ' ', raw).strip()
+    if not s:
+        return False
+    if _is_no_trans_cell(s):
+        return True
+    # Table row: pipe- or tab-delimited; suppress only when ALL cells are
+    # in-scope (a row that mixes numbers with translated labels is not safe).
+    # Pipe rows are checked on the normalised string.  Tab rows must be split
+    # on the original ``raw`` string because normalisation converts tabs to
+    # spaces, making '\t' in s always False.
+    if '|' in s:
+        cells = [c.strip() for c in s.split('|') if c.strip()]
+        if cells and all(_is_no_trans_cell(c) for c in cells):
+            return True
+    elif '\t' in raw:
+        cells = [re.sub(r'\s+', ' ', c).strip() for c in raw.split('\t')]
+        cells = [c for c in cells if c]
+        if cells and all(_is_no_trans_cell(c) for c in cells):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Han-script awareness for Simplified Chinese targets
+#
+# When the target language is Simplified Chinese and the source is identical to
+# the target, there are three possible explanations:
+#   (a) The source contains Traditional/JP kanji that SHOULD be converted →
+#       actionable finding, kind="han_not_simplified".
+#   (b) The source is short and already in valid Simplified/shared-Han form →
+#       informational (the chars are genuinely ambiguous; must still be visible).
+#   (c) The source is long and already in valid Simplified/shared-Han form →
+#       keep the original actionable finding (a long text left unchanged is
+#       suspicious even if no individual char signals conversion).
+#
+# Threshold: segments ≤ _SHORT_HAN_THRESHOLD chars (excluding a trailing page-
+# number list) use case (b); longer use (c).  Dot-leader lines (table-of-contents
+# format) are never eligible for the informational downgrade regardless of length;
+# that guard lives in core.py where `leader_line` is computed.
+# ---------------------------------------------------------------------------
+
+_SHORT_HAN_THRESHOLD = 10  # characters (not bytes)
+
+# Trailing page-number pattern: space + digit(s) + optional commas/dashes/spaces
+# e.g. " 56", " 15, 26-30", " 1, 3–5, 42".  Stripped before measuring length so
+# that index lines do not inflate into the long-actionable group.
+_PAGE_NUM_SUFFIX_RE = re.compile(r'\s+\d[\d\s,;.–—-]*$')
+
+# ---------------------------------------------------------------------------
+# Codec-based non-simplified character detection
+#
+# A Han character is considered "non-simplified" when it encodes in Shift-JIS
+# but NOT in GB2312.  Shift-JIS covers Japanese and Traditional forms that
+# have no Simplified Chinese equivalent in GB2312.  Characters that encode in
+# both standards (e.g. 後, 浜) may still be Traditional/JP forms — those are
+# listed in _FORCED_TRUE so they still trigger.
+#
+# _EXCEPTIONS contains Shift-JIS-only characters that legitimately appear in
+# Simplified Chinese text (proper names, classical vocabulary, Buddhist terms)
+# and should NOT trigger the han_not_simplified check.
+# ---------------------------------------------------------------------------
+
+_FORCED_TRUE: frozenset[str] = frozenset({
+    '後',  # U+5F8C: in GB2312 for compatibility; Traditional/JP form of 后
+    '浜',  # U+6D5C: in GB2312; JP shinjitai of 濱, not standard Simplified Chinese
+})
+
+_EXCEPTIONS: frozenset[str] = frozenset({
+    # Place names and personal names with no standard Simplified alternative:
+    '塚',  # U+585A: Japanese place/personal name component (e.g. 一里塚, 塚田)
+    '潟',  # U+6F5F: Japanese geography (新潟 = Niigata); no Simplified equivalent
+    '昇',  # U+6607: personal name component; also variant of 升 in classical texts
+    '祐',  # U+7950: personal name component (e.g. 天祐, 祐子); common in proper nouns
+    '楯',  # U+696F: literary/onomastic variant for "shield"; used in Simplified names
+    # Classical and specialised vocabulary retained in Simplified Chinese writing:
+    '祇',  # U+7947: Buddhist term 祇园 (Jetavana grove); widely used in Simplified scholarship
+    '畤',  # U+7564: ancient altar term in Classical Chinese history (e.g. 四畤 in 史记)
+})
+
+# Normalized Simplified Chinese target-language labels (normalize_language output).
+_SIMP_CHINESE_LABELS: frozenset[str] = frozenset({
+    "简体中文", "simplified chinese", "chi_sim",
+    "zh-cn", "zh_cn", "zh", "chinese", "中文", "汉语",
+})
+
+# Han Unified Ideographs (all planes) — same range the script-leak check uses.
+_HAN_CRE = re.compile(
+    r"[一-鿿㐀-䶿"
+    r"\U00020000-\U0002A6DF"
+    r"\U0002A700-\U0002CEAF\U0002CEB0-\U0002EBEF]"
+)
+# Hiragana, Katakana (full- and half-width), Katakana Phonetic Extensions.
+_KANA_CRE = re.compile(r"[぀-ヿㇰ-ㇿ･-ﾟ]")
+# Japanese quotation marks that do not appear in Chinese.
+_JP_BRACKET_CRE = re.compile(r"[『』「」]")
+# Any Latin letter.
+_LATIN_CRE = re.compile(r"[A-Za-z]")
+
+
+def is_simplified_chinese_target(target_lang: str) -> bool:
+    """Return True when *target_lang* resolves to Simplified Chinese (loose)."""
+    from folith.textual import normalize_language
+    return normalize_language(str(target_lang or "")) in _SIMP_CHINESE_LABELS
+
+
+def _qualifies_for_han_check(src: str) -> bool:
+    """True if *src* has Han chars and no kana, no Latin, no JP corner brackets.
+
+    Segments with kana are definitively Japanese; segments with Latin are mixed
+    or technical; segments with JP-exclusive quotation marks are likely Japanese
+    prose.  Those are left to the existing actionable path unchanged.
+    """
+    s = str(src or "")
+    return (
+        bool(_HAN_CRE.search(s))
+        and not _KANA_CRE.search(s)
+        and not _JP_BRACKET_CRE.search(s)
+        and not _LATIN_CRE.search(s)
+    )
+
+
+def _is_sjis_encodable(c: str) -> bool:
+    """Return True if the single character *c* encodes without error in Shift-JIS."""
+    try:
+        c.encode('shift_jis')
+        return True
+    except (UnicodeEncodeError, LookupError):
+        return False
+
+
+def _is_gb2312_encodable(c: str) -> bool:
+    """Return True if the single character *c* encodes without error in GB2312."""
+    try:
+        c.encode('gb2312')
+        return True
+    except (UnicodeEncodeError, LookupError):
+        return False
+
+
+def _non_simplified_chars(text: str) -> list[str]:
+    """Return Han chars in *text* that are non-simplified, in order, deduplicated.
+
+    A character is considered non-simplified when:
+    * it is in ``_FORCED_TRUE`` (GB2312-compatible but Traditional/JP), OR
+    * it encodes in Shift-JIS but NOT in GB2312, AND is NOT in ``_EXCEPTIONS``.
+
+    Shift-JIS-only characters are Japanese or Traditional forms with no
+    Simplified equivalent in GB2312.  Characters in ``_EXCEPTIONS`` are Shift-
+    JIS-only but legitimately used in Simplified Chinese proper names or
+    classical texts and should not trigger the check.
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+    for c in str(text or ''):
+        if c in seen or not _HAN_CRE.match(c):
+            continue
+        if c in _FORCED_TRUE:
+            seen.add(c)
+            result.append(c)
+        elif c not in _EXCEPTIONS and _is_sjis_encodable(c) and not _is_gb2312_encodable(c):
+            seen.add(c)
+            result.append(c)
+    return result
+
+
+def _content_len_for_threshold(src_norm: str) -> int:
+    """Length of *src_norm* after stripping a trailing page-number list.
+
+    Index entries like "渡口重国 15, 26-30" report a length of 4 (the Han
+    name) rather than the full string, so the threshold correctly places them
+    in the short / informational group instead of inflating them into the
+    long / actionable group.
+    """
+    return len(_PAGE_NUM_SUFFIX_RE.sub('', src_norm))
+
+
+# ---------------------------------------------------------------------------
 # #101: numeric / unit / tag structure checks
 #
 # These are mechanical signals, not semantic ones: a number that disappears, a
