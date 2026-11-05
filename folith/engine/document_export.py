@@ -381,6 +381,16 @@ def build_translation_docx(state, source, *, roundtrip: bool = False):
         return translations_to_word(pairs, state.get("target_lang")), report
     except EpubExportError as exc:
         message = str(exc)
+        if is_epub:
+            # An EPUB task whose source paragraph association cannot be bound
+            # (for example a legacy structure edit without source refs) used
+            # to deliver a plain-text DOCX before image support.  Keep that
+            # deliverable instead of turning the missing association into a
+            # hard failure; the report says exactly what was not kept.
+            report["warnings"].append(
+                message + " 已改为纯文字重建，不保留图片。")
+            report.update(image_count=0, image_reference_count=0)
+            return translations_to_word(pairs, state.get("target_lang")), report
         if "来源不一致" not in message:
             raise RuntimeError(message.replace("EPUB", "译文 DOCX")) from exc
         # After re-reading failed pages the source paragraph mapping can no

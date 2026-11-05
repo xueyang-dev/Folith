@@ -454,12 +454,9 @@ def _epub_source(source: bytes, *, stats: dict | None = None):
                 if kind is None:
                     skip("unsupported")
                     continue
-                if kind[0] == "svg":
-                    embedded = _svg_embedded_image(book, target, data, encrypted, set())
-                    if embedded is None:
-                        skip("vector_svg")
-                        continue
-                    data, kind = embedded
+                # ``<img src="x.svg">`` stays an SVG file in the translated
+                # EPUB (EPUB 3 core media type); the DOCX rebuild rasterizes
+                # it and skips + reports the one it cannot convert.
                 name = _register_media(media, seen, data, *kind)
                 positions[offset + int(record["at"])].append(name)
 

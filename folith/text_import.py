@@ -64,6 +64,20 @@ def _image_records(element, tag: str) -> list[dict]:
     return records
 
 
+def _object_records(element) -> list[dict]:
+    """A bitmap referenced through ``<object data>`` must not vanish silently.
+
+    The object's fallback children are still walked, so the paragraph text
+    contract is unchanged; when the object has a ``data`` resource, any nested
+    fallback ``img`` would be a duplicate of the same picture on screen, so
+    image collection is suppressed while walking those children.
+    """
+    data = element.get("data")
+    if not data:
+        return []
+    return [{"tag": "object", "href": str(data), "at": None}]
+
+
 def _html_paragraphs(markup: str | bytes, headings: list | None = None,
                      anchors: dict | None = None,
                      images: list | None = None):
@@ -71,11 +85,12 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
     ``{"index": 标题段落在结果里的下标, "level": 1–6}`` 追加进去（结构解析用）。
     传入 ``anchors`` 字典时，把元素 id/name 映射到其段落在结果里的下标。
 
-    传入 ``images`` 列表时不再丢弃 ``img``/``svg``：每处引用追加一条
-    ``{"tag": "img"|"svg-image"|"vector-svg", "href": 原始地址, "at": 段落边界}``。
+    传入 ``images`` 列表时不再丢弃 ``img``/``svg``/``object``：每处引用追加一条
+    ``{"tag": "img"|"svg-image"|"vector-svg"|"object", "href": 原始地址, "at": 段落边界}``。
     ``at`` 是“图片之前的完整段落数”：独立图片块落在前后段落之间的边界上，
     段内图片落在该完整段落之后；图片元素本身没有文字，因此不会改变段落序列。
-    图片后方的 tail 文本照常并入段落。"""
+    图片后方的 tail 文本照常并入段落；``<object data>`` 的 fallback 文字照常
+    参与段落，图片资源本身由调用方保留或计入跳过。"""
     if isinstance(markup, bytes):
         markup = decode_text(markup)
     root = html.fromstring(markup)
@@ -97,12 +112,15 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
     paragraphs = []
     # Flush around block boundaries; nested lists/divs never duplicate text.
     pending = []
-    # Image markers wait for the flush of the nearest enclosing block (or of
-    # the next block when they sit directly in the body). A block that ends up
-    # with no text leaves the paragraph count untouched, so a marker can never
-    # shift the following paragraphs.
-    block_images: list[list[dict]] = []
+    # Each open block remembers the images that belong *after that block*.
+    # ``has_child_blocks`` decides what "after the block" means: a leaf block
+    # (p/li/h1 that only contains inline content) resolves its images after its
+    # own flush; a container block resolves them at the boundary captured when
+    # the image was met, so an image between two child paragraphs cannot drift
+    # to the end of the whole container.
+    block_frames: list[dict] = []
     deferred: list[dict] = []
+    suppress_images = [0]
 
     def flush():
         text = re.sub(r"\s+", " ", "".join(pending)).strip()
@@ -117,10 +135,12 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
         if not keep_images:
             return
         images.append(record)
-        if block_images:
-            block_images[-1].append(record)
-        elif any(chunk.strip() for chunk in pending):
+        if any(chunk.strip() for chunk in pending):
+            # Inline image: after the paragraph that contains it.
             deferred.append(record)
+        elif block_frames:
+            record["candidate"] = len(paragraphs)
+            block_frames[-1]["records"].append(record)
         else:
             record["at"] = len(paragraphs)
 
@@ -129,7 +149,9 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
         block = tag in blocks
         if block:
             flush()
-            block_images.append([])
+            if block_frames:
+                block_frames[-1]["has_child_blocks"] = True
+            block_frames.append({"records": [], "has_child_blocks": False})
         if anchors is not None:
             node_id = node.get("id") or node.get("name")
             if node_id and str(node_id) not in anchors:
@@ -142,9 +164,18 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
                 if child_tag == "br":
                     pending.append(" ")
                 elif child_tag in {"img", "svg"}:
-                    if keep_images:
+                    if keep_images and not suppress_images[0]:
                         for record in _image_records(child, child_tag):
                             add_image(record)
+                elif child_tag == "object" and keep_images and not suppress_images[0] \
+                        and child.get("data"):
+                    for record in _object_records(child):
+                        add_image(record)
+                    suppress_images[0] += 1
+                    try:
+                        walk(child)
+                    finally:
+                        suppress_images[0] -= 1
                 else:
                     walk(child)
                 if child_tag in {"td", "th"}:
@@ -159,12 +190,16 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
                     and len(paragraphs) > before):
                 headings.append({"index": len(paragraphs) - 1,
                                  "level": int(tag[1])})
-            owned = block_images.pop()
-            for record in owned:
-                # Inline images follow their complete block; an image-only
-                # block produces no paragraph, so this is still the exact
-                # boundary between the surrounding paragraphs.
-                record["at"] = len(paragraphs)
+            frame = block_frames.pop()
+            for record in frame["records"]:
+                # A leaf block (p/li/h1…) owns its inline images: they follow
+                # its complete paragraph. A container block only provides the
+                # current boundary, captured when the image was met.
+                if frame["has_child_blocks"]:
+                    record["at"] = record.pop("candidate", len(paragraphs))
+                else:
+                    record.pop("candidate", None)
+                    record["at"] = len(paragraphs)
     walk(body)
     flush()
     return paragraphs, omitted
