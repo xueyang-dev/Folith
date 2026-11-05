@@ -2474,5 +2474,10 @@
   "{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段": "{v0}-Gruppe {v1} · {v2} Vorkommen · {v3} Abschnitte betroffen",
   "需要调查": "Untersuchung erforderlich",
   "作用于：{v0}": "Wirkt auf: {v0}",
-  "辅助": "Auxiliär"
+  "辅助": "Auxiliär",
+  "自动处理有确定依据的问题（实验）": "Belegte Befunde automatisch behandeln (experimentell)",
+  "只对本任务生效。有确定依据的发现会移入「自动处理（审计）」组，每条都能撤销；不修改译文，不调用模型，也不放宽交付门禁。": "Gilt nur für diese Aufgabe. Befunde mit deterministischem Nachweis wechseln in die Gruppe „Automatisch behandelt (Audit)“, und jeder kann aufgehoben werden. Die Übersetzung wird nicht geändert, kein Modell aufgerufen und die Lieferprüfung nicht gelockert.",
+  "无法切换自动处理": "Automatische Behandlung konnte nicht umgeschaltet werden",
+  "已开启自动处理：{v0} 条发现有确定依据，已移入审计组。": "Automatische Behandlung ist an: {v0} Befunde haben einen deterministischen Nachweis und wurden in die Audit-Gruppe verschoben.",
+  "已关闭自动处理：所有发现回到人工队列。": "Automatische Behandlung ist aus: Alle Befunde sind zurück in der menschlichen Warteschlange."
 }

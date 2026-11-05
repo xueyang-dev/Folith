@@ -447,6 +447,7 @@ class MainWindow(QMainWindow):
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
         # #289: 审计列表的撤销信号 → 适配器 → 既有核心函数。
         self.workbench.reviewRevokeRequested.connect(self.revoke_auto_handling)
+        self.workbench.reviewTriageToggleRequested.connect(self.set_auto_handling)
         self.workbench.glossaryDraftRequested.connect(self.save_glossary_draft)
         self.workbench.glossaryFreezeRequested.connect(self.freeze_glossary)
         self.workbench.glossaryUnfreezeRequested.connect(self.unfreeze_glossary)
@@ -3230,6 +3231,22 @@ class MainWindow(QMainWindow):
         # 连续处理（#98）：只有动作**成功**才前进到下一项；失败时提示留在
         # 队列里，未处理的发现项不会被跳过。
         self.workbench.review_panel.consume_advance_hint()
+
+    def set_auto_handling(self, enabled: bool) -> None:
+        """打开或关闭本任务的自动处理；失败时刷新页面，让勾选状态回到实际值。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            result = adapter.set_auto_handling(job_id, enabled)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法切换自动处理'), str(exc))
+        else:
+            self._notice(
+                i18n.tr('已开启自动处理：{v0} 条发现有确定依据，已移入审计组。',
+                        v0=result["verified_safe"])
+                if enabled else i18n.tr('已关闭自动处理：所有发现回到人工队列。'))
+        self.refresh_workbench(force=True)
 
     def revoke_auto_handling(self, record_key: str) -> None:
         """#289: 撤销一条自动处理结论——窗口层是唯一写状态的地方。

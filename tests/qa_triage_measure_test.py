@@ -69,7 +69,7 @@ def _state(findings=None, pairs=None, enabled=True, **extra):
 def _retention_state(fid="f-keep", term="秦半两"):
     """A finding whose target is a frozen preserve term: verified_safe holds."""
     finding = _finding(fid, detected_text=term,
-                       segment_id=0)
+                       segment_id=0, kind="source_residue")
     state = _state([finding], pairs=[{"source": "秦半両が流通した。",
                                      "target": f"{term}流通了。"}])
     state["glossary_frozen"] = {

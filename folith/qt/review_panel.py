@@ -19,7 +19,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QApplication, QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QTextBrowser, QTextEdit,
     QVBoxLayout, QWidget,
 )
@@ -234,6 +234,7 @@ class ReviewPanel(QWidget):
     #: #289: 审计列表的撤销——面板只发信号（triage 记录键），写状态的是
     #: 窗口层经适配器调用既有核心函数；面板自己不写状态。
     triageRevokeRequested = Signal(str)             # triage record key
+    triageToggleRequested = Signal(bool)            # 本任务的自动处理开关
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -277,6 +278,15 @@ class ReviewPanel(QWidget):
         self.review_all_button.clicked.connect(self.reviewAllRequested.emit)
         self.concept_button = button(i18n.tr('概念决策'), "list")
         self.concept_button.clicked.connect(self.conceptRequested.emit)
+        # clicked 只在用户操作时发出；apply() 同步勾选状态不会反过来写任务。
+        self.triage_toggle = QCheckBox(i18n.tr('自动处理有确定依据的问题（实验）'))
+        self.triage_toggle.setObjectName("reviewTriageToggle")
+        self.triage_toggle.setToolTip(i18n.tr(
+            '只对本任务生效。有确定依据的发现会移入「自动处理（审计）」组，每条都能撤销；'
+            '不修改译文，不调用模型，也不放宽交付门禁。'))
+        self.triage_toggle.setAccessibleDescription(self.triage_toggle.toolTip())
+        self.triage_toggle.clicked.connect(
+            lambda checked: self.triageToggleRequested.emit(bool(checked)))
         top = QHBoxLayout()
         text_column = QVBoxLayout()
         text_column.setSpacing(2)
@@ -454,7 +464,11 @@ class ReviewPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(10)
-        layout.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignRight)
+        actions = QHBoxLayout()
+        actions.addWidget(self.triage_toggle)
+        actions.addStretch(1)
+        actions.addWidget(self.concept_button)
+        layout.addLayout(actions)
         layout.addWidget(self.content, 1)
         layout.addWidget(self.empty_state, 1)
 
@@ -525,6 +539,8 @@ class ReviewPanel(QWidget):
         # #289: 审计列表。开关关闭时视图里没有 `auto_handled_items` 这个键，
         # 下面的列表就是空的，页面渲染与今天完全一致。
         self._triage_on = bool(self._view.get("qa_triage_enabled"))
+        self.triage_toggle.setChecked(self._triage_on)
+        self.triage_toggle.setEnabled(not busy)
         self._auto = [item for item in (self._view.get("auto_handled_items") or [])]
         self._group_summaries = {
             str(group.get("group_id") or ""): dict(group)

@@ -240,62 +240,30 @@ def store(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Orthographic folding (triage side only; the detectors are not touched)
+# Outer-bracket comparison (triage side only; the detectors are not touched)
 #
-# A closed character table, not a fuzzy matcher.  It folds traditional ->
-# simplified and a small set of orthographic variants (异体) so that
-# 増淵/增渊 and 〈奏谳书〉/奏谳书 become the same key, plus bracket/punctuation
-# folding that ``consistency.spelling`` does not do (it strips 《》 and quotes
-# only).  It deliberately does NOT implement Japanese shinjitai/kyūjitai as a
-# rule: 増->增 is registered here as an 异体 variant, nothing more.
+# Two target forms count as the same text only when they differ by a matched
+# pair of brackets or quotes around the whole form, as in 〈奏谳书〉 / 奏谳书.
+# Character folding is deliberately absent.  河東 / 河东 in a simplified target
+# is a leftover form that should be unified, and Polish / polish are two words,
+# so neither may read as "no action needed".  A bracket inside the form, as in
+# 非十二子》篇, is a typo and keeps the forms different.
 # ---------------------------------------------------------------------------
 
-_TRADITIONAL_TO_SIMPLIFIED = {
-    "書": "书", "漢": "汉", "淵": "渊", "讞": "谳", "獻": "献",
-    "這": "这", "說": "说", "國": "国", "學": "学", "會": "会",
-    "對": "对", "時": "时", "個": "个", "們": "们", "來": "来",
-    "為": "为", "開": "开", "關": "关", "長": "长", "門": "门",
-    "問": "问", "間": "间", "東": "东", "車": "车", "馬": "马",
-    "鳥": "鸟", "魚": "鱼", "龍": "龙", "見": "见", "頁": "页",
-    "風": "风", "飛": "飞", "頭": "头", "題": "题", "讓": "让",
-    "認": "认", "識": "识", "語": "语", "讀": "读", "寫": "写",
-    "聽": "听", "買": "买", "賣": "卖", "錢": "钱", "銀": "银",
-    "鐵": "铁", "張": "张", "強": "强", "歸": "归", "當": "当",
-    "戰": "战", "爭": "争", "愛": "爱", "應": "应", "舊": "旧",
-    "華": "华", "萬": "万", "與": "与", "將": "将", "歲": "岁",
-    "歷": "历", "廣": "广", "從": "从", "眾": "众", "傳": "传",
-    "價": "价", "內": "内", "兩": "两", "別": "别", "創": "创",
-    "動": "动", "務": "务", "勝": "胜", "勞": "劳", "區": "区",
-    "醫": "医", "錯": "错", "閱": "阅", "陰": "阴", "陽": "阳",
-    "隨": "随", "險": "险", "隱": "隐", "雖": "虽", "雙": "双",
-    "離": "离", "難": "难", "電": "电", "圖": "图", "團": "团",
-    "導": "导", "層": "层", "幣": "币", "師": "师", "帶": "带",
-    "幫": "帮", "庫": "库", "廠": "厂", "實": "实", "寧": "宁",
-    "體": "体",
+_OUTER_PAIRS = {
+    "《": "》", "〈": "〉", "「": "」", "『": "』", "〔": "〕", "〖": "〗", "【": "】",
+    "“": "”", "‘": "’", "«": "»", "‹": "›", '"': '"', "'": "'",
 }
-
-#: Orthographic variants (异体), NOT a Japanese old/new-font rule.
-_ORTHOGRAPHIC_VARIANTS = {
-    "増": "增",
-}
-
-#: Brackets/quotes the triage fold removes anywhere (consistency.spelling only
-#: strips 《》 and quotes, and only at the edges).
-_FOLD_BRACKETS = "〈〉《》「」『』〔〕〖〗【】“”‘’\"'"
-
-_ORTHOGRAPHIC_FOLD = {**_TRADITIONAL_TO_SIMPLIFIED, **_ORTHOGRAPHIC_VARIANTS}
+_PAIR_CHARS = frozenset(_OUTER_PAIRS) | frozenset(_OUTER_PAIRS.values())
 
 
-def orthographic_key(form: Any) -> str:
-    """Fold one surface form to a comparable orthographic key.
-
-    NFKC + casefold + punctuation folding via ``terminology_variants.punct_key``,
-    then the closed character table.  Two forms are orthographically equivalent
-    iff their keys are equal and the raw forms differ.
-    """
-    text = "".join(ch for ch in str(form or "") if ch not in _FOLD_BRACKETS)
-    key = terminology_variants.punct_key(text)
-    return "".join(_ORTHOGRAPHIC_FOLD.get(ch, ch) for ch in key)
+def outer_bracket_key(form: Any) -> str:
+    """The form without matched brackets around the whole of it."""
+    text = str(form or "").strip()
+    while len(text) >= 2 and _OUTER_PAIRS.get(text[0]) == text[-1] \
+            and not _PAIR_CHARS.intersection(text[1:-1]):
+        text = text[1:-1].strip()
+    return text
 
 
 def _variant_forms(finding: Mapping[str, Any]) -> List[str]:
@@ -361,19 +329,54 @@ def _accepted_variants(state: Optional[Mapping[str, Any]],
     return set()
 
 
+def _live_entity_view(state: Optional[Mapping[str, Any]],
+                      finding: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """The entity conflict as it reads from the registry and the current text.
+
+    A stored finding keeps the spellings it was detected with, and its
+    fingerprint covers one segment only.  Evidence must not rest on that copy: a
+    wrong spelling that appears later in another occurrence would stay hidden.
+    Returns ``None`` when the finding is no entity conflict, when its registry
+    record is missing or rejected, or when no occurrence is left to check.
+    """
+    if str(finding.get("type") or "") != "entity_conflict":
+        return None
+    records = (state or {}).get("entity_registry")
+    if not isinstance(records, (list, tuple)):
+        return None
+    wanted = {_spell_fold(finding.get("source") or "")}
+    wanted.update(_spell_fold(alias) for alias in finding.get("aliases") or [])
+    wanted.discard("")
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        forms = [record.get("source_form"), *(record.get("aliases") or [])]
+        if not wanted & {_spell_fold(form) for form in forms if form}:
+            continue
+        if record.get("status") == "rejected":
+            return None
+        rows = consistency.current_occurrences(record, (state or {}).get("pairs") or [])
+        if not rows:
+            return None
+        live = dict(finding)
+        live["occurrences"] = rows
+        live["observed_targets"] = sorted(
+            {str(value) for row in rows for value in row.get("variants") or []})
+        live["preferred_target"] = record.get("preferred_target")
+        return live
+    return None
+
+
 def _concept_decision_evidence(state: Optional[Mapping[str, Any]],
                                finding: Mapping[str, Any]) -> Optional[Dict[str, str]]:
-    """A stored concept decision that actually covers every observed spelling.
+    """A stored concept decision that actually covers every current spelling.
 
     A card being present does **not** settle a finding, and ``keep_variants``
-    alone is not evidence.  When the finding carries per-segment ``occurrences``,
-    each row is checked on its own: every variant of that row, folded with the
-    detector's own ``consistency.spelling`` helper, must be the preferred
-    translation, an accepted variant of the entity, or the exception declared
-    for **that row's** segment.  A segment's exception never excuses a spelling
-    that appears in another segment.  When there are no occurrences, only the
-    preferred translation and accepted variants are allowed and no segment
-    exception is consulted.
+    alone is not evidence.  Each current occurrence is checked on its own: every
+    variant of that row, folded with the detector's own ``consistency.spelling``
+    helper, must be the preferred translation, an accepted variant of the entity,
+    or the exception declared for **that row's** segment.  A segment's exception
+    never excuses a spelling that appears in another segment.
 
     The evidence ref carries the preferred translation and the concrete observed
     spellings, not just the card id, so changing the preferred target (which does
@@ -381,6 +384,9 @@ def _concept_decision_evidence(state: Optional[Mapping[str, Any]],
     """
     decisions = (state or {}).get("concept_decisions")
     if not decisions:
+        return None
+    live = _live_entity_view(state, finding)
+    if live is None:
         return None
     probes = []
     source = str(finding.get("source") or "").strip()
@@ -404,47 +410,28 @@ def _concept_decision_evidence(state: Optional[Mapping[str, Any]],
     accepted = _accepted_variants(state, finding)
     surfaces: List[str] = []
 
-    rows = [row for row in finding.get("occurrences") or []
-            if isinstance(row, Mapping)]
-    if rows:
-        # Per-occurrence check: the exception of one segment must not vouch for a
-        # spelling that appears in another segment.
-        for row in rows:
-            row_allowed = set(accepted) | {preferred_key}
-            index = row.get("index")
-            if isinstance(index, int) and not isinstance(index, bool):
-                scope = f"segment:{index}"
-                for exception in card.get("exceptions") or []:
-                    if isinstance(exception, Mapping) \
-                            and str(exception.get("scope") or "") == scope:
-                        target = str(exception.get("target") or "").strip()
-                        if target:
-                            row_allowed.add(_spell_fold(target))
-            variants = [value for value in row.get("variants") or []
-                        if str(value or "").strip()]
-            if not variants:
-                continue
-            for value in variants:
-                key = _spell_fold(value)
-                if not key or key not in row_allowed:
-                    return None
-                surfaces.append(consistency.spelling(value))
-        if not surfaces:
-            return None
-    else:
-        # No per-segment rows: only the preferred translation and the entity's
-        # accepted variants may excuse an observed target; a segment exception is
-        # meaningless without knowing which segment the spelling came from.
-        observed = [str(value or "").strip() for value in finding.get("observed_targets") or []]
-        observed = [value for value in observed if value]
-        if not observed:
-            return None
-        allowed = set(accepted) | {preferred_key}
-        for value in observed:
+    # Per-occurrence check: the exception of one segment must not vouch for a
+    # spelling that appears in another segment.
+    for row in live["occurrences"]:
+        row_allowed = set(accepted) | {preferred_key}
+        index = row.get("index")
+        if isinstance(index, int) and not isinstance(index, bool):
+            scope = f"segment:{index}"
+            for exception in card.get("exceptions") or []:
+                if isinstance(exception, Mapping) \
+                        and str(exception.get("scope") or "") == scope:
+                    target = str(exception.get("target") or "").strip()
+                    if target:
+                        row_allowed.add(_spell_fold(target))
+        variants = [value for value in row.get("variants") or []
+                    if str(value or "").strip()]
+        for value in variants:
             key = _spell_fold(value)
-            if not key or key not in allowed:
+            if not key or key not in row_allowed:
                 return None
             surfaces.append(consistency.spelling(value))
+    if not surfaces:
+        return None
 
     spelled = " | ".join(sorted(dict.fromkeys(surfaces)))
     card_id = str(card["card_id"])
@@ -458,26 +445,40 @@ def _concept_decision_evidence(state: Optional[Mapping[str, Any]],
 def _orthographic_equivalence_evidence(
         state: Optional[Mapping[str, Any]],
         finding: Mapping[str, Any]) -> Optional[Dict[str, str]]:
-    """The target variants are the same word written differently."""
-    if str(finding.get("type") or "") != "entity_conflict":
+    """The current target forms differ only by brackets around the whole form."""
+    live = _live_entity_view(state, finding)
+    if live is None:
         return None
-    forms = _variant_forms(finding)
-    distinct = sorted(set(forms))
+    distinct = sorted(set(_variant_forms(live)))
     if len(distinct) < 2:
         return None
-    keys = {orthographic_key(form) for form in distinct}
+    keys = {outer_bracket_key(form) for form in distinct}
     if len(keys) != 1:
         return None
     canonical = next(iter(keys))
     ref = " == ".join(distinct)
     return {"kind": ORTHOGRAPHIC_EQUIVALENCE, "ref": ref,
-            "detail": f"orthographic variants of {canonical}"}
+            "detail": f"same text as {canonical} apart from outer brackets"}
+
+
+#: Findings that report source text left in the target: the only question a
+#: retention policy can answer.
+_RETENTION_KINDS = frozenset({"source_residue", "script_leak"})
+_RETENTION_CATEGORIES = frozenset({"translation_completion", "source_language_residue"})
 
 
 def _retention_policy_evidence(
         state: Optional[Mapping[str, Any]],
         finding: Mapping[str, Any]) -> Optional[Dict[str, str]]:
-    """A frozen ``preserve`` glossary entry covers the text this finding flags."""
+    """A frozen ``preserve`` entry covers source text the target really kept.
+
+    The policy only answers "is it fine that this text stayed as it is?".  A
+    finding that reports the opposite, such as a preserve term missing from the
+    target, names the same term and must never read as settled by that entry.
+    """
+    if not (str(finding.get("kind") or "") in _RETENTION_KINDS
+            or str(finding.get("category") or "") in _RETENTION_CATEGORIES):
+        return None
     frozen = (state or {}).get("glossary_frozen")
     if not isinstance(frozen, Mapping):
         return None
@@ -488,6 +489,8 @@ def _retention_policy_evidence(
     if not text:
         return None
     target_key = _span_key(text)
+    if target_key not in _span_key(_pair_for(state, finding).get("target")):
+        return None
     version = frozen.get("version")
     for entry in entries:
         if not isinstance(entry, Mapping):
@@ -525,11 +528,26 @@ def _evidence_holds(state: Optional[Mapping[str, Any]],
     return bool(resolved) and resolved.get("ref") == str(item.get("ref") or "")
 
 
+def _is_merged_row(finding: Mapping[str, Any]) -> bool:
+    """Whether the queue folded several records into this row.
+
+    The merge key does not include the entity, so one row can stand for two
+    different conflicts in the same segment.  Evidence read from the row describes
+    only the first of them, so a merged row can never be proven safe.
+    """
+    try:
+        return int(finding.get("duplicate_count") or 1) > 1
+    except (TypeError, ValueError):
+        return True
+
+
 def _verified_safe_evidence_valid(state: Optional[Mapping[str, Any]],
                                   finding: Mapping[str, Any],
                                   evidence: Any) -> bool:
     """``verified_safe`` needs one allowlisted, currently-holding producing item."""
     if not isinstance(evidence, (list, tuple)) or not evidence:
+        return False
+    if _is_merged_row(finding):
         return False
     for item in evidence:
         if not isinstance(item, Mapping):
@@ -559,6 +577,8 @@ def classify(state: Optional[Mapping[str, Any]],
     """
     if str(finding.get("severity") or "").strip() == BLOCKING:
         return {"disposition": BLOCKING, "evidence": [], "actor_type": "rule"}
+    if _is_merged_row(finding):
+        return {"disposition": HUMAN_REQUIRED, "evidence": [], "actor_type": "rule"}
     for _kind, resolver in _RESOLVERS:
         item = resolver(state, finding)
         if item:
@@ -752,6 +772,55 @@ def records(state: Optional[Mapping[str, Any]]) -> Dict[str, Dict[str, Any]]:
         for finding_id, entry in current.items()
         if isinstance(entry, Mapping)
     }
+
+
+def apply_deterministic(state: Dict[str, Any]) -> Dict[str, int]:
+    """Record ``verified_safe`` for every open finding the allowlist settles.
+
+    This is the runtime entry point of the deterministic round: no model call,
+    no text change, no finding edit.  With the switch off it writes nothing.
+    Findings are read through ``delivery.review_queue_findings`` and keyed the
+    same way as the review queue, so a record reaches the row it describes.
+
+    Idempotent, and it never overrules a human or another writer: a revoked
+    record stays revoked, and a record holding any other disposition (for
+    example a staged repair) is left alone.  ``human_required`` and ``blocking``
+    write nothing, because a missing record already reads as a human decision.
+    A finding that cannot be classified also stays with the human.
+
+    Returns ``{"examined", "recorded", "verified_safe", "failed"}``, where
+    ``verified_safe`` counts every finding currently reading that way.
+    """
+    summary = {"examined": 0, "recorded": 0, "verified_safe": 0, "failed": 0}
+    if not enabled(state):
+        return summary
+    from . import delivery
+
+    for finding in delivery.review_queue_findings(dict(state)):
+        summary["examined"] += 1
+        try:
+            keyed = dict(finding)
+            keyed["finding_id"] = str(
+                finding.get("finding_id") or delivery.finding_id(dict(finding)))
+            if disposition_of(state, keyed) == VERIFIED_SAFE:
+                summary["verified_safe"] += 1
+                continue
+            current = state.get(STATE_KEY)
+            entry = current.get(keyed["finding_id"]) if isinstance(current, Mapping) else None
+            if isinstance(entry, Mapping) and (
+                    str(entry.get("revoked_at") or "").strip()
+                    or str(entry.get("disposition") or "") != VERIFIED_SAFE):
+                continue
+            result = classify(state, keyed)
+            if result["disposition"] != VERIFIED_SAFE:
+                continue
+            record(state, keyed, disposition=VERIFIED_SAFE, actor_type="rule",
+                   evidence=result["evidence"])
+            summary["recorded"] += 1
+            summary["verified_safe"] += 1
+        except Exception:  # noqa: BLE001 - it stays in the human queue; a finished task must not fail here
+            summary["failed"] += 1
+    return summary
 
 
 def annotate(findings: Any,

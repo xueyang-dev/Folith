@@ -2474,5 +2474,10 @@
   "{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段": "Groupe {v0} {v1} · {v2} occurrences · {v3} segments concernés",
   "需要调查": "Investigation nécessaire",
   "作用于：{v0}": "S'applique à : {v0}",
-  "辅助": "Auxiliaire"
+  "辅助": "Auxiliaire",
+  "自动处理有确定依据的问题（实验）": "Traiter seuls les constats prouvés (expérimental)",
+  "只对本任务生效。有确定依据的发现会移入「自动处理（审计）」组，每条都能撤销；不修改译文，不调用模型，也不放宽交付门禁。": "S'applique à cette tâche uniquement. Les constats à preuve déterministe passent dans le groupe « Traitement automatique (audit) », et chacun peut être révoqué. La traduction n'est pas modifiée, aucun modèle n'est appelé et le contrôle de livraison n'est pas assoupli.",
+  "无法切换自动处理": "Impossible de changer le traitement automatique",
+  "已开启自动处理：{v0} 条发现有确定依据，已移入审计组。": "Traitement automatique activé : {v0} constats ont une preuve déterministe et sont passés dans le groupe d'audit.",
+  "已关闭自动处理：所有发现回到人工队列。": "Traitement automatique désactivé : tous les constats sont de retour dans la file humaine."
 }

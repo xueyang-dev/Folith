@@ -2474,5 +2474,10 @@
   "{v0}组 {v1} · 出现 {v2} 次 · 影响 {v3} 段": "Grupo {v0} {v1} · {v2} apariciones · {v3} segmentos afectados",
   "需要调查": "Requiere investigación",
   "作用于：{v0}": "Afecta a: {v0}",
-  "辅助": "Auxiliar"
+  "辅助": "Auxiliar",
+  "自动处理有确定依据的问题（实验）": "Tratar solos los hallazgos probados (experimental)",
+  "只对本任务生效。有确定依据的发现会移入「自动处理（审计）」组，每条都能撤销；不修改译文，不调用模型，也不放宽交付门禁。": "Solo se aplica a esta tarea. Los hallazgos con evidencia determinista pasan al grupo «Automático (auditoría)» y cada uno puede revocarse. No cambia la traducción, no se llama a ningún modelo ni se relaja el control de entrega.",
+  "无法切换自动处理": "No se pudo cambiar el tratamiento automático",
+  "已开启自动处理：{v0} 条发现有确定依据，已移入审计组。": "Tratamiento automático activado: {v0} hallazgos tienen evidencia determinista y pasaron al grupo de auditoría.",
+  "已关闭自动处理：所有发现回到人工队列。": "Tratamiento automático desactivado: todos los hallazgos vuelven a la cola humana."
 }

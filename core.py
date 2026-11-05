@@ -14353,6 +14353,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         attach_pair_spans(state)
         from folith import delivery as _delivery
         state["delivery_status"] = _delivery.compute_delivery_status(state)
+        from folith import finding_triage as _finding_triage
+        _finding_triage.apply_deterministic(state)
         from folith.readiness import record_readiness_milestone
         record_readiness_milestone(job_id, state, "draft_ready")
         save_job_state(job_id, state)
