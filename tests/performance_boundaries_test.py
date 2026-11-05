@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 
 import core
@@ -38,22 +39,44 @@ def test_annotation_boundaries_expose_ordered_commit_wait(tmp_path, monkeypatch)
     monkeypatch.setattr(core, "save_job_state", lambda *_: None)
     state = core.new_job_state("boundaries.txt")
     state["pairs"] = [{"source": f"Section {i} explains operational requirements.", "target": f"第{i}节解释运行要求。"} for i in range(2)]
+    # Two annotation workers, so batch 2 can finish while batch 1 is still running.
+    state["pipeline_config"] = {"translation_concurrency": 2, "annotation_scheduler": "c2"}
+    second_ready = threading.Event()
 
     def response(pairs, *_):
         if "Section 0" in pairs[0]["source"]:
-            time.sleep(0.03)
+            # Hold batch 1's result until batch 2 has recorded its own, so the
+            # ordered wait is visible regardless of how long this machine takes
+            # to stage (fsync) either result.
+            assert second_ready.wait(10), "batch 2 never reported a result"
         return core.AnnotationBatchResult(status="empty")
 
+    record_timing = core._batch_timing
+
+    def timing(job_id, stage, batch_id, phase, **metadata):
+        record_timing(job_id, stage, batch_id, phase, **metadata)
+        if batch_id == 2 and phase == "result_ready":
+            second_ready.set()
+
     monkeypatch.setattr(core, "annotate_batch", response)
+    monkeypatch.setattr(core, "_batch_timing", timing)
     run = trace.start_run("boundaries", output_dir=tmp_path / "trace", level=TraceLevel.STANDARD)
     try:
         core.annotate_stage(state, "boundaries", [], "DeepSeek", "mock", "model", "简体中文")
     finally:
         trace.finish_run("boundaries")
     events = [json.loads(line) for line in run.requests_path.read_text(encoding="utf-8").splitlines()]
-    batch = {e["phase"]: e["monotonic"] for e in events if e["event"] == "batch_timing" and e["batch_id"] == 2}
-    assert batch["queued"] <= batch["worker_started"] <= batch["result_ready"] < batch["commit_started"] <= batch["commit_finished"]
-    assert batch["commit_started"] - batch["result_ready"] > 0.01
+    batches = {}
+    for event in events:
+        if event["event"] == "batch_timing":
+            batches.setdefault(event["batch_id"], {})[event["phase"]] = event["monotonic"]
+    first, second = batches[1], batches[2]
+    for batch in (first, second):
+        assert batch["queued"] <= batch["worker_started"] <= batch["result_ready"] < batch["commit_started"] <= batch["commit_finished"]
+    # Batch 2's result was ready before batch 1 reached its commit and batch 2
+    # was committed only after batch 1 finished: the wait starts at
+    # result_ready, not at worker_started.
+    assert second["result_ready"] < first["commit_started"] <= first["commit_finished"] <= second["commit_started"]
     assert any(e.get("phase") == "annotation_complete" for e in events)
 
 
