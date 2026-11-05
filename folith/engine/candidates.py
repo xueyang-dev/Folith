@@ -173,12 +173,14 @@ def stage_concept_revision(job_id: str, card: Mapping[str, Any], *,
     的显式覆盖路径，不存在批量入口。
     """
     from folith import concept_revision as _cr
+    from folith import consistency as _consistency
 
     state = _loaded(job_id)
     pairs = state.get("pairs") or []
     preview = _cr.preview_concept_revision(
         card, state.get("entity_registry") or [], pairs,
-        state.get("concept_decisions"), exclusions=exclusions)
+        state.get("concept_decisions"), exclusions=exclusions,
+        known_forms=_consistency.collect_known_forms(state))
     card = dict(card) if isinstance(card, Mapping) else {}
     card_id = str(card.get("card_id") or "")
     member_forms = {str(form or "").strip().casefold()
@@ -238,12 +240,14 @@ def stage_term_revision(job_id: str, source_term: str, old_target: str,
     （``excluded: true``）但不产生候选。
     """
     from folith import term_revision as _tr
+    from folith import consistency as _consistency
 
     state = _loaded(job_id)
     pairs = state.get("pairs") or []
     preview = _tr.preview_term_revision(
         source_term, old_target, new_target, pairs,
-        forbidden=forbidden, exclusions=exclusions)
+        forbidden=forbidden, exclusions=exclusions,
+        known_forms=_consistency.collect_known_forms(state))
     source_key = _tr.consistency.spelling(source_term).casefold()
     drafts: List[Dict[str, Any]] = []
     for row in preview["rows"]:
