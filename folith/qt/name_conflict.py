@@ -177,12 +177,13 @@ class NameConflictWidget(QWidget):
         radio = style_module.RadioButton(text)
         self.group.addButton(radio, position)
         if kind == CUSTOM:
+            # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
             line = QHBoxLayout()
+            layout.addLayout(line)
             line.setContentsMargins(0, 0, 0, 0)
             line.addWidget(radio)
             line.addWidget(self.custom_edit, 1)
             self.custom_edit.show()
-            layout.addLayout(line)
         else:
             layout.addWidget(radio)
         if kind == VARIANT and option["indexes"]:
