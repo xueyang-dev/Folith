@@ -230,7 +230,10 @@ def test_longer_translation_that_arrives_grows_the_open_row(bench):
     view.select_segment(0)
     _pump(app)
     before = view.segment_list.rowHeight(0)
-    longer = "后台返回了一段明显更长的译文，" * 6
+    # 24 次（约 310 字）：译文列在 CI 上会被拉伸到很宽，次数少时只排一两行，天然
+    # 高度仍在"展开行最小高度"（60）以下，行高没有可增长的余地。取足够长，让任何
+    # 列宽下都至少排三行。
+    longer = "后台返回了一段明显更长的译文，" * 24
 
     _apply_targets(view, {0: longer})
     _pump(app)
