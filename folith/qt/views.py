@@ -6855,10 +6855,13 @@ class WorkbenchView(QWidget):
                     QRect(0, 0, inner, 100000),
                     int(Qt.TextFlag.TextWordWrap), text or " ")
                 # 与阅读行距那边同一口径：Linux 字体回退会把整段中文当长词只量一行。
-                tallest = max(tallest, rect.height(),
-                              segment_editor._wrapped_height(
-                                  text or " ", metrics, inner,
-                                  segment_editor._font_pixels(table.font())))
+                # 也只在"只量到一行"时复核，避免给几千行加逐字成本。
+                height = rect.height()
+                if height <= metrics.lineSpacing():
+                    height = max(height, segment_editor._wrapped_height(
+                        text or " ", metrics, inner,
+                        segment_editor._font_pixels(table.font())))
+                tallest = max(tallest, height)
             cached = max(segment_editor.ROW_HEIGHT, tallest + 2 * segment_editor.CELL_PAD + 4)
             self._height_cache[key] = cached
         return cached

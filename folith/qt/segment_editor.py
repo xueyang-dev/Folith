@@ -266,8 +266,12 @@ def reading_height(text: str, font, width: int) -> int:
                                 int(Qt.TextFlag.TextWordWrap), body)
     natural = max(1.0, float(metrics.lineSpacing()) / max(1.0, _font_pixels(font)))
     target = max(1.0, float(style_module.reading_line_height(body)))
-    measured = max(rect.height(),
-                   _wrapped_height(body, metrics, width, _font_pixels(font)))
+    measured = float(rect.height())
+    if measured <= metrics.lineSpacing():
+        # 只量到一行时才用逐字累加复核：正常换行的文本走 boundingRect 的快路径，
+        # 不给几千行的书加成本（CI 的 macOS 上曾因此超时）。
+        measured = max(measured,
+                       _wrapped_height(body, metrics, width, _font_pixels(font)))
     return int(math.ceil(measured * target / natural))
 
 
