@@ -83,7 +83,13 @@ _ZH_DELIVERY_CONTEXT = ('交付', '快照')
 #: value: number of user-visible strings. Every entry is a line in glossary
 #: section 3; once the rewrite lands the count drops and the check prints a
 #: "shrink the baseline" TODO instead of failing.
-_SOURCE_BASELINE: dict[str, int] = {}
+_SOURCE_BASELINE: dict[str, int] = {
+    # 0.8.1 QA 集成（origin/main bdf440a5）带进来的旧措辞：那些功能（批量确认候选、
+    # 术语冻结、QA 复核）原本就不在这次 UI 重做的范围内，main 上一直用旧词。合并时
+    # 不做逐条改写（49 个键 × 7 个目录），先按基线把清单列成 TODO，F16 统一留到合并
+    # 后的下一轮；基线收紧时把数字改小即可。
+    'folith/resources/locales/qt-zh-CN.json': 56,
+}
 # 基线为空 = 中文界面文案里已经**没有任何**废弃说法（2026-11-04 全部落地后清的）。
 # 以后新增一处就报错；如果某个文件确实暂时改不了，往这里加一条 `路径: 处数`，
 # 脚本会把它打印成 TODO，而不是拦住整个门禁。
@@ -93,7 +99,11 @@ _SOURCE_BASELINE: dict[str, int] = {}
 #: The translated catalogs have no baseline: F16 的做法就是先把它们改齐（词表第 4 节），
 #: 所以这六份目录里再出现串味就是新问题。留着这个字典是为了以后需要 grandfather 时
 #: 有地方放（格式同 :data:`_SOURCE_BASELINE`）。
-_CATALOG_BASELINE: dict[str, int] = {}
+_CATALOG_BASELINE: dict[str, int] = {
+    # 同上：这些是 main 那 56 条中文键的译文，一起等 F16 统一。
+    'qt-ar.json': 46, 'qt-de.json': 41, 'qt-en.json': 43,
+    'qt-es.json': 43, 'qt-fr.json': 43, 'qt-ru.json': 46,
+}
 
 #: Per-language families for the three concepts the catalogs keep confusing.
 #: Each entry: family -> regex applied to catalog *values*.

@@ -595,6 +595,7 @@ def _freeze_glossary_state(job_id, state, entries=None, *, frozen_by='user'):
         _refresh_ai_term_conflicts(state)
         if state.get("p2_done"):
             _refresh_segment_term_conflicts(state)
+            _apply_triage_after_freeze(state)
         return state
     source_hash = ""
     src = _c.job_dir(job_id) / "source.bin"
@@ -625,7 +626,14 @@ def _freeze_glossary_state(job_id, state, entries=None, *, frozen_by='user'):
     _refresh_ai_term_conflicts(state)
     if state.get('p2_done'):
         _refresh_segment_term_conflicts(state)
+        _apply_triage_after_freeze(state)
     return state
+
+
+def _apply_triage_after_freeze(state):
+    """A frozen ``preserve`` entry is evidence, so re-read the open findings."""
+    from folith import finding_triage
+    finding_triage.apply_deterministic(state)
 
 
 @_serialized_job_mutation
@@ -706,7 +714,9 @@ def preview_entity_repair(state, source_form, target):
     record = _entity_registry.EntityRegistry(state.get("entity_registry") or [])._find(source_form)
     if record is None:
         raise ValueError("找不到该实体")
-    return consistency.preview(record, state.get("pairs") or [], target)
+    known_forms = consistency.collect_known_forms(state)
+    return consistency.preview(record, state.get("pairs") or [], target,
+                               known_forms=known_forms)
 
 
 @_serialized_job_mutation
@@ -785,6 +795,9 @@ def _refresh_entity_consistency(state, *, actor="system"):
             finding["resolution"] = {"action": "entity_consistency_rechecked",
                 "note": "当前译文已统一或语境变体已人工确认", "actor": actor,
                 "timestamp": _finalization.now_iso()}
+    # A concept decision or an accepted variant may settle what is still open.
+    from folith import finding_triage
+    finding_triage.apply_deterministic(state)
 
 
 def write_profile_artifacts(job_id, document_profile, style_profile):

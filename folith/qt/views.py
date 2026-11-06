@@ -2593,6 +2593,7 @@ class WorkbenchView(QWidget):
     sourceConfirmRequested = Signal(int, str)           # segment index, note
     # #289: 审计列表的撤销（由窗口层调用适配器 → 既有核心函数；面板不写状态）
     reviewRevokeRequested = Signal(str)                 # triage record key
+    reviewTriageToggleRequested = Signal(bool)          # 本任务的自动处理开关
     # 术语页（暂存修改 / 冻结 / 逐条修订）
     glossaryDraftRequested = Signal(list)
     glossaryFreezeRequested = Signal(list)
@@ -3771,6 +3772,7 @@ class WorkbenchView(QWidget):
         self.review_panel.editRequested.connect(self.show_segment_for_edit)
         # #289: 撤销 → 窗口层 → 适配器 → 核心（revert 候选 / revoke）。
         self.review_panel.triageRevokeRequested.connect(self.reviewRevokeRequested.emit)
+        self.review_panel.triageToggleRequested.connect(self.reviewTriageToggleRequested.emit)
         self.tabs.addTab(self.review_panel,
                          icons.icon("shield-check", 16, "text-secondary"),
                          i18n.tr('审校'))

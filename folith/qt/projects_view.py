@@ -579,14 +579,15 @@ class ProjectsView(QWidget):
         detail = self._detail
         project = detail.get("project") or {}
         description = str(project.get("description") or "")
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         head = QHBoxLayout()
+        self.overview_box.addLayout(head)
         head.addWidget(_text(description or i18n.tr('还没有项目说明（客户、领域、语气要求……）'),
                              "body" if description else "meta", wrap=True), 1)
         edit = style_module.icon_button("file-text", i18n.tr('编辑说明'))
         edit.setAccessibleName(i18n.tr('编辑说明'))
         edit.clicked.connect(self._describe)
         head.addWidget(edit)
-        self.overview_box.addLayout(head)
         if not project.get("target_lang"):
             self.overview_box.addWidget(self._notice_row(
                 i18n.tr('还没有设置语言方向。设置之后，新任务只会用到方向相同的术语。'),
@@ -1150,12 +1151,13 @@ class ProjectsView(QWidget):
             lines.append((i18n.tr('出现在'), "　".join(
                 f"{name.rsplit('.', 1)[0]} · {i18n.tr('{v0} 处', v0=n)}" for name, n in term["used_tasks"])))
         for label, value in lines:
+            # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
             row = QHBoxLayout()
+            self.term_detail_body.addLayout(row)
             title = _text(label, "label")
             title.setFixedWidth(64)
             row.addWidget(title, 0, Qt.AlignmentFlag.AlignTop)
             row.addWidget(_text(value, "body", wrap=True), 1)
-            self.term_detail_body.addLayout(row)
 
     def _term_dialog(self, source: str = "", target: str = "", domain: str = "",
                      note: str = "") -> dict | None:
@@ -1278,10 +1280,11 @@ class ProjectsView(QWidget):
                 else i18n.tr('收起只出现过 1 次的'))
             style_module.set_button(self.unsorted_singles, "plain", small=True)
             self.unsorted_singles.clicked.connect(self._toggle_singles)
+            # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
             row = QHBoxLayout()
+            self.unsorted_box.addLayout(row)
             row.addWidget(self.unsorted_singles)
             row.addStretch(1)
-            self.unsorted_box.addLayout(row)
         tasks = self._detail.get("tasks") or []
         if not tasks:
             self.unsorted_box.addWidget(style_module.EmptyState(

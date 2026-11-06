@@ -216,10 +216,14 @@ def build_state(*, triage_enabled: bool):
         {"source": SRC_NUM, "target": SRC_NUM, "initial_target": SRC_NUM},
         {"source": "汉武帝派使者出使", "target": "汉武帝派使者出使，汉文帝也曾派使者。",
          "initial_target": "汉武帝派使者出使，汉文帝也曾派使者。"},
-        {"source": "奏獻書下达。%s", "target": "奏献书下达。",
-         "initial_target": "奏献书下达。"},
+        # pairs[2]: placeholder finding source (blocking); plain 奏谳书 form for entity registry.
+        {"source": "奏讞書下达。%s", "target": "奏谳书下达。",
+         "initial_target": "奏谳书下达。"},
         {"source": "前元十七年，春。", "target": "公元前164年春。",
          "initial_target": "公元前164年春。"},
+        # pairs[4]: bracket form of 奏讞書 — required for orthographic_equivalence evidence.
+        {"source": "奏讞書下达。", "target": "〈奏谳书〉下达。",
+         "initial_target": "〈奏谳书〉下达。"},
     ]
     numbers = _number_findings()
     findings = {
@@ -227,10 +231,11 @@ def build_state(*, triage_enabled: bool):
         "staged_auto": dict(numbers[0], finding_id="f-num-staged-289"),
         "emperor": _entity_finding("f-emperor-289", "汉武帝", "汉武帝",
                                    ["汉武帝", "汉文帝"]),
-        "safe_entity": _entity_finding("f-orth-289", "奏獻書", "奏献书",
-                                       ["奏獻書", "奏献书"]),
-        "model_capped": _entity_finding("f-model-289", "奏獻書", "奏献书",
-                                        ["奏獻書", "奏献书"],
+        # bracket-form equivalence: 奏讞書 → preferred 奏谳书 or bracketed 〈奏谳书〉
+        "safe_entity": _entity_finding("f-orth-289", "奏讞書", "奏谳书",
+                                       ["〈奏谳书〉", "奏谳书"]),
+        "model_capped": _entity_finding("f-model-289", "奏讞書", "奏谳书",
+                                        ["〈奏谳书〉", "奏谳书"],
                                         severity="informational"),
         "blocking": _blocking_finding(),
         "investigate": dict(_informational_finding(), finding_id="f-inv-289",
@@ -251,6 +256,21 @@ def build_state(*, triage_enabled: bool):
         "finding_groups_enabled": True,
         "findings": [],
     }
+    # Entity registry provides the live view _live_entity_view() requires for
+    # orthographic_equivalence evidence.  Registry occurrences point at pairs[2]
+    # (plain form) and pairs[4] (bracket form).
+    state["entity_registry"] = [{
+        "source_form": "奏讞書",
+        "preferred_target": "奏谳书",
+        "aliases": [],
+        "accepted_variants": [],
+        "observations": [
+            {"target": "奏谳书", "segment_id": 2},
+            {"target": "〈奏谳书〉", "segment_id": 4},
+        ],
+        "occurrences": [2, 4],
+    }]
+
     state["findings"] = [findings[key] for key in (
         "committed_auto", "staged_auto", "emperor", "safe_entity", "model_capped",
         "blocking", "investigate", "informational", "human_resolved",
@@ -529,7 +549,7 @@ def test_expanding_audit_shows_evidence_snapshot_candidate(qt_app):
                                 if label.text()))
     joined = " || ".join(texts)
     assert ft.ORTHOGRAPHIC_EQUIVALENCE in joined          # evidence kind
-    assert "奏献书 == 奏獻書" in joined or "奏獻書 == 奏献书" in joined  # evidence ref
+    assert ("〈奏谳书〉" in joined and "奏谳书" in joined and "==" in joined)  # evidence ref
     assert "当时原文" in joined and "当时译文" in joined   # snapshot 原文/译文
     assert "cand-289-a" in joined and "候选" in joined    # candidate id
     assert "已提交" in joined                              # committed 标志

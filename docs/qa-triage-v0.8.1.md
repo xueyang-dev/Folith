@@ -1,6 +1,6 @@
 # Intelligent QA Triage — v0.8.1 Architecture Plan
 
-**Status:** design only. No product code, QA semantics or delivery-gate behaviour changes in this round.
+**Status:** written as a design-only round: no product code, QA semantics or delivery-gate behaviour changed in it. Later rounds implemented it. What now runs in the product is the `verified_safe` path only, through `finding_triage.apply_deterministic`, behind the per-task switch on the review page. The automatic repair transaction (§5.5) and the model escalation still have no runtime caller. A row the queue merged from several records (`duplicate_count > 1`) can never read as `verified_safe`, because its evidence describes only the first record.
 
 **Source issue:** [#270](https://github.com/xueyang-dev/Folith/issues/270) · **Milestone:** v0.8.1 (milestone 20) · **Branch:** `docs/issue-270-qa-triage`
 
@@ -452,7 +452,7 @@ Hard rules:
 | kind | `ref` | Produced by | Why it is deterministic |
 |---|---|---|---|
 | `concept_decision` | `concept_cards` card id | `concept_cards.decision_for_keys` (`folith/concept_cards.py:118`) via `state["concept_decisions"]` | A human already decided the concept; `consistency.findings` already applies it |
-| `orthographic_equivalence` | canonical form pair | Traditional↔simplified / variant folding as already used by `terminology_variants` and `consistency._distinct_variants` | A character-level equivalence, not a judgement |
+| `orthographic_equivalence` | canonical form pair | Outer-bracket stripping via `finding_triage.outer_bracket_key`: forms equal iff they differ only by a matched outer bracket pair (〈〉, 【】, 〔〕, 《》 …) around the entire string — `〈奏谳书〉` ≡ `奏谳书`, but `増淵` ≢ `增渊` (char difference, not brackets) | The bracket pair is a purely typographic wrapper; the reader sees the same term |
 | `retention_policy` | glossary entry id + frozen glossary version | glossary entry with `behavior == "preserve"` present in `state["glossary_frozen"]` | The user froze the glossary; retention is an instruction, not an inference |
 | `candidate_verification` | `candidate_id` + detector re-run result | §5.5 verification step | The same detector, re-run on the committed text, no longer fires |
 | `structural_repair` | detector code + segment id | `finding_groups.build_number_fix_draft` returning a draft | The repair is a single literal substitution with a unique candidate |
@@ -697,13 +697,17 @@ Five observations that shape the design, all directly verifiable in those `state
    today — which is consistent with the requirement that a model-reported confidence can never
    produce `verified_safe` (§5.4).
 5. **The false positives the issue describes are real, and their root causes are visible in the
-   data.** From the 漢帝国 task: `増淵` vs `增渊` (Japanese form vs simplified — the
-   orthographic-equivalence case); `奏讞書` with observed variants `〈奏谳书〉` and `奏谳书`
-   (identical except for the `〈〉` brackets, which `consistency.spelling` does **not** strip —
-   it strips `《》` and quotes only, `folith/consistency.py:7`); `文帝期` vs `文帝时期`; and
-   actionable findings whose reason is "译文与源段完全相同，疑似整段未翻译" (identical source
-   and target — the era-name/date case the issue names). The dominant category is
-   `translation_completion` (125 of 164).
+   data.** From the 漢帝国 task: `奏讞書` with observed variants `〈奏谳书〉` and `奏谳书`
+   (identical except for the `〈〉` brackets — the `orthographic_equivalence` case;
+   bracket forms survive `consistency.spelling`, which strips only `《》` and quotes,
+   `folith/consistency.py:7`); `増淵` vs `增渊` (Japanese vs simplified character,
+   **not** bracket-only — stays `human_required` under `outer_bracket_key`); `文帝期` vs
+   `文帝时期`; and actionable findings whose reason is
+   "译文与源段完全相同，疑似整段未翻译" (identical source and target — the
+   era-name/date case the issue names). The dominant category is
+   `translation_completion` (125 of 164). **Measured** on 12 real tasks (copies):
+   1,225 → 1,214 findings after enabling (11 auto-handled, all
+   `orthographic_equivalence`; 0 pair/finding mutations; 0 failures).
 
 What this means for the metric: the counts above are **observations with provenance, not a
 result**. They establish that today's HIR is uninformative and that no per-finding ground truth
@@ -745,7 +749,7 @@ What each label is for:
 |---|---|
 | `real_error` | Any of these becoming `verified_safe`, or disappearing without a snapshot, is a **Critical Defect Escape**. |
 | `legitimate_keep` | Proper names, era names, retained terms. These *should* become `verified_safe` when a `retention_policy` exists — and must stay `human_required` when it does not. |
-| `legitimate_variant` | 奏獻書 / 奏献书, orthographic and determiner variants. Target of `orthographic_equivalence`. |
+| `legitimate_variant` | 奏讞書 / 〈奏谳书〉 / 奏谳书 — forms that differ only by matched outer brackets. Target of `orthographic_equivalence`. (Traditional↔simplified differences like 奏獻書/奏献书 are **not** bracket-only and stay `human_required`.) |
 | `ambiguous` | Must never be `verified_safe`; landing in `needs_investigation` or `human_required` is correct. |
 
 What exists today, and what is missing:
