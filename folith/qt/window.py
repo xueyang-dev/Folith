@@ -1689,6 +1689,21 @@ class MainWindow(QMainWindow):
         # test_destroyed_window_drops_delayed_tips 就是这么崩的）。
         QTimer.singleShot(0, self, self._sync_minimum_size)
 
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        """设过最小值以后就以它为准。
+
+        Qt 会拿 ``minimumSizeHint()`` 和 ``minimumSize()`` 里较大的那个去钳制
+        ``resize()``；两边不一致时，"缩到最小"会被悄悄放大（CI 上 minimumSize 报
+        607、实际按 805 兜底）。
+        """
+        if getattr(self, "_syncing_minimum", False):
+            return super().minimumSizeHint()
+        hint = super().minimumSizeHint()
+        minimum = self.minimumSize()
+        if minimum.width() > 0 or minimum.height() > 0:
+            hint = hint.expandedTo(minimum)
+        return hint
+
     def _sync_minimum_size(self) -> None:
         """让窗口的 minimumSize 与当前布局的 minimumSizeHint 一致。
 

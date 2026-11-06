@@ -6945,6 +6945,9 @@ class WorkbenchView(QWidget):
                                                   source_width),
                      editor.editor_height(target_width - 8) + footer + 8,
                      document_height + footer + 8,
+                     # 编辑态的高度不能低于该行非编辑态的自然高度，否则展开行反而
+                     # 比其它行矮、长译文的最后几行被裁掉（Linux CI 的 60 > 60）。
+                     self._natural_height(position),
                      segment_editor.ROW_HEIGHT)
         height = min(wanted, cap)
         if table.rowHeight(position) != height:
