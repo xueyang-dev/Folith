@@ -2694,7 +2694,9 @@ class OptionCard(QPushButton):
         # 子控件一开始就带父窗口：没有父窗口时 setVisible(True) 会让它闪成顶层小窗。
         self.icon_label = QLabel(self)
         self.icon_label.setVisible(bool(icon))
-        self.title_label = QLabel(title, self)
+        # 标题用 ElideLabel：俄语「Стандартный」在窄卡里比可用宽度长，普通 QLabel
+        # 会把字直接裁掉（没有省略号、没有提示）。ElideLabel 省略并把全文放进 tooltip。
+        self.title_label = style_module.ElideLabel(title, parent=self)
         self.title_label.setObjectName("optionTitle")
         head.addWidget(self.icon_label)
         head.addWidget(self.title_label, 1)

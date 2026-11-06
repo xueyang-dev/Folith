@@ -461,7 +461,9 @@ def test_the_translation_mode_panel_is_modes_plus_a_collapsed_advanced_section(
         assert panel.mode_selector.options() == ("快速", "标准", "学术增强")
         for key in panel.mode_selector.options():
             button = panel.mode_selector.button(key)
-            assert button._title.text()
+            # 标题是 ElideLabel：窄卡里显示省略、完整文字必须还在（F18 一度换成普通
+            # QLabel，俄语「Стандартный」被直接裁掉且没有提示）。
+            assert button._title.fullText(), key
             # 一行摘要不再占位，但仍在悬停提示里。
             assert button._description.isHidden()
             assert button._description.text() in button.toolTip()
@@ -1545,3 +1547,18 @@ def test_the_prepare_page_never_narrows_below_its_content(data_env, qt_app, lang
         bench.close()
     finally:
         i18n.set_language(previous)
+
+
+def test_a_long_mode_title_elides_instead_of_being_cut(qt_app):
+    """俄语「Стандартный」在窄卡里比可用宽度长：要省略并保留完整悬停提示。"""
+    from folith.qt import components
+
+    card = components.ModeCard("k", "Стандартный", "", "")
+    card.resize(120, 120)
+    card.show()
+    qt_app.processEvents()
+    label = card._title
+    assert label.fullText() == "Стандартный", "完整标题不能丢"
+    assert label.text() != label.fullText(), "放不下时要省略，而不是把字裁掉"
+    assert label.toolTip() == "Стандартный", "省略后要有完整悬停提示"
+    card.close()

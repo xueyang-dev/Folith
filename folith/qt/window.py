@@ -1704,6 +1704,12 @@ class MainWindow(QMainWindow):
         if central is not None and central.layout() is not None:
             central.layout().activate()
         hint = self.minimumSizeHint()
+        if central is not None:
+            # 中央部件自己也可能被布局约束写入了一个更大的最小尺寸（Linux 上实测
+            # minimumSizeHint 607、Qt 却按 805 兜底），一并算进去。
+            hint = hint.expandedTo(central.minimumSize())
+            if central.layout() is not None:
+                hint = hint.expandedTo(central.layout().minimumSize())
         layout = self.layout()
         if layout is not None:
             layout.activate()

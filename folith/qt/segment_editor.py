@@ -266,7 +266,29 @@ def reading_height(text: str, font, width: int) -> int:
                                 int(Qt.TextFlag.TextWordWrap), body)
     natural = max(1.0, float(metrics.lineSpacing()) / max(1.0, _font_pixels(font)))
     target = max(1.0, float(style_module.reading_line_height(body)))
-    return int(math.ceil(rect.height() * target / natural))
+    measured = max(rect.height(), _wrapped_height(body, metrics, width))
+    return int(math.ceil(measured * target / natural))
+
+
+def _wrapped_height(text: str, metrics, width: int) -> int:
+    """按"逐字累加宽度"估算换行高度（CJK 逐个字可断行）。
+
+    ``QFontMetrics.boundingRect(…, TextWordWrap, …)`` 在 Linux 的字体回退下会把整段
+    中文当成一个长词，只量出一行；行高因此不随译文变长而增长（CI 上
+    ``test_longer_translation_that_arrives_grows_the_open_row`` 就是 ``60 > 60``）。
+    逐字累加不依赖断词规则，作为下限与 boundingRect 取大值——只是偶尔高估一两行，
+    绝不会把字裁掉。
+    """
+    limit = max(40, int(width))
+    lines, current = 1, 0.0
+    for char in text:
+        advance = metrics.horizontalAdvance(char)
+        if current + advance > limit and current > 0:
+            lines += 1
+            current = advance
+        else:
+            current += advance
+    return lines * metrics.lineSpacing()
 
 
 def source_height(table: QAbstractItemView, text: str, width: int) -> int:

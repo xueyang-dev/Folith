@@ -1911,6 +1911,9 @@ class ElideLabel(QLabel):
         self._full_text = str(text or "")
         self._mode = mode
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        # 构造时也要挂上完整文字：以前只有外部再调 setText() 才设 tooltip，
+        # 于是"用构造函数建的省略标签"省略了却没有悬停提示。
+        self.setToolTip(self._full_text)
         self._apply(0)
 
     def setText(self, value: str) -> None:  # noqa: N802 - Qt 命名

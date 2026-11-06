@@ -170,8 +170,20 @@ def _qt_tr_strings():
                 continue
             first = node.args[0]
             if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                found.append((path.relative_to(ROOT), node.lineno, first.value))
+                found.append((_relative(path), node.lineno, first.value))
     return found
+
+
+def _relative(path):
+    """``path`` 相对仓库根的写法；不在根下时原样返回。
+
+    用例会把 ``ROOT`` 指到临时目录再跑扫描，这时的真实源码路径不在那个根下，
+    ``relative_to`` 会抛 ``ValueError``（release_engineering_test 就是这么红的）。
+    """
+    try:
+        return str(Path(path).relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 def _catalog_group(key):
@@ -255,7 +267,7 @@ def glossary_check():
         path = CATALOGS / name
         if not path.is_file():
             continue
-        key = str(path.relative_to(ROOT))
+        key = _relative(path)
         for text in json.loads(path.read_text(encoding='utf-8')):
             hits = zh_glossary_hits(text)
             if not hits:

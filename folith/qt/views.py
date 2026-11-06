@@ -6850,10 +6850,13 @@ class WorkbenchView(QWidget):
             metrics = table.fontMetrics()
             tallest = 0
             for text, width in ((source, widths[0]), (target, widths[1])):
+                inner = max(40, width - 2 * segment_editor.CELL_PAD - 10)
                 rect = metrics.boundingRect(
-                    QRect(0, 0, max(40, width - 2 * segment_editor.CELL_PAD - 10), 100000),
+                    QRect(0, 0, inner, 100000),
                     int(Qt.TextFlag.TextWordWrap), text or " ")
-                tallest = max(tallest, rect.height())
+                # 与阅读行距那边同一口径：Linux 字体回退会把整段中文当长词只量一行。
+                tallest = max(tallest, rect.height(),
+                              segment_editor._wrapped_height(text or " ", metrics, inner))
             cached = max(segment_editor.ROW_HEIGHT, tallest + 2 * segment_editor.CELL_PAD + 4)
             self._height_cache[key] = cached
         return cached
