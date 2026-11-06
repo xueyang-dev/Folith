@@ -177,3 +177,27 @@ def test_reading_text_height_uses_the_line_metrics(app):
     wide = style.reading_text_height("A term rendered one way in chapter two.", font, 400)
     narrow = style.reading_text_height("A term rendered one way in chapter two.", font, 120)
     assert narrow > wide, (narrow, wide)
+
+
+def test_wrapped_height_grows_without_cjk_glyphs():
+    """字体缺中文字形时（CI 的 Linux 镜像）逐字宽度是 0，高度也必须随文字变长。
+
+    否则长译文的行高不增长、内容被裁：qt_inline_editor_test 在 CI 上就是 60 == 60。
+    """
+    from folith.qt import segment_editor
+
+    class _NoGlyphMetrics:
+        def horizontalAdvance(self, _char):
+            return 0
+
+        def averageCharWidth(self):
+            return 0
+
+        def lineSpacing(self):
+            return 20
+
+    text = "后台返回了一段明显更长的译文，" * 6
+    short = segment_editor._wrapped_height("短", _NoGlyphMetrics(), 600, 14)
+    long = segment_editor._wrapped_height(text, _NoGlyphMetrics(), 600, 14)
+    assert long > short, (short, long)
+    assert long >= 2 * 20, long

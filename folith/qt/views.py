@@ -6856,7 +6856,9 @@ class WorkbenchView(QWidget):
                     int(Qt.TextFlag.TextWordWrap), text or " ")
                 # 与阅读行距那边同一口径：Linux 字体回退会把整段中文当长词只量一行。
                 tallest = max(tallest, rect.height(),
-                              segment_editor._wrapped_height(text or " ", metrics, inner))
+                              segment_editor._wrapped_height(
+                                  text or " ", metrics, inner,
+                                  segment_editor._font_pixels(table.font())))
             cached = max(segment_editor.ROW_HEIGHT, tallest + 2 * segment_editor.CELL_PAD + 4)
             self._height_cache[key] = cached
         return cached
