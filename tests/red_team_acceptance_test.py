@@ -858,6 +858,10 @@ def test_external_evidence_attack_and_prompt_scan():
         path = line.split(":", 1)[0].replace(os.sep, "/")
         if (path, int(line.split(":", 2)[1])) in transport_url_lines:
             continue
+        # The SDL namespace is an XML identifier, not a model citation URL.
+        if path == "scripts/audit_sdlxliff.py" and \
+                'SDL_NS_PREFIX = "http://sdl.com/FileTypes/SdlXliff"' in line:
+            continue
         # Verified DOI/repository URLs belong in the deterministic literature
         # registry; this scan is only a guard against asking a model to invent
         # citation URLs in prompts.
