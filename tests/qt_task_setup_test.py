@@ -1551,14 +1551,26 @@ def test_the_prepare_page_never_narrows_below_its_content(data_env, qt_app, lang
 
 def test_a_long_mode_title_elides_instead_of_being_cut(qt_app):
     """俄语「Стандартный」在窄卡里比可用宽度长：要省略并保留完整悬停提示。"""
-    from folith.qt import components
+    from folith.qt import components, style
 
+    # 直接量 ElideLabel：宽度给得足够小，任何平台的字体都放不下，结果与字体度量无关。
+    label = style.ElideLabel("Стандартный")
+    label.resize(48, 24)
+    label.show()
+    qt_app.processEvents()
+    try:
+        assert label.fullText() == "Стандартный", "完整标题不能丢"
+        assert label.text() != label.fullText(), "放不下时要省略，而不是把字裁掉"
+        assert label.toolTip() == "Стандартный", "省略后要有完整悬停提示"
+    finally:
+        label.close()
+
+    # 模式卡本身也要保留完整标题（窄卡里显示的是省略版）。
     card = components.ModeCard("k", "Стандартный", "", "")
     card.resize(120, 120)
     card.show()
     qt_app.processEvents()
-    label = card._title
-    assert label.fullText() == "Стандартный", "完整标题不能丢"
-    assert label.text() != label.fullText(), "放不下时要省略，而不是把字裁掉"
-    assert label.toolTip() == "Стандартный", "省略后要有完整悬停提示"
-    card.close()
+    try:
+        assert card._title.fullText() == "Стандартный"
+    finally:
+        card.close()
