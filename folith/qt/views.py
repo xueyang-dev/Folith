@@ -6937,9 +6937,14 @@ class WorkbenchView(QWidget):
         self._sync_inline_target(position)
         footer = segment_editor.FOOTER_HEIGHT if editor.footer.isVisibleTo(editor) else 0
         cap = max(160, int(table.viewport().height() * 0.6))
+        # 再把编辑框自己的文档高度算进来：它是 Qt 真实排版出来的结果，不受字体回退
+        # 与逐字量宽的影响（Linux 上曾出现译文变长、行高不动：60 > 60）。
+        document = editor.edit.document()
+        document_height = int(document.documentLayout().documentSize().height() or 0)
         wanted = max(segment_editor.source_height(table, self._rows[position].source,
                                                   source_width),
                      editor.editor_height(target_width - 8) + footer + 8,
+                     document_height + footer + 8,
                      segment_editor.ROW_HEIGHT)
         height = min(wanted, cap)
         if table.rowHeight(position) != height:
