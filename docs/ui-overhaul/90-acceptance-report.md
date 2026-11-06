@@ -196,5 +196,20 @@
 | `qt_trial_feedback_test` 2 条顺序相关失败 | **真**。根因**不是**我先前判断的"应用字体不同"（复审指出：单独跑时先应用浅色/深色主题都能过，失败与通过时字体都是 13px）。真正的污染源是本分支新增的 `tests/qt_reading_grid_test.py`：它在 import 时就 `os.environ.setdefault("QT_SCALE_FACTOR", "2")`，而 pytest 收集阶段会 import 全部模块，于是**整个进程被放大 2×**，几何类断言（tether 偏 24px、首屏卡片偏 ~15px）随之漂移。已删掉那行（矩形与绘制同源，1× 下该模块 11 条全过）。另：`_card_width()` 需要把 F8 的文字块算进高度预算——去掉预算时「setup banner」那条会红（复审复现一致）。**更正一条我做错的实验**：我曾说"还原到 1.34/236 首屏两条真的红"，那次我把比例和预算**一起**改回去了，结论被混淆；复审按"只改比例、保留预算"跑 68 条全过，我按同样条件重跑也是 **96 passed**。所以比例已还原为 `1.34 / 236`（更接近一页纸/书脊方向），真正解决问题的是高度预算而不是压扁卡片 |
 | 西/法/德/俄/阿单数语法 | 已把「数量 + 复数名词」的措辞改成与数量无关（`Resolver problemas obligatorios ({v0})` 等），5 个语言 4 条键 |
 | 每次启动被新手指南/新变化挡住 | 新增 `FOLITH_SKIP_ONBOARDING=1` 显式跳过（与既有 `FOLITH_QT_NONINTERACTIVE`、offscreen 判断并列） |
-| golden | **仍等用户决定**：差异只在 `delivery` 的 `title/detail/tone` 三个字段（复审已核对），重新生成前我不会改快照 |
+| golden | **用户已同意，已重新生成**（`tests/fixtures/qa_triage_switch_off_golden.json`）：diff 只有 3 行，正是 `delivery.title`、`delivery.detail`、`delivery.tone`；`panel_rows` 与其余字段逐字节未变 |
 | 误带的 9 个 docx 夹具 | 已 `git checkout 93b1de02 -- tests/fixtures/docx_contract` 还原（同尺寸、不同字节，是测试写回的产物） |
+
+
+## golden 重新生成（2026-11-06，经用户同意）
+
+- 生成方式：用同一条 `_view(triage_enabled=False)` 产出 `projection` / `panel_rows`，按原文件格式（`projection` 为对象、`panel_rows` 为数组、两空格缩进）写回。
+- 逐字段对比旧快照：**只有三处**——`delivery.title`（`翻译审校已完成` → `暂时无法交付`）、`delivery.detail`（`当前译文的审校状态允许继续准备交付` → `还有 1 个必须处理的问题`）、`delivery.tone`（`success` → `warning`）。`panel_rows` 4 条完全一致，其余字段无差异。
+- `git diff` 该文件：`1 file changed, 3 insertions(+), 3 deletions(-)`。
+
+单进程全量（`-k "qt or brand or ui_overhaul"`，1504 条）：
+
+```
+1 failed, 1503 passed, 6 skipped — 15:17，无崩溃
+```
+
+唯一失败是 `qt_terms_panel_test::test_workbench_stays_at_980px_with_terms_open_and_closed`——干净 HEAD 上同样顺序相关地失败，与本次改动无关。**已与基线持平。**

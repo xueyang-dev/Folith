@@ -26,9 +26,9 @@
       "kind": ""
     },
     "delivery": {
-      "detail": "当前译文的审校状态允许继续准备交付",
-      "title": "翻译审校已完成",
-      "tone": "success"
+      "detail": "还有 1 个必须处理的问题",
+      "title": "暂时无法交付",
+      "tone": "warning"
     },
     "filter_counts": {
       "all": 8,
