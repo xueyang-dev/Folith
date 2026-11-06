@@ -213,3 +213,28 @@
 ```
 
 唯一失败是 `qt_terms_panel_test::test_workbench_stays_at_980px_with_terms_open_and_closed`——干净 HEAD 上同样顺序相关地失败，与本次改动无关。**已与基线持平。**
+
+
+## 与 origin/main 合并（2026-11-06，`bdf440a5` 0.8.1 QA 集成）
+
+| 事项 | 处理 |
+| --- | --- |
+| 7 个语言目录冲突 | `git merge`（不变基、不改写）报冲突只因两边都在文件尾部加键；**逐键三方比对后没有任何一个键的值真正冲突**。合并按本分支顺序保留、main 的 82 个新键追加在末尾，`git diff` 只有新增行（7 文件 +581/−7）。 |
+| 覆盖率 | `qt_i18n_coverage.py --strict`：7 个语言 **1765/1765** 全通过。 |
+| 词表门禁 | `check_ui_locales.py`：**0 errors**。 |
+| 词表遗留 | main 带进来的 49 个键沿用旧措辞（审核/冻结族），与 F16 的「确认/锁定」标准不一致。这些功能不在这轮 UI 重做范围内，合并时不逐条改写（49 键 × 7 目录），已在脚本基线里登记为 TODO，F16 统一放到合并后下一轮。 |
+| 模式卡片被压扁 | **不是合并回归，是本分支的既有 bug**：`git worktree` 在合并前的 `e4ad47a8` 上单跑同一条用例也失败。根因：`ModeCards.set_options()` 里卡片刚建出来还没显示，`QHBoxLayout` 跳过隐藏子控件 → 容器 sizeHint 高度 0 → 父布局按 0 分配且不再重问。已让 `ModeCards.sizeHint()/minimumSizeHint()` 取「最高的那张卡」。`qt_task_setup_test.py` 57 条全过。 |
+
+### `qt_layout_item_wrapper_test` 两条：main 上同样失败
+
+在**干净的 origin/main**（`bdf440a5`）worktree 上跑同一个单进程全量：
+
+```
+4 failed, 1518 passed, 6 skipped, 2 errors
+  qt_client_window_test::test_dialogs_never_block_a_scripted_run
+  qt_layout_item_wrapper_test::test_project_overview_rebuild_creates_no_item_wrappers
+  qt_layout_item_wrapper_test::test_unsorted_terms_rebuild_creates_no_item_wrappers
+  qt_terms_panel_test::test_workbench_stays_at_980px_with_terms_open_and_closed
+```
+
+结论：那两条「过期 QWidgetItem 包装」用例在 main 自己身上、只在长进程里失败，与本分支无关，也不该由 UI 分支修。它们和段错误排查是同一类线索，留给那条独立排查。

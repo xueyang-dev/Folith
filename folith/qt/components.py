@@ -2856,6 +2856,24 @@ class ModeCards(QWidget):
             self._row.addWidget(button, 1)
             self._options[key] = button
 
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        """高度取"最高的那张卡"，不跟着布局算。
+
+        卡片在 ``set_options`` 里刚建出来时还没显示，``QHBoxLayout`` 会跳过隐藏的子控件，
+        于是容器第一次被问尺寸时高度是 0；父布局一旦按 0 分配就再也不问第二次，卡片
+        全被压成 0 高（窄窗用例里的"模式选项被压扁了"）。
+        """
+        hint = super().sizeHint()
+        tallest = max((button.sizeHint().height() for button in self._options.values()),
+                      default=0)
+        return QSize(hint.width(), max(hint.height(), tallest))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        hint = super().minimumSizeHint()
+        tallest = max((button.minimumSizeHint().height()
+                       for button in self._options.values()), default=0)
+        return QSize(hint.width(), max(hint.height(), tallest))
+
     def options(self) -> tuple[str, ...]:
         return tuple(self._options)
 
