@@ -1,0 +1,117 @@
+{
+  "name": "synthetic-track-changes",
+  "description": "含未决修订的单元：显式拒绝（PENDING_TRACK_CHANGES），绝不静默接受或拒绝修订。",
+  "provenance": {
+    "origin": "synthetic",
+    "created": "2026-10-26",
+    "generator": "tests/fixtures/tu_contract/generate_fixtures.py",
+    "issue": 143,
+    "license": "与本仓库同许可",
+    "notes": "仓库内合成的最小结构样本，不含真实项目内容，无需外部授权。"
+  },
+  "source_tree": {
+    "name": "xliff",
+    "attrs": {
+      "version": "1.2"
+    },
+    "text": null,
+    "children": [
+      {
+        "name": "file",
+        "attrs": {
+          "source-language": "en",
+          "target-language": "zh-CN",
+          "datatype": "plaintext"
+        },
+        "text": null,
+        "children": [
+          {
+            "name": "body",
+            "attrs": {},
+            "text": null,
+            "children": [
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "50"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Pending revision unit.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "revisions",
+                    "attrs": {
+                      "pending": "true"
+                    },
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "revision",
+                        "attrs": {
+                          "author": "editor",
+                          "when": "2026-10-01"
+                        },
+                        "text": null,
+                        "children": [
+                          {
+                            "name": "ins",
+                            "attrs": {},
+                            "text": "inserted words",
+                            "children": []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "units": [
+    {
+      "external_id": "50",
+      "source_text": "Pending revision unit.",
+      "target_text": "",
+      "status": "untranslated",
+      "tags": []
+    }
+  ],
+  "expected": {
+    "rejections": [
+      {
+        "scope": "unit",
+        "code": "PENDING_TRACK_CHANGES",
+        "unit_ref": "50"
+      }
+    ]
+  }
+}
