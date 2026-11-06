@@ -421,6 +421,15 @@ def _ratio(value: float) -> str:
 class TaskSetupPanel(QWidget):
     """译前准备：输入与上下文 / 翻译设置 / 交付内容 / 开始翻译。"""
 
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        """不低于**自然宽度**：这一页是竖排表单，比它自己算出来的宽度更窄时，语言
+        下拉、模式卡和说明会被横向切掉，又没有横向滚动条可救（复审实测中文能缩到
+        438、俄语 556）。高度仍按布局的来（纵向可滚动）。
+        """
+        hint = super().minimumSizeHint()
+        width = max(hint.width(), self.sizeHint().width())
+        return QSize(width, hint.height())
+
     startRequested = Signal(dict)
     #: 「归入项目」旁边的新建入口。面板自己**不建**项目：创建会写盘、要弹名称输入框、
     #: 还要刷新首页的项目列表，那些都是 window 的职责（它持有对话框与其它页面）。

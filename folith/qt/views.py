@@ -5608,6 +5608,24 @@ class WorkbenchView(QWidget):
         self._setup_view = new_view
         if self._setup_view is not None:
             self.setup_panel.load(self._setup_view)
+            self._sync_setup_min_width()
+
+    #: 准备页的两栏（封面 + 表单）在更窄时右栏会被切掉：语言下拉、模式卡和说明文字
+    #: 都靠省略显示，横向又没有滚动条可救。中文/俄语实测 820 是能完整放下的下限。
+    SETUP_MIN_WIDTH = 820
+
+    def _sync_setup_min_width(self) -> None:
+        """准备页的滚动区不能比面板的自然宽度更窄。
+
+        ``QScrollArea`` 几乎不报最小宽度，横向滚动条又是关掉的：窗口被拖窄时内容
+        会被直接切掉（复审实测中文 438、俄语 556）。把下限钉在面板算出来的宽度上。
+        """
+        needed = max(self.setup_panel.minimumSizeHint().width(), self.SETUP_MIN_WIDTH)
+        if needed > 0 and self.setup_scroll.minimumWidth() != needed:
+            self.setup_scroll.setMinimumWidth(needed)
+            # 面板在折叠分割区里，光设滚动区的最小宽度传不到窗口（实测窗口仍能缩到
+            # 438）。工作台自己也要有这个下限。
+            self.setMinimumWidth(max(needed + 16, self.minimumWidth()))
 
     def set_setup_choices(self, choices: dict) -> None:
         """填准备面板的目录（``adapter.setup_choices``）；进程内只需一次。"""

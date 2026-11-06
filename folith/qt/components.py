@@ -2855,6 +2855,25 @@ class ModeCards(QWidget):
             self._group.addButton(button)
             self._row.addWidget(button, 1)
             self._options[key] = button
+        # 选项是在构造之后才装进来的：父级在"还空着"的时候就算过一次尺寸，那份缓存
+        # 不会被自动失效，于是卡片被分到 0 高。逐级打掉最近几层的布局缓存。
+        self._invalidate_ancestors()
+
+    def _invalidate_ancestors(self) -> None:
+        self._row.activate()
+        # 卡片的实际高度可以大于一行文字，但一行的高度是下限：任何祖先都不该把它
+        # 压到 0（不然就是"模式选项被压扁"）。同时刷新自己的尺寸缓存。
+        self.setMinimumHeight(max(self.sizeHint().height(), 1))
+        widget = self
+        for _ in range(4):
+            widget.updateGeometry()
+            layout = widget.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+            widget = widget.parentWidget()
+            if widget is None:
+                break
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
         """高度取"最高的那张卡"，不跟着布局算。
@@ -2874,6 +2893,21 @@ class ModeCards(QWidget):
                        for button in self._options.values()), default=0)
         return QSize(hint.width(), max(hint.height(), tallest))
 
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt 命名
+        """按宽度算高度——**必须实现**。
+
+        卡片带 ``heightForWidth``，容器因此也被标记为"高度依赖宽度"；此时外层
+        ``QBoxLayout`` 问的是 ``heightForWidth()`` 而不是 ``sizeHint()``。QWidget 的
+        默认实现返回 0/``-1``，于是父布局认为这一行不需要高度，三张卡被压成 0 高
+        （窄窗用例单跑就是这样；整文件跑时前面的用例偶然触发过一次重排才正常）。
+        """
+        count = max(1, len(self._options))
+        spacing = theme_module.SPACE["sm"]
+        each = max(1, (max(width, 1) - spacing * (count - 1)) // count)
+        tallest = max((button.heightForWidth(each) for button in self._options.values()),
+                      default=0)
+        return max(tallest, self.sizeHint().height())
+
     def options(self) -> tuple[str, ...]:
         return tuple(self._options)
 
@@ -2885,6 +2919,8 @@ class ModeCards(QWidget):
         for key, button in self._options.items():
             tokens, duration, calls = texts.get(key, ("", "", ""))
             button.set_estimate(tokens, duration, calls)
+        self._row.activate()
+        self.updateGeometry()
 
     def value(self) -> str:
         return self._value
