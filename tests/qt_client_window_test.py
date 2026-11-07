@@ -4344,14 +4344,28 @@ def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     _pump(app, 0.5)
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
     window._motion._last.clear()  # not a "rapid repeat" of the first navigation
-    widths = []
+    widths: list[int] = []
+    # 记录**每一次 setter 调用**时的页面宽度：以前用 Python 循环 + sleep 采样，
+    # CI 机器一忙就会漏帧（"should have run for a few frames" 偶发红）。
+    # setter 本身就是逐帧回调，挂在它上面与调度无关。
+    original_animate = window._motion.animate
+
+    def recording_animate(key, start_value, end_value, setter, **kwargs):
+        if key != "sidebar":
+            return original_animate(key, start_value, end_value, setter, **kwargs)
+
+        def recording_setter(value):
+            widths.append(window.stack.width())
+            return setter(value)
+
+        return original_animate(key, start_value, end_value, recording_setter, **kwargs)
+
+    monkeypatch.setattr(window._motion, "animate", recording_animate)
     open_job_and_wait(window, job_id)
-    while window._motion.running("sidebar"):
-        widths.append(window.stack.width())
-        app.processEvents()
-        time.sleep(0.01)
-    _pump(app, 0.2)
-    assert len(widths) > 2, "the transition should have run for a few frames"
+    _pump(app, 0.3)
+    assert len(widths) >= 2, (
+        f"the transition should have run (setter calls={len(widths)}, "
+        f"running={window._motion.running('sidebar')})")
     assert len(set(widths)) == 1, f"page width changed during the transition: {sorted(set(widths))}"
     assert not window.sidebar_clip.isVisible()
     assert window.stack.width() == window.stack_clip.width(), "the page follows the window again"
