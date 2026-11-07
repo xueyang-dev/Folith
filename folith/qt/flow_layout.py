@@ -21,6 +21,30 @@ def _expands(item) -> bool:
         QSizePolicy.Policy.Ignored)
 
 
+def _width_bounds(item) -> tuple[int, int]:
+    """控件的 ``(最小宽度, 最大宽度)``；``QWIDGETSIZE_MAX`` 表示没设上限。"""
+    return item.minimumSize().width(), item.maximumSize().width()
+
+
+def _preferred_width(item) -> int:
+    """``sizeHint`` 夹进控件自己的 maximumWidth / minimumWidth 之后的宽度。
+
+    ``QLayout`` 的契约是：控件放不下时可以省略、可以折行，但**不能比它自己声明的
+    maximumWidth 更宽**。之前这里直接用 ``sizeHint``，而 ``setMaximumWidth`` 只作用
+    在控件上、不改变 ``sizeHint``：顶栏那个「继续处理 N 个必须处理的问题」按钮
+    sizeHint 328、上限 240，于是拿到 328 的槽位、文字被裁成两头都缺一截——省略号
+    也没机会出现（``ElideButton`` 要拿到最终宽度才会省略）。
+    """
+    minimum, maximum = _width_bounds(item)
+    hint = item.sizeHint().width()
+    if maximum >= 0:
+        hint = min(hint, maximum)
+    # minimumWidth 比 maximumWidth 还大是调用方的矛盾设置：以上限为准，别把行撑破。
+    if minimum <= maximum:
+        hint = max(hint, minimum)
+    return hint
+
+
 class FlowRow(QLayout):
     """一行控件：放得下就排成一行、铺满宽度；放不下就按顺序折到下一行，每行同样铺满。
 
@@ -70,15 +94,15 @@ class FlowRow(QLayout):
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt naming
         items = self._visible()
-        width = sum(item.sizeHint().width() for item in items) + self.spacing() * max(0, len(items) - 1)
+        width = sum(_preferred_width(item) for item in items) \
+            + self.spacing() * max(0, len(items) - 1)
         height = max((item.sizeHint().height() for item in items), default=0)
         margins = self.contentsMargins()
         return QSize(width + margins.left() + margins.right(), height + margins.top() + margins.bottom())
 
     def minimumSize(self) -> QSize:  # noqa: N802 - Qt naming
         items = self._visible()
-        width = max((max(item.minimumSize().width(), item.sizeHint().width()) for item in items),
-                    default=0)
+        width = max((_preferred_width(item) for item in items), default=0)
         height = max((item.sizeHint().height() for item in items), default=0)
         margins = self.contentsMargins()
         return QSize(width + margins.left() + margins.right(), height + margins.top() + margins.bottom())
@@ -91,7 +115,7 @@ class FlowRow(QLayout):
         row: list = []
         used = 0
         for item in self._visible():
-            width = item.sizeHint().width()
+            width = _preferred_width(item)
             if row and used + space + width > inner.width():
                 rows.append(row)
                 row, used = [], 0
@@ -105,7 +129,7 @@ class FlowRow(QLayout):
         for items in rows:
             height = max(item.sizeHint().height() for item in items)
             if apply:
-                widths = [item.sizeHint().width() for item in items]
+                widths = [_preferred_width(item) for item in items]
                 extra = max(0, inner.width() - sum(widths) - space * (len(items) - 1))
                 grows = [_expands(item) for item in items]
                 if not self._fill:
@@ -119,6 +143,10 @@ class FlowRow(QLayout):
                     if grows[index]:
                         width += share + (1 if remainder > 0 else 0)
                         remainder = max(0, remainder - 1)
+                    minimum, maximum = _width_bounds(item)
+                    if minimum <= maximum:
+                        width = max(width, minimum)
+                    width = min(width, maximum)
                     width = min(width, inner.width())
                     left = inner.right() - (x - inner.x()) - width + 1 if rtl else x
                     item.setGeometry(QRect(left, y, width, height))

@@ -313,6 +313,10 @@ def test_save_and_next_skips_confirmed_segments(bench):
     rows = list(view._all_rows)
     import dataclasses
 
+    # 打开任务时的交付门禁对账会把这几段合成的短译文记成确定性发现项
+    # （segments 0-2 的译文只有三个字）。这个用例只验证「已审校的行会被跳过」
+    # 这条行状态规则，先清掉门禁发现项，别让另一条规则决定结果。
+    view._state["findings"] = []
     view._all_rows = [dataclasses.replace(rows[0], status="待审校"),
                       dataclasses.replace(rows[1], status="已审校", reviewed=True),
                       dataclasses.replace(rows[2], status="待审校")]
@@ -437,3 +441,82 @@ def test_chunked_rebuild_does_not_notify_the_view_once_per_cell(bench):
     assert 0 < len(changes) < 10, (
         f"{len(changes)} dataChanged notifications for {total} rows and "
         f"{total * 3} cells: still notifying per cell")
+
+
+# ---- 撤销：键盘输入走 Qt 原生栈；整段程序化替换（AX/辅助功能）走本地快照 ----------
+def _press_undo(edit, *, shift=False):
+    from PySide6.QtTest import QTest
+
+    modifiers = Qt.KeyboardModifier.ControlModifier
+    if shift:
+        modifiers |= Qt.KeyboardModifier.ShiftModifier
+    QTest.keyClick(edit, Qt.Key.Key_Z, modifiers)
+
+
+def test_cmd_z_undoes_typed_text(bench):
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    edit = view.target_edit
+    edit.setFocus()
+    edit.insertPlainText("改")
+    _pump(app)
+    assert edit.toPlainText() == "改译文0"
+    _press_undo(edit)
+    _pump(app)
+    assert edit.toPlainText() == "译文0"
+
+
+def test_cmd_z_undoes_a_programmatic_value_replacement(bench):
+    """AX/assistive clients may replace the whole value without a keystroke.
+
+    Qt does not put that on its undo stack, so before this fix ⌘Z did nothing and
+    the acceptance run kept seeing ``x[2]`` after pressing ⌘Z. The editor keeps a
+    small text history for exactly that path, while typed changes still use Qt's
+    native undo.
+    """
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    edit = view.target_edit
+    assert edit.toPlainText() == "译文0"
+    # Explicit base-class call = the same non-undoable whole-value replacement a
+    # native accessibility client performs (our Python override is bypassed).
+    QPlainTextEdit.setPlainText(edit, "x译文0")
+    _pump(app)
+    assert edit.toPlainText() == "x译文0"
+    assert not edit.document().isUndoAvailable()
+    _press_undo(edit)
+    _pump(app)
+    assert edit.toPlainText() == "译文0"
+
+
+def test_programmatic_undo_can_be_redone(bench):
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    edit = view.target_edit
+    QPlainTextEdit.setPlainText(edit, "x译文0")
+    _pump(app)
+    _press_undo(edit)
+    _pump(app)
+    assert edit.toPlainText() == "译文0"
+    _press_undo(edit, shift=True)
+    _pump(app)
+    assert edit.toPlainText() == "x译文0"
+
+
+def test_loading_another_segment_starts_a_fresh_undo_history(bench):
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    edit = view.target_edit
+    QPlainTextEdit.setPlainText(edit, "x译文0")
+    _pump(app)
+    view.select_segment(2)
+    _pump(app)
+    assert edit.toPlainText() == "译文2"
+    _press_undo(edit)
+    _pump(app)
+    # Nothing from segment 0 may come back after moving to segment 2.
+    assert edit.toPlainText() == "译文2"

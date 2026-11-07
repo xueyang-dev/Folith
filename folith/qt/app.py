@@ -127,6 +127,13 @@ def main(argv: list[str] | None = None) -> int:
     from . import window as window_module
 
     app = window_module.build_application(sys.argv[:1])
+    if sys.platform == "darwin":
+        # 外部 AX 扫描会让 Qt 的 Cocoa 无障碍桥读到已释放的 interface
+        # （上游 QTBUG-149612）；随包 PySide6 还没有修复，这里装上运行时修复。
+        # 细节、证据与删除时机见 folith/qt/macos_accessibility.py。
+        from . import macos_accessibility
+
+        macos_accessibility.install(log=log)
     # macOS 的"用本应用打开文件"事件可能在窗口建好之前到达：先排队，窗口就绪后再导入。
     external_files = ExternalFileQueue(
         lambda window, files: window.open_external_files(files))

@@ -117,7 +117,11 @@ class AttentionList(QWidget):
 
     def _add_finding(self, item: dict) -> None:
         severity = str(item.get("severity") or "informational")
-        summary = str(item.get("summary") or item.get("reason") or "")
+        # 检查项的摘要多数是模型写的自由文本，不能改写；但交付完整性、确定性检查
+        # 这类固定措辞要跟界面语言走。tr_dynamic 只做目录精确匹配，命中不了就
+        # 原样返回——模型文案不会进目录，这就是安全边界。
+        summary = i18n.tr_dynamic(
+            str(item.get("summary") or item.get("reason") or ""))
         card = QWidget()
         card.setObjectName("attentionItem")
         card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)

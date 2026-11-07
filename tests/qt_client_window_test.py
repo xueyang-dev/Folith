@@ -720,13 +720,15 @@ def test_delivery_asset_open_and_reveal_target_the_frozen_file(client, monkeypat
     window.refresh_workbench(force=True)
 
     workbench = window.workbench
-    assert workbench.asset_list.count() >= 2
-    names = [workbench.asset_list.item(i).text()
-             for i in range(workbench.asset_list.count())]
-    assert "translation.docx" in names
-    workbench.asset_list.setCurrentRow(names.index("translation.docx"))
-    workbench._open_asset()
-    workbench._reveal_asset()
+    # 交付工作区的公开读 API：分组后的文件行（技术附件收起时也在其中）。
+    names = workbench.delivery.file_names()
+    assert len(names) >= 2, names
+    assert "translation.docx" in names, names
+    row = workbench.delivery.row_for("translation.docx")
+    assert row is not None
+    assert row.entry.missing is False
+    workbench._open_asset("translation.docx")
+    workbench._reveal_asset("translation.docx")
     app.processEvents()
 
     assert opened and opened[-1].endswith("translation.docx")
@@ -1159,15 +1161,12 @@ def test_declared_delivery_formats_are_the_ones_produced(client):
         # 完成回调（负责立刻刷新面板）可能还没被主线程处理。等"用户看到的东西"
         # 比等状态更接近真实体验，也顺带钉住"显式动作立即刷新"这条行为。
         def panel_has_assets() -> bool:
-            return any(window.workbench.asset_list.item(index).text()
-                       == "translation.docx"
-                       for index in range(window.workbench.asset_list.count()))
+            return "translation.docx" in window.workbench.delivery.file_names()
 
         assert _pump(app, 180, panel_has_assets), (
             "冻结交付后交付页没有列出资产："
-            f"{[window.workbench.asset_list.item(i).text() for i in range(window.workbench.asset_list.count())]}")
-        names = [window.workbench.asset_list.item(i).text()
-                 for i in range(window.workbench.asset_list.count())]
+            f"{window.workbench.delivery.file_names()}")
+        names = window.workbench.delivery.file_names()
         assert "translation.docx" in names
         assert "bilingual.docx" not in names
         assert "terms.xlsx" not in names
@@ -3227,23 +3226,11 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
     job_b = delivered("stale-b", "B 的译文。", with_pdf=False)
 
     def assets() -> list[str]:
-        """只取**文件行**：清单里还有按用途分组的小标题行（不可选中）。"""
-        names = []
-        for index in range(window.workbench.asset_list.count()):
-            item = window.workbench.asset_list.item(index)
-            data = item.data(Qt.ItemDataRole.UserRole) or {}
-            if data.get("kind") == "asset":
-                names.append(item.text())
-        return names
+        """只取**文件行**：交付工作区的 file_names() 不含分组标题。"""
+        return window.workbench.delivery.file_names()
 
     def group_titles() -> list[str]:
-        titles = []
-        for index in range(window.workbench.asset_list.count()):
-            item = window.workbench.asset_list.item(index)
-            data = item.data(Qt.ItemDataRole.UserRole) or {}
-            if data.get("kind") == "header":
-                titles.append(item.text())
-        return titles
+        return [card.group.title for card in window.workbench.delivery._groups]
 
     open_job_and_wait(window, job_a)
     window.refresh_workbench(force=True)
@@ -3256,9 +3243,10 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
     import time as _time
 
     window.workbench._delivery_rendered = True
-    window.workbench._delivery_key = (len(window.workbench._snapshots),
-                                      str(window.workbench._state.get(
-                                          "delivery_status") or ""))
+    # 节流键包含任务标识（views._render_delivery）：钉住"刚刚渲染过 A"这件事。
+    window.workbench._delivery_key = (
+        job_a, len(window.workbench._snapshots),
+        str(window.workbench._state.get("delivery_status") or ""))
     window.workbench._delivery_preview_at = _time.monotonic()
     open_job_and_wait(window, job_b)
     window.refresh_workbench(force=True)
@@ -3272,14 +3260,13 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
     # 要钉住的是"A 的文件一个都不能留在 B 的清单里"。
     assert sorted(names_b) == sorted(expected_b), (names_b, expected_b)
     assert "translation.pdf" not in names_b, names_b
-    # 清单按用途分组：分组标题存在，且**只有**文件行会被当成资产（A 的 PDF 不能借
-    # 标题行的身份留下来）。标题行不可选中，否则"打开"会指向一个不存在的文件。
+    # 清单按内容类型分组：分组标题存在，但 file_names() 只含真实文件行。
+    # A 的 PDF 不能借"分组标题"的身份留下来，否则"打开"会指向一个不存在的文件。
     assert group_titles(), "交付清单缺少分组标题"
-    for index in range(window.workbench.asset_list.count()):
-        item = window.workbench.asset_list.item(index)
-        data = item.data(Qt.ItemDataRole.UserRole) or {}
-        if data.get("kind") == "header":
-            assert not (item.flags() & Qt.ItemFlag.ItemIsSelectable), item.text()
+    for title in group_titles():
+        assert title not in names_b, (title, names_b)
+    assert window.workbench.delivery.row_for("translation.pdf") is None
+    assert window.workbench.delivery.row_for("translation.docx") is not None
 
 
 def test_switching_jobs_clears_the_search_but_keeps_the_status_filter(client):

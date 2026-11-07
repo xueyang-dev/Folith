@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QRect, Qt, Signal
-from PySide6.QtGui import QBrush, QFontMetrics, QTextOption
+from PySide6.QtGui import QBrush, QFontMetrics, QKeySequence, QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QLabel, QPlainTextEdit, QStyleOptionViewItem,
     QTableWidget, QVBoxLayout, QWidget,
@@ -63,20 +63,103 @@ def set_text_direction(edit, direction: Qt.LayoutDirection) -> None:
     document.setDefaultTextOption(option)
 
 
+#: 编辑框自带撤销历史的深度上限。QPlainTextEdit 的 undo 栈覆盖键盘输入；这里额外
+#: 记一份文本快照，用来处理**整段文字被程序化替换**（辅助功能/AX 客户端设置输入框
+#: 的值、输入法整段上屏等）的情况——那条路径不会进 Qt 的 undo 栈，⌘Z 于是什么都不做
+#: （验收记录：第 18 段输入 x 后按 ⌘Z 仍显示 x[2]）。
+UNDO_HISTORY_LIMIT = 200
+
+
 class _TargetEdit(QPlainTextEdit):
-    """译文编辑框：⌘↩ 交给工作台（保存并进入下一段），Esc 把焦点还给表格。"""
+    """译文编辑框：⌘↩ 交给工作台（保存并进入下一段），Esc 把焦点还给表格。
+
+    ⌘Z / ⇧⌘Z 优先交给 Qt 的原生撤销栈；原生栈为空但文字被程序化换过时，退回本类
+    记录的文本快照，保证「撤销」在任何一种输入方式下都真的撤销。
+    """
 
     commitAndNext = Signal()
     escaped = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._undo_history: list[str] = []
+        self._redo_history: list[str] = []
+        self._tracked_text = ""
+        self._restoring = False
+        self._native_edit_action = False
+        self.document().contentsChanged.connect(self._record_text_change)
 
     def setPlainText(self, text: str) -> None:  # noqa: N802 - Qt 命名
         """设文字时同时套上阅读行距（拉丁 1.5 / 中文 1.7，F6）。
 
         必须在 setPlainText **之后**设块格式：它会把已有块格式重置掉。
+        程序化装载（切换段落、后台译文到达）是新基线，不当成可撤销的用户编辑。
         """
         super().setPlainText(text)
         style_module.set_reading_line_height(
             self.document(), style_module.reading_line_height(text))
+        if not self._restoring:
+            self._undo_history.clear()
+            self._redo_history.clear()
+            self._tracked_text = str(text or "")
+
+    def _record_text_change(self) -> None:
+        """记下每次文本变化的上一版，供原生 undo 栈为空时回退。"""
+        text = self.toPlainText()
+        if self._restoring or self._native_edit_action:
+            self._tracked_text = text
+            return
+        if text == self._tracked_text:
+            return
+        self._undo_history.append(self._tracked_text)
+        if len(self._undo_history) > UNDO_HISTORY_LIMIT:
+            del self._undo_history[0]
+        self._redo_history.clear()
+        self._tracked_text = text
+
+    @staticmethod
+    def _undo_pressed(event) -> bool:
+        if event.matches(QKeySequence.StandardKey.Undo):
+            return True
+        modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        # Qt 在 macOS 把 ⌘ 报成 ControlModifier；这里也接受 Meta，避免平台差异
+        # 让撤销键静默失效。只认 Z，不抢 AltGr 等组合。
+        return (event.key() == Qt.Key.Key_Z
+                and modifiers in (Qt.KeyboardModifier.ControlModifier,
+                                  Qt.KeyboardModifier.MetaModifier))
+
+    @staticmethod
+    def _redo_pressed(event) -> bool:
+        if event.matches(QKeySequence.StandardKey.Redo):
+            return True
+        modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        control = Qt.KeyboardModifier.ControlModifier
+        shift = Qt.KeyboardModifier.ShiftModifier
+        return ((event.key() == Qt.Key.Key_Z and modifiers in (
+                    control | shift, Qt.KeyboardModifier.MetaModifier | shift))
+                or (event.key() == Qt.Key.Key_Y and modifiers in (
+                    control, Qt.KeyboardModifier.MetaModifier)))
+
+    def _apply_programmatic_text(self, text: str) -> None:
+        self._restoring = True
+        try:
+            super().setPlainText(text)
+            style_module.set_reading_line_height(
+                self.document(), style_module.reading_line_height(text))
+        finally:
+            self._restoring = False
+        self._tracked_text = text
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.setTextCursor(cursor)
+
+    def _history_step(self, source: list[str], target: list[str]) -> bool:
+        if not source:
+            return False
+        text = source.pop()
+        target.append(self.toPlainText())
+        self._apply_programmatic_text(text)
+        return True
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and (
@@ -87,6 +170,29 @@ class _TargetEdit(QPlainTextEdit):
             return
         if event.key() == Qt.Key.Key_Escape:
             self.escaped.emit()
+            event.accept()
+            return
+        if self._undo_pressed(event):
+            if self.document().isUndoAvailable():
+                # 键盘输入的撤销仍走 Qt 原生栈（保留光标/选区的 Qt 语义）。
+                self._native_edit_action = True
+                try:
+                    super().keyPressEvent(event)
+                finally:
+                    self._native_edit_action = False
+            else:
+                self._history_step(self._undo_history, self._redo_history)
+            event.accept()
+            return
+        if self._redo_pressed(event):
+            if self.document().isRedoAvailable():
+                self._native_edit_action = True
+                try:
+                    super().keyPressEvent(event)
+                finally:
+                    self._native_edit_action = False
+            else:
+                self._history_step(self._redo_history, self._undo_history)
             event.accept()
             return
         super().keyPressEvent(event)

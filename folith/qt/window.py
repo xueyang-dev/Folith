@@ -491,6 +491,11 @@ class MainWindow(QMainWindow):
         self.workbench.editSubmitted.connect(self.submit_edit)
         self.workbench.revealRequested.connect(self.reveal_path)
         self.workbench.openAssetRequested.connect(self.open_path)
+        self.workbench.copyPathRequested.connect(self.copy_path)
+        self.workbench.downloadDeliveryZipRequested.connect(self.download_delivery_zip)
+        self.workbench.openDeliveryFolderRequested.connect(self.open_delivery_folder)
+        self.workbench.saveDeliveryAssetRequested.connect(self.save_delivery_asset)
+        self.workbench.showDeliveryAssetInfoRequested.connect(self.show_delivery_asset_info)
         self.workbench.draftSaved.connect(
             lambda *_args: self._mark_dirty_status(i18n.tr('草稿已保存')))
         # Shared outline loader: when a background parse finishes, update the
@@ -3815,6 +3820,132 @@ class MainWindow(QMainWindow):
             on_done=lambda written: self._notice(
                 i18n.tr('已保存 {v0} 个文件到 {v1}', v0=len(written), v1=target)))
 
+    # ================= 交付工作区的文件操作 =================
+    def _ask_save_file(self, title: str, default_name: str) -> str:
+        """保存对话框；脚本化运行不弹系统面板（与 ``_choose_directory`` 同一条约定）。"""
+        if _automation():
+            self._notice(i18n.tr(
+                '{v0}：自动化运行不打开系统面板，交付文件由调用方直接写出。', v0=title))
+            return ""
+        target, _selected = QFileDialog.getSaveFileName(
+            self, title, str(Path.home() / "Documents" / default_name))
+        return target
+
+    def _info(self, title: str, message: str, detail: str = "") -> None:
+        """信息窗口；脚本化运行只记一条瞬时消息，不阻塞。"""
+        self._last_notice = message
+        if _automation():
+            self._notice(f"{title} · {message}", task=False, detail=detail)
+            return
+        prompts.NoticeDialog.notify(self, title, message, detail=detail)
+
+    def download_delivery_zip(self, version: int, job_id: str | None = None) -> None:
+        """把当前冻结版本的全部交付文件打包成 ZIP 并保存到用户选择的位置。
+
+        只读冻结快照：打包不会改动、也不会重新生成任何交付文件；快照里有文件
+        缺失或校验不过时，适配器会拒绝并给出是哪一个，不产生"看起来成功"的半套包。
+        """
+        job_id = job_id or self._current_job_id
+        if not job_id:
+            return
+        try:
+            default_name = adapter.delivery_archive_name(job_id, int(version))
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法打包冻结交付'), str(exc), job_id=job_id)
+            return
+        target = self._ask_save_file(i18n.tr('保存交付包（ZIP）'), default_name)
+        if not target:
+            self._notice(i18n.tr('已取消下载。'), job_id=job_id)
+            return
+        self._run_with_busy(
+            i18n.tr('下载全部（ZIP）'), i18n.tr('正在打包冻结交付…'),
+            adapter.save_delivery_archive, job_id, int(version), target,
+            for_job=job_id,
+            on_done=lambda path: self._notice(
+                i18n.tr('已保存交付包：{v0}', v0=str(path)), job_id=job_id))
+
+    def open_delivery_folder(self, version: int, job_id: str | None = None) -> None:
+        """在系统文件管理器里打开冻结交付目录（不存在就报错，不假装打开过）。"""
+        job_id = job_id or self._current_job_id
+        if not job_id:
+            return
+        try:
+            result = adapter.open_delivery_folder(job_id, int(version))
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法打开交付文件夹'), str(exc), job_id=job_id)
+            return
+        if not result.get("ok"):
+            self._failure(i18n.tr('无法打开交付文件夹'),
+                          str(result.get("detail") or i18n.tr('系统未返回原因。')),
+                          job_id=job_id)
+            return
+        self._notice(i18n.tr('已打开交付文件夹：{v0}', v0=str(result.get("path") or "")),
+                     job_id=job_id)
+
+    def save_delivery_asset(self, name: str, version: int,
+                            job_id: str | None = None) -> None:
+        """另存单个交付文件的副本（源文件只读；目标已存在时由保存对话框确认）。"""
+        job_id = job_id or self._current_job_id
+        if not job_id or not name:
+            return
+        try:
+            default_name = adapter.delivery_default_asset_name(
+                job_id, int(version), name)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法另存文件'), str(exc), job_id=job_id)
+            return
+        target = self._ask_save_file(i18n.tr('另存文件副本'), default_name)
+        if not target:
+            self._notice(i18n.tr('已取消另存。'), job_id=job_id)
+            return
+        self._run_with_busy(
+            i18n.tr('另存文件副本'), i18n.tr('正在复制交付文件…'),
+            adapter.save_delivery_asset_copy, job_id, int(version), name, target,
+            for_job=job_id, overwrite=True,
+            on_done=lambda path: self._notice(
+                i18n.tr('已保存文件副本：{v0}', v0=str(path)), job_id=job_id))
+
+    def show_delivery_asset_info(self, name: str, version: int,
+                                 job_id: str | None = None) -> None:
+        """文件信息：名称、格式、大小、校验值与所属交付版本（全部来自真实文件）。"""
+        job_id = job_id or self._current_job_id
+        if not job_id or not name:
+            return
+        try:
+            info = adapter.delivery_asset_info(job_id, int(version), name)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法读取文件信息'), str(exc), job_id=job_id)
+            return
+        from . import delivery_panel
+
+        lines = [
+            i18n.tr('文件名：{v0}', v0=str(info.get("name") or "")),
+            i18n.tr('格式：{v0}', v0=delivery_panel.format_label(str(info.get("name") or ""))),
+            i18n.tr('大小：{v0}', v0=delivery_panel.human_size(info.get("size"))),
+            i18n.tr('交付版本：v{v0}', v0=info.get("version")),
+            i18n.tr('所属文档：{v0}', v0=str(info.get("source_name") or i18n.tr('未命名任务'))),
+            i18n.tr('位置：{v0}', v0=str(info.get("path") or "")),
+        ]
+        created = str(info.get("created_at") or "")
+        if created:
+            lines.append(i18n.tr('交付时间：{v0}', v0=created))
+        sha = str(info.get("sha256") or "")
+        if sha:
+            lines.append(i18n.tr('校验（sha256）：{v0}…', v0=sha[:16]))
+        if not info.get("exists"):
+            lines.append(i18n.tr('状态：文件在磁盘上找不到。'))
+        elif info.get("size") is not None and info.get("actual_size") not in (None, info.get("size")):
+            lines.append(i18n.tr('状态：磁盘上的大小与交付记录不一致。'))
+        self._info(i18n.tr('文件信息'), "\n".join(lines))
+
+    def copy_path(self, path: str) -> None:
+        """把文件路径写进系统剪贴板。"""
+        text = str(path or "")
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self._notice(i18n.tr('已复制文件路径：{v0}', v0=text), task=False)
+
     def reveal_path(self, path: str) -> None:
         result = adapter.reveal_in_finder(path)
         self._notice(result.get("detail") or i18n.tr('已在{v0}中显示。', v0=platform_ui.file_manager_name()), task=False)
@@ -4292,23 +4423,28 @@ class MainWindow(QMainWindow):
         self.close()
 
 
-#: 平台级缺陷（**应用侧无法根治，也没有可用的开关**）：在 macOS 26/27 上，外部辅助功能
-#: 客户端（AI "Computer Use" / VoiceOver / 窗口管理器的 AX 扫描）遍历界面时，Qt 的 Cocoa
-#: 可访问性桥会崩溃（SIGSEGV/SIGBUS，栈顶 `libqcocoa` +
+#: 平台级缺陷 **QTBUG-149612**（上游已修复，但随包 PySide6 还没有）：在 macOS 26/27 上，
+#: 外部辅助功能客户端（AI "Computer Use" / VoiceOver / 窗口管理器的 AX 扫描）遍历界面时，
+#: Qt 的 Cocoa 可访问性桥会崩溃（SIGSEGV/SIGBUS，栈顶 `libqcocoa` +
 #: `NSAccessibilityAttributeAccessorInfo getAttributeValue:forObject:`）。
 #:
-#: 上游根因：QTBUG-149612 —— "macOS: synthesized table elements can delete their parent
-#: accessibility interface"（影响 6.11.0–6.11.2；截至 2026-10-05 状态 Reported、无 fixVersion，
-#: Gerrit 765434 仍在评审）。同一个签名见于 calibre（PyQt6）、Qt Creator、Anki、FreeCAD。
+#: 根因：`-[QMacAccessibilityElement dealloc]` 会用元素共享的 `axid` 调用
+#: `QAccessibleCache::deleteInterface`；表格合成的 row/cell 占位元素与父表共用 id，
+#: 它们析构时删掉了父表的 `QAccessibleInterface`，`QAccessibleTable` 缓存的指针随后
+#: 变成悬垂指针，下一次 AX 查询（选中子元素）即读已释放内存。
 #:
-#: R62 实测（本仓库 `scripts/qt_ax_scan_probe.py`，证据 E163–E168）：
-#:   - 复现 3/3 + 对照 2/2：表格里选中一行 + 外部 AX 扫描 + 打开任务 → 进程 SIGSEGV/SIGBUS；
-#:   - `QT_ACCESSIBILITY=0` 在 Qt 6.11 **完全无效**（随包 Qt 二进制里没有这个字符串）；
-#:   - `QAccessible.setActive(False)` 会被 OS 在 AX 客户端接入时重新激活，即使每 100ms 重申
-#:     一次，崩溃依旧发生。
-#: 因此这里**不再提供任何"关掉辅助功能"的开关**（R61 曾提供的
-#: `FOLITH_QT_DISABLE_ACCESSIBILITY=1` 是无效的，已删除）：不要给测试者一个不存在的安全感。
-#: 唯一可靠做法是**验收时不挂外部 AX 代理**（人工键鼠不受影响），并等上游修复后升级 PySide6。
+#: 处置（2026-11-06，R64）：
+#:   - 上游 commit `8148c48d`（"macOS: Don't let native a11y elements delete accessible
+#:     interfaces"）2026-10-27 已合入 Qt `dev`/`6.12`，但 6.11.2（随包）、6.11.3、
+#:     6.12.0 都早于它，带修复的 6.12.1 计划 2026-11-17 发布；
+#:   - 因此由 :mod:`folith.qt.macos_accessibility` 在启动时把 `-dealloc` 换成
+#:     "先清零 `axid` 再调原实现"，等价于上游修复的语义；
+#:   - `QT_ACCESSIBILITY=0` 在 Qt 6.11 无效、`QAccessible.setActive(False)` 会被系统
+#:     重新激活（R62 实测），所以**不再提供任何"关掉辅助功能"的开关**——那种开关只会
+#:     给测试者一个不存在的安全感。诊断用的 `FOLITH_QT_AX_WORKAROUND=0` 关掉的是
+#:     **本修复**（用来复现上游缺陷做 A/B），不是辅助功能；
+#:   - PySide6 升到 6.12.1+ 后修复不再安装（版本门），届时删除该模块与调用点。
+
 
 
 def file_open_path(event) -> str:

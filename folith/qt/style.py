@@ -96,8 +96,8 @@ QPushButton:hover {{ background: {t['bg-surface-raised']}; }}
    ``selection-background-color`` 一遍。token 写 ``.18``，**真实窗口里渲出来的
    是 ``#4b5d83``（等效 alpha ≈ .46）**，选中行因此变成一块饱和蓝，比主行动按钮
    还抢眼。这里只留 ``selection-background-color`` 那一层：token 是多少就渲染多少
-   （``#2e3546``）。``AssetRowDelegate`` 不调 ``super().paint()``、自己铺一次，
-   本来就只有一层，实测不受这条影响。 */
+   （``#2e3546``）。自绘的委托不调 ``super().paint()``、自己铺一次，本来就只有一层，
+   实测不受这条影响。 */
 QTableWidget::item:selected, QListWidget::item:selected, QTreeWidget::item:selected {{
     background: transparent;
 }}
@@ -298,10 +298,84 @@ QFrame#onboardingChoice:hover, QFrame#onboardingChoice:focus {{ border-color: {t
 QFrame#onboardingChoice:disabled {{ background: transparent; border-color: {t['border-faint']}; }}
 QFrame#onboardingChoice QLabel {{ background: transparent; }}
 QLabel#link {{ color: {t['accent']}; font-weight: 600; }}
-/* 交付清单：小节标题 + 右侧汇总（"6 个文件 · 85.5 KB"），行内布局由委托自绘 */
-QLabel#assetMeta {{ font-size: {f['micro']}px; color: {t['text-muted']}; }}
-QLabel#assetGroupTitle {{ font-size: {f['label']}px; font-weight: 600; color: {t['text-secondary']}; }}
-QLabel#assetMissing {{ font-size: {f['micro']}px; font-weight: 600; color: {t['danger']}; }}
+/* ================= 交付工作区 ================= */
+/* 顶部成果身份：标题 + 冻结版本芯片 + 文件名 + 统计行（文件数 / 总大小 / 交付时间）。
+   统计与状态同源（冻结快照的 manifest），这里只负责字号层级，不画彩底。 */
+QLabel#deliveryTitle {{ font-size: {f['display']}px; font-weight: 700; color: {t['text-primary']}; }}
+QLabel#deliveryDocName {{ font-size: {f['card']}px; color: {t['text-secondary']}; }}
+QLabel#deliveryMeta {{ font-size: {f['footnote']}px; color: {t['text-secondary']}; }}
+QFrame#deliveryMetaDivider {{ background: {t['border-hairline']}; border: none;
+    min-width: 1px; max-width: 1px; }}
+/* 内容分组：扁平的一张面，只有发丝线，没有投影——参考图的文件列表就是这种分层。 */
+QFrame#deliveryGroup {{
+    background: {t['bg-surface']};
+    border: 1px solid {t['border-hairline']};
+    border-radius: {r['md']}px;
+}}
+QLabel#deliveryGroupTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#deliveryGroupHint {{ font-size: {f['footnote']}px; color: {t['text-secondary']}; }}
+/* 分组图标：浅色圆角方块 + 语义色图标；色调只表达"成果类别"，不是状态。 */
+QFrame#deliveryTile {{ background: {t['accent-soft']}; border: none;
+    border-radius: {r['md']}px; }}
+QFrame#deliveryTile[tone="bilingual"] {{ background: {t['info-soft']}; }}
+QFrame#deliveryTile[tone="terms"] {{ background: {t['success-soft']}; }}
+QFrame#deliveryTile[tone="technical"] {{ background: {t['bg-surface-sunken']}; }}
+/* 格式标签：按格式取色，同一个格式在整页里永远同一个颜色与宽度。 */
+/* 冻结版本芯片：浅绿底 + 绿字 + 勾选图标（图标在控件里，不只靠颜色）。 */
+QFrame#frozenPill {{
+    background: {t['success-soft']};
+    border: 1px solid {t['border-hairline']};
+    border-radius: {r['pill']}px;
+}}
+QLabel#frozenPillText {{ font-size: {f['footnote']}px; font-weight: 600;
+    color: {t['success']}; background: transparent; }}
+QLabel#formatBadge {{ font-size: {f['micro']}px; font-weight: 600;
+    background: {t['bg-surface-sunken']}; color: {t['text-secondary']};
+    border: 1px solid {t['border-hairline']}; border-radius: {r['pill']}px;
+    padding: 1px 6px; }}
+QLabel#formatBadge[format="accent"] {{ background: {t['accent-soft']}; color: {t['accent']}; }}
+QLabel#formatBadge[format="success"] {{ background: {t['success-soft']}; color: {t['success']}; }}
+QLabel#formatBadge[format="warning"] {{ background: {t['warning-soft']}; color: {t['warning']}; }}
+QLabel#formatBadge[format="info"] {{ background: {t['info-soft']}; color: {t['info']}; }}
+QLabel#formatBadge[format="muted"] {{ background: {t['bg-surface-sunken']}; color: {t['text-secondary']}; }}
+/* 文件行：只有悬停才浮一点底色；行与行之间是一条发丝线，不是独立卡片。 */
+QFrame#deliveryFileRow {{ background: transparent; border: none;
+    border-radius: {r['sm']}px; }}
+QFrame#deliveryFileRow[hover="true"] {{ background: {t['bg-hover']}; }}
+QLabel#deliveryFileName {{ font-size: {f['body']}px; color: {t['text-primary']}; }}
+QLabel#deliveryFileName[missing="true"] {{ color: {t['text-secondary']}; }}
+QLabel#deliveryFileSize {{ font-size: {f['footnote']}px; color: {t['text-muted']}; }}
+QLabel#deliveryFileSize[missing="true"] {{ color: {t['danger']}; font-weight: 600; }}
+QFrame#deliveryHairline, QFrame#deliveryDivider {{
+    background: {t['border-hairline']}; border: none;
+}}
+/* 技术附件：低视觉权重的一块（浅底、无投影），展开后才与内容分组同亮度。 */
+QFrame#deliveryTechnical {{
+    background: {t['bg-surface-subtle']};
+    border: 1px solid {t['border-hairline']};
+    border-radius: {r['md']}px;
+}}
+QFrame#deliveryTechnical[open="true"] {{ background: {t['bg-surface']}; }}
+QFrame#deliveryTechnicalHeader {{ background: transparent; border: none;
+    border-radius: {r['md']}px; }}
+QFrame#deliveryTechnicalHeader[hover="true"] {{ background: {t['bg-hover']}; }}
+QFrame#deliveryTechnicalHeader:focus {{ border: 1px solid {t['accent-border']}; }}
+/* 图标按钮挂菜单时不画系统下拉箭头（菜单由点击打开，不另开一个小三角热区）。 */
+QPushButton#iconButton::menu-indicator, QToolButton#iconButton::menu-indicator {{
+    image: none; width: 0px;
+}}
+/* 「更多」用 QToolButton 才能用键盘打开菜单；外观与图标按钮同一套。 */
+QToolButton#iconButton {{
+    min-width: {box('md', pad_y=0)}px; max-width: {box('md', pad_y=0)}px;
+    min-height: {box('md', pad_y=0)}px; max-height: {box('md', pad_y=0)}px;
+    padding: 0; border-radius: {c['md'] // 2 - 1}px;
+    background: transparent; border: 1px solid transparent;
+    color: {t['text-secondary']};
+}}
+QToolButton#iconButton:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+QToolButton#iconButton:pressed {{ background: {t['bg-selected']}; }}
+QToolButton#iconButton:focus {{ border-color: {t['accent']}; }}
+QToolButton#iconButton::menu-indicator {{ image: none; width: 0px; }}
 {chip_rules()}
 
 /* ================= 面（卡片） ================= */
@@ -753,6 +827,9 @@ QPushButton#iconButton {{
     background: transparent; border-color: transparent; color: {t['text-secondary']};
 }}
 QPushButton#iconButton:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+/* 焦点必须看得见：这个 id 把 border-color 设成了 transparent，通用的
+   QPushButton:focus 被 id 选择器压过去，Tab 到行内「打开」时原本没有任何视觉反馈。 */
+QPushButton#iconButton:focus {{ border-color: {t['accent']}; }}
 QPushButton#iconButton:checked {{ background: {t['accent-soft']}; color: {t['brand-ink']}; }}
 
 /* 按钮只有 4 种 × 2 尺寸（设计审校 40 号第三节），用 ``set_button(button, kind, small=)``
@@ -1852,6 +1929,9 @@ class ElideButton(QPushButton):
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._full_text = ""
+        #: 调用方给的说明性悬停提示（例如"这个按钮会做什么/为什么不可用"）。
+        #: 省略逻辑只在**没有**说明时才用完整文字补位，不能把说明覆盖掉。
+        self._hint = ""
         self.setText(text)
 
     def setText(self, text: str) -> None:  # noqa: N802 - Qt 命名
@@ -1883,6 +1963,19 @@ class ElideButton(QPushButton):
         super().resizeEvent(event)
         self._apply_elide()
 
+    def setToolTip(self, text: str) -> None:  # noqa: N802 - Qt 命名
+        self._hint = str(text or "")
+        self._apply_tooltip()
+
+    def _apply_tooltip(self) -> None:
+        shown = QPushButton.text(self)
+        if self._hint:
+            QPushButton.setToolTip(self, self._hint)
+        elif shown != self._full_text:
+            QPushButton.setToolTip(self, self._full_text)
+        else:
+            QPushButton.setToolTip(self, "")
+
     def _apply_elide(self) -> None:
         metrics = self.fontMetrics()
         shown = self._full_text
@@ -1894,7 +1987,7 @@ class ElideButton(QPushButton):
             shown = metrics.elidedText(shown, Qt.TextElideMode.ElideRight, max(room, 20))
         # 「&」在按钮文字里是助记符标记（"Terms & memory" 会显示成 "Terms _memory"）：转义。
         QPushButton.setText(self, shown.replace("&", "&&"))
-        self.setToolTip(self._full_text if shown != self._full_text else "")
+        self._apply_tooltip()
 
 
 class ElideLabel(QLabel):
@@ -1917,8 +2010,13 @@ class ElideLabel(QLabel):
         self._apply(0)
 
     def setText(self, value: str) -> None:  # noqa: N802 - Qt 命名
-        self._full_text = str(value or "")
-        self.setToolTip(self._full_text)
+        text = str(value or "")
+        # 文案没变就什么都不做：后台每秒刷新都会调到这里，Qt 对相同文本的
+        # setToolTip 仍会发一次 ToolTipChange（辅助技术跟着被叫醒）。
+        if text == self._full_text and self.toolTip() == text:
+            return
+        self._full_text = text
+        self.setToolTip(text)
         self._apply(self.width())
 
     def set_elide_mode(self, mode) -> None:
@@ -2410,128 +2508,6 @@ class EmptyState(QFrame):
         self.hint_label.setText(hint)
         self.hint_label.setVisible(bool(hint))
         self.setVisible(bool(title))
-
-
-class AssetRowDelegate(QStyledItemDelegate):
-    """交付资产行：类型图标 + 文件名 + 右侧大小；分组标题行是另一套紧凑样式。
-
-    为什么自绘而不是 `QListWidget` 默认渲染：一行里要同时放图标、主文案、右对齐的
-    大小和"文件缺失"标记，QSS 的 `::item` 做不到多段布局；而且分组标题必须是
-    **不可选中**的行，默认渲染会把它当成普通条目高亮。
-
-    条目数据放在 `Qt.UserRole` 的一个 dict 里：
-
-        {"kind": "header" | "asset", "title": str, "meta": str,
-         "icon": str, "missing": bool}
-
-    `Qt.DisplayRole` 仍然是文件/分组名，命令行与既有用例继续按文本读取。
-    """
-
-    HEADER_HEIGHT = 30
-    ROW_HEIGHT = theme_module.CONTROL["row"]
-
-    def sizeHint(self, option, index) -> QSize:  # noqa: N802 - Qt 命名
-        data = index.data(Qt.ItemDataRole.UserRole) or {}
-        height = (self.HEADER_HEIGHT if data.get("kind") == "header"
-                  else self.ROW_HEIGHT)
-        return QSize(option.rect.width(), height)
-
-    def paint(self, painter, option, index) -> None:  # noqa: N802 - Qt 命名
-        from PySide6.QtWidgets import QStyle
-
-        tokens = theme_module.tokens(current_theme())
-        data = index.data(Qt.ItemDataRole.UserRole) or {}
-        rect = option.rect
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-        if data.get("kind") == "header":
-            font = font_for(current_theme())
-            font.setPixelSize(theme_module.FONT_SIZES["label"])
-            font.setWeight(QFont.Weight.DemiBold)
-            painter.setFont(font)
-            metrics = painter.fontMetrics()
-            meta = str(data.get("meta") or "")
-            meta_width = metrics.horizontalAdvance(meta) if meta else 0
-            painter.setPen(QPen(qcolor(tokens["text-muted"])))
-            painter.drawText(
-                QRectF(rect.left() + 2, rect.top(), rect.width() - meta_width - 12,
-                       rect.height()),
-                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-                metrics.elidedText(str(data.get("title") or ""),
-                                   Qt.TextElideMode.ElideRight,
-                                   max(0, rect.width() - meta_width - 12)))
-            if meta:
-                painter.drawText(
-                    QRectF(rect.right() - meta_width - 2, rect.top(),
-                           meta_width, rect.height()),
-                    int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-                    meta)
-            hairline = QPen(qcolor(tokens["border-hairline"]))
-            painter.setPen(hairline)
-            painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
-            painter.restore()
-            return
-
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        # 行首高亮竖线是 Web 表格的记号。夜间去掉它：选中已经由 bg-selected
-        # （accent 低透明度渍）表达，再加一条亮蓝竖线就不是"原生列表"了。
-        indicator = 3 if (selected and not night_mode()) else 0
-        if selected:
-            painter.fillRect(rect, qcolor(tokens["bg-selected"]))
-            if indicator:
-                painter.fillRect(QRectF(rect.left(), rect.top(), indicator,
-                                        rect.height()),
-                                 qcolor(tokens["accent"]))
-        elif hovered:
-            painter.fillRect(rect, qcolor(tokens["bg-hover"]))
-
-        icon_size = 16
-        pad = theme_module.SPACE["sm"]
-        icon_rect = QRectF(rect.left() + pad + indicator,
-                           rect.top() + (rect.height() - icon_size) / 2,
-                           icon_size, icon_size)
-        from . import icons as _icons
-
-        pixmap = _icons.pixmap(str(data.get("icon") or "file"), icon_size,
-                               tokens["text-muted"])
-        if not pixmap.isNull():
-            painter.drawPixmap(icon_rect.topLeft(), pixmap)
-
-        font = font_for(current_theme())
-        font.setPixelSize(theme_module.FONT_SIZES["body"])
-        painter.setFont(font)
-        metrics = painter.fontMetrics()
-        meta_font = font_for(current_theme())
-        meta_font.setPixelSize(theme_module.FONT_SIZES["caption"])
-        meta_metrics = QFontMetrics(meta_font)
-        meta = str(data.get("meta") or "")
-        meta_width = meta_metrics.horizontalAdvance(meta) if meta else 0
-        text_left = icon_rect.right() + pad
-        text_width = max(0, int(rect.width() - (text_left - rect.left())
-                                - meta_width - pad * 3))
-        painter.setPen(QPen(qcolor(tokens["text-primary"])))
-        painter.drawText(
-            QRectF(text_left, rect.top(), text_width, rect.height()),
-            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            metrics.elidedText(str(index.data(Qt.ItemDataRole.DisplayRole) or ""),
-                               Qt.TextElideMode.ElideMiddle, text_width))
-        if meta:
-            painter.setFont(meta_font)
-            painter.setPen(QPen(qcolor(tokens["danger"] if data.get("missing")
-                                       else tokens["text-muted"])))
-            painter.drawText(
-                QRectF(rect.right() - meta_width - pad * 1.5, rect.top(),
-                       meta_width + pad, rect.height()),
-                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-                meta)
-        hairline = QPen(qcolor(tokens["border-hairline"]))
-        painter.setPen(hairline)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawLine(QPointF(rect.left(), rect.bottom()),
-                         QPointF(rect.right(), rect.bottom()))
-        painter.restore()
 
 
 class RadioButton(QRadioButton):
