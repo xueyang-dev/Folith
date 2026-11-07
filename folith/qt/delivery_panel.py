@@ -579,7 +579,11 @@ class DeliveryGroupCard(QFrame):
         identity_layout.setSpacing(theme_module.SPACE["md"])
         self.tile = IconTile(group.icon, self._tone(group.key), identity)
         identity_layout.addWidget(self.tile, 0, Qt.AlignmentFlag.AlignTop)
+        # 先把子布局挂到父布局上再往里放控件：先填后挂会让 PySide 给每个条目留下
+        # 一个 QWidgetItem 包装器，卡片重建后包装器残留，之后同地址的新对象会被
+        # 误认成它而段错误（tests/qt_layout_item_wrapper_test.py）。
         text_column = QVBoxLayout()
+        identity_layout.addLayout(text_column, 1)
         text_column.setContentsMargins(0, 0, 0, 0)
         text_column.setSpacing(theme_module.SPACE["xxs"])
         self.title_label = QLabel(group.title, identity)
@@ -590,7 +594,6 @@ class DeliveryGroupCard(QFrame):
         text_column.addWidget(self.title_label)
         text_column.addWidget(self.hint_label)
         text_column.addStretch(1)
-        identity_layout.addLayout(text_column, 1)
         layout.addWidget(identity, 0, Qt.AlignmentFlag.AlignTop)
 
         divider = QFrame(self)
@@ -716,6 +719,7 @@ class _DisclosureHeader(QFrame):
         self.tile = IconTile("package", "technical", self)
         layout.addWidget(self.tile, 0, Qt.AlignmentFlag.AlignVCenter)
         text_column = QVBoxLayout()
+        layout.addLayout(text_column, 1)
         text_column.setContentsMargins(0, 0, 0, 0)
         text_column.setSpacing(theme_module.SPACE["xxs"])
         self.title_label = QLabel(technical_text()[0], self)
@@ -724,7 +728,6 @@ class _DisclosureHeader(QFrame):
         self.hint_label.setObjectName("deliveryGroupHint")
         text_column.addWidget(self.title_label)
         text_column.addWidget(self.hint_label)
-        layout.addLayout(text_column, 1)
         self.meta_label = QLabel("", self)
         self.meta_label.setObjectName("deliveryMeta")
         layout.addWidget(self.meta_label, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -1103,6 +1106,7 @@ class _Header(QWidget):
         layout.setSpacing(theme_module.SPACE["md"])
 
         identity = QHBoxLayout()
+        layout.addLayout(identity)
         identity.setContentsMargins(0, 0, 0, 0)
         identity.setSpacing(theme_module.SPACE["xl"])
         self.cover = components.DocThumb(width=96, height=128, parent=self)
@@ -1113,6 +1117,7 @@ class _Header(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(theme_module.SPACE["xs"])
         title_row = QHBoxLayout()
+        column.addLayout(title_row)
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(theme_module.SPACE["md"])
         self.title_label = QLabel(i18n.tr('交付已完成'), self.identity_column)
@@ -1122,7 +1127,6 @@ class _Header(QWidget):
         title_row.addWidget(self.title_label, 0, Qt.AlignmentFlag.AlignVCenter)
         title_row.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignVCenter)
         title_row.addStretch(1)
-        column.addLayout(title_row)
         self.filename_label = style_module.ElideLabel(
             "", mode=Qt.TextElideMode.ElideMiddle, parent=self.identity_column)
         self.filename_label.setObjectName("deliveryDocName")
@@ -1157,6 +1161,7 @@ class _Header(QWidget):
         column.addSpacing(theme_module.SPACE["sm"])
 
         self.actions = components.FlowRow(spacing=theme_module.SPACE["md"], fill=False)
+        column.addLayout(self.actions)
         self.download_button = style_module.ElideButton(i18n.tr('下载全部（ZIP）'))
         style_module.set_button(self.download_button, "primary")
         self.download_button.setIcon(icons.icon("download", 16, "text-on-accent"))
@@ -1178,7 +1183,6 @@ class _Header(QWidget):
         self.actions.addWidget(self.download_button)
         self.actions.addWidget(self.open_folder_button)
         self.actions.addWidget(self.save_package_button)
-        column.addLayout(self.actions)
 
         # ---- 门禁区：未冻结时才有意义（状态、交付说明、冻结/去处理/接受风险） ----
         self.gate = QWidget(self.identity_column)
@@ -1193,6 +1197,7 @@ class _Header(QWidget):
             i18n.tr('交付说明（可选，例如：已完成人工审校）'))
         gate_layout.addWidget(self.note_edit)
         self.gate_actions = components.FlowRow(spacing=theme_module.SPACE["sm"], fill=False)
+        gate_layout.addLayout(self.gate_actions)
         self.fix_button = style_module.ElideButton(i18n.tr('去处理必须处理的问题'))
         style_module.set_button(self.fix_button, "primary")
         self.fix_button.setIcon(icons.icon("shield-check", 16, "text-on-accent"))
@@ -1212,11 +1217,9 @@ class _Header(QWidget):
         for button in (self.fix_button, self.deliver_button,
                        self.risk_button, self.export_button):
             self.gate_actions.addWidget(button)
-        gate_layout.addLayout(self.gate_actions)
         column.addWidget(self.gate)
         identity.addWidget(self.identity_column, 1)
         identity.addStretch(0)
-        layout.addLayout(identity)
 
     # ---- 应用模型 ----
     def apply(self, model: DeliveryModel) -> None:
