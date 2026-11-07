@@ -119,11 +119,12 @@ def test_panel_fits_the_default_window_in_every_ui_language(qt_app, lang):
         panel.close()
 
 
-def test_confirm_is_the_only_primary_action_without_a_suggestion(qt_app):
+def test_style_finding_without_suggestion_prioritizes_edit(qt_app):
     panel = _panel(_item(suggested_target=""))
     try:
         assert panel.apply_button.property("kind") == "secondary"
-        assert panel.confirm_button.property("kind") == "primary"
+        assert panel.confirm_button.property("kind") == "secondary"
+        assert panel.edit_button.property("kind") == "primary"
     finally:
         panel.close()
 
@@ -188,8 +189,10 @@ def test_confirmed_open_decision_is_visible_in_the_queue_and_detail(qt_app):
                          decision_label="已确认存在，待修订"))
     try:
         assert "已确认存在，待修订" in _first_card_text(panel)
-        assert "已确认存在，待修订" in panel.item_body.toPlainText()
-        assert "已记录的决定" in panel.item_body.toPlainText()
+        detail = (panel.item_body.toPlainText() + "\n"
+                  + panel.evidence_body.toPlainText())
+        assert "已确认存在，待修订" in detail
+        assert "已记录的决定" in detail
     finally:
         panel.close()
 

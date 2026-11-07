@@ -295,14 +295,33 @@ def _triage_fields(state: Mapping[str, Any],
         if isinstance(entry.get("snapshot"), Mapping) else {}
     auto_handled = disposition == _finding_triage.VERIFIED_SAFE or (
         disposition == _finding_triage.AUTO_RESOLVABLE and committed)
+    # 已提交/暂存修复的「处理结果」只在候选记录里：按 candidate_id 取它的
+    # candidate_target 与状态。取不到就留空——界面据此显示「无法重新构造」，
+    # 绝不拿当前译文冒充历史。
+    candidate_id = str(entry.get("candidate_id") or "")
+    candidate_target = ""
+    candidate_status = ""
+    if candidate_id:
+        try:
+            from folith import translation_candidates as _candidates
+            record = _candidates.by_id(state, candidate_id)
+            if isinstance(record, Mapping):
+                candidate_target = str(record.get("candidate_target") or "")
+                candidate_status = str(record.get("status") or "")
+        except Exception:  # noqa: BLE001 - projection must fail soft
+            pass
     return {
         "triage_record_key": key,
         "triage_disposition": disposition,
         "triage_actor_type": actor_type,
         "triage_evidence": evidence,
-        "triage_candidate_id": str(entry.get("candidate_id") or ""),
+        "triage_candidate_id": candidate_id,
+        "triage_candidate_status": candidate_status,
         "triage_committed": committed,
         "triage_snapshot": snapshot,
+        # before = 记录当时的译文；after = 候选产出的译文；current = 投影里的当前译文。
+        "triage_before_target": str(snapshot.get("target") or "") if snapshot else "",
+        "triage_after_target": candidate_target,
         "triage_created_at": str(entry.get("created_at") or ""),
         "triage_auto_handled": auto_handled,
     }
@@ -412,6 +431,9 @@ def _finding_item(state: Mapping[str, Any], finding: Mapping[str, Any], *,
         # 其余发现项保持逐字节不变。
         item.update(_entity_term_fields(finding, locked_entities or {},
                                         fallback_segment=segment_id))
+    if finding.get("type") == "glossary_stale" and finding.get("previous_target"):
+        # Read-only projection of the recorded previous variant for the term card.
+        item["previous_target"] = str(finding["previous_target"])
     return item
 
 

@@ -3487,8 +3487,15 @@ class WorkbenchView(QWidget):
         terms_layout = QVBoxLayout(self.terms_side)
         terms_layout.setContentsMargins(0, 8, theme_module.SPACE["sm"], 0)
         terms_layout.addLayout(terms_head)
-        # 表格负责滚动；完整编辑器复用同一面板，避免两份暂存状态。
-        terms_layout.addWidget(self.terms_panel, 1)
+        # The compact panel can be taller than the available workspace in a
+        # short window. Scroll the complete panel instead of compressing its
+        # editor and navigation controls into overlapping rectangles.
+        self.terms_side_scroll = QScrollArea()
+        self.terms_side_scroll.setWidgetResizable(True)
+        self.terms_side_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.terms_side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.terms_side_scroll.setWidget(self.terms_panel)
+        terms_layout.addWidget(self.terms_side_scroll, 1)
         self._terms_side_layout = terms_layout
         self.terms_panel.workspaceRequested.connect(self._open_terms_workspace)
         self.terms_panel.locateRequested.connect(self._locate_panel_term)
@@ -5007,7 +5014,7 @@ class WorkbenchView(QWidget):
         self._terms_dialog = dialog
         dialog.setWindowTitle(i18n.tr('术语管理'))
         layout = QVBoxLayout(dialog)
-        self._terms_side_layout.removeWidget(self.terms_panel)
+        self.terms_side_scroll.takeWidget()
         layout.addWidget(self.terms_panel)
         self.terms_panel.set_compact(False)
         dialog.resize(1000, 700)
@@ -5016,8 +5023,8 @@ class WorkbenchView(QWidget):
         finally:
             self._terms_dialog = None
             layout.removeWidget(self.terms_panel)
-            self._terms_side_layout.addWidget(self.terms_panel, 1)
             self.terms_panel.set_compact(True)
+            self.terms_side_scroll.setWidget(self.terms_panel)
             self.terms_panel.show()
 
     def _locate_panel_term(self, term: dict) -> None:

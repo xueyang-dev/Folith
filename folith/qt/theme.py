@@ -209,6 +209,21 @@ def tokens(theme: str) -> dict[str, str]:
     return result
 
 
+def qa_surface_tokens(theme: str) -> dict[str, str]:
+    """Decision Studio roles mapped to the shared palette, without new colours."""
+    palette = tokens(theme)
+    result = {}
+    for role, source in {
+        "qa-shell": "bg-page", "qa-queue": "bg-surface-sunken",
+        "qa-workspace": "bg-surface", "qa-inspector": "bg-surface-subtle",
+        "qa-section": "bg-surface", "qa-toolbar": "bg-surface-subtle",
+        "qa-selected": "bg-selected", "qa-border": "border-subtle",
+        "qa-hover": "bg-hover", "qa-focus": "accent",
+    }.items():
+        result[role] = palette[source]
+    return result
+
+
 def label(theme: str) -> str:
     return THEME_LABELS.get(theme, theme)
 
