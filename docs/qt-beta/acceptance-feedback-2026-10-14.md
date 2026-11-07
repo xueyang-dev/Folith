@@ -746,7 +746,7 @@ cProfile 的结果非常集中：
 
 - **多语言**：所有新增文案都要写进 5 个 locale（ar / en / es / ru / zh-CN）。按 memory 里记的做法，新键追加在末尾，`indent=2`，不要整份重排。阿拉伯语是 RTL：D2 的「左侧展开」、浮窗的锚点、进度条的填充方向，在 RTL 下都要镜像。每一批都要截一张阿拉伯语界面检查。
 - **深色模式**：每个新组件（浮窗、抽屉、进度条、状态图标、toast、欢迎窗口）都要在浅色 / 深色两种主题下截图核对，颜色一律走主题 token，不写死色值。
-- **辅助功能**：所有新控件都要设置 accessibleName / accessibleDescription，并且能用键盘完整操作。由于 QTBUG-149612，**不能用 AX 自动化（Computer Use / VoiceOver 代理）做验收**，这部分只能人工完成。
+- **辅助功能**：所有新控件都要设置 accessibleName / accessibleDescription，并且能用键盘完整操作。~~由于 QTBUG-149612，**不能用 AX 自动化（Computer Use / VoiceOver 代理）做验收**，这部分只能人工完成。~~ **2026-11-06 更新**：QTBUG-149612 已由应用启动时的运行时修复缓解（见 [acceptance-quickstart.md](acceptance-quickstart.md) 第四点五节与证据 E203–E208），现在可以用 AX 自动化辅助验收；是否达标仍以人判定为准。
 - **减少动态效果 / 减少透明度**：D1 里所有动画都要读取系统设置。需要一个统一的 `motion.reduced()` 判断，而不是每处自己去读。
 - **共享逻辑会同时影响 Streamlit 旧壳**：第 13 条的 `application/settings.py`、`task_setup.py`，第 10 条的 `translation_evidence.py`，都是 Qt 和 Streamlit 共用的。修改后要连同 Streamlit 相关的测试一起跑，并检查 `app.py` 里的模式卡片文案（`_preset_card_html`）和新的三档定位是否一致。
 - **测试改动量**：第 12 条 A 要去掉底部状态栏，而现有测试大量依赖 `self.status.currentMessage()` 做断言；D2 / D3 要把页面从 `self.tabs` 里拆出来，现有测试也大量依赖 `tabs.setCurrentWidget` / `current_page_id()`。这两批要先提供一个测试用的等价查询接口（例如 `window.last_notice()`、`workbench.open_panel(id)`），再批量迁移测试，避免一次改坏几百个断言。

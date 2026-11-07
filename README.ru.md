@@ -1,7 +1,7 @@
 # Folith · 译页
 
 <p align="center">
-  <img src="folith/resources/brand/folith-lockup.png" alt="Folith·译页 — Agentic Translation Workspace" width="840">
+  <img src="folith/resources/brand/folith-lockup.png" alt="Folith · 译页 — Agentic Translation Workspace" width="840">
 </p>
 
 <p align="center">

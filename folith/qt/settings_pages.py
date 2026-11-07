@@ -18,7 +18,7 @@ from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QVBoxLayout, QWidget, QProgressBar,
-    QPlainTextEdit,
+    QPlainTextEdit, QSizePolicy,
 )
 
 from . import connection_status
@@ -429,7 +429,7 @@ class AboutPage(QWidget):
 # =============================================================================
 #: 工作台里不在菜单上的快捷键（编辑框、检查与修复、网格）。
 LOCAL_SHORTCUTS = (
-    ("save_next", "保存当前段并进入下一个未确认的段"),
+    ("save_next", "保存当前段并进入下一个待处理的段"),
     ("source", "展开 / 收起原页或原位置"),
     ("escape", "编辑框：把焦点还给段落网格；检查与修复：收起面板"),
     ("previous_segment", "段落网格：上一段"),
@@ -687,3 +687,235 @@ class ConnectionPanel(QWidget):
 
         self.runner.submit(connection_status.test, role, config, on_done=done,
                            on_error=failed, label=f"test-{role}")
+
+
+# =============================================================================
+# 阅读排版（F6，2026-11-04 UI 审查）：阅读字体做成设置项，行距是规则不是开关
+# =============================================================================
+#: 候选阅读字体族。**只是候选**：实际只列出本机装了的族；默认值是"跟随界面字体"，
+#: 一个平台字体名都不写死。西文衬线在前（长文阅读的首选），随后是带拉丁字形的
+#: 中文字体、阿拉伯字体——它们决定中文 / RTL 排版能不能回退。
+READING_FONT_CANDIDATES = (
+    # 西文衬线
+    "Georgia", "Charter", "Iowan Old Style", "Times New Roman", "Cambria",
+    "Literata", "Noto Serif", "Source Serif Pro",
+    # 中文衬线（同时带拉丁字形）
+    "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC", "Noto Serif SC",
+    # 中文黑体
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
+    "Noto Sans CJK SC", "Noto Sans SC",
+    # 阿拉伯文与通用无衬线
+    "Geeza Pro", "Noto Naskh Arabic", "Noto Sans Arabic", "Atkinson Hyperlegible",
+    "Helvetica Neue", "Segoe UI", "Arial", "Verdana",
+)
+
+
+def reading_font_choices(current: str = "") -> list[str]:
+    """本机装了的候选族（保持候选顺序）；当前值不在候选里时排在前面。"""
+    from PySide6.QtGui import QFontDatabase
+
+    available = set(QFontDatabase.families())
+    families = [name for name in READING_FONT_CANDIDATES if name in available]
+    if current and current not in families:
+        families.insert(0, current)
+    return families
+
+
+class ReadingPreview(QWidget):
+    """设置 · 阅读的预览：两段样例按阅读行距（中文 1.7 / 拉丁 1.5）排。
+
+    Qt 的 ``QLabel`` 没有行距，所以这里直接用 ``QTextDocument`` 画；行距与字体
+    的口径和阅读区的绘制方（``style.set_reading_line_height`` /
+    ``style.reading_line_height``）是同一处，预览不会撒谎。
+    """
+
+    SAMPLES = (
+        ("原文", "同一个术语在第二章是一种译法、到第九章又换成另一种，"
+                 "读者每次都得停下来猜：作者是不是在说两件不同的事。"),
+        ("译文", "A term that is rendered one way in chapter two and another way "
+                 "in chapter nine forces every reader to stop and wonder whether "
+                 "the author meant two different things."),
+    )
+    CAPTION_GAP = 6
+    COLUMN_GAP = 20
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("readingPreview")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._family = ""
+        self._cache_key = None
+        self._cache: list = []
+        self.setMinimumHeight(140)
+
+    # ---- 字体与文档 ---------------------------------------------------------
+    def reading_font(self):
+        """预览用的字体：与应用字体同族，字号取阅读档；选了族时追加回退链。"""
+        from PySide6.QtGui import QFont
+
+        font = QFont(style_module.font_for(style_module.current_theme()))
+        font.setPixelSize(theme_module.FONT_SIZES["reading"])
+        if self._family:
+            font.setFamilies(list(dict.fromkeys([self._family, *font.families()])))
+        return font
+
+    def set_family(self, family: str) -> None:
+        self._family = str(family or "")
+        self._cache_key = None
+        self.updateGeometry()
+        self.update()
+
+    def column_width(self) -> int:
+        pad = theme_module.SPACE["md"]
+        usable = max(80, self.width() - 2 * pad)
+        return max(80, (usable - self.COLUMN_GAP) // 2)
+
+    def documents(self) -> list:
+        from PySide6.QtGui import QTextCharFormat, QTextCursor, QTextDocument
+
+        key = (self.column_width(), self._family, style_module.current_theme())
+        if self._cache_key == key:
+            return self._cache
+        font = self.reading_font()
+        tokens = theme_module.tokens(style_module.current_theme())
+        width = self.column_width()
+        documents = []
+        for _caption, text in self.SAMPLES:
+            document = QTextDocument()
+            document.setDefaultFont(font)
+            document.setDocumentMargin(0)
+            document.setPlainText(text)
+            style_module.set_reading_line_height(
+                document, style_module.reading_line_height(text))
+            cursor = QTextCursor(document)
+            cursor.select(QTextCursor.SelectionType.Document)
+            char = QTextCharFormat()
+            char.setForeground(theme_module.qcolor(tokens["text-primary"]))
+            cursor.mergeCharFormat(char)
+            document.setTextWidth(width)
+            documents.append(document)
+        self._cache_key = key
+        self._cache = documents
+        return documents
+
+    # ---- 尺寸与绘制 ---------------------------------------------------------
+    def _caption_font(self):
+        from PySide6.QtGui import QFont
+
+        font = QFont(self.font())
+        font.setPixelSize(theme_module.FONT_SIZES["micro"])
+        font.setWeight(QFont.Weight.DemiBold)
+        return font
+
+    def sizeHint(self):  # noqa: N802 - Qt 命名
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QFontMetrics
+
+        caption = QFontMetrics(self._caption_font()).height() + self.CAPTION_GAP
+        height = max((document.size().height() for document in self.documents()), default=0)
+        return QSize(self.width(), int(height + caption + 2 * theme_module.SPACE["md"]) + 4)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
+        from PySide6.QtCore import QPointF, QRectF
+        from PySide6.QtGui import QFontMetrics, QPainter, QPen
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        tokens = theme_module.tokens(style_module.current_theme())
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setPen(QPen(theme_module.qcolor(tokens["border-hairline"]), 1))
+        painter.setBrush(theme_module.qcolor(tokens["bg-surface"]))
+        painter.drawRoundedRect(rect, theme_module.RADIUS["md"], theme_module.RADIUS["md"])
+
+        caption_font = self._caption_font()
+        painter.setFont(caption_font)
+        painter.setPen(theme_module.qcolor(tokens["text-muted"]))
+        pad = theme_module.SPACE["md"]
+        baseline = pad + QFontMetrics(caption_font).ascent()
+        x = pad
+        top = pad + QFontMetrics(caption_font).height() + self.CAPTION_GAP
+        for (caption, _text), document in zip(self.SAMPLES, self.documents()):
+            painter.drawText(QPointF(x, baseline), caption)
+            painter.save()
+            painter.translate(x, top)
+            document.drawContents(painter)
+            painter.restore()
+            x += self.column_width() + self.COLUMN_GAP
+        painter.end()
+
+
+class ReadingPage(QWidget):
+    """设置 · 阅读：只放**一个**可选设置——阅读字体（F6）。
+
+    行距不是设置项：拉丁 1.5 / 中文 1.7 是排版规则（``theme.READING_LINE_HEIGHT``），
+    不是口味。字体默认"跟随界面字体"，不写死任何平台的字体；选中的族后面仍接着
+    中文 / 阿拉伯文回退链（``theme.reading_font_stack``）。
+    """
+
+    changed = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from .dialogs import _panel
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, theme_module.SPACE["sm"], 0, 0)
+        layout.setSpacing(theme_module.SPACE["sm"])
+
+        card, body = _panel(i18n.tr('阅读字体'), i18n.tr(
+            '长文按拉丁 1.5、中文 1.7 的行距排版；同样的窗口一屏会少看到几段，'
+            '长时间审校更省力。'))
+        self.current_family = style_module.load_reading_font()
+        self.font_box = style_module.ComboBox()
+        self.font_box.setObjectName("readingFontBox")
+        self.font_box.addItem(i18n.tr('跟随界面字体'), "")
+        for family in reading_font_choices(self.current_family):
+            self.font_box.addItem(family, family)
+        index = self.font_box.findData(self.current_family)
+        self.font_box.setCurrentIndex(index if index >= 0 else 0)
+        self.font_box.setMaximumWidth(320)
+        self.font_box.setAccessibleName(i18n.tr('阅读字体'))
+        self.font_box.currentIndexChanged.connect(self._font_changed)
+        body.addWidget(self.font_box)
+
+        # 行距规则与代价写在页面上，不藏在 tooltip 里：这是用户唯一能看到的
+        # "为什么阅读区和以前排得不一样"的说明。
+        self.explanation = QLabel(i18n.tr(
+            '长文按拉丁 1.5、中文 1.7 的行距排版；同样的窗口一屏会少看到几段，'
+            '长时间审校更省力。'))
+        self.explanation.setObjectName("hint")
+        self.explanation.setWordWrap(True)
+        body.addWidget(self.explanation)
+
+        self.note = QLabel(i18n.tr('没安装的字体会自动回退到界面字体与中文字体。'))
+        self.note.setObjectName("hint")
+        self.note.setWordWrap(True)
+        body.addWidget(self.note)
+
+        self.preview_caption = QLabel(i18n.tr('预览'))
+        style_module.set_text_role(self.preview_caption, "label")
+        body.addWidget(self.preview_caption)
+        self.preview = ReadingPreview()
+        self.preview.set_family(self.current_family)
+        body.addWidget(self.preview)
+        layout.addWidget(card)
+        layout.addStretch(1)
+
+    def set_family(self, family: str) -> None:
+        """外部（窗口 / 测试）把当前阅读字体带进来，不改偏好。"""
+        self.current_family = str(family or "")
+        index = self.font_box.findData(self.current_family)
+        if index >= 0 and index != self.font_box.currentIndex():
+            self.font_box.blockSignals(True)
+            self.font_box.setCurrentIndex(index)
+            self.font_box.blockSignals(False)
+        self.preview.set_family(self.current_family)
+
+    def _font_changed(self, _index: int) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        family = str(self.font_box.currentData() or "")
+        self.current_family = style_module.apply_reading_font(
+            QApplication.instance(), family)
+        self.preview.set_family(self.current_family)
+        self.changed.emit()

@@ -1,11 +1,11 @@
-"""术语页：审核候选术语、锁定、冻结，翻译开始后逐条修订。
+"""术语页：确认候选术语、锁定，翻译开始后逐条修订。
 
-旧界面的"术语"工作区在 Qt 里原来没有，而严格术语治理的任务会在候选术语未冻结时
+旧界面的"术语"工作区在 Qt 里原来没有，而严格术语治理的任务会在候选术语未锁定、未确认时
 被核心拒绝开始翻译——没有这个面板，这类任务（包括接入的旧任务）就没有出口。
 
 只做展示与发信号；真正写状态的是窗口层调用的适配器（沿用核心的术语版本机制）：
 
-* 翻译开始前：面板里**暂存**修改，「保存草稿 / 冻结并继续 / 跳过冻结」才落盘；
+* 翻译开始前：面板里**暂存**修改，「保存草稿 / 锁定并继续 / 跳过锁定」才落盘；
 * 翻译开始后：每次修订立即走核心的逐条接口，由核心生成新的术语版本。
 """
 from __future__ import annotations
@@ -108,17 +108,16 @@ class TermsPanel(QWidget):
             return widget
 
         self.banner = style_module.NoticeStrip("", tone="info")
+        # 说明文字比标题低两档（12/次要色 vs 17/600）：面板里只有标题是"标题"（F15）。
+        style_module.set_text_role(self.banner._label, "meta")  # noqa: SLF001 - 同模块外观约定
         self.heading = QLabel("")
         self.heading.setObjectName("termsHeading")
 
-        self.table = QTableWidget(0, len(COLUMNS))
+        # 项目页的术语库是同一份数据的另一张表：外观共用 components.DataTable（F15），
+        # 两张表不再一个有网格一个没有、一个表头 30px 一个系统默认。
+        self.table = components.DataTable(len(COLUMNS), multi_select=True, sortable=True)
         self.table.setObjectName("termsTable")
         self.table.setHorizontalHeaderLabels([i18n.tr(c) for c in COLUMNS])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSortingEnabled(True)
-        self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -187,12 +186,12 @@ class TermsPanel(QWidget):
 
         self.save_button = button(i18n.tr('保存草稿'), "save")
         self.save_button.clicked.connect(lambda: self._save_staged(False))
-        self.freeze_button = button(i18n.tr('冻结并继续翻译'), "check-circle",
+        self.freeze_button = button(i18n.tr('锁定并继续翻译'), "check-circle",
                                     "text-on-accent", "primary")
         self.freeze_button.clicked.connect(lambda: self._save_staged(True))
-        self.bypass_button = button(i18n.tr('跳过冻结，使用暂定术语'), "arrow-right")
+        self.bypass_button = button(i18n.tr('跳过锁定，使用暂定术语'), "arrow-right")
         self.bypass_button.clicked.connect(self.bypassRequested.emit)
-        self.unfreeze_button = button(i18n.tr('解除冻结'), "refresh")
+        self.unfreeze_button = button(i18n.tr('解除锁定'), "refresh")
         self.unfreeze_button.clicked.connect(self.unfreezeRequested.emit)
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
@@ -207,11 +206,10 @@ class TermsPanel(QWidget):
         self.locate_button.clicked.connect(self._locate_current)
         self.impact_heading = QLabel('')
         self.impact_heading.setWordWrap(True)
-        self.impact_table = QTableWidget(0, 3)
+        # 影响范围预览也是同一张"术语表"外观（F15）：面板里不允许第二套表格。
+        self.impact_table = components.DataTable(3)
         self.impact_table.setHorizontalHeaderLabels([i18n.tr('段'), i18n.tr('原文'), i18n.tr('译文')])
-        self.impact_table.verticalHeader().setVisible(False)
-        self.impact_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.impact_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.impact_table.horizontalHeader().setStretchLastSection(True)
         self.impact_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.impact_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.impact_table.cellDoubleClicked.connect(self._open_impact_segment)
@@ -282,8 +280,9 @@ class TermsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(10)
-        layout.addWidget(self.banner)
+        # 标题在前、说明在后：原来提示条压在这行计数上面，读起来像"先结论后标题"（F15）。
         layout.addWidget(self.heading)
+        layout.addWidget(self.banner)
         layout.addWidget(self.filter_bar)
         self.content_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         list_layout = QVBoxLayout()
@@ -501,7 +500,7 @@ class TermsPanel(QWidget):
         dialog.setWindowTitle(i18n.tr('潜在重复术语'))
         dialog.resize(850, 500)
         layout = QVBoxLayout(dialog)
-        label = QLabel(i18n.tr('找到 {v0} 组候选。确定性归一仍不代表含义相同；推测相似仅供人工审查。',
+        label = QLabel(i18n.tr('找到 {v0} 组候选。确定性归一仍不代表含义相同；推测相似仅供人工判断。',
                               v0=len(candidates)))
         label.setWordWrap(True)
         layout.addWidget(label)
@@ -704,13 +703,17 @@ class TermsPanel(QWidget):
             conflict_count = self._conflict_counts.get(str(row.get('id') or ''), 0)
             if self._compact and conflict_count:
                 status += i18n.tr(' · 冲突 {v0}', v0=conflict_count)
+            # 状态列一律「圆点 + 同色文字」（F15），冲突项用"需要处理"的语气。
+            tone = "attention" if conflict_count else components.TERM_TONES.get(
+                str(row.get("status") or ""), "idle")
             values = (row.get("source"), row.get("preferred") or "—",
                       status,
                       str(row.get("occurrences", 0)),
                       conflict_count,
                       str(row.get('modified_at') or '')[:10] or '—')
             for column, value in enumerate(values):
-                item = QTableWidgetItem(str(value or ""))
+                item = (components.status_cell(str(value or ""), tone) if column == 2
+                        else QTableWidgetItem(str(value or "")))
                 item.setData(Qt.ItemDataRole.UserRole, index)
                 if column == 3:
                     item.setData(Qt.ItemDataRole.DisplayRole, int(row.get('occurrences') or 0))
@@ -925,20 +928,20 @@ class TermsPanel(QWidget):
         view = self._view
         if view.get("frozen"):
             return (
-                i18n.tr('v{v0} 已冻结', v0=view.get("frozen_version")),
-                i18n.tr('术语版本 v{v0} 已冻结；仍可人工修改',
+                i18n.tr('v{v0} 已锁定', v0=view.get("frozen_version")),
+                i18n.tr('术语版本 v{v0} 已锁定；仍可人工修改',
                         v0=view.get("frozen_version")),
             )
         if view.get("bypassed"):
             return (
                 i18n.tr('使用暂定术语'),
-                i18n.tr('本任务跳过了人工冻结，当前使用暂定术语。'),
+                i18n.tr('本任务跳过了人工锁定，当前使用暂定术语。'),
             )
         if view.get("blocks_start"):
             return (
                 i18n.tr('待确认 {v0}', v0=view.get("pending_count", pending)),
                 i18n.tr(
-                    '严格术语治理：还有 {v0} 个候选术语未确认。冻结术语表后才能开始翻译。',
+                    '严格术语治理：还有 {v0} 个候选术语待确认。锁定术语表后才能开始翻译。',
                     v0=view.get("pending_count", pending)),
             )
         if not self._rows:
@@ -950,7 +953,7 @@ class TermsPanel(QWidget):
             )
         return (
             i18n.tr('保存草稿后生效'),
-            i18n.tr('翻译开始前可以暂存修改；点「保存草稿」或「冻结」才会写入任务。'),
+            i18n.tr('翻译开始前可以暂存修改；点「保存草稿」或「锁定」才会写入任务。'),
         )
 
     def _sync(self) -> None:

@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # waits for input and the test never returns on a headless runner.
 os.environ.setdefault("FOLITH_QT_NONINTERACTIVE", "1")
 
-from PySide6.QtWidgets import QApplication, QToolButton  # noqa: E402
+from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
 from folith.qt import style  # noqa: E402
 from tests.project_language_fixture import build  # noqa: E402
@@ -49,7 +49,7 @@ def test_overview_opens_the_project_with_the_most_pending_and_pins_unsorted(env,
     assert requested[-1][0] == ids["device"]
     _load(view, adapter, ids["device"])
     labels = [view.tab_bar.button(k).text() for k in ("overview", "terms", "tm")]
-    assert labels[0].startswith("概览") and "10" in labels[1]    # 3 条已确认 + 7 条待审核
+    assert labels[0].startswith("概览") and "10" in labels[1]    # 3 条已锁定 + 7 条待确认
     assert view.tab_bar.button("review") is None
     assert "设备说明书项目" == view.title.text()
     assert "英 → 中" in view.subtitle.text()
@@ -58,10 +58,9 @@ def test_overview_opens_the_project_with_the_most_pending_and_pins_unsorted(env,
     assert "导出记忆" in view.export_button.text()
 
 
-def _chip_texts(view, column=3):
-    from PySide6.QtWidgets import QLabel
-
-    return [view.term_table.cellWidget(r, column).findChild(QLabel).text()
+def _status_texts(view, column=3):
+    """状态列的文字。F15 之后状态格是「圆点 + 文字」的 QTableWidgetItem（不再是芯片控件）。"""
+    return [view.term_table.item(r, column).text()
             for r in range(view.term_table.rowCount())]
 
 
@@ -72,7 +71,7 @@ def test_terms_tab_lists_confirmed_and_pending_in_one_table(env, app):  # noqa: 
     assert "10" in options["all"] and "3" in options["confirmed"] and "7" in options["pending"]
     sources = [e["source"] for e in view._term_rows]
     assert sources == sorted(sources, key=str.casefold)         # 一张表，按原文排，确认后不跳位
-    assert set(_chip_texts(view)) == {"已确认", "待审核"}
+    assert set(_status_texts(view)) == {"已锁定", "待确认"}
     origins = {e["source"]: view.term_table.item(r, 4).text() for r, e in enumerate(view._term_rows)}
     assert origins["hub"] == "已审校译文" and origins["power outlet"] == "任务术语表"
     assert origins["quick start guide"] == "机器译文" and origins["status light"] in (
@@ -103,7 +102,7 @@ def test_status_and_source_filters(env, app):  # noqa: F811
     assert requested[-1][1] == "task"
     _load(view, adapter, ids["device"], basis="task")
     assert [e["source"] for e in view._term_rows] == ["power outlet", "smart plug"]
-    view._term_filter_changed("all")           # 离开「待审核」时来源筛选回到「全部」
+    view._term_filter_changed("all")           # 离开「待确认」时来源筛选回到「全部」
     assert view._basis == "all"
 
 
@@ -165,7 +164,7 @@ def test_unsorted_page_is_a_readonly_summary_with_make_project_buttons(env, app)
     assert len(buttons) == 3
     buttons[0].click()
     assert len(moved) == 1 and moved[0]
-    # 候选并进各任务自己的术语列表，状态是「待审核」；这里唯一的动作是「只用于此任务」。
+    # 候选并进各任务自己的术语列表，状态是「待确认」；这里唯一的动作是「只用于此任务」。
     decided: list[tuple] = []
     view.decideRequested.connect(lambda item, decision: decided.append((item["source"], decision)))
     keep = [b for b in view.page_unsorted_terms.findChildren(QPushButton) if b.toolTip() == "只用于这个任务"]
@@ -459,7 +458,7 @@ def test_pending_view_shows_at_least_six_rows_at_1000x600(env, app):  # noqa: F8
     table = view.term_table
     visible_rows = table.viewport().height() // table.verticalHeader().defaultSectionSize()
     assert visible_rows >= 6, (visible_rows, table.viewport().height())
-    # 提示行不常驻（已有已确认术语时只是筛选条上的提示）；详情的动作在窄页上最多两行。
+    # 提示行不常驻（已有已锁定术语时只是筛选条上的提示）；详情的动作在窄页上最多两行。
     assert view.term_note.isHidden() and view.term_filter.toolTip()
     assert view.review_actions.rowCount() == 1
     view.close()
@@ -483,8 +482,8 @@ def test_unsorted_cards_use_confirmed_pending_chips_and_one_column_layout(env, a
     for _ in range(8):          # 卡片分批补上
         app.processEvents()
     texts = {label.text() for label in view.page_unsorted_terms.findChildren(QLabel)}
-    assert {"已确认", "待审核"} <= texts and not texts & {"已锁定", "暂定"}
-    assert any("条已确认" in t for t in texts) and not any("条已锁定" in t for t in texts)
+    assert {"已锁定", "待确认"} <= texts and not texts & {"已确认", "暂定"}
+    assert any("条已锁定" in t for t in texts) and not any("条已确认" in t for t in texts)
     # 同一页上各卡片的「译名」列起点一致（固定的列布局）。
     xs = {label.mapTo(view.page_unsorted_terms.widget(), label.rect().topLeft()).x()
           for label in view.page_unsorted_terms.findChildren(QLabel) if label.text() == "译名"}
@@ -580,8 +579,10 @@ def test_task_rows_have_a_menu_with_open_move_and_delete(env, app):  # noqa: F81
     view.moveRequested.connect(lambda jobs: seen["move"].append(jobs))
     view.deleteJobsRequested.connect(lambda jobs: seen["delete"].append(jobs))
 
-    buttons = view.findChildren(QToolButton, "taskRowMore")
-    assert buttons, "每个任务行都应有「…」按钮"
+    # F19：行内「更多」现在是全局方形图标按钮（#iconButton），不再是没样式的原生
+    # QToolButton；用动态属性标记它，测试仍按"任务行里的更多"精确定位。
+    buttons = [b for b in view.findChildren(QPushButton) if b.property("taskRowMore")]
+    assert buttons, "每个任务行都应有「更多」按钮"
     jobs = [t["job_id"] for t in view._detail["tasks"]]
     assert len(buttons) == len(jobs)
 

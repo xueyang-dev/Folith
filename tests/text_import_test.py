@@ -44,13 +44,15 @@ def test_markdown_readable_text_and_explicit_omissions(suffix):
     assert not warnings
 
 
-def test_epub_spine_order_multilingual_text_and_omissions():
+def test_epub_spine_order_multilingual_text_and_preserved_images():
     paragraphs, warnings, report = core.extract_document_paragraphs_with_report("book.epub", epub_bytes())
     assert paragraphs == ["第一章", "العربية 正文。", "Second chapter."]
     assert not warnings
     assert report["extracted"]["chapters"] == 2
-    assert report["unsupported"][0]["kind"] == "image"
-    assert report["status"] == "partial"
+    # EPUB images are carried by the edition exports, so they are not parse
+    # failures and not "unsupported content" anymore.
+    assert report["unsupported"] == []
+    assert report["status"] == "complete"
 
 
 @pytest.mark.parametrize("data", [b"not a zip", epub_bytes(encrypted=True), epub_bytes(missing=True)])
@@ -96,7 +98,61 @@ def test_new_sources_can_export_translation_epub(suffix, data):
                        for index, text in enumerate(paragraphs)]}
     output, report = build_translation_epub(state, data)
     assert report["image_count"] == 0
-    assert any("纯文字" in warning for warning in report["warnings"])
+    if suffix == ".epub":
+        # The image is missing from this fixture; it is skipped with a reason,
+        # and the EPUB path is no longer a plain-text rebuild.
+        assert any("资源缺失" in warning for warning in report["warnings"])
+        assert not any("纯文字" in warning for warning in report["warnings"])
+    else:
+        assert any("纯文字" in warning for warning in report["warnings"])
     with zipfile.ZipFile(io.BytesIO(output)) as book:
         translated = "".join(book.read(name).decode() for name in book.namelist() if "chapter-" in name)
     assert all(f"译文 {index}" in translated for index in range(len(paragraphs)))
+
+
+def test_epub_images_are_not_reported_as_parse_failures():
+    from folith.engine.segments import excluded_segments_manifest
+    from folith.text_import import _html_paragraphs
+
+    markup = '<html><body><p>Text <img src="a.png"/> tail.</p></body></html>'
+    paragraphs, omitted = _html_paragraphs(markup)
+    assert paragraphs == ["Text tail."]
+    assert omitted == {"image": 1}
+
+    images = []
+    paragraphs, omitted = _html_paragraphs(markup, images=images)
+    assert paragraphs == ["Text tail."]
+    assert omitted == {}
+    assert images == [{"tag": "img", "href": "a.png", "at": 1}]
+
+    _paragraphs, _warnings, report = core.extract_document_paragraphs_with_report(
+        "book.epub", epub_bytes())
+    assert not [item for item in report["unsupported"] if item["kind"] == "image"]
+    manifest = excluded_segments_manifest({"extraction_report": report})
+    assert manifest["parse_failures"]["unsupported_count"] == 0
+
+
+def test_epub_per_chapter_extraction_matches_full_sequence():
+    from folith.text_import import extract_text_source
+
+    paragraphs, _unsupported, facts = extract_text_source("book.epub", epub_bytes())
+    groups, _unsupported, per_chapter_facts = extract_text_source(
+        "book.epub", epub_bytes(), per_chapter=True)
+    assert [text for group in groups for text in group] == paragraphs
+    assert per_chapter_facts == facts
+    assert facts["chapters"] == len(groups)
+
+
+@pytest.mark.parametrize("suffix,data", [
+    (".md", "# 标题\n\n![图](image.png)\n\n正文。".encode()),
+    (".md", b"![only image](image.png)\n"),
+    (".txt", b"Text paragraph."),
+])
+def test_text_and_markdown_reports_do_not_claim_images_are_preserved(suffix, data):
+    _paragraphs, _warnings, report = core.extract_document_paragraphs_with_report(
+        "source" + suffix, data)
+    notes = " ".join(report["notes"])
+    assert "图片仅保留" not in notes
+    assert "译文 EPUB" not in notes
+    if suffix in {".md", ".markdown"}:
+        assert "Markdown 图片不纳入" in notes

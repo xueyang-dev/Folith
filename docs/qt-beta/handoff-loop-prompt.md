@@ -3,6 +3,12 @@
 > **这份文档是自足的**：新 session 不需要上一段对话的上下文，读完这一份就能接着干。
 > 上一段对话已用掉约 61 轮循环；此前的完整证据在
 > [../qt-spike/evidence-log.md](../qt-spike/evidence-log.md)（E1–E157，S1–S8 + Beta R2–R60）。
+>
+> **2026-11-06 更新（读本文前先看这条）**：AX 崩溃（QTBUG-149612）不再"应用侧无解"——应用现在
+> 启动时安装运行时修复（`folith/qt/macos_accessibility.py`，与上游修复 `8148c48d` 语义一致，
+> 只对 Qt 6.11.x / 6.12.0 安装，Qt 6.12.1+ 自动停用）。本文 §0 最后一条、§2 与"下一步建议"
+> 里的「验收必须用人工键鼠、不挂 AX 代理」**已作废**；当前口径见
+> [acceptance-quickstart.md](acceptance-quickstart.md) 第四点五节与证据日志 R72（E203–E211）。
 
 ---
 
@@ -17,12 +23,14 @@
 - **机器可验证部分**：全部 PASS（166 用例、20 步验证链、155 文件全量回归、文档一致性审计（含链接校验）、
   重复定义静态检查）。
 - **人工强制项**：**0/7**（见 §3）；用户已做了一轮部分验收，**输入法项被一个原生崩溃阻断**。
-- **最重要的一件事**：macOS 上**外部辅助功能扫描（AI "Computer Use" / AX 客户端）会让 Qt
-  平台插件崩溃**——上游缺陷 **QTBUG-149612**（Qt 6.11.0–6.11.2 受影响，无修复版本），
-  calibre/Qt Creator/Anki/FreeCAD 同样如此。R62 已在本机**稳定复现 3/3** 并逐帧核对，
-  且实测**没有任何可用的应用侧开关**（`QT_ACCESSIBILITY=0` 无效、
-  `QAccessible.setActive(False)` 会被系统重新激活）。**验收必须用人工键鼠、不挂 AX 代理。**
-  详见 §2 与 [computer-use-acceptance-2026-10-05.md](computer-use-acceptance-2026-10-05.md)。
+- **最重要的一件事**：macOS 上**外部辅助功能扫描（AI "Computer Use" / AX 客户端）曾让 Qt
+  平台插件崩溃**——上游缺陷 **QTBUG-149612**，calibre/Qt Creator/Anki/FreeCAD 同样如此。
+  R62 曾在本机**稳定复现 3/3** 并逐帧核对。**2026-11-06 起已缓解**：应用启动时安装运行时修复
+  （`folith/qt/macos_accessibility.py`），只对受影响的 Qt 6.11.x / 6.12.0 生效，上游修复
+  （commit `8148c48d`，2026-10-27 合入）随 Qt 6.12.1 起可用后本修复自动停用。旧的
+  「验收必须用人工键鼠、不挂 AX 代理」要求**已作废**；未验证部分（冻结 DMG、真实 AX 客户端
+  完整 A/B）见 §2 与 [acceptance-quickstart.md](acceptance-quickstart.md) 第四点五节。
+  详见 [computer-use-acceptance-2026-10-05.md](computer-use-acceptance-2026-10-05.md)（历史）。
 
 ---
 
@@ -39,7 +47,7 @@
 | 用例 | **166**（`qt_acceptance_kit_test` 9 / `qt_delivery_content_test` 3 / `qt_extraction_error_test` 5 / `qt_client_style_test` 8 / `qt_client_adapter_test` 57 / `qt_client_window_test` **71**（本地化与窗口外壳各加了一批）/ `qt_release_plumbing_test` 10 / `qt_spike_test` 3 … 以 `--collect-only` 为准） |
 | 验证链 | `bash scripts/qt_beta_chain.sh tmp/qt-beta/chain` → **20 步**，任一步失败 rc=1 |
 | 全量回归 | **155 文件：154 通过**；唯一失败是既有的 `brand_regression_test`——命中**他人**未跟踪文件（`benchmark/ocr-vision-pilot/*.json`、`docs/desktop-handover.md`）**以及 `folith/qt/dialogs.py:566` 一处注释**（见 E180） |
-| 证据规模 | `docs/qt-spike/evidence-log.md`：**E1–E202**、66 个轮次小节（S1–S8 + Beta R2–R71） |
+| 证据规模 | `docs/qt-spike/evidence-log.md`：**E1–E211**、67 个轮次小节（S1–S8 + Beta R2–R72） |
 | 验收记录（用户） | [computer-use-acceptance-2026-10-05.md](computer-use-acceptance-2026-10-05.md) + `tmp/qt-beta/computer-use-2026-10-05/evidence/`（2 份 `.ips`、截图、诊断包、日志） |
 
 > 数字会漂移：`scripts/qt_docs_audit.py` 会核对**用例数 / 链条步数 / 最低系统 / 候选 sha /
@@ -47,7 +55,12 @@
 
 ---
 
-## 2. 交接时最重要的未决问题：macOS + AX 扫描崩溃（R62 已复现并定性，应用侧无解）
+## 2. 交接时最重要的未决问题：macOS + AX 扫描崩溃（R62 已复现并定性；**2026-11-06 已由运行时修复缓解**）
+
+> 本节是 2026-10-05 的历史结论（"应用侧无解"）。2026-11-06 起应用在启动时安装运行时修复
+> （`folith/qt/macos_accessibility.py`，等价上游修复 `8148c48d`），确定性复现器 A/B 已过
+> （E205），重建 `.app` 启动日志确认已安装（E208）；冻结 DMG 验证、AX 表格可见性与真实 Computer Use 的完整验收仍待补
+> （E210/E211）。见证据日志 R72 与 [acceptance-quickstart.md](acceptance-quickstart.md) 第四点五节。
 
 ### 现象（用户 2026-10-05 实测）
 
@@ -90,12 +103,16 @@ macOS 27.0.1 / Apple M4 上，用 AI "Computer Use"（辅助功能/AX 扫描）�
 
 ### 下一步建议（给新 session 与用户）
 
-1. **请用户用人工键鼠**（不挂 AX 代理）重做 7 条强制人工项——正常使用路径不受此缺陷影响；
+1. ~~**请用户用人工键鼠**（不挂 AX 代理）重做 7 条强制人工项~~ **2026-11-06 更新**：AX 崩溃已由
+   运行时修复缓解，"不挂 AX 代理"的要求作废；7 条人工项仍须人工判定，但可以挂 AX 代理 /
+   Computer Use 辅助操作，并按 `FOLITH_QT_AX_WORKAROUND=0` 做 A/B 回传；
 2. 不要再发明"关掉辅助功能"的开关：两个候选开关都实测无效（见上）；要验证任何新想法，
    直接用 `scripts/qt_ax_scan_probe.py` 跑 A/B（`--actions "click:selftest.docx,press:打开任务"`
    或 `--double-click-points "456,272"`），**以进程是否存活为准**，不要只断言环境变量被设置；
-3. **跟踪上游**：QTBUG-149612 / Gerrit 765434。修复进入 PySide6 后必须：升级 → 重建 →
-   20 步链 → 全量回归 → OCR 基线 → 用本探针回归（预期 `ALIVE`），并出新候选与身份；
+3. **跟踪上游**：QTBUG-149612（修复 commit `8148c48d`，2026-10-27 合入 `dev` + `6.12`，
+   fixVersions 6.8.10 / 6.12.1 / 6.13.0）。修复进入 PySide6（Qt 6.12.1+）后必须：升级 → 重建 →
+   20 步链 → 全量回归 → OCR 基线 → 用本探针回归（预期 `ALIVE`），并出新候选与身份；届时
+   `folith/qt/macos_accessibility.py` 会被版本门自动停用，确认后删除本文件与调用点；
 4. 探针**不进 20 步验证链**（需要 AX 授权、会动真实鼠标、依赖前台窗口）；它在本机可用，
    在没有辅助功能授权的环境会诚实地输出 `NOT_RUN`。
 
@@ -160,12 +177,18 @@ macOS arm64）的 Private Beta 收口。先读这三份，再动手：
 当前重点（按优先级）：
   1. 收口 R62：确认 20 步链全绿、154 项用例全绿，把 R62 的证据块写进 evidence-log 与 status，
      刷新三份文档身份并复跑审计。（R62 已删除无效的 AX 开关并改写文档，见交接文档 §2。）
-  2. macOS + AX 扫描崩溃（见交接文档 §2）：**R62 已稳定复现并定性到上游 QTBUG-149612**，
-     实测没有任何可用的应用侧开关（`QT_ACCESSIBILITY=0` 无效、`QAccessible.setActive(False)`
-     被系统重新激活）。**R63 补上了"崩溃的后果"**：任务数据逐项不变、无残留进程、可重开继续用
-     （E173，工具 `scripts/qt_ax_crash_aftermath_probe.py`，负控 E174 证明它会 FAIL 而不是永远 PASS）。
-     不要重新发明开关；请用户改**人工键鼠**重测，并跟踪上游修复
-     （QTBUG-149612 / Gerrit 765434；修好后升级 PySide6 + 全量重验 + 用探针回归）。
+  2. macOS + AX 扫描崩溃（见交接文档 §2）：**R62 已稳定复现并定性到上游 QTBUG-149612**。
+     R72（2026-11-06）已用运行时修复缓解：`folith/qt/macos_accessibility.py` 把上游两处删除点
+     （`dealloc` 与 `+removeElementsFromCache:`）都改为不删除 interface。**因果证据**是确定性
+     复现器（无修复 exit 139 / 修复后 exit 0，E205）与 25 次循环（E206）；真实 app 的 AX 扫描
+     探针在修复生效时全部存活（源码无动作 3/3、源码动作路线 3/3、冻结 .app 2/2，无 .ips），
+     **但关掉修复的 env=0 对照臂也 4/4 存活**——本机没复现用户那条崩溃，只算支持性证据
+     （E207）。只改 `dealloc` 的 v1 3/3 崩溃是 partial-patch artefact（E209），不是用户崩溃模式。
+     **不要**再重新发明"关掉辅助功能"的开关（`QT_ACCESSIBILITY=0` / `QAccessible.setActive(False)`
+     实测无效）；**不要**再说"验收必须不挂 AX 代理"（旧要求已作废）。剩余：真实 Computer Use
+     在重建候选上的完整验收（E211）、冻结 DMG 复核、AX 表格可见性（E210 未验证）。
+     跟踪上游：QTBUG-149612（修复 commit `8148c48d` 2026-10-27 合入 dev+6.12，随 Qt 6.12.1 发布）；
+     升级 PySide6 后重建 + 20 步链 + 全量回归 + 用探针回归（预期 `ALIVE`），并删除本模块与调用点。
   3. 等用户回传 7 条人工项结果：通过则改 PRIVATE_BETA_READY；失败则按项定位修复出新候选。
 
 定义完成（§7 只允许三种字符串之一）：
@@ -256,8 +279,10 @@ venv/bin/python qt_client.py --data-dir <隔离目录> --log-dir <隔离日志> 
 
 **产品/平台类**
 
-11. **macOS + AX 扫描会崩 Qt 平台插件**（§2，上游 QTBUG-149612）；不要把它写成"已修复"，
-    也**不要**再发明"关掉辅助功能"的开关——`QT_ACCESSIBILITY=0` 与
+11. **macOS + AX 扫描曾会崩 Qt 平台插件**（§2，上游 QTBUG-149612）；**2026-11-06 起应用有运行时
+    修复**（`folith/qt/macos_accessibility.py`，等价上游 commit `8148c48d`）——可以说"已缓解"，
+    但**不要**说成"上游修复已发布"（Qt 6.12.1 计划 2026-11-17，随包仍是 6.11.2），也不要
+    再说"AX 自动化不可用于验收"。仍**不要**发明"关掉辅助功能"的开关——`QT_ACCESSIBILITY=0` 与
     `QAccessible.setActive(False)` 都已实测无效（R62）。
 12. **僵尸进程会让 `kill(pid,0)` 判活**：崩溃后的目标仍是僵尸，探针/脚本必须用
     `ps -o stat=` 之类确认（R62 因此差点漏掉复现结果，回归用例已加）。

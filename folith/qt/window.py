@@ -282,6 +282,10 @@ class MainWindow(QMainWindow):
         shell_layout.addWidget(self.sheet, 1)
         self.setCentralWidget(shell)
         self._shell_layout = shell_layout
+        # 页面栈的最小宽度取所有页的最大值：打开过一次宽任务，回首页也缩不回去
+        # （实测 en 1410 / ru 1441，合同要求 ≤1280）。`QWidgetItem` 对 `Ignored`
+        # 策略的页面不算最小尺寸，所以只让**当前页**参与窗口下限（F1，第三轮复审）。
+        self.stack.currentChanged.connect(self._sync_page_policies)
         self._extend_shell_under_title_bar()
         # 顶部那条外壳（标题栏 + 页面上方的间隙）任意位置都能拖动窗口。
         self._shell_drag = components.WindowDragArea(
@@ -487,6 +491,11 @@ class MainWindow(QMainWindow):
         self.workbench.editSubmitted.connect(self.submit_edit)
         self.workbench.revealRequested.connect(self.reveal_path)
         self.workbench.openAssetRequested.connect(self.open_path)
+        self.workbench.copyPathRequested.connect(self.copy_path)
+        self.workbench.downloadDeliveryZipRequested.connect(self.download_delivery_zip)
+        self.workbench.openDeliveryFolderRequested.connect(self.open_delivery_folder)
+        self.workbench.saveDeliveryAssetRequested.connect(self.save_delivery_asset)
+        self.workbench.showDeliveryAssetInfoRequested.connect(self.show_delivery_asset_info)
         self.workbench.draftSaved.connect(
             lambda *_args: self._mark_dirty_status(i18n.tr('草稿已保存')))
         # Shared outline loader: when a background parse finishes, update the
@@ -1006,7 +1015,7 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr_dynamic(message), task=False)
             self.refresh_projects()
 
-        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+        self._run_with_busy(i18n.tr('确认候选'), i18n.tr('正在记录确认决定…'),
                             adapter.accept_review_item, item, target, on_done=done)
 
     def decide_review_item(self, item: dict, decision: str) -> None:
@@ -1014,7 +1023,7 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr_dynamic(message), task=False)
             self.refresh_projects()
 
-        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+        self._run_with_busy(i18n.tr('确认候选'), i18n.tr('正在记录确认决定…'),
                             adapter.decide_review_item, item, decision, on_done=done)
 
     def batch_accept_items(self, items: list) -> None:
@@ -1040,7 +1049,7 @@ class MainWindow(QMainWindow):
                 self._notice(i18n.tr('已确认 {v0} 条术语。', v0=ok), task=False)
             self.refresh_projects()
 
-        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+        self._run_with_busy(i18n.tr('确认候选'), i18n.tr('正在记录确认决定…'),
                             adapter.accept_review_items, pick, on_done=done)
 
     def clear_project_memory(self, project_id: str) -> None:
@@ -1451,6 +1460,9 @@ class MainWindow(QMainWindow):
             self._cached_models_key = self._workbench_models_key(job_id, signature)
             self._delivery_cache.prime(job_id, prepared["delivery"])
             self.stack.setCurrentWidget(self.workbench)
+            # 页面换过、内容也铺好了：这时重新同步窗口最小尺寸，别让 minimumSize()
+            # 还停在首页那一档（否则缩到"最小"会被 Qt 放大到工作台的真实下限）。
+            self._sync_minimum_size()
             self._log(f"open job {job_id}")
             self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
             self._sync_menu_state()
@@ -1654,8 +1666,91 @@ class MainWindow(QMainWindow):
             return
         self.show_home()
 
+    def _sync_page_policies(self, *_args) -> None:
+        """只让当前页参与窗口最小尺寸，其余页面在切回来时要回自己的下限。"""
+        from PySide6.QtWidgets import QSizePolicy
+
+        current = self.stack.currentWidget()
+        for page in (self.home, self.workbench, self.projects):
+            if page is None:
+                continue
+            policy = page.sizePolicy()
+            horizontal = (QSizePolicy.Policy.Preferred if page is current
+                          else QSizePolicy.Policy.Ignored)
+            vertical = (QSizePolicy.Policy.Preferred if page is current
+                        else QSizePolicy.Policy.Ignored)
+            if (policy.horizontalPolicy(), policy.verticalPolicy()) != (horizontal, vertical):
+                page.setSizePolicy(horizontal, vertical)
+        layout = self.stack.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        self.stack.updateGeometry()
+        self._sync_minimum_size()
+        # 布局在下一个事件循环才真正落定：再同步一次，否则窗口最小尺寸会停在
+        # 上一页的那一档（实测回首页后仍是 1057，于是缩不回去）。
+        # **必须**把 self 传给 singleShot：窗口在定时器到期前被销毁时，Qt 会自己取消，
+        # 否则会调用已析构对象的绑定方法（qt_client_window_test 的
+        # test_destroyed_window_drops_delayed_tips 就是这么崩的）。
+        QTimer.singleShot(0, self, self._sync_minimum_size)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        """设过最小值以后就以它为准。
+
+        Qt 会拿 ``minimumSizeHint()`` 和 ``minimumSize()`` 里较大的那个去钳制
+        ``resize()``；两边不一致时，"缩到最小"会被悄悄放大（CI 上 minimumSize 报
+        607、实际按 805 兜底）。
+        """
+        if getattr(self, "_syncing_minimum", False):
+            return super().minimumSizeHint()
+        hint = super().minimumSizeHint()
+        minimum = self.minimumSize()
+        if minimum.width() > 0 or minimum.height() > 0:
+            hint = hint.expandedTo(minimum)
+        return hint
+
+    def _sync_minimum_size(self) -> None:
+        """让窗口的 minimumSize 与当前布局的 minimumSizeHint 一致。
+
+        Qt 只用 hint 去"顶住"手动 resize，不会把它写进 ``minimumSize()``；两边一旦
+        差 1–8px，把窗口缩到 ``minimumSize()`` 就会被悄悄放大一点（实测 870×529 →
+        871×537）。页面内容在这一轮变高（卡片文字行、检查器动作条），这个偏差才显形。
+        """
+        if getattr(self, "_syncing_minimum", False):
+            return
+        # `minimumSizeHint()` 有时比布局的真实下限小（QMainWindow 不算中央部件里
+        # 分数宽度向上取整的那一位），所以两个都问，取较大者。
+        central = self.centralWidget()
+        if central is not None and central.layout() is not None:
+            central.layout().activate()
+        hint = self.minimumSizeHint()
+        if central is not None:
+            # 中央部件自己也可能被布局约束写入了一个更大的最小尺寸（Linux 上实测
+            # minimumSizeHint 607、Qt 却按 805 兜底），一并算进去。
+            hint = hint.expandedTo(central.minimumSize())
+            if central.layout() is not None:
+                hint = hint.expandedTo(central.layout().minimumSize())
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+            hint = hint.expandedTo(layout.minimumSize())
+        if not hint.isValid():
+            return
+        if self.minimumSize() == hint:
+            return
+        self._syncing_minimum = True
+        try:
+            self.setMinimumSize(hint)
+        finally:
+            self._syncing_minimum = False
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        self._sync_minimum_size()
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
+        self._sync_minimum_size()
         # A frozen page width belongs to the window size the transition began
         # with; a resize mid-transition jumps straight to the final layout.
         settle = getattr(self, "_sidebar_settle", None)
@@ -1725,7 +1820,7 @@ class MainWindow(QMainWindow):
             if tm:
                 message += i18n.tr('；并入 {v0} 条翻译记忆', v0=tm)
             if clash:
-                message += i18n.tr('；{v0} 条译名和术语库不一致，已放进待审核', v0=clash)
+                message += i18n.tr('；{v0} 条译名和术语库不一致，已放进待确认', v0=clash)
             if skipped:
                 reasons = "；".join(
                     f"{item.get('job_id')}：{i18n.tr_dynamic(str(item.get('reason') or ''))}"
@@ -2092,6 +2187,10 @@ class MainWindow(QMainWindow):
                                  refresh_delivery=force or terminal_change, prepared=prepared,
                                  models=models)
         self._sync_menu_state()
+        # 内容变了，布局的最小尺寸也可能跟着变（标题、阶段条、检查器动作条）。
+        # 每次刷新同步一次，窗口的 minimumSize() 才不会比真实下限小 1–8px——
+        # 否则「缩到最小尺寸」会被 Qt 悄悄放大（resize(870,463) → 871×463）。
+        self._sync_minimum_size()
         # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
         self._later(600, lambda: self._offer_tips(runtime))
 
@@ -3164,24 +3263,24 @@ class MainWindow(QMainWindow):
 
     def freeze_glossary(self, rows: list) -> None:
         self._glossary_action(adapter.freeze_glossary, rows,
-                              done_message=i18n.tr('术语已冻结。'),
-                              failure=i18n.tr('无法冻结术语'),
+                              done_message=i18n.tr('术语已锁定。'),
+                              failure=i18n.tr('无法锁定术语'),
                               after=self._continue_after_freeze)
 
     def unfreeze_glossary(self) -> None:
         self._glossary_action(adapter.unfreeze_glossary,
-                              done_message=i18n.tr('已解除冻结，可以继续修改术语。'),
-                              failure=i18n.tr('无法解除冻结'))
+                              done_message=i18n.tr('已解除锁定，可以继续修改术语。'),
+                              failure=i18n.tr('无法解除锁定'))
 
     def bypass_glossary_freeze(self) -> None:
         if not self._confirm(
-                i18n.tr('跳过术语冻结'),
+                i18n.tr('跳过术语锁定'),
                 i18n.tr('跳过后将直接使用暂定术语继续翻译；这个决定会被记录，之后术语变化不会自动保证全文一致。\n\n确定跳过吗？'),
-                yes=i18n.tr('跳过冻结'), no=i18n.tr('取消')):
+                yes=i18n.tr('跳过锁定'), no=i18n.tr('取消')):
             return
         self._glossary_action(adapter.bypass_glossary_freeze,
-                              done_message=i18n.tr('已跳过冻结，使用暂定术语。'),
-                              failure=i18n.tr('无法跳过冻结'),
+                              done_message=i18n.tr('已跳过锁定，使用暂定术语。'),
+                              failure=i18n.tr('无法跳过锁定'),
                               after=self._continue_after_freeze)
 
     def update_glossary_entry(self, entry_id: str, fields: dict) -> None:
@@ -3721,6 +3820,132 @@ class MainWindow(QMainWindow):
             on_done=lambda written: self._notice(
                 i18n.tr('已保存 {v0} 个文件到 {v1}', v0=len(written), v1=target)))
 
+    # ================= 交付工作区的文件操作 =================
+    def _ask_save_file(self, title: str, default_name: str) -> str:
+        """保存对话框；脚本化运行不弹系统面板（与 ``_choose_directory`` 同一条约定）。"""
+        if _automation():
+            self._notice(i18n.tr(
+                '{v0}：自动化运行不打开系统面板，交付文件由调用方直接写出。', v0=title))
+            return ""
+        target, _selected = QFileDialog.getSaveFileName(
+            self, title, str(Path.home() / "Documents" / default_name))
+        return target
+
+    def _info(self, title: str, message: str, detail: str = "") -> None:
+        """信息窗口；脚本化运行只记一条瞬时消息，不阻塞。"""
+        self._last_notice = message
+        if _automation():
+            self._notice(f"{title} · {message}", task=False, detail=detail)
+            return
+        prompts.NoticeDialog.notify(self, title, message, detail=detail)
+
+    def download_delivery_zip(self, version: int, job_id: str | None = None) -> None:
+        """把当前冻结版本的全部交付文件打包成 ZIP 并保存到用户选择的位置。
+
+        只读冻结快照：打包不会改动、也不会重新生成任何交付文件；快照里有文件
+        缺失或校验不过时，适配器会拒绝并给出是哪一个，不产生"看起来成功"的半套包。
+        """
+        job_id = job_id or self._current_job_id
+        if not job_id:
+            return
+        try:
+            default_name = adapter.delivery_archive_name(job_id, int(version))
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法打包冻结交付'), str(exc), job_id=job_id)
+            return
+        target = self._ask_save_file(i18n.tr('保存交付包（ZIP）'), default_name)
+        if not target:
+            self._notice(i18n.tr('已取消下载。'), job_id=job_id)
+            return
+        self._run_with_busy(
+            i18n.tr('下载全部（ZIP）'), i18n.tr('正在打包冻结交付…'),
+            adapter.save_delivery_archive, job_id, int(version), target,
+            for_job=job_id,
+            on_done=lambda path: self._notice(
+                i18n.tr('已保存交付包：{v0}', v0=str(path)), job_id=job_id))
+
+    def open_delivery_folder(self, version: int, job_id: str | None = None) -> None:
+        """在系统文件管理器里打开冻结交付目录（不存在就报错，不假装打开过）。"""
+        job_id = job_id or self._current_job_id
+        if not job_id:
+            return
+        try:
+            result = adapter.open_delivery_folder(job_id, int(version))
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法打开交付文件夹'), str(exc), job_id=job_id)
+            return
+        if not result.get("ok"):
+            self._failure(i18n.tr('无法打开交付文件夹'),
+                          str(result.get("detail") or i18n.tr('系统未返回原因。')),
+                          job_id=job_id)
+            return
+        self._notice(i18n.tr('已打开交付文件夹：{v0}', v0=str(result.get("path") or "")),
+                     job_id=job_id)
+
+    def save_delivery_asset(self, name: str, version: int,
+                            job_id: str | None = None) -> None:
+        """另存单个交付文件的副本（源文件只读；目标已存在时由保存对话框确认）。"""
+        job_id = job_id or self._current_job_id
+        if not job_id or not name:
+            return
+        try:
+            default_name = adapter.delivery_default_asset_name(
+                job_id, int(version), name)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法另存文件'), str(exc), job_id=job_id)
+            return
+        target = self._ask_save_file(i18n.tr('另存文件副本'), default_name)
+        if not target:
+            self._notice(i18n.tr('已取消另存。'), job_id=job_id)
+            return
+        self._run_with_busy(
+            i18n.tr('另存文件副本'), i18n.tr('正在复制交付文件…'),
+            adapter.save_delivery_asset_copy, job_id, int(version), name, target,
+            for_job=job_id, overwrite=True,
+            on_done=lambda path: self._notice(
+                i18n.tr('已保存文件副本：{v0}', v0=str(path)), job_id=job_id))
+
+    def show_delivery_asset_info(self, name: str, version: int,
+                                 job_id: str | None = None) -> None:
+        """文件信息：名称、格式、大小、校验值与所属交付版本（全部来自真实文件）。"""
+        job_id = job_id or self._current_job_id
+        if not job_id or not name:
+            return
+        try:
+            info = adapter.delivery_asset_info(job_id, int(version), name)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法读取文件信息'), str(exc), job_id=job_id)
+            return
+        from . import delivery_panel
+
+        lines = [
+            i18n.tr('文件名：{v0}', v0=str(info.get("name") or "")),
+            i18n.tr('格式：{v0}', v0=delivery_panel.format_label(str(info.get("name") or ""))),
+            i18n.tr('大小：{v0}', v0=delivery_panel.human_size(info.get("size"))),
+            i18n.tr('交付版本：v{v0}', v0=info.get("version")),
+            i18n.tr('所属文档：{v0}', v0=str(info.get("source_name") or i18n.tr('未命名任务'))),
+            i18n.tr('位置：{v0}', v0=str(info.get("path") or "")),
+        ]
+        created = str(info.get("created_at") or "")
+        if created:
+            lines.append(i18n.tr('交付时间：{v0}', v0=created))
+        sha = str(info.get("sha256") or "")
+        if sha:
+            lines.append(i18n.tr('校验（sha256）：{v0}…', v0=sha[:16]))
+        if not info.get("exists"):
+            lines.append(i18n.tr('状态：文件在磁盘上找不到。'))
+        elif info.get("size") is not None and info.get("actual_size") not in (None, info.get("size")):
+            lines.append(i18n.tr('状态：磁盘上的大小与交付记录不一致。'))
+        self._info(i18n.tr('文件信息'), "\n".join(lines))
+
+    def copy_path(self, path: str) -> None:
+        """把文件路径写进系统剪贴板。"""
+        text = str(path or "")
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self._notice(i18n.tr('已复制文件路径：{v0}', v0=text), task=False)
+
     def reveal_path(self, path: str) -> None:
         result = adapter.reveal_in_finder(path)
         self._notice(result.get("detail") or i18n.tr('已在{v0}中显示。', v0=platform_ui.file_manager_name()), task=False)
@@ -3789,7 +4014,12 @@ class MainWindow(QMainWindow):
         """首次启动：全新用户看欢迎窗口，老用户只看一页「新变化」。返回显示了哪一种。"""
         from . import onboarding
 
-        if onboarding._automatic():
+        import os as _os
+
+        # 脚本化 / 开发环境：显式跳过，别再让"新手指南/新变化"挡住每一次启动。
+        # `FOLITH_SKIP_ONBOARDING=1` 优先于一切；offline/offscreen 与
+        # `FOLITH_QT_NONINTERACTIVE=1` 走 `_automatic()`。
+        if _os.environ.get("FOLITH_SKIP_ONBOARDING") == "1" or onboarding._automatic():
             return ""
         try:
             has_jobs = bool(adapter.list_jobs())
@@ -4193,23 +4423,28 @@ class MainWindow(QMainWindow):
         self.close()
 
 
-#: 平台级缺陷（**应用侧无法根治，也没有可用的开关**）：在 macOS 26/27 上，外部辅助功能
-#: 客户端（AI "Computer Use" / VoiceOver / 窗口管理器的 AX 扫描）遍历界面时，Qt 的 Cocoa
-#: 可访问性桥会崩溃（SIGSEGV/SIGBUS，栈顶 `libqcocoa` +
+#: 平台级缺陷 **QTBUG-149612**（上游已修复，但随包 PySide6 还没有）：在 macOS 26/27 上，
+#: 外部辅助功能客户端（AI "Computer Use" / VoiceOver / 窗口管理器的 AX 扫描）遍历界面时，
+#: Qt 的 Cocoa 可访问性桥会崩溃（SIGSEGV/SIGBUS，栈顶 `libqcocoa` +
 #: `NSAccessibilityAttributeAccessorInfo getAttributeValue:forObject:`）。
 #:
-#: 上游根因：QTBUG-149612 —— "macOS: synthesized table elements can delete their parent
-#: accessibility interface"（影响 6.11.0–6.11.2；截至 2026-10-05 状态 Reported、无 fixVersion，
-#: Gerrit 765434 仍在评审）。同一个签名见于 calibre（PyQt6）、Qt Creator、Anki、FreeCAD。
+#: 根因：`-[QMacAccessibilityElement dealloc]` 会用元素共享的 `axid` 调用
+#: `QAccessibleCache::deleteInterface`；表格合成的 row/cell 占位元素与父表共用 id，
+#: 它们析构时删掉了父表的 `QAccessibleInterface`，`QAccessibleTable` 缓存的指针随后
+#: 变成悬垂指针，下一次 AX 查询（选中子元素）即读已释放内存。
 #:
-#: R62 实测（本仓库 `scripts/qt_ax_scan_probe.py`，证据 E163–E168）：
-#:   - 复现 3/3 + 对照 2/2：表格里选中一行 + 外部 AX 扫描 + 打开任务 → 进程 SIGSEGV/SIGBUS；
-#:   - `QT_ACCESSIBILITY=0` 在 Qt 6.11 **完全无效**（随包 Qt 二进制里没有这个字符串）；
-#:   - `QAccessible.setActive(False)` 会被 OS 在 AX 客户端接入时重新激活，即使每 100ms 重申
-#:     一次，崩溃依旧发生。
-#: 因此这里**不再提供任何"关掉辅助功能"的开关**（R61 曾提供的
-#: `FOLITH_QT_DISABLE_ACCESSIBILITY=1` 是无效的，已删除）：不要给测试者一个不存在的安全感。
-#: 唯一可靠做法是**验收时不挂外部 AX 代理**（人工键鼠不受影响），并等上游修复后升级 PySide6。
+#: 处置（2026-11-06，R64）：
+#:   - 上游 commit `8148c48d`（"macOS: Don't let native a11y elements delete accessible
+#:     interfaces"）2026-10-27 已合入 Qt `dev`/`6.12`，但 6.11.2（随包）、6.11.3、
+#:     6.12.0 都早于它，带修复的 6.12.1 计划 2026-11-17 发布；
+#:   - 因此由 :mod:`folith.qt.macos_accessibility` 在启动时把 `-dealloc` 换成
+#:     "先清零 `axid` 再调原实现"，等价于上游修复的语义；
+#:   - `QT_ACCESSIBILITY=0` 在 Qt 6.11 无效、`QAccessible.setActive(False)` 会被系统
+#:     重新激活（R62 实测），所以**不再提供任何"关掉辅助功能"的开关**——那种开关只会
+#:     给测试者一个不存在的安全感。诊断用的 `FOLITH_QT_AX_WORKAROUND=0` 关掉的是
+#:     **本修复**（用来复现上游缺陷做 A/B），不是辅助功能；
+#:   - PySide6 升到 6.12.1+ 后修复不再安装（版本门），届时删除该模块与调用点。
+
 
 
 def file_open_path(event) -> str:

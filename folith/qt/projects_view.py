@@ -1,6 +1,6 @@
-"""项目页：左边项目列表，右边这个项目的内容（概览 / 术语库 / 翻译记忆 / 待审核）。
+"""项目页：左边项目列表，右边这个项目的内容（概览 / 术语库 / 翻译记忆 / 待确认）。
 
-语言资产住在项目里：术语库和翻译记忆是项目的，待审核是项目里各任务发现的候选加上
+语言资产住在项目里：术语库和翻译记忆是项目的，待确认是项目里各任务发现的候选加上
 "和术语库不一致"的待决冲突。「未分类」置顶，只汇总各任务自己的术语（只读），共享的翻译
 记忆照旧，从不向新任务注入任何东西。
 
@@ -14,9 +14,9 @@ from pathlib import Path
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
+    QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem,
-    QToolButton, QVBoxLayout, QWidget, QWidgetAction,
+    QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from folith import language_assets as assets
@@ -28,12 +28,13 @@ from . import i18n
 from . import icons
 from . import project_sheets
 from . import prompts
+from . import status_voice
 from . import style as style_module
 from . import theme as theme_module
 
 TABS = (("overview", "概览"), ("terms", "术语库"), ("tm", "翻译记忆"))
 UNSORTED_TABS = (("terms", "各任务的术语"), ("tm", "共享翻译记忆"))
-#: 术语库里「待审核」的来源筛选。
+#: 术语库里「待确认」的来源筛选。
 BASIS_FILTERS = (("all", "全部来源"), ("task", "任务术语表"), ("reviewed", "已审校译文"),
                  ("machine", "机器译文"), ("conflict", "和术语库不一致"))
 PAGE = 300                                  # 一次最多摆出的行数；筛选始终作用于全部
@@ -104,17 +105,13 @@ class _Reflow(QWidget):
         self._arrange(event.size().width())
 
 
-def _status_chip_width(*labels: str) -> int:
-    """状态芯片的宽度：外语里 «Ожидает проверки» 比 «Подтверждено» 长，两个都要量。
+def _status_column_width(*labels: str) -> int:
+    """状态列宽：外语里 «Ожидает подтверждения» 比「已锁定」长得多，逐个量。
 
-    固定列宽（早先的 84px）在俄语/西语下会把芯片里的字截掉，所以列宽按芯片量。
+    宽度由 :func:`components.status_cell_width` 算（圆点 + 文字 + 单元格内边距），
+    和术语面板用同一个函数，两处表格的状态列不会一宽一窄。
     """
-    chip = style_module.Chip("", "ok")
-    width = 0
-    for label in labels:
-        chip.setText(label)
-        width = max(width, chip.sizeHint().width())
-    return width
+    return components.status_cell_width(labels)
 
 
 def _cell(text: object) -> QTableWidgetItem:
@@ -157,28 +154,17 @@ def _tone_color(tone: str) -> str:
 
 
 def _table(headers: list[str]) -> QTableWidget:
-    table = QTableWidget(0, len(headers))
+    """项目页的表格：外观在 :class:`components.DataTable`（与术语面板共用，F15）。"""
+    table = components.DataTable(len(headers))
     table.setHorizontalHeaderLabels(headers)
-    table.verticalHeader().setVisible(False)
-    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-    table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-    table.setShowGrid(False)
-    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    table.setTextElideMode(Qt.TextElideMode.ElideRight)
     table.horizontalHeader().setStretchLastSection(True)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-    table.horizontalHeader().setDefaultAlignment(
-        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-    table.horizontalHeader().setFixedHeight(theme_module.CONTROL["header"])
-    table.horizontalHeader().setHighlightSections(False)
-    table.verticalHeader().setDefaultSectionSize(theme_module.CONTROL["row"] - 4)
-    table.setItemDelegate(style_module.RowDelegate(table))
     return table
 
 
 class _ListRow(style_module.Surface):
-    """左栏里的一行（未分类 / 项目）：图标 + 名称 + 副标题 + 待审核角标。"""
+    """左栏里的一行（未分类 / 项目）：图标 + 名称 + 副标题 + 待确认角标。"""
 
     clicked = Signal(str)
 
@@ -229,8 +215,8 @@ class ProjectsView(QWidget):
     #: 「把「未分类」的任务移进来…」：目标项目已选好
     pullRequested = Signal(str)
     newProjectRequested = Signal()
-    acceptRequested = Signal(dict, str)         # 待审核项, 译名
-    decideRequested = Signal(dict, str)         # 待审核项, task_only / rejected / keep
+    acceptRequested = Signal(dict, str)         # 待确认项, 译名
+    decideRequested = Signal(dict, str)         # 待确认项, task_only / rejected / keep
     batchAcceptRequested = Signal(list)
     projectsChanged = Signal()                  # 新建 / 改名 / 归档 / 删除之后
     pendingChanged = Signal(int)                # 侧栏「项目」角标
@@ -612,9 +598,9 @@ class ProjectsView(QWidget):
                 i18n.tr('确认方向…'), self._set_direction))
         review_total = int((detail.get("term_counts") or {}).get("pending") or 0)
         stats = (
-            (i18n.tr('术语库'), str(len(detail.get("terms") or [])), i18n.tr('已确认，新任务自动使用'), "terms"),
+            (i18n.tr('术语库'), str(len(detail.get("terms") or [])), i18n.tr('已锁定，新任务自动使用'), "terms"),
             (i18n.tr('翻译记忆'), str(len(detail.get("tm") or [])), i18n.tr('已审校的句对'), "tm"),
-            (i18n.tr('待审核'), str(review_total),
+            (i18n.tr('待确认'), str(review_total),
              i18n.tr('来自 {v0} 个任务', v0=detail.get("review_tasks", 0)), "pending"),
             (i18n.tr('风格规则'), str(detail.get("style_rule_count", 0)), i18n.tr('审校中确认'), ""))
         self.stat_grid = _Reflow([self._stat_tile(*stat) for stat in stats],
@@ -665,9 +651,14 @@ class ProjectsView(QWidget):
             row.addWidget(icons.IconLabel("file-text", 16, "text-secondary"))
             name = _elide(task["name"], "body")
             row.addWidget(name, 1)
-            tone = ("error" if task.get("runtime_status") == "failed" else
-                    "active" if task.get("active") else
-                    "done" if "交付" in str(task.get("status")) else "idle")
+            # 状态语气只走 status_voice（F4）：以前用 `"交付" in status` 判断，
+            # 于是「暂不满足交付条件」「工作版本已偏离冻结交付」都会显示成绿色。
+            tone = status_voice.theme_tone(
+                status_voice.tone_for_label(str(task.get("status") or "")))
+            if task.get("runtime_status") == "failed":
+                tone = status_voice.ERROR
+            elif task.get("active"):
+                tone = status_voice.ACTIVE
             status = components.StatusLabel(
                 i18n.tr_dynamic(str(task.get("status") or "")) or i18n.tr('未开始'), tone)
             status.setMinimumWidth(96)
@@ -676,12 +667,12 @@ class ProjectsView(QWidget):
             style_module.set_button(open_button, "plain", small=True)
             open_button.clicked.connect(lambda _c=False, j=task["job_id"]: self.openJobRequested.emit(j, -1))
             row.addWidget(open_button)
-            more_button = QToolButton()
-            more_button.setObjectName("taskRowMore")
-            more_button.setText("…")
-            more_button.setToolTip(i18n.tr('更多操作'))
+            # F19：这里原来是一个没上样式的原生 QToolButton（方角、系统外观），和同一页
+            # 的其它按钮不在一个体系里。改用全局的方形图标按钮（透明底 + 悬停面），
+            # 图标也和页面级「更多」同一个（icons "more"）。
+            more_button = style_module.icon_button("more", i18n.tr('更多操作'))
+            more_button.setProperty("taskRowMore", True)
             more_button.setAccessibleName(i18n.tr('更多操作'))
-            more_button.setCursor(Qt.CursorShape.PointingHandCursor)
             more_button.clicked.connect(
                 lambda _c=False, j=task["job_id"], b=more_button: self._show_task_menu(
                     j, b.mapToGlobal(b.rect().bottomLeft())))
@@ -735,7 +726,7 @@ class ProjectsView(QWidget):
         return card
 
     def _open_terms(self, status: str, basis: str = "all") -> None:
-        """跳到术语库，并打开某个状态 / 来源筛选（「待审核」统计卡、冲突提示条用）。"""
+        """跳到术语库，并打开某个状态 / 来源筛选（「待确认」统计卡、冲突提示条用）。"""
         self._tab, self._term_status = "terms", status
         if basis != self._basis:
             self._basis = basis
@@ -748,7 +739,7 @@ class ProjectsView(QWidget):
     def _open_conflicts(self) -> None:
         self._open_terms("pending", "conflict")
 
-    # ================= 术语库（已确认 + 待审核，一张表） =================
+    # ================= 术语库（已锁定 + 待确认，一张表） =================
     def _build_terms(self) -> QWidget:
         page = QWidget()
         box = QVBoxLayout(page)
@@ -774,7 +765,7 @@ class ProjectsView(QWidget):
         bar.addWidget(self.term_add)
         box.addLayout(bar)
 
-        # 工具条：状态筛选、来源下拉（只在「待审核」）、右侧「显示只出现过 1 次」和「批量确认…」。
+        # 工具条：状态筛选、来源下拉（只在「待确认」）、右侧「显示只出现过 1 次」和「批量确认…」。
         # 宽度不够时右侧那组换到下一行，不挤压表格以外的任何东西。
         self.toolbar = QGridLayout()
         self.toolbar.setContentsMargins(0, 0, 0, 0)
@@ -783,7 +774,7 @@ class ProjectsView(QWidget):
         self.term_filter = style_module.SegmentedControl([("all", "")])
         self.term_filter.changed.connect(self._term_filter_changed)
         self.basis_combo = style_module.ComboBox()
-        self.basis_combo.setAccessibleName(i18n.tr('待审核的来源'))
+        self.basis_combo.setAccessibleName(i18n.tr('待确认的来源'))
         self.basis_combo.activated.connect(self._combo_activated)
         self.singles_button = QPushButton("")
         style_module.set_button(self.singles_button, "plain", small=True)
@@ -800,7 +791,7 @@ class ProjectsView(QWidget):
         self._toolbar_narrow = None
         self._arrange_toolbar(False)
         box.addLayout(self.toolbar)
-        self.term_note = _text("", "time", wrap=True)     # 只在没有已确认术语时显示一行
+        self.term_note = _text("", "time", wrap=True)     # 只在没有已锁定术语时显示一行
 
         self.term_table = _table(["", i18n.tr('原文'), i18n.tr('译名'), i18n.tr('状态'),
                                   i18n.tr('来源'), i18n.tr('出现')])
@@ -819,7 +810,7 @@ class ProjectsView(QWidget):
         self.term_none = _text(i18n.tr('没有符合条件的术语。'), "meta")
         box.addWidget(self.term_none)
 
-        # 已确认的行：详情 + 编辑 / 移除。
+        # 已锁定的行：详情 + 编辑 / 移除。
         self.term_detail = style_module.Card()
         detail = QVBoxLayout(self.term_detail)
         detail.setContentsMargins(16, 10, 16, 10)
@@ -839,7 +830,7 @@ class ProjectsView(QWidget):
         detail.addLayout(actions)
         box.addWidget(self.term_detail)
 
-        # 待审核的行：译名可改，确认 / 只用于这个任务 / 不是术语。
+        # 待确认的行：译名可改，确认 / 只用于这个任务 / 不是术语。
         self.review_detail = style_module.Card()
         review = QVBoxLayout(self.review_detail)
         review.setContentsMargins(16, 8, 16, 8)
@@ -936,7 +927,7 @@ class ProjectsView(QWidget):
         self._fill_terms()
 
     def _term_entries(self) -> list[dict]:
-        """表里的全部行（未筛选）：已确认的术语 + 待审核项，按原文排序，确认后行不会跳位。"""
+        """表里的全部行（未筛选）：已锁定的术语 + 待确认项，按原文排序，确认后行不会跳位。"""
         entries = [{"kind": "confirmed", "source": t["source"], "term": t}
                    for t in self._detail.get("terms") or []]
         entries += [{"kind": "pending", "source": i["source"], "item": i}
@@ -950,11 +941,11 @@ class ProjectsView(QWidget):
         review = detail.get("review") or {}
         confirmed, pending = int(counts.get("confirmed") or 0), int(counts.get("pending") or 0)
         options = [("all", i18n.tr('全部') + f"  {confirmed + pending}"),
-                   ("confirmed", i18n.tr('已确认') + f"  {confirmed}"),
-                   ("pending", i18n.tr('待审核') + f"  {pending}")]
+                   ("confirmed", i18n.tr('已锁定') + f"  {confirmed}"),
+                   ("pending", i18n.tr('待确认') + f"  {pending}")]
         self.term_filter.set_options(options)
         self.term_filter.set_value(self._term_status)
-        # 来源下拉：只在看「待审核」时出现，数字取自收起之后的各来源条数。
+        # 来源下拉：只在看「待确认」时出现，数字取自收起之后的各来源条数。
         self.basis_combo.blockSignals(True)
         self.basis_combo.clear()
         by_basis = review.get("counts") or {}
@@ -978,7 +969,7 @@ class ProjectsView(QWidget):
             i18n.tr('显示只出现过 1 次的 {v0} 条', v0=collapsed) if not self._show_singles
             else i18n.tr('收起只出现过 1 次的'))
         project = detail.get("project") or {}
-        hint = i18n.tr('已确认的术语会自动用于新任务（{v0}）；待审核的确认后才会用',
+        hint = i18n.tr('已锁定的术语会自动用于新任务（{v0}）；候选术语确认后才会用',
                        v0=_dir(project.get("direction_label") or i18n.tr('未设定')))
         self.term_note.setText(hint)
         self.term_filter.setToolTip(hint)       # 平时只在筛选条上悬停时出现，不占一行
@@ -1017,7 +1008,7 @@ class ProjectsView(QWidget):
         has_any = bool(confirmed or pending or collapsed)
         for widget in (table, self.term_query, self.term_filter):
             widget.setVisible(has_any)
-        self.term_note.setVisible(has_any and not confirmed)    # 还没有已确认的术语时才占一行
+        self.term_note.setVisible(has_any and not confirmed)    # 还没有已锁定术语时才占一行
         self.term_empty.setVisible(not has_any)
         self.term_none.setVisible(has_any and not self._term_rows)
         self.batch_button.setVisible(any(e["kind"] == "pending" for e in self._term_rows)
@@ -1037,7 +1028,7 @@ class ProjectsView(QWidget):
         固定列宽会让它们被省略号截掉。状态列还要留出单元格内边距
         （QSS 的 item padding 8+8）和芯片宿主自己的右边距（6），芯片才放得下。
         """
-        width = _status_chip_width(i18n.tr('已确认'), i18n.tr('待审核')) + 24
+        width = _status_column_width(i18n.tr('已锁定'), i18n.tr('待确认')) + 24
         if self.term_table.columnWidth(3) != width:
             self.term_table.setColumnWidth(3, max(84, width))
 
@@ -1086,27 +1077,22 @@ class ProjectsView(QWidget):
             lay.addWidget(check)
             table.setCellWidget(r, 0, holder)
             self._review_rows[r] = self._review_items.index(item)
-            target, tone = item["target"], {"conflict": "warn"}.get(item["basis"], "info")
-            status, origin = i18n.tr('待审核'), i18n.tr_dynamic(item["basis_label"])
-            if item["basis"] == "conflict":
-                status = i18n.tr('待审核')
+            target = item["target"]
+            # 和术语库不一致的候选要用"需要处理"的语气，其余候选是"等人决定"。
+            tone = ("attention" if item["basis"] == "conflict"
+                    else components.TERM_TONES["candidate"])
+            status, origin = i18n.tr('待确认'), i18n.tr_dynamic(item["basis_label"])
             hits = str(item["hits"]) if item.get("positions_known") or item.get("kind") != "conflict" else "—"
         else:
             term = entry["term"]
-            source, target, tone = term["source"], term["target"], "ok"
-            status, origin = i18n.tr('已确认'), i18n.tr_dynamic(term["origin_text"])
+            source, target, tone = term["source"], term["target"], components.TERM_TONES["locked"]
+            status, origin = i18n.tr('已锁定'), i18n.tr_dynamic(term["origin_text"])
             hits = str(term["used_total"]) if term["used_tasks"] else "—"
         table.setItem(r, 0, QTableWidgetItem(""))
         table.setItem(r, 1, _cell(source))
         table.setItem(r, 2, _cell(target))
-        chip_host = QWidget()
-        chip_host.setObjectName("transparent")
-        chip_lay = QHBoxLayout(chip_host)
-        chip_lay.setContentsMargins(0, 0, 6, 0)
-        chip_lay.addWidget(style_module.Chip(status, tone))
-        chip_lay.addStretch(1)
-        table.setCellWidget(r, 3, chip_host)
-        table.setItem(r, 3, QTableWidgetItem(""))
+        # 状态一律「圆点 + 同色文字」（F15），不再是实心色块。
+        table.setItem(r, 3, components.status_cell(status, tone))
         table.setItem(r, 4, _cell(origin))
         count = QTableWidgetItem(hits)
         count.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -1340,7 +1326,7 @@ class ProjectsView(QWidget):
         names.addWidget(_elide(task["name"], "name"))
         names.addWidget(_elide(
             f"{_dir(task['direction_label'])} · "
-            + i18n.tr('{v0} 条术语，{v1} 条已确认', v0=task["term_count"], v1=task["locked_count"]),
+            + i18n.tr('{v0} 条术语，{v1} 条已锁定', v0=task["term_count"], v1=task["locked_count"]),
             "time"))
         head.addLayout(names, 1)
         open_button = QPushButton(i18n.tr('打开任务'))
@@ -1359,7 +1345,7 @@ class ProjectsView(QWidget):
         grid.setContentsMargins(16, 4, 16, 0)
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(4)
-        chip_width = _status_chip_width(i18n.tr('已确认'), i18n.tr('待审核')) + 4
+        chip_width = _status_column_width(i18n.tr('已锁定'), i18n.tr('待确认')) + 4
         for column, text in enumerate((i18n.tr('原文'), i18n.tr('译名'), i18n.tr('状态'), i18n.tr('出现'))):
             title = _text(text, "time")
             title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -1380,19 +1366,18 @@ class ProjectsView(QWidget):
                 # 文字长短不参与列宽：整页所有卡片的列起点一致。
                 label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
                 grid.addWidget(label, r, column)
-            # 和项目术语库同一套说法：锁定 = 已确认；暂定和智能体候选 = 待审核。
+            # 和项目术语库同一套说法：locked 显示「已锁定」；暂定和智能体候选显示「待确认」。
+            # 状态一律 StatusLabel 的圆点 + 同色文字（F15），不用实心色块。
             confirmed = term["status"] == "locked"
-            chip_host = QWidget()
-            chip_host.setObjectName("transparent")
-            chip_lay = QHBoxLayout(chip_host)
-            chip_lay.setContentsMargins(0, 0, 0, 0)
-            chip = style_module.Chip(i18n.tr('已确认') if confirmed else i18n.tr('待审核'),
-                                     "ok" if confirmed else "info")
+            status = components.StatusLabel(
+                i18n.tr('已锁定') if confirmed else i18n.tr('待确认'),
+                components.TERM_TONES["locked" if confirmed else
+                                     (term["status"] if term["status"] in components.TERM_TONES
+                                      else "candidate")])
+            status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             if term["status"] == "pending":
-                chip.setToolTip(i18n.tr_dynamic(term.get("basis_label") or ""))
-            chip_lay.addWidget(chip)
-            chip_lay.addStretch(1)
-            grid.addWidget(chip_host, r, 2)
+                status.setToolTip(i18n.tr_dynamic(term.get("basis_label") or ""))
+            grid.addWidget(status, r, 2)
             grid.addWidget(_text(str(term["hits"]), "meta"), r, 3, Qt.AlignmentFlag.AlignRight)
             if term["status"] == "pending":
                 keep = QPushButton(i18n.tr('只用于这个任务'))
@@ -1406,7 +1391,7 @@ class ProjectsView(QWidget):
             box.addWidget(_text("  " + i18n.tr('还有 {v0} 条', v0=task["more"]), "time"))
         return card
 
-    # ================= 待审核行的动作（都在术语库的行与详情里） =================
+    # ================= 待确认行的动作（都在术语库的行与详情里） =================
     def _basis_changed(self, key: str) -> None:
         if key and key != self._basis:
             self._basis = key
@@ -1467,22 +1452,21 @@ class ProjectsView(QWidget):
         item = self.selected_review_item()
         if item:
             self._keep_source = item["source"]
-            self._mark_confirmed(self.term_table.currentRow())      # 立刻让这一行变成已确认
+            self._mark_confirmed(self.term_table.currentRow())      # 立刻让这一行变成已锁定
             self.acceptRequested.emit(item, self.name_edit.text().strip())
 
     def _mark_confirmed(self, row: int) -> None:
-        """乐观更新：确认之后这一行马上显示「已确认」；真正的数据随后台刷新校正。"""
+        """乐观更新：确认之后这一行马上显示「已锁定」；真正的数据随后台刷新校正。"""
         entry = self.selected_entry()
         if entry.get("kind") != "pending":
             return
-        host = self.term_table.cellWidget(row, 3)
-        chip = host.findChild(style_module.Chip) if host else None
-        if chip is not None:
-            chip.setText(i18n.tr('已确认'))
-            chip.set_tone("ok")
+        item = self.term_table.item(row, 3)
+        if item is not None:
+            item.setIcon(components.status_dot_icon("done"))
+            item.setText(i18n.tr('已锁定'))
         origin = self.term_table.item(row, 4)
         if origin is not None:
-            origin.setText(i18n.tr('审核收进'))
+            origin.setText(i18n.tr('确认收进'))
 
     def _decide_current(self, decision: str) -> None:
         item = self.selected_review_item()
@@ -1724,7 +1708,7 @@ class ProjectsView(QWidget):
         except adapter.AdapterError as exc:
             self._note(str(exc))
             return
-        self._note(i18n.tr('已导入到项目「{v0}」（只增不改；译名不一致的会放进待审核）。',
+        self._note(i18n.tr('已导入到项目「{v0}」（只增不改；译名不一致的会放进待确认）。',
                            v0=result["project"].get("name") or ""))
         self._mark_changed()
         self.reloadRequested.emit()

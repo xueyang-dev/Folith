@@ -330,8 +330,258 @@ def validate_delivery_translation_state(state):
     }
 
 
-def _record_delivery_validation_findings(state, report):
-    """Persist only new invariant/entity findings for the review queue."""
+#: Marker on a review finding that came from the deterministic delivery gate.
+#: Only target invariants and findings carrying this marker are reconciled
+#: automatically; a model-review finding is never cleared just because the gate
+#: stopped naming it.
+DELIVERY_GATE_SOURCE = "delivery_validation"
+
+
+def _gate_problem_key(finding):
+    """Identity shared by a gate problem and its persisted review finding.
+
+    ``segment_index`` + ``invariant_code`` when the code exists.  Findings
+    recorded before ``invariant_code`` existed fall back to the (user-visible)
+    reason text, which is what the review queue has always shown.  ``None`` as
+    the index marks a document-level problem.
+    """
+    index = finding.get("segment_index")
+    if isinstance(index, bool) or not isinstance(index, int):
+        index = None
+    code = finding.get("invariant_code") or finding.get("code")
+    if code:
+        return (index, str(code))
+    return (index, str(finding.get("reason") or finding.get("summary") or ""))
+
+
+def _current_gate_problems(report, *, segment_scoped_only=False):
+    """Every problem the current gate report actually names.
+
+    ``segment_scoped_only`` keeps the open-path repair away from document-level
+    problems (pair-count mismatch, missing source pages): those are persisted by
+    the existing mutation paths and are not part of the stale-invariant repair.
+    """
+    problems = {}
+    for finding in _translation_target.target_invariant_findings(report):
+        problems.setdefault(_gate_problem_key(finding), finding)
+    for finding in report.get("blocking_findings") or []:
+        if isinstance(finding, dict):
+            problems.setdefault(_gate_problem_key(finding), finding)
+    if segment_scoped_only:
+        problems = {key: value for key, value in problems.items()
+                    if key[0] is not None}
+    return problems
+
+
+def _is_gate_owned(finding):
+    return (finding.get("type") == "delivery_invariant"
+            or finding.get("gate_source") == DELIVERY_GATE_SOURCE)
+
+
+def _refresh_finding_stats(state):
+    """Recompute the review counters from the single findings list."""
+    stats = state.setdefault("review_stats", {})
+    for severity in ("blocking", "actionable", "informational"):
+        stats[severity] = sum(
+            1 for item in state.get("findings") or []
+            if isinstance(item, dict) and item.get("severity") == severity
+            and not item.get("resolved"))
+    state["has_blocking"] = stats["blocking"] > 0
+    return stats
+
+
+def _delivery_validation_record(report):
+    return {
+        "status": report.get("status"),
+        "blocking": bool(report.get("blocking")),
+        "checked_pairs": report.get("checked_pairs", 0),
+        "issues": list(report.get("issues") or []),
+        "entity_conflicts": [
+            {
+                "source": item.get("source"),
+                "preferred_target": item.get("preferred_target"),
+                "observed_targets": item.get("observed_targets"),
+            }
+            for item in report.get("entity_findings") or []
+        ],
+    }
+
+
+def _reconcile_gate_findings(state, report, *, actor="system",
+                             segment_scoped_only=False, add_missing=True,
+                             reopen=True):
+    """Align persisted review findings with one authoritative gate report.
+
+    * a gate-owned finding the report no longer names describes text that has
+      changed, so it is resolved with an audit record (this is the stale
+      ``delivery_invariant`` repair: only what the *current* report stopped
+      reporting is cleared, never a problem that is still real);
+    * optionally (``add_missing``) a problem the gate still reports gets an
+      unresolved finding, and (``reopen``) a hand-resolved one is reopened
+      because the gate proves it is not fixed;
+    * a document-level finding without an ``invariant_code`` is never cleared
+      blind — there is no segment to prove the match.
+
+    ``add_missing``/``reopen`` are deliberately **off** on the open/preview
+    path: opening a task is not a delivery decision, and persisting every
+    current blocker would rewrite large states on open (a 900-segment book with
+    450 synthetic blockers grew the state by 450 findings and advanced the
+    revision, which broke the poll contract).  Only the explicit delivery /
+    review mutations (:func:`_record_delivery_validation_findings`) add or
+    reopen findings.
+
+    ``segment_scoped_only`` is used by the open-path repair: it must not touch
+    document-level findings (pair-count mismatch, missing source pages) that
+    the normal mutation paths own.
+
+    Returns the number of changed findings.  The caller owns the save.
+    """
+    from folith import delivery as _delivery
+
+    problems = _current_gate_problems(report, segment_scoped_only=segment_scoped_only)
+    findings = state.setdefault("findings", [])
+    by_key = {}
+    for item in findings:
+        if not isinstance(item, dict):
+            continue
+        key = _gate_problem_key(item)
+        prior = by_key.get(key)
+        # Prefer the still-open record over an older resolved duplicate, so a
+        # report that still names the problem never leaves two open copies.
+        if prior is None or (prior.get("resolved") and not item.get("resolved")):
+            by_key[key] = item
+    changed = 0
+    if add_missing or reopen:
+        for key, problem in problems.items():
+            prior = by_key.get(key)
+            if prior is None:
+                if not add_missing:
+                    continue
+                stored = dict(problem)
+                if stored.get("type") == "check":
+                    stored["gate_source"] = DELIVERY_GATE_SOURCE
+                findings.append(stored)
+                by_key[key] = stored
+                changed += 1
+                continue
+            if not reopen or not prior.get("resolved"):
+                continue
+            if str(problem.get("severity") or "") != "blocking":
+                continue
+            prior["resolved"] = False
+            prior.pop("resolution", None)
+            if prior.get("type") == "check":
+                prior["gate_source"] = DELIVERY_GATE_SOURCE
+            _delivery.add_human_action(
+                state, _delivery.finding_id(prior), "reopened",
+                "当前交付检查仍报告该问题，已重新打开", "system")
+            changed += 1
+    for item in findings:
+        if not isinstance(item, dict) or item.get("resolved"):
+            continue
+        if not _is_gate_owned(item):
+            continue
+        key = _gate_problem_key(item)
+        if key in problems:
+            continue
+        if key[0] is None:
+            if segment_scoped_only:
+                continue
+            if not item.get("invariant_code"):
+                continue
+        item["resolved"] = True
+        item["resolution"] = {
+            "action": "target_rechecked",
+            "note": "重新检查当前译文与交付门禁，该问题已不再出现",
+            "timestamp": _finalization.now_iso(),
+            "actor": actor,
+        }
+        _delivery.add_human_action(
+            state, _delivery.finding_id(item), "target_rechecked",
+            "重新检查当前译文与交付门禁，该问题已不再出现", actor)
+        changed += 1
+    return changed
+
+
+def gate_reconciliation_needed(state, report):
+    """Cheap read-only check: is any persisted gate finding now stale?
+
+    This is what keeps the read-only polling path free of writes: only a
+    segment-scoped, gate-owned, still-open finding the current report no longer
+    names makes :func:`reconcile_delivery_gate` load, repair and save.  The
+    open path never adds current blockers or reopens resolved ones, so a report
+    naming a problem the queue does not carry is not a reason to write.
+    Document-level findings are excluded on purpose (see
+    :func:`_reconcile_gate_findings`).
+    """
+    problems = _current_gate_problems(report, segment_scoped_only=True)
+    for item in state.get("findings") or []:
+        if not isinstance(item, dict) or item.get("resolved"):
+            continue
+        if not _is_gate_owned(item):
+            continue
+        key = _gate_problem_key(item)
+        if key in problems or key[0] is None:
+            continue
+        return True
+    return False
+
+
+def apply_gate_reconciliation(state, report, *, actor="system"):
+    """Mirror a persisted reconciliation onto a caller's in-memory state.
+
+    The Qt open path keeps the object it handed to ``delivery_preview`` and
+    uses it for the review queue and the window cache, so the in-memory copy
+    must agree with what was just written to disk.
+    """
+    from folith import delivery as _delivery
+
+    if not isinstance(state, dict):
+        return state
+    if not _reconcile_gate_findings(state, report, actor=actor,
+                                    segment_scoped_only=True,
+                                    add_missing=False, reopen=False):
+        return state
+    _refresh_finding_stats(state)
+    state["delivery_validation"] = _delivery_validation_record(report)
+    state["delivery_status"] = _delivery.compute_delivery_status(state)
+    return state
+
+
+@_serialized_job_mutation
+def reconcile_delivery_gate(job_id, *, actor="system"):
+    """One-shot, open-path repair of persisted gate findings.
+
+    ``delivery_preview`` calls this only when :func:`gate_reconciliation_needed`
+    says the persisted findings disagree with the current report, so a read-only
+    poll never writes and a repaired task writes exactly once.  Returns
+    ``(state, report)``, or ``(None, None)`` when the task does not exist.
+    """
+    from folith import delivery as _delivery
+
+    state = _c.load_job_state(job_id)
+    if state is None:
+        return None, None
+    if state.get("delivery_status") == "final":
+        # A frozen snapshot is immutable evidence.  Rewriting review metadata
+        # would change the state identity and falsely report divergence, so a
+        # final task is repaired only through the explicit re-freeze path.
+        return state, _c.validate_delivery_translation_state(state)
+    report = _c.validate_delivery_translation_state(state)
+    changed = _reconcile_gate_findings(state, report, actor=actor,
+                                       segment_scoped_only=True,
+                                       add_missing=False, reopen=False)
+    if not changed:
+        return state, report
+    _refresh_finding_stats(state)
+    state["delivery_validation"] = _delivery_validation_record(report)
+    state["delivery_status"] = _delivery.compute_delivery_status(state)
+    _c.save_job_state(job_id, state)
+    return state, report
+
+
+def _record_delivery_validation_findings(state, report, *, actor="system"):
+    """Persist invariant/entity/QA findings for the review queue and re-count."""
     from folith import delivery as _delivery
     _refresh_entity_consistency(state)
     active_source_indexes = {
@@ -352,31 +602,21 @@ def _record_delivery_validation_findings(state, report):
                 "actor": "system",
             }
     state["source_quality_gate"] = dict(report.get("source_quality_gate") or {})
-    state["delivery_validation"] = {
-        "status": report.get("status"),
-        "blocking": bool(report.get("blocking")),
-        "checked_pairs": report.get("checked_pairs", 0),
-        "issues": list(report.get("issues") or []),
-        "entity_conflicts": [
-            {
-                "source": item.get("source"),
-                "preferred_target": item.get("preferred_target"),
-                "observed_targets": item.get("observed_targets"),
-            }
-            for item in report.get("entity_findings") or []
-        ],
-    }
+    state["delivery_validation"] = _delivery_validation_record(report)
+    # One canonical reconciliation: the current gate report decides which
+    # persisted findings are real (including deterministic QA blockers such as
+    # "译文疑似遗漏或被截断"), and which stale target invariants are gone.
+    _reconcile_gate_findings(state, report, actor=actor)
     existing = {
         (item.get("type"), item.get("segment_index"), item.get("invariant_code"),
          item.get("reason"))
         for item in state.setdefault("findings", [])
         if isinstance(item, dict) and not item.get("resolved")
     }
-    findings = _translation_target.target_invariant_findings(report)
-    findings.extend(
+    findings = [
         dict(item) for item in report.get("source_quality_findings") or []
         if isinstance(item, dict)
-    )
+    ]
     for item in report.get("entity_findings") or []:
         findings.append({
             **item,
@@ -394,20 +634,7 @@ def _record_delivery_validation_findings(state, report):
         if key not in existing:
             state["findings"].append(finding)
             existing.add(key)
-    stats = state.setdefault("review_stats", {})
-    stats["blocking"] = sum(
-        1 for item in state["findings"]
-        if item.get("severity") == "blocking" and not item.get("resolved")
-    )
-    stats["actionable"] = sum(
-        1 for item in state["findings"]
-        if item.get("severity") == "actionable" and not item.get("resolved")
-    )
-    stats["informational"] = sum(
-        1 for item in state["findings"]
-        if item.get("severity") == "informational" and not item.get("resolved")
-    )
-    state["has_blocking"] = stats["blocking"] > 0
+    _refresh_finding_stats(state)
     if report.get("blocking") and state.get("delivery_status") in ("approved", "final"):
         # A state-level mutation (for example a manually injected target) must
         # invalidate the mutable approval even when no snapshot exists yet.
@@ -638,6 +865,51 @@ def recovery_summary(job_id, state=None):
     return _checkpoint.recovery_summary(_c.job_dir(job_id), state or {})
 
 
+def _resolved_deterministic_blocker_still_fails(state):
+    """Zero-write re-check of hand-resolved deterministic blockers.
+
+    ``task_status_label`` runs for every task-list row, so it must not run the
+    full delivery validation.  But a *resolved* blocking deterministic finding
+    can still describe the current text: a user marked it fixed, while the
+    deterministic gate was never re-recorded (for example a truncated target).
+    Only the two text-only predicates that produce blocking findings are
+    re-evaluated here; checks that need the glossary stay with the gate.  The
+    cost is O(blocking findings), not O(pairs).
+    """
+    from folith.engine.glossary_checks import is_incomplete_translation
+    from folith.translation_target import is_translation_transport_wrapper
+
+    pairs = state.get("pairs") or []
+    seen = set()
+    for finding in state.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        if (finding.get("severity") != "blocking"
+                or not finding.get("resolved")
+                or finding.get("detector") != "Deterministic QA"):
+            continue
+        index = finding.get("segment_index")
+        if isinstance(index, bool) or not isinstance(index, int) or index in seen:
+            continue
+        seen.add(index)
+        if not 0 <= index < len(pairs) or not isinstance(pairs[index], dict):
+            continue
+        pair = pairs[index]
+        source = str(pair.get("source") or "")
+        target = str(pair.get("target") or "")
+        if not target.strip() or pair.get("target_is_json"):
+            # The delivery gate treats a missing target as an actionable
+            # notice, and an explicitly JSON target as allowed; never upgrade
+            # either into a blocker here.
+            continue
+        if is_incomplete_translation(source, target):
+            return True
+        if (target.strip() != source.strip()
+                and is_translation_transport_wrapper(target)):
+            return True
+    return False
+
+
 def task_status_label(state, job_id=""):
     """User-facing task status derived from persisted workflow state."""
     from folith import delivery as _delivery
@@ -681,6 +953,16 @@ def task_status_label(state, job_id=""):
         review = translation_review_readiness(state)
         if review.get("required") and not review.get("ready"):
             return "待审校"
+        # 首页标签必须与交付门禁同一判据（issue 2）：持久化的交付校验已经
+        # 判定阻断时，首页不得承诺"可以冻结交付"。`delivery_validation` 由
+        # 交付/审校动作写入，读取它是 O(1)，不跑整本 validate。
+        if (state.get("delivery_validation") or {}).get("blocking") is True:
+            return "暂不满足交付条件"
+        # 零写入兜底：人工把确定性阻断项标成 resolved、但当前文本仍触发同一
+        # 确定性检查时（例如译文仍被截断），门禁会阻断而 delivery_validation
+        # 可能还没有被重新记录；只重查这两条纯文本谓词。
+        if _resolved_deterministic_blocker_still_fails(state):
+            return "暂不满足交付条件"
         return "可以冻结交付"
     if state.get("p1_done") and not state.get("p2_done"):
         if (state.get("stage") == "TERMS_PREPARED" and state.get("quality_mode")

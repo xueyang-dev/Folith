@@ -30,8 +30,8 @@ KIT = ROOT / "docs" / "qt-beta" / "manual-acceptance.md"
 #: 清单里用「」或代码格式引用的界面文字，必须真的出现在 Qt 源码里。
 REFERENCED_LABELS = (
     "翻译任务", "还没有任务", "模型连接", "测试连接", "外观", "跟随系统",
-    "日间", "夜间", "纸面", "保存并提交", "复制原文到译文", "保存并进入下一段",
-    "冻结交付", "保存冻结交付文件", "用默认应用打开", "在 Finder 中显示",
+    "日间", "夜间", "保存并提交", "复制原文到译文", "保存并进入下一段",
+    "冻结交付", "下载全部（ZIP）", "打开文件夹", "另存交付文件", "查看文件信息",
     "重译本段", "排除本段", "已排除段落", "审校全部段落", "在后台运行",
     "关于 Folith", "诊断信息", "保存诊断包", "任务与交付", "导入文档",
 )
@@ -44,7 +44,7 @@ def _qt_sources() -> str:
     return "\n".join(
         (ROOT / "folith" / "qt" / name).read_text(encoding="utf-8")
         for name in ("views.py", "window.py", "dialogs.py", "theme.py",
-                     "adapter.py", "prompts.py"))
+                     "adapter.py", "prompts.py", "delivery_panel.py"))
 
 
 def test_every_label_the_kit_references_exists():
@@ -161,7 +161,12 @@ def test_docs_audit_catches_a_stale_claim(tmp_path, monkeypatch):
 
 
 def test_quickstart_is_a_usable_one_page_guide():
-    """验收速览必须自足：结论、候选身份、四件优先事项、回传模板、已知限制都在。"""
+    """验收速览必须自足：结论、候选身份、四件优先事项、回传模板、已知限制都在。
+
+    2026-11-06：AX（QTBUG-149612）由"已知限制：不要挂载 AX 代理"改为"已由运行时
+    修复缓解"；速览必须写明修复机制、版本门与 A/B 诊断开关，旧禁令只能作为已作废
+    的历史说明出现（否则测试者会继续按一条已解除的限制操作）。
+    """
     import qt_docs_audit as docs_audit
 
     text = (ROOT / "docs" / "qt-beta" / "acceptance-quickstart.md").read_text(
@@ -174,11 +179,18 @@ def test_quickstart_is_a_usable_one_page_guide():
     if record.is_file():
         assert docs_audit._sha_matches(
             text, json.loads(record.read_text(encoding="utf-8"))["sha256"])
+    # AX（QTBUG-149612）从"已知限制：不要挂载 AX 代理"变成"已由运行时修复缓解"：
+    # 速览必须同时给出上游缺陷编号、修复机制、版本门与 A/B 诊断开关，测试者才
+    # 知道什么已验证、什么还需要回传证据（冻结 DMG 上的 A/B 仍未验证）。
     for needle in ("真实中文输入法", "系统文件面板", "干净机器", "真实模型服务",
                    "候选 sha256：", "诊断包", "已知限制",
                    "scripts/qt_beta_chain.sh", "已由机器验证",
-                   "不要挂载 AX 代理", "QTBUG-149612"):
+                   "QTBUG-149612", "运行时修复", "6.12.1",
+                   "FOLITH_QT_AX_WORKAROUND"):
         assert needle in text, needle
+    if "不要挂载 AX 代理" in text:
+        # 旧禁令只能作为"已作废的历史说明"出现，不能再是一句现行要求。
+        assert "作废" in text, "旧禁令「不要挂载 AX 代理」仍以现行要求出现在速览里"
     # 指向详细步骤，避免两份清单分叉
     assert "manual-acceptance.md" in text
 

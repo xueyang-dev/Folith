@@ -42,7 +42,7 @@ DOCX 原格式写回、TM 模糊匹配 / TM V2、文档跨版本增量同步、W
 1. **收口阻断项**：合入待并入的分支，处理上节所列阻断项；源码、测试、文档与品牌资源之外（开发工具状态、用户任务、源文档、凭据、构建产物）不入库，并清掉 HEAD 中的本机绝对路径。
 2. **干净提交构建**：工作区干净后冻结提交，从该提交构建 wheel / sdist 与 Qt `.app` / DMG，版本号改为最终确认的值；核对归档内容和源码、产物身份、原生架构及最低系统版本。
 3. **运行 `bash scripts/qt_beta_chain.sh <输出目录>`（20 步）**：构建、门禁、文档一致性审计、用例与端到端探针，任一步失败即停；用项目声明的 pytest 8 环境逐文件跑测试，避免多文件 Qt 对象污染。随后由构建记录生成 manifest、发行说明与人工验收文档，并重生成验收包（`scripts/qt_acceptance_bundle.py --write`）。
-4. **收齐 7 条强制人工项**（A.1′、A.7″、A.8′、B.1、C.2′、C.12、D.9，详见 [验收矩阵](qt-beta/acceptance-matrix.md)与[人工验收清单](qt-beta/manual-acceptance.md)）：A.1′ Finder / Dock 双击与 quarantine 首次放行、A.7″ 系统文件面板、A.8′ 真实模型服务、B.1 真实中文输入法、C.2′ Dock 实际点击退出、C.12 睡眠 / 唤醒、D.9 干净 Mac。须在最终 DMG 上用人工键鼠完成，不挂 AX 代理（QTBUG-149612）。
+4. **收齐 7 条强制人工项**（A.1′、A.7″、A.8′、B.1、C.2′、C.12、D.9，详见 [验收矩阵](qt-beta/acceptance-matrix.md)与[人工验收清单](qt-beta/manual-acceptance.md)）：A.1′ Finder / Dock 双击与 quarantine 首次放行、A.7″ 系统文件面板、A.8′ 真实模型服务、B.1 真实中文输入法、C.2′ Dock 实际点击退出、C.12 睡眠 / 唤醒、D.9 干净 Mac。须在最终 DMG 上由人判定并签收；AX 崩溃（QTBUG-149612）已由启动时的运行时修复缓解，"不挂 AX 代理"的旧要求自 2026-11-06 作废，可用 AX 代理 / Computer Use 辅助操作，并按 `FOLITH_QT_AX_WORKAROUND=0` 回传 A/B。
 5. **全部通过后，才可声明 `PRIVATE_BETA_READY`。** 在此之前对外只能称「候选」。
 6. **签名与公证另行处理**：公开分发另需 Developer ID、硬化运行时、签名、公证、staple 与真实下载验证；公开 push / tag / Release 留待后续授权。
 

@@ -598,7 +598,7 @@ def test_term_card_detail_lists_the_paragraphs_that_still_use_the_old_term(panel
     body = panel.item_body.toPlainText()
     assert "Lycidas" in body and "利西达斯" in body
     assert "吕西达斯" in body, "旧译法也要摆出来，用户才知道差在哪"
-    assert "未用冻结译法" in body
+    assert "未用锁定译法" in body
     # 标题按术语写，不写某一段的段号。
     assert panel.item_title.text().startswith("Lycidas → 利西达斯")
 
@@ -613,7 +613,7 @@ def test_term_card_title_counts_the_affected_paragraphs(panel):
 
 
 # ---- #277：概念决策类术语卡的决定参考字段 ---------------------------------------
-# 与 #102 过期译法卡同一套字段与渲染：冻结译法 / 旧译法 / 影响段落。
+# 与 #102 过期译法卡同一套字段与渲染：锁定译法 / 旧译法 / 影响段落。
 
 def _concept_card_view(**term_fields):
     item = _item(id="finding:c277", finding_id="c277",
@@ -638,8 +638,8 @@ def test_concept_card_shows_frozen_previous_and_affected_segments(panel):
                               segment_indexes=[1, 2, 3, 4, 5])
     panel.apply(view)
     assert panel.select_item_id("finding:c277")
-    body = panel.item_body.toPlainText()
-    assert "冻结译法" in body and "阿里克" in body
+    body = _detail_text(panel)
+    assert "锁定译法" in body and "阿里克" in body
     assert "旧译法" in body and "阿瑞克" in body
     assert "影响段落" in body and "5 段" in body
     # 原有信息不丢：原文 / 当前译文对照与统一译名的操作部件都还在。
@@ -653,8 +653,8 @@ def test_concept_card_without_frozen_translation_shows_no_empty_field(panel):
                               segment_indexes=[0, 1, 2, 3, 4, 5])
     panel.apply(view)
     assert panel.select_item_id("finding:c277")
-    body = panel.item_body.toPlainText()
-    assert "冻结译法" not in body, "没有冻结译法就不显示空字段冒充有值"
+    body = _detail_text(panel)
+    assert "锁定译法" not in body, "没有锁定译法就不显示空字段冒充有值"
     assert "旧译法" not in body
     assert "影响段落" in body and "6 段" in body
 
@@ -666,9 +666,9 @@ def test_concept_card_previous_equal_to_frozen_is_not_repeated(panel):
                               segment_indexes=[1, 2, 3])
     panel.apply(view)
     assert panel.select_item_id("finding:c277")
-    body = panel.item_body.toPlainText()
-    assert "冻结译法" in body
-    assert "旧译法" not in body, "旧译法与冻结译法一致时不重复占一行"
+    body = _detail_text(panel)
+    assert "锁定译法" in body
+    assert "旧译法" not in body, "旧译法与锁定译法一致时不重复占一行"
 
 
 def test_entity_rows_for_the_same_name_merge_the_hit_segments():
@@ -689,3 +689,123 @@ def test_entity_rows_for_the_same_name_merge_the_hit_segments():
     assert merged["term_segment_total"] == 4
     assert merged["term_frozen_target"] == "阿里克"
     assert merged["term_previous_target"] == "阿瑞克"
+
+
+def _detail_text(panel):
+    """Decision workspace v2 splits the inspector: workspace problem/source/target
+    live in item_body, the evidence (terminology, recorded decision, group) in
+    evidence_body. A detail assertion should read both."""
+    return panel.item_body.toPlainText() + "\n" + panel.evidence_body.toPlainText()
+
+
+# ---- 发现项文案的界面语言（issue 5a） -------------------------------------------
+# 交付完整性 / 确定性检查的固定文案由核心拼好（中文），发现项的摘要与建议又是
+# 模型可以自由书写的位置：渲染层只走 i18n.tr_dynamic（目录精确匹配），命中的
+# 翻成界面语言，命中不了的原样返回——模型文案一个字都不能被改写。
+
+_I18N_LANGUAGES = ("en", "es", "ru", "ar", "fr", "de")
+
+
+def _has_cjk(text):
+    return any("\u4e00" <= char <= "\u9fff" for char in str(text or ""))
+
+
+@pytest.fixture()
+def ui_language():
+    from folith.qt import i18n
+
+    previous = i18n.language()
+
+    def switch(code):
+        i18n.set_language(code)
+        return code
+
+    yield switch
+    i18n.set_language(previous)
+
+
+def _delivery_item(**overrides):
+    """交付完整性发现项（Translation Target Invariant）在队列里的真实形状。"""
+    summary = "译文仍是 JSON/Markdown transport wrapper，不能作为普通正文交付"
+    item = _item(
+        severity="blocking", severity_label="必须处理",
+        segment_index=14, segment_number=15, identity_detail="格式完整性",
+        category="format_integrity", category_label="格式完整性",
+        title="第 15 段 · 格式完整性", summary=summary,
+        reason=summary, explanation=summary,
+        recommendation="重新解析或重新翻译该段；不要把模型原始 transport 响应写入交付产物。",
+    )
+    item.update(overrides)
+    return item
+
+
+def _queue_texts(panel):
+    from PySide6.QtCore import Qt
+
+    texts = []
+    for row in range(panel.list.count()):
+        entry = panel.list.item(row)
+        if entry.data(Qt.ItemDataRole.UserRole):
+            texts.append(entry.text())
+    return texts
+
+
+def test_finding_copy_follows_the_ui_language(panel, qtbot_free_app, ui_language):
+    """六种语言里，队列标题与详情的标题/问题/建议都不能露出中文。"""
+    from folith.qt import i18n
+
+    for code in _I18N_LANGUAGES:
+        ui_language(code)
+        panel.apply(_view(_delivery_item()))
+        queue = _queue_texts(panel)
+        title = panel.item_title.text()
+        body = panel.item_body.toPlainText()
+        assert queue, f"{code}: 队列里没有渲染出发现项"
+        for text, where in ((queue[0], "queue"), (title, "title"), (body, "body")):
+            assert not _has_cjk(text), f"{code}: {where} 仍是中文：{text!r}"
+        assert title.startswith(i18n.tr("第 {v0} 段", v0=15))
+        assert i18n.tr_dynamic(_delivery_item()["summary"]) in body
+        assert i18n.tr_dynamic(_delivery_item()["recommendation"]) in body
+        assert not panel.item_chip.text().startswith("必须处理")
+
+
+def test_category_label_in_the_queue_title_is_translated(panel, qtbot_free_app,
+                                                        ui_language):
+    """没有命中片段的发现项用类别标签当定位说明（_identity_detail）——也要翻译。"""
+    for code in _I18N_LANGUAGES:
+        ui_language(code)
+        panel.apply(_view(_delivery_item(identity_detail="格式完整性",
+                                         title="第 15 段 · 格式完整性")))
+        assert _has_cjk(panel.item_title.text()) is False, code
+        assert _has_cjk(_queue_texts(panel)[0]) is False, code
+
+
+def test_model_written_copy_is_never_rewritten(panel, qtbot_free_app, ui_language):
+    """目录里没有的模型自由文本必须逐字保留（安全边界，不是"顺手翻译"）。"""
+    summary = "模型自由文本：这一段读起来别扭"
+    recommendation = "模型建议：换个说法，不要动术语"
+    for code in _I18N_LANGUAGES:
+        ui_language(code)
+        panel.apply(_view(_delivery_item(
+            summary=summary, reason=summary, explanation=summary,
+            recommendation=recommendation)))
+        body = panel.item_body.toPlainText()
+        assert summary in body, f"{code}: 模型摘要被改写了"
+        assert recommendation in body, f"{code}: 模型建议被改写了"
+        assert summary in _queue_texts(panel)[0], f"{code}: 队列卡片改写了模型摘要"
+
+
+def test_attention_card_copy_follows_the_ui_language(qtbot_free_app, ui_language):
+    """工作台右栏「需要注意」的检查项摘要与审校页同一口径。"""
+    from folith.qt.segment_assist import AttentionList
+
+    finding = {"severity": "blocking",
+               "summary": "译文仍是 JSON/Markdown transport wrapper，不能作为普通正文交付",
+               "decidable": False}
+    widget = AttentionList()
+    for code in _I18N_LANGUAGES:
+        ui_language(code)
+        widget.set_items([finding], [])
+        texts = widget.texts()
+        assert texts, f"{code}: 注意卡是空的"
+        assert not any(_has_cjk(text) for text in texts), f"{code}: {texts!r}"

@@ -67,7 +67,9 @@ def test_apply_theme_and_follow_system(app):
     # "跟随系统" resolves from the reported system appearance.
     assert theme.resolve(theme.FOLLOW_SYSTEM, system_dark=True) == "dark"
     assert theme.resolve(theme.FOLLOW_SYSTEM, system_dark=False) == "light"
-    assert theme.resolve("paper") == "paper"
+    # 已废弃的整套主题回退到日间（旧偏好由窗口迁移成主题色）。
+    assert theme.resolve("paper") == "light"
+    assert theme.resolve("green") == "light"
     assert theme.resolve("nonsense") == "light"
 
 

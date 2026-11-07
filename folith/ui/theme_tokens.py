@@ -5,11 +5,9 @@ Why this module exists
 The stylesheet in :mod:`folith.ui.styles` is a large literal CSS document.  Its
 colours used to be re-interpreted per theme by a hue/lightness heuristic that
 guessed a "role" for every ``#hex`` it found.  That works for a theme that is a
-re-tint of the same cool palette, but it cannot express a theme whose accent is
-not a blue: in Paper every role that the heuristic resolved to ``primary`` (or to
-``primary-soft``) came back as saturated Folith blue.  It also cannot express
-Night, which is deliberately **not** a re-tint: it is a neutral graphite palette
-matched to the macOS dark window chrome (§ ``TOKENS['dark']``).
+re-tint of the same cool palette, but it cannot express Night, which is deliberately
+**not** a re-tint: it is a neutral graphite palette matched to the macOS dark window
+chrome (§ ``TOKENS['dark']``).
 
 So the direction is now one-way and explicit::
 
@@ -20,38 +18,26 @@ So the direction is now one-way and explicit::
   the ~6k lines of existing component CSS did not have to be rewritten at once.
 * The generated ``:root`` block is appended *after* the legacy normalizer runs,
   so it always wins the cascade without ``!important``.
-
-Paper is therefore not "Light with a beige background": it is a complete,
-independent palette (warm paper surfaces, ink-slate accent, warm-low-saturation
-status colours) that every component inherits for free.
 """
 from __future__ import annotations
 
 # Presentation order used by the appearance settings page and by generated CSS.
-THEME_ORDER = ('light', 'dark', 'paper', 'green')
+THEME_ORDER = ('light', 'dark')
 
-SCHEMES = {'light': 'light', 'dark': 'dark', 'paper': 'light', 'green': 'light'}
+SCHEMES = {'light': 'light', 'dark': 'dark'}
 
 # --------------------------------------------------------------------------
 # Semantic tokens
 # --------------------------------------------------------------------------
 # Every theme declares exactly the same keys.  `light` values are the values the
 # product already shipped, so wiring the token layer in changes nothing visible
-# for Day mode; dark and paper are re-derived from them on purpose.
-#
-# Paper palette rationale (docs: "high quality book paper + modern editor"):
-#   * surfaces are warm but not yellow (R-B delta stays small), never pure white
-#   * the accent is an ink slate — related to the brand by hue family, unrelated
-#     by saturation, so no UI element competes with the logo
-#   * text is warm near-black; muted text still clears 4.5:1 on both the page and
-#     the surface colour
-#   * shadows are warm and very light; hierarchy comes from spacing and type
+# for Day mode; dark is re-derived from them on purpose.
 TOKENS: dict[str, dict[str, str]] = {
     'light': {
         # 2026-10-16 色彩审校（docs/ui-audit/40-design-review-2026-10-16 第十一节）：
         # 界面主色与 logo 分开。logo 仍是钴蓝 #004CFD（brand-logo-blue）；界面取同一
         # 色相、降低彩度的 #2B5FD1（OKLCH C 0.267 → 0.185），四个语义色统一到 L 0.55，
-        # 页面底去掉蓝雾。纸面与夜间主题早就遵守"品牌蓝只属于 logo"，日间现在也一样。
+        # 页面底去掉蓝雾。夜间主题早就遵守"品牌蓝只属于 logo"，日间现在也一样。
         'bg-page': '#f4f6f8',
         'bg-sidebar': '#f9fafb',
         # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
@@ -66,8 +52,16 @@ TOKENS: dict[str, dict[str, str]] = {
         'bg-hover': '#f7f9fc',
         'bg-selected': '#eef4fd',
         'text-primary': '#131c2e',
-        'text-secondary': '#667085',
-        'text-muted': '#7e8796',
+        # 2026-11-04 F10：次要文字必须 >= 4.5:1（WCAG AA 小字）。
+        # 实测（tmp/overhaul-tokens/contrast_audit.py）原值 text-secondary #667085 /
+        # text-muted #7e8796 在最深的侧栏底（shell 渐变末端 #e6e9ed）只有 4.08 / 2.98；
+        # 页面底 4.59 / 3.35、卡片 4.97 / 3.62，后面两处 muted 都不达标。
+        #   * secondary 提到 #4f5b70 —— 侧栏底 5.63、页面底 6.33、卡片 6.86；
+        #   * muted 提到 #59647a —— 侧栏底 4.89、页面底 5.49、卡片 5.95。
+        # 两档仍保留层级（最差处 5.63 : 4.89 ≈ 1.15），没有合成一档：idle 状态点、
+        # 时间、格式标签本来就应该比字段标签轻一点。
+        'text-secondary': '#4f5b70',
+        'text-muted': '#59647a',
         'text-on-accent': '#ffffff',
         'text-on-status': '#ffffff',
         # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
@@ -101,6 +95,10 @@ TOKENS: dict[str, dict[str, str]] = {
         # action colour: only status pills and a few icon tints use it.
         'info': '#7761b0',
         'info-soft': '#f6f4ff',
+        # 高亮（PDF 原页 / 搜索命中 / 术语定位）：暖黄荧光笔。原来源码里写死，
+        # 主题切到夜间时与纸面对比失控——2026-11-04 审校 F20 要求进 token。
+        'highlight-bg': '#ffe08a',
+        'highlight-ink': '#202124',
         # Page wash: the home canvas fades from the page colour into a faint
         # brand-blue tint (135deg).  Dark stays flat on purpose (graphite).
         'bg-gradient-start': '#fbfbfc',
@@ -110,7 +108,10 @@ TOKENS: dict[str, dict[str, str]] = {
         'brand-logo-blue': '#004cfd',
         'brand-cyan': '#00e8fe',
         'brand-azure': '#0088fd',
-        'disabled-bg': '#d9e5f6',
+        # 禁用面不再刷在按钮上（F7：禁用态去掉填充），只剩开关轨道用它。
+        # 原值 #d9e5f6 带蓝味：主题色换成翠绿 / 石板时，禁用轨道仍是蓝的，
+        # 而且它在页面底上比可用的控件更显眼。改成中性灰。
+        'disabled-bg': '#e2e6ec',
         'disabled-ink': '#8ca2c0',
         'overlay-veil': 'rgba(247,248,250,.96)',
         'surface-glass': 'rgba(248,251,255,.96)',
@@ -155,8 +156,13 @@ TOKENS: dict[str, dict[str, str]] = {
         'bg-selected': 'rgba(130,172,255,.18)',
         # --- text ---
         'text-primary': 'rgba(255,255,255,.92)',
-        'text-secondary': 'rgba(235,235,245,.62)',
-        'text-muted': 'rgba(235,235,245,.38)',
+        # 2026-11-04 F10（同 light）：半透明文字按实际叠加结果算。原 .62 / .38 在
+        # 卡片底只有 5.92 / 3.13、选中行底 5.05 / 3.16，muted 全部不达标。
+        #   * secondary .66 —— 最差的选中行底 5.45；
+        #   * muted .60 —— 最差的选中行底 4.80（页面底 5.95、卡片 5.64）。
+        # 与 light 保持同一层级比例（5.45 : 4.80 ≈ 1.14）。
+        'text-secondary': 'rgba(235,235,245,.66)',
+        'text-muted': 'rgba(235,235,245,.60)',
         'text-on-accent': '#ffffff',
         'text-on-status': '#131316',
         # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
@@ -191,6 +197,9 @@ TOKENS: dict[str, dict[str, str]] = {
         'danger-soft': 'rgba(255,170,164,.14)',
         'info': '#c0a8ff',
         'info-soft': 'rgba(192,168,255,.16)',
+        # 夜间：同一支荧光笔压暗，字仍用深色（高亮块本身是浅色底）。
+        'highlight-bg': 'rgba(255,214,102,.72)',
+        'highlight-ink': '#1b1b1f',
         'bg-gradient-start': '#1C1C1E',
         'bg-gradient-end': '#1C1C1E',
         'brand-navy': '#f2f2f7',
@@ -209,109 +218,17 @@ TOKENS: dict[str, dict[str, str]] = {
         'shadow-lg': '0 10px 26px rgba(0,0,0,.42), 0 2px 6px rgba(0,0,0,.28)',
         'switch-knob': '#ffffff',
     },
-    'paper': {
-        'bg-page': '#f2eadb',
-        'bg-sidebar': '#ece3d2',
-        # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
-        'bg-glass': '#e9dfcc',
-        'bg-shell-start': '#e9dfcc', 'bg-shell-end': '#e1d6c0',
-        'control-bg': '#fbf7ee',
-        'control-border': 'rgba(70,60,45,.22)',
-        'bg-surface': '#fbf7ee',
-        'bg-surface-subtle': '#f6f0e2',
-        'bg-surface-sunken': '#e9dfcb',
-        'bg-surface-raised': '#fdfaf3',
-        'bg-hover': '#eae2d1',
-        'bg-selected': '#e1dcce',
-        'text-primary': '#2d2923',
-        'text-secondary': '#5f594e',
-        'text-muted': '#6f6858',
-        'text-on-accent': '#faf7ef',
-        'text-on-status': '#faf7ef',
-        # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
-        # as a button in every theme; white on it is >= 4.5:1.
-        'hero': '#4c5a66', 'hero-hover': '#3e4b56', 'hero-active': '#333e48',
-        'text-on-hero': '#faf7ef',
-        'border-faint': 'rgba(70,60,45,.07)',
-        'border-hairline': 'rgba(70,60,45,.09)',
-        'border-divider': 'rgba(70,60,45,.11)',
-        'border-subtle': 'rgba(70,60,45,.15)',
-        'border-strong': 'rgba(70,60,45,.28)',
-        'border-sidebar': 'rgba(70,60,45,.16)',
-        'accent': '#4c5a66',
-        'accent-hover': '#3e4b56',
-        'accent-active': '#333e48',
-        'accent-fill': '#4c5a66',
-        'accent-fill-hover': '#3e4b56',
-        'accent-fill-active': '#333e48',
-        'accent-soft': '#e1dcce',
-        'accent-soft-hover': '#d8d2c1',
-        'accent-border': 'rgba(76,90,102,.42)',
-        'focus-ring': 'rgba(76,90,102,.42)',
-        'focus-halo': 'rgba(76,90,102,.18)',
-        'success': '#2f6b4f',
-        'success-soft': '#e3e9d8',
-        'warning': '#8a5a17',
-        'warning-soft': '#f1e4c4',
-        'danger': '#a63a31',
-        'danger-soft': '#f2ded6',
-        'info': '#6a5a86',
-        'info-soft': '#e6dfef',
-        'bg-gradient-start': '#f4ecdd',
-        'bg-gradient-end': '#ece2cf',
-        'brand-navy': '#2a251e',
-        'brand-ink': '#2a251e',
-        # The logo keeps the brand colours in every theme: it is the anchor that
-        # makes "paper" read as the same product rather than a different app.
-        'brand-logo-blue': '#004cfd',
-        'brand-cyan': '#00e8fe',
-        'brand-azure': '#0088fd',
-        'disabled-bg': '#e4dcca',
-        'disabled-ink': '#9a9280',
-        'overlay-veil': 'rgba(248,243,232,.95)',
-        'surface-glass': 'rgba(250,246,237,.96)',
-        'glass-border': 'rgba(70,60,45,.14)',
-        'glass-shadow': 'rgba(80,66,44,.10)',
-        'shadow-sm': '0 1px 2px rgba(72,58,38,.05)',
-        'shadow-md': '0 2px 8px rgba(72,58,38,.07), 0 1px 2px rgba(72,58,38,.05)',
-        'shadow-lg': '0 8px 24px rgba(72,58,38,.10), 0 2px 6px rgba(72,58,38,.05)',
-        'switch-knob': '#fbf7ee',
-    },
-    # Green is the fourth theme: a light, fresh palette whose accent is the
-    # design sheet's "Primary Green" (#0F6B4F).  Like Paper it is a complete
-    # palette, not a re-tint of Day: the accent, selection washes, focus rings and
-    # page wash are all green, while text / border neutrals stay the cool slate
-    # of the sheet (#0F172A / #64748B / #E5E7EB).  The logo keeps its brand
-    # colours (see ``brand-logo-blue``), so the product stays recognisable.
+}
+
+# Accent palettes for the Day / Night appearances (Settings > General).  Only the
+# values an accent overrides live here: `theme.tokens` lays them over a theme and
+# derives the night variants.  The former Paper and Green full themes were retired
+# on 2026-11-04; `slate` keeps Paper's ink accent and `green` keeps Green's.
+ACCENT_TOKENS: dict[str, dict[str, str]] = {
     'green': {
-        'bg-page': '#f4f8f6',
-        'bg-sidebar': '#f8faf9',
-        # Golden Gate：边到边侧栏/检查器的“玻璃”底色，以及工具栏控件的面与描边。
-        'bg-glass': '#ebf3ef',
-        'bg-shell-start': '#e6efea', 'bg-shell-end': '#dde8e2',
-        'control-bg': '#ffffff',
-        'control-border': 'rgba(15,40,30,.18)',
-        'bg-surface': '#ffffff',
-        'bg-surface-subtle': '#f8faf9',
-        'bg-surface-sunken': '#eef3f0',
-        'bg-surface-raised': '#ffffff',
-        'bg-hover': '#f0f6f3',
-        'bg-selected': '#e6f4ee',
-        'text-primary': '#0f172a',
-        'text-secondary': '#64748b',
-        'text-muted': '#7a8699',
-        'text-on-accent': '#ffffff',
-        'text-on-status': '#ffffff',
-        # The one primary action of a page (sidebar 「导入文档…」): a fill that reads
-        # as a button in every theme; white on it is >= 4.5:1.
-        'hero': '#0f6b4f', 'hero-hover': '#0b5a42', 'hero-active': '#084833',
-        'text-on-hero': '#ffffff',
-        'border-faint': '#edf1ef',
-        'border-hairline': '#e8edeb',
-        'border-divider': '#e5e7eb',
-        'border-subtle': '#dde3e0',
-        'border-strong': '#c6d0cb',
-        'border-sidebar': '#e2e8e5',
+        'hero': '#0f6b4f',
+        'hero-hover': '#0b5a42',
+        'hero-active': '#084833',
         'accent': '#0f6b4f',
         'accent-hover': '#0b5a42',
         'accent-active': '#084833',
@@ -321,33 +238,28 @@ TOKENS: dict[str, dict[str, str]] = {
         'accent-soft': '#e6f4ee',
         'accent-soft-hover': '#d5ece2',
         'accent-border': '#a8d8c4',
+        'text-on-accent': '#ffffff',
+        'text-on-hero': '#ffffff',
         'focus-ring': 'rgba(15,107,79,.26)',
         'focus-halo': 'rgba(46,204,138,.18)',
-        'success': '#13955f',
-        'success-soft': '#e4f6ee',
-        'warning': '#b54708',
-        'warning-soft': '#fffaeb',
-        'danger': '#dc2626',
-        'danger-soft': '#fef3f2',
-        'info': '#6f4bdc',
-        'info-soft': '#f1ecff',
-        'bg-gradient-start': '#f7fbf9',
-        'bg-gradient-end': '#e2f3ea',
-        'brand-navy': '#0d2b21',
-        'brand-ink': '#0d2b21',
-        'brand-logo-blue': '#004cfd',
-        'brand-cyan': '#00e8fe',
-        'brand-azure': '#0088fd',
-        'disabled-bg': '#e1eae6',
-        'disabled-ink': '#93a39b',
-        'overlay-veil': 'rgba(244,248,246,.96)',
-        'surface-glass': 'rgba(248,250,249,.96)',
-        'glass-border': '#cfe3d9',
-        'glass-shadow': 'rgba(15,60,45,.08)',
-        'shadow-sm': '0 1px 2px rgba(16,40,30,.05)',
-        'shadow-md': '0 2px 8px rgba(16,40,30,.07), 0 1px 2px rgba(16,40,30,.05)',
-        'shadow-lg': '0 8px 24px rgba(16,40,30,.09), 0 2px 6px rgba(16,40,30,.05)',
-        'switch-knob': '#ffffff',
+    },
+    'slate': {
+        'hero': '#4c5a66',
+        'hero-hover': '#3e4b56',
+        'hero-active': '#333e48',
+        'accent': '#4c5a66',
+        'accent-hover': '#3e4b56',
+        'accent-active': '#333e48',
+        'accent-fill': '#4c5a66',
+        'accent-fill-hover': '#3e4b56',
+        'accent-fill-active': '#333e48',
+        'accent-soft': '#e1dcce',
+        'accent-soft-hover': '#d8d2c1',
+        'accent-border': 'rgba(76,90,102,.42)',
+        'text-on-accent': '#faf7ef',
+        'text-on-hero': '#faf7ef',
+        'focus-ring': 'rgba(76,90,102,.42)',
+        'focus-halo': 'rgba(76,90,102,.18)',
     },
 }
 

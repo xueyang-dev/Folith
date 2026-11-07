@@ -194,6 +194,18 @@ def test_deep_analysis_is_cached_and_verbatim_only(monkeypatch, bench):  # noqa:
     view, app = bench
     from folith.qt import adapter
 
+    # 合成的三段短译文会触发确定性交付门禁（「译文疑似遗漏或被截断」），
+    # 而「进一步审视」会丢弃与 QA 发现重叠的模型决定。这个用例验证的是分析
+    # 解析与缓存，所以清掉门禁发现项，并阻止视图刷新再次把它们写回去。
+    def _strip_gate_findings(latest):
+        latest["findings"] = []
+        latest["delivery_validation"] = {}
+        latest["delivery_status"] = "draft"
+
+    adapter.core.mutate_job_state(view.job_id, _strip_gate_findings)
+    view._state["findings"] = []
+    monkeypatch.setattr(adapter, "delivery_preview", lambda *_a, **_k: {})
+
     state = adapter.load_state(view.job_id)
     source = state["pairs"][1]["source"]
     target = state["pairs"][1]["target"]
