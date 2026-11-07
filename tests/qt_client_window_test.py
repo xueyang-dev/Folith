@@ -4342,6 +4342,13 @@ def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     job_id = _seed_job_for_keyboard(adapter, core, tmp, "sidebar-motion.docx", ["甲。", "乙。"])
     window.show_home()
     _pump(app, 0.5)
+    # 前面用例可能已经把侧栏收起来了：那样 240 → 0 的过渡就没有位移，动画会被
+    # 直接跳过（CI 上 setter 只被调用一次）。这里先把侧栏摆回展开态，让过渡必然发生。
+    from folith.qt import views as views_module
+
+    window.sidebar_clip.setFixedWidth(views_module.HomeView.SIDEBAR_WIDTH)
+    window.sidebar_clip.show()
+    _pump(app, 0.1)
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
     window._motion._last.clear()  # not a "rapid repeat" of the first navigation
     widths: list[int] = []
