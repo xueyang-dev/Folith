@@ -1926,38 +1926,20 @@ def _recheck_delivery_invariants_for_segments(state, indexes, *, actor="user"):
     """Refresh deterministic target blockers after a working-text edit.
 
     A target invariant describes the text that existed when it was recorded.
-    When a user edits that target, a resolved old invariant must not continue
-    to block delivery; if the same problem remains, the existing finding stays
-    open and the current validation report remains authoritative.
+    The current validation report is the only authority: every persisted
+    ``delivery_invariant`` finding the report no longer names is resolved (with
+    an audit record), while findings the report still names stay open.  The
+    reconciliation is intentionally whole-document: an edit to one segment can
+    also fix — or stale — a finding recorded on another segment, and the old
+    per-index scope left those stale rows blocking delivery forever.
+
+    ``indexes`` is kept for call-site compatibility (it documents which edit
+    triggered the pass); the report decides what is still real.
     """
     from folith import delivery as _delivery
 
-    indexes = {int(index) for index in indexes}
     report = _c.validate_delivery_translation_state(state)
-    active = {
-        (issue.get("segment_index"), issue.get("code"))
-        for issue in report.get("issues") or []
-    }
-    for finding in state.setdefault("findings", []):
-        if not isinstance(finding, dict) \
-                or finding.get("type") != "delivery_invariant" \
-                or finding.get("segment_index") not in indexes \
-                or finding.get("resolved"):
-            continue
-        key = (finding.get("segment_index"), finding.get("invariant_code"))
-        if key in active:
-            continue
-        finding["resolved"] = True
-        finding["resolution"] = {
-            "action": "target_rechecked",
-            "note": "CURRENT_TRANSLATION 编辑后重新通过目标文本门禁",
-            "timestamp": _finalization.now_iso(),
-            "actor": actor,
-        }
-        _delivery.add_human_action(
-            state, _delivery.finding_id(finding), "target_rechecked",
-            "CURRENT_TRANSLATION 编辑后重新通过目标文本门禁", actor)
-    _c._record_delivery_validation_findings(state, report)
+    _c._record_delivery_validation_findings(state, report, actor=actor)
     state["delivery_status"] = _delivery.compute_delivery_status(state)
     return report
 

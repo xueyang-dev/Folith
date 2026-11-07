@@ -329,3 +329,60 @@ def test_new_mti_explanation_is_translated_in_every_qt_catalog():
                 assert data[key] == key
             else:
                 assert data[key] != key, f"{code}: MTI 词条没有翻译：{key!r}"
+
+
+# ---------------------------------------------------------------------------
+# 交付页的确定性阻断文案（task-6）：整句只过一次 tr_dynamic
+# ---------------------------------------------------------------------------
+
+#: `folith/qt/adapter.py::_blocking_finding_messages` 拼出来的整句形状。
+#: 交付页对整句只调用一次 tr_dynamic，所以 summary / reason 必须由**整句模板**
+#: 覆盖，而整句模板要排在泛化模板「第 {v0} 段：{v1}」之前——目录顺序就是模板
+#: 优先级，否则只有段号会被翻译、后面的中文原样留下（德语验收截图里的样子）。
+_DELIVERY_BLOCKING_LINE = (
+    "第 3507 段：译文疑似遗漏或被截断（疑似漏译/截断：原文 58 字符/3 句，"
+    "译文仅 19 字符/1 句）")
+
+_DELIVERY_BLOCKING_TEMPLATE = (
+    "第 {v0} 段：译文疑似遗漏或被截断（疑似漏译/截断：原文 {v1} 字符/{v2} 句，"
+    "译文仅 {v3} 字符/{v4} 句）")
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in str(text))
+
+
+def test_delivery_blocking_line_is_fully_translated_in_every_catalog():
+    for code, _label in i18n.available_languages():
+        i18n.set_language(code)
+        keys = list(json.loads(i18n.catalog_path("qt", code).read_text(encoding="utf-8")))
+        assert _DELIVERY_BLOCKING_TEMPLATE in keys, f"{code}: 缺整句模板"
+        assert keys.index(_DELIVERY_BLOCKING_TEMPLATE) < keys.index("第 {v0} 段：{v1}"), \
+            f"{code}: 整句模板被泛化模板抢先命中"
+        rendered = i18n.tr_dynamic(_DELIVERY_BLOCKING_LINE)
+        # 段号与每个数字都原样保留
+        for number in ("3507", "58", "3", "19", "1"):
+            assert number in rendered, (code, rendered)
+        if code == "zh-CN":
+            assert rendered == _DELIVERY_BLOCKING_LINE
+        else:
+            assert rendered != _DELIVERY_BLOCKING_LINE
+            assert not _has_cjk(rendered), f"{code}: 阻断行仍是中文：{rendered}"
+
+
+def test_delivery_blocking_family_keys_exist_and_stay_untranslated_free_text():
+    """同族阻断文案（空译 / 占位符丢失 / 原文质量门）也有键；模型文本原样返回。"""
+    keys = (
+        "译文为空",
+        "原文片段未通过翻译准入门",
+        "译文遗漏必须保留的{v0}「{v1}」",
+        "正文段落译文不能为空",
+        "双语 pairs 数量与源文段落数量不一致，不能生成完整交付物",
+    )
+    for code, _label in i18n.available_languages():
+        catalog = json.loads(i18n.catalog_path("qt", code).read_text(encoding="utf-8"))
+        for key in keys:
+            assert key in catalog, f"{code}: 缺交付阻断词条 {key!r}"
+        i18n.set_language(code)
+        free_text = "模型自由文本：这一段读起来别扭"
+        assert i18n.tr_dynamic(free_text) == free_text, f"{code}: 模型文本被改写了"

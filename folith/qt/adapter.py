@@ -14,11 +14,15 @@ the window will show, and "nothing happened" is never reported as success.
 """
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import re
 import shutil
+import tempfile
 import time
+import zipfile
 import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,6 +34,7 @@ from folith.desktop import exit_flow
 from folith.desktop import file_actions
 from folith.desktop import legacy_import
 from folith.desktop import paths as desktop_paths
+from folith import snapshots as _snapshots
 from folith import translation_evidence
 from folith import retrospective as _retrospective
 from folith import source_languages as _source_languages
@@ -4347,15 +4352,89 @@ def delete_glossary_entry(job_id: str, entry_id: str) -> str:
 # ================= delivery =================
 
 
+def _blocking_finding_messages(validation: dict) -> list[str]:
+    """Locate the deterministic blockers the gate reports but ``issues`` omits.
+
+    ``validation.blocking_findings`` (deterministic QA: empty/truncated/wrapped
+    targets) is part of the gate verdict but used to be invisible in the preview,
+    so the page said "可以冻结交付" while the gate blocked.  One message per
+    finding, with the segment number; a finding already described by a
+    segment-level issue is not repeated (one problem, one line).
+    """
+    seen = {
+        (issue.get("segment_index"), str(issue.get("message") or ""))
+        for issue in validation.get("issues") or [] if isinstance(issue, dict)
+    }
+    messages: list[str] = []
+    for finding in validation.get("blocking_findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        index = finding.get("segment_index")
+        index = index if isinstance(index, int) and not isinstance(index, bool) else None
+        summary = str(finding.get("summary") or finding.get("reason")
+                      or "译文未通过交付检查")
+        reason = str(finding.get("reason") or "").strip()
+        text = summary if not reason or reason == summary else f"{summary}（{reason}）"
+        if (index, summary) in seen or (index, text) in seen:
+            continue
+        seen.add((index, summary))
+        location = f"第 {index + 1} 段" if index is not None else "全文"
+        messages.append(f"{location}：{text}")
+    return messages
+
+
+def _reconcile_delivery_gate_for_preview(job_id: str, state: dict,
+                                         validation: dict) -> tuple[dict, dict]:
+    """Repair persisted gate findings once, then preview from the same truth.
+
+    ``delivery_preview`` is called on every poll, so the repair is gated by a
+    cheap comparison of the persisted findings against the report already in
+    hand.  Only a real disagreement writes, and the write makes the next
+    comparison agree, so a read-only poll never touches the disk.  The caller's
+    state object is updated in place: the Qt open path hands that same object to
+    the review queue and its own cache, and they must not keep showing findings
+    the delivery page just reconciled.
+    """
+    from folith.engine import delivery_state as _delivery_state
+
+    if state.get("delivery_status") == "final":
+        # Never rewrite review metadata of a frozen task from the preview: the
+        # state identity is what proves the frozen snapshot still matches.
+        return state, validation
+    if not _delivery_state.gate_reconciliation_needed(state, validation):
+        return state, validation
+    try:
+        fresh, report = _delivery_state.reconcile_delivery_gate(job_id)
+    except Exception:  # noqa: BLE001 - a preview must not fail because repair failed
+        # A live worker owns the task, or the state could not be written; the
+        # next open retries.  Never fight it from a read-only preview and never
+        # turn a display call into an error dialog.
+        return state, validation
+    if fresh is None:
+        return state, validation
+    if isinstance(report, dict):
+        _delivery_state.apply_gate_reconciliation(state, report)
+        return state, report
+    return state, validation
+
+
 def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
                      state: dict | None = None) -> dict:
-    """What the delivery gate currently says, without changing anything.
+    """What the delivery gate currently says.
+
+    Read-only apart from one guarded repair: when a persisted gate finding is no
+    longer reported by the current gate report (a stale ``delivery_invariant``),
+    it is resolved once — with an audit record — so the label, the issue list and
+    the button all read from the same verdict.  The open/preview path never adds
+    current blockers and never reopens resolved ones (that stays with explicit
+    delivery/review actions), and a poll that finds nothing stale never writes.
 
     ``state``: the caller's already-loaded state.  Reloading means parsing and
     deep-copying the whole task state again (tens of MB for a book).
     """
     state = state if state is not None else load_state(job_id)
     validation = core.validate_delivery_translation_state(state)
+    state, validation = _reconcile_delivery_gate_for_preview(job_id, state, validation)
     snapshot = core.delivery_snapshot_status(job_id, state)
     configured = core.normalize_delivery_config(
         state.get("delivery_config"),
@@ -4420,14 +4499,27 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
 
         count = len(legacy_blocking)
         review_issues.append(i18n.tr_n("必须处理的问题 {v0} 个", count, v0=count))
+    # 交付页正文、顶部和按钮必须是同一判据（issue 2）：门禁阻断时绝不承诺
+    # "可以冻结交付"。这里只覆盖会自相矛盾的那个标签；"待审校"等已经如实的
+    # 标签保持原样。首页用 core.task_status_label 的同一判据（见 delivery_state）。
+    status_label = core.task_status_label(state, job_id)
+    if validation.get("blocking") and status_label == "可以冻结交付":
+        status_label = "暂不满足交付条件"
     preview = {
         "can_accept_risk": can_accept_risk,
         "blocking_count": blocking_count,
-        "status_label": core.task_status_label(state, job_id),
+        "status_label": status_label,
         "delivery_status": state.get("delivery_status") or "draft",
         "validation": validation,
         "blocking": bool(validation.get("blocking")),
-        "issues": list(validation.get("issues") or []) + review_issues,
+        # ``validation["issues"]`` are engine dicts (code/message/severity); the
+        # page renders this list as text, so hand it the human-readable message.
+        # Leaving the dicts in made a document-level problem (pair count, missing
+        # source pages) render as a Python literal instead of a sentence.
+        "issues": ([str(item.get("message") or item) if isinstance(item, dict) else str(item)
+                    for item in validation.get("issues") or []]
+                   + _blocking_finding_messages(validation)
+                   + review_issues),
         "snapshot": snapshot,
         "asset_names": names,
         "review_gate": {
@@ -4744,6 +4836,224 @@ def open_with_default_app(path: str | os.PathLike[str]) -> dict:
     result = file_actions.open_with_default_app(path)
     return {"ok": bool(getattr(result, "ok", False)),
             "detail": str(getattr(result, "detail", "") or "")}
+
+
+# ================= 冻结交付的文件动作（ZIP / 打开目录 / 另存为 / 文件信息） =================
+#
+# 这一组操作作用在**不可修改**的冻结快照上：读快照、写到用户选定的位置，
+# 但绝不改动快照本身，也绝不把"少文件、内容不符"包装成成功。
+
+
+def _delivery_snapshot_manifest(job_id: str, version: int) -> dict:
+    """冻结快照的清单；版本不存在时直接报错，不返回空值让人误以为成功。"""
+    manifest = None
+    try:
+        wanted = int(version)
+    except (TypeError, ValueError):
+        wanted = None
+    if wanted is not None:
+        manifest = next((item for item in core.list_delivery_snapshots(job_id)
+                         if item.get("snapshot_version") == wanted), None)
+    if manifest is None:
+        raise AdapterError(f"找不到 v{version} 的冻结交付")
+    return manifest
+
+
+def _delivery_asset_record(manifest: dict, name: str) -> dict:
+    record = next((item for item in manifest.get("assets") or []
+                   if item.get("name") == str(name)), None)
+    if record is None:
+        raise AdapterError(f"交付快照里没有这个文件：{name}")
+    return record
+
+
+def _write_bytes_atomically(target: Path, data: bytes) -> None:
+    """先写同目录临时文件再 ``os.replace``：中途失败不会留下半截文件。"""
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handle_fd, temp_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".part", dir=str(target.parent))
+    except OSError as exc:
+        raise AdapterError(f"无法写入 {target.name}：{exc}") from exc
+    try:
+        with os.fdopen(handle_fd, "wb") as handle:
+            handle.write(data)
+        os.replace(temp_name, target)
+    except OSError as exc:
+        raise AdapterError(f"无法写入 {target.name}：{exc}") from exc
+    finally:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+
+
+def delivery_archive_name(job_id: str, version: int) -> str:
+    """冻结交付的 ZIP 默认文件名：``<原文件名>_delivery_v<版本>.zip``。
+
+    快照里的文件都叫 ``bilingual.docx``、``translation.pdf``……几个任务存进同一个
+    文件夹就会重名，ZIP 也一样；所以沿用 ``delivery_file_name`` 的清洗规则，只保留
+    原文件名里可读、且两个系统都接受的部分。没有原文件名时退回 ``delivery_v<版本>.zip``。
+    """
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    source = PurePosixPath(str(_source_name(job_id) or "").replace("\\", "/"))
+    stem = _UNSAFE_NAME.sub("_", source.stem).strip(" ._")
+    if not stem:
+        return f"delivery_v{wanted}.zip"
+    return f"{stem}_delivery_v{wanted}.zip"
+
+
+def delivery_archive_bytes(job_id: str, version: int) -> bytes:
+    """把冻结交付打成一个 ZIP（与 ``snapshots.archive`` 相同的布局）。
+
+    返回前逐个核对清单里的每个文件：缺文件、内容与 sha256 不符都明确报错——
+    绝不返回一个"看起来完整"、实际少文件或内容被改过的包。
+    """
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    assets = core.delivery_snapshot_assets(job_id, wanted)
+    missing: list[str] = []
+    corrupt: list[str] = []
+    payload: list[tuple[str, bytes]] = []
+    for item in manifest.get("assets") or []:
+        name = str(item.get("name") or "")
+        if not name:
+            continue
+        data = assets.get(name)
+        if data is None:
+            # load_asset 对"文件不在"和"内容不符"都返回 None，用磁盘实况区分。
+            if Path(core.delivery_snapshot_asset_path(job_id, wanted, name)).is_file():
+                corrupt.append(name)
+            else:
+                missing.append(name)
+            continue
+        if item.get("sha256") != hashlib.sha256(data).hexdigest():
+            corrupt.append(name)
+            continue
+        payload.append((name, data))
+    if missing:
+        raise AdapterError("交付快照缺少文件：" + "、".join(missing))
+    if corrupt:
+        raise AdapterError("交付快照中的文件校验失败：" + "、".join(corrupt))
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for name, data in payload:
+            bundle.writestr(name, data)
+        bundle.writestr(_snapshots.MANIFEST_FILE, json.dumps(
+            manifest, ensure_ascii=False, indent=2) + "\n")
+    return output.getvalue()
+
+
+def save_delivery_archive(job_id: str, version: int,
+                          destination: str | os.PathLike[str]) -> Path:
+    """把冻结交付 ZIP 写到保存面板给出的文件路径。
+
+    先完整校验、再落盘：校验失败时目标位置不会出现任何文件。
+    """
+    data = delivery_archive_bytes(job_id, version)
+    target = Path(destination).expanduser()
+    if target.is_dir():
+        raise AdapterError(f"目标位置是文件夹，不是文件：{target}")
+    _write_bytes_atomically(target, data)
+    return target
+
+
+def delivery_folder_path(job_id: str, version: int) -> Path:
+    """冻结交付在磁盘上的真实目录（不是导出目录）。"""
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    # 空文件名交给 asset_path，得到的就是版本目录本身：目录布局只由 snapshots 决定。
+    folder = Path(core.delivery_snapshot_asset_path(job_id, wanted, ""))
+    if not folder.is_dir():
+        raise AdapterError(f"交付快照 v{wanted} 的文件夹不存在，请重新冻结交付。")
+    return folder
+
+
+def open_delivery_folder(job_id: str, version: int, *, opener=None) -> dict:
+    """在系统文件管理器里打开冻结交付目录。
+
+    返回 ``{"ok", "path", "detail"}``；失败时 ``ok=False`` 并给出原因，不抛异常。
+    ``opener`` 供测试注入，默认走 ``file_actions.open_directory``——测试因此永远
+    不会真的打开 Finder/Explorer。
+    """
+    try:
+        folder = delivery_folder_path(job_id, version)
+    except AdapterError as exc:
+        return {"ok": False, "path": "", "detail": str(exc)}
+    action = opener if opener is not None else file_actions.open_directory
+    try:
+        result = action(folder)
+    except Exception as exc:  # noqa: BLE001 - 打开文件夹失败不能让界面崩掉
+        return {"ok": False, "path": str(folder),
+                "detail": f"{type(exc).__name__}: {exc}"}
+    return {"ok": bool(getattr(result, "ok", False)), "path": str(folder),
+            "detail": str(getattr(result, "detail", "") or "")}
+
+
+def delivery_default_asset_name(job_id: str, version: int, name: str) -> str:
+    """单个文件"另存为"时的默认文件名：``<原文件名>_<快照文件名>``。"""
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    record = _delivery_asset_record(manifest, name)
+    return delivery_file_name(_source_name(job_id), str(record.get("name")))
+
+
+def save_delivery_asset_copy(job_id: str, version: int, name: str,
+                             destination: str | os.PathLike[str], *,
+                             overwrite: bool = False) -> Path:
+    """把快照里的**一个**文件另存到保存面板给出的文件路径。
+
+    写之前先按清单校验字节；默认不覆盖已有文件（``overwrite=True`` 才替换，
+    由界面先确认）。快照本身只读，这里不会改动它。
+    """
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    record = _delivery_asset_record(manifest, name)
+    asset = str(record.get("name"))
+    data = _snapshots.load_asset(core.job_dir(job_id), wanted, asset)
+    if data is None:
+        if Path(core.delivery_snapshot_asset_path(job_id, wanted, asset)).is_file():
+            raise AdapterError(f"交付快照中的文件校验失败：{asset}")
+        raise AdapterError(f"交付快照缺少文件：{asset}")
+    if record.get("sha256") != hashlib.sha256(data).hexdigest():
+        raise AdapterError(f"交付快照中的文件校验失败：{asset}")
+    target = Path(destination).expanduser()
+    if target.is_dir():
+        raise AdapterError(f"目标位置是文件夹，不是文件：{target}")
+    if target.exists() and not overwrite:
+        raise AdapterError(
+            f"目标文件已存在，未覆盖：{target.name}。请确认覆盖或另选位置。")
+    _write_bytes_atomically(target, data)
+    return target
+
+
+def delivery_asset_info(job_id: str, version: int, name: str) -> dict:
+    """一个冻结文件的信息：清单记录（大小 / sha256 / 冻结时间）+ 磁盘实况。"""
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    record = _delivery_asset_record(manifest, name)
+    asset = str(record.get("name"))
+    path = Path(core.delivery_snapshot_asset_path(job_id, wanted, asset))
+    try:
+        stat = path.stat()
+    except OSError:
+        stat = None
+    exists = bool(stat is not None and path.is_file())
+    return {
+        "name": asset,
+        "path": str(path),
+        "exists": exists,
+        "size": int(record.get("size") or 0),
+        "sha256": str(record.get("sha256") or ""),
+        "actual_size": stat.st_size if exists else None,
+        "created_at": str(manifest.get("created_at") or ""),
+        "version": wanted,
+        "source_name": _source_name(job_id),
+        "extension": path.suffix,
+        "modified_at": datetime.fromtimestamp(
+            stat.st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
+            if exists else None,
+    }
 
 
 # ================= deletion =================

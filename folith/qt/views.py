@@ -35,6 +35,7 @@ from . import components
 from . import motion
 from . import icons
 from . import preferences
+from . import delivery_panel
 from .activity_panel import ActivityPanel
 from .cases_panel import CasesPanel
 from .followup_panel import FollowupPanel
@@ -216,141 +217,11 @@ def _fit_lines(text: str, font, width: int, lines: int = 2) -> str:
 
 
 # ================= 交付资产清单 =================
-#: 交付文件分组（顺序即界面顺序）：译文在前，其次是术语、证据与记录。
-#: Web 界面里"交付"是一列带图标、带大小、按用途分组的文件，而不是一串文件名。
-DELIVERY_GROUPS: tuple[tuple[str, str, str], ...] = (
-    ("translation", "译文与对照", "file-text"),
-    ("terms", "术语表", "file-sheet"),
-    ("evidence", "证据与清理", "file-code"),
-    ("record", "交付记录", "file-code"),
-    ("report", "报告", "file-text"),
-    ("image", "图片与预览", "image"),
-    ("other", "其它文件", "file"),
-)
-
-#: 已知交付文件 -> (分组, 图标)。未知文件按后缀取图标并归入"其它文件"。
-DELIVERY_ASSET_KINDS: dict[str, tuple[str, str]] = {
-    "translation.docx": ("translation", "file-text"),
-    "bilingual.docx": ("translation", "file-text"),
-    "translation.pdf": ("translation", "file-text"),
-    "original_layout.pdf": ("translation", "file-text"),
-    "original_format.docx": ("translation", "file-text"),
-    "original_format_report.json": ("record", "file-code"),
-    "original_layout_report.json": ("record", "file-code"),
-    "terms.xlsx": ("terms", "file-sheet"),
-    "segment_evidence.jsonl": ("evidence", "file-code"),
-    "source_cleanup.json": ("evidence", "file-code"),
-    "delivery_manifest.json": ("record", "file-code"),
-}
-
-DELIVERY_SUFFIX_ICONS = {
-    ".docx": "file-text", ".doc": "file-text", ".pdf": "file-text",
-    ".xlsx": "file-sheet", ".xls": "file-sheet", ".csv": "file-sheet",
-    ".json": "file-code", ".jsonl": "file-code", ".xml": "file-code",
-    ".md": "file-text", ".txt": "file-text",
-    ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
-    ".epub": "file-text",
-}
-
-
-def _asset_kind(name: str) -> tuple[str, str]:
-    """交付文件名 -> (分组 key, 图标名)。"""
-    base = str(name or "").split("/")[-1]
-    known = DELIVERY_ASSET_KINDS.get(base)
-    if known is not None:
-        return known
-    lowered = base.lower()
-    for suffix, icon in DELIVERY_SUFFIX_ICONS.items():
-        if lowered.endswith(suffix):
-            return "image" if icon == "image" else "other", icon
-    return "other", "file"
-
-
-def _human_size(size) -> str:
-    """字节数 -> `36.5 KB`。取不到大小就返回 `—`，不猜一个数。"""
-    try:
-        value = float(size)
-    except (TypeError, ValueError):
-        return "—"
-    if value < 0:
-        return "—"
-    if value < 1024:
-        return f"{int(value)} B"
-    for unit, divisor in (("KB", 1024), ("MB", 1024 ** 2), ("GB", 1024 ** 3)):
-        if value < divisor * 1024 or unit == "GB":
-            return f"{value / divisor:.1f} {unit}"
-    return f"{value:.0f} B"
-
-
-def _asset_summary(assets: list[dict]) -> str:
-    total = 0
-    known = 0
-    for asset in assets:
-        size = asset.get("size")
-        if isinstance(size, (int, float)):
-            total += int(size)
-            known += 1
-    text = f"{len(assets)} 个文件"
-    if known:
-        text += f" · {_human_size(total)}"
-    return text
-
-
-def _frozen_at_label(value) -> str:
-    """快照 `created_at`（ISO UTC）-> 本地 `YYYY-MM-DD HH:MM`，取不到就不显示。"""
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    try:
-        from datetime import datetime
-
-        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        if moment.tzinfo is not None:
-            moment = moment.astimezone()
-        return moment.strftime("%Y-%m-%d %H:%M")
-    except (TypeError, ValueError):
-        return text[:16].replace("T", " ")
-
-
-def _asset_rows(latest: dict | None, *, resolve=None) -> list[dict]:
-    """把快照 manifest 变成"分组标题 + 文件行"的展示数据。
-
-    纯函数（路径探测由调用方通过 `resolve` 注入），因此能脱离窗口单测。
-    """
-    assets = [item for item in ((latest or {}).get("assets") or [])
-              if str(item.get("name") or "")]
-    if not assets:
-        return []
-    grouped: dict[str, list[dict]] = {}
-    for asset in assets:
-        group, icon = _asset_kind(str(asset.get("name")))
-        grouped.setdefault(group, []).append({"asset": asset, "icon": icon})
-    rows: list[dict] = []
-    for group, title, _group_icon in DELIVERY_GROUPS:
-        items = grouped.get(group)
-        if not items:
-            continue
-        rows.append({"kind": "header", "title": title,
-                     "meta": _asset_summary([item["asset"] for item in items])})
-        for item in items:
-            asset = item["asset"]
-            name = str(asset.get("name"))
-            missing = False
-            if resolve is not None:
-                try:
-                    path = resolve(name)
-                except Exception:  # noqa: BLE001 - 快照读不到就按缺失显示
-                    path = None
-                missing = not (path and getattr(path, "is_file", lambda: False)())
-            size = asset.get("size")
-            rows.append({
-                "kind": "asset", "title": name, "icon": item["icon"],
-                "size": int(size) if isinstance(size, (int, float)) else None,
-                "missing": missing,
-                "meta": "文件缺失" if missing else _human_size(size),
-                "sha256": str(asset.get("sha256") or ""),
-            })
-    return rows
+# 交付文件的分类、大小换算与时间格式只有一份真值：:mod:`delivery_panel`（内容优先：
+# 译文 / 双语对照 / 术语表 / 技术与追溯附件）。这里保留两个薄别名，旧调用点与既有
+# 用例不必同时改；新代码请直接用 ``delivery_panel`` 里的函数。
+_human_size = delivery_panel.human_size
+_frozen_at_label = delivery_panel.local_stamp
 
 
 def _row_percent(row) -> int | None:
@@ -1300,10 +1171,19 @@ class HomeView(QWidget):
         self._place_badge()
 
     def _place_badge(self) -> None:
+        """把角标放在按钮**末端**的空位里：LTR 靠右，RTL 靠左。
+
+        按钮内容（图标 + 文字）跟着 layoutDirection 镜像，角标也必须镜像：
+        阿语里文字从右边开始，角标仍停在右侧就会压住「المشاريع」。
+        """
         button = self.manage_projects_button
         badge = self.pending_badge
         badge.adjustSize()
-        badge.move(button.width() - badge.width() - 12, (button.height() - badge.height()) // 2)
+        y = (button.height() - badge.height()) // 2
+        if button.layoutDirection() == Qt.LayoutDirection.RightToLeft:
+            badge.move(12, y)
+        else:
+            badge.move(button.width() - badge.width() - 12, y)
 
     def set_current_nav(self, name: str) -> None:
         """点亮当前页对应的侧栏项（``tasks`` / ``projects``）。"""
@@ -2028,7 +1908,8 @@ class HomeView(QWidget):
     def eventFilter(self, watched, event):  # noqa: N802 - Qt 命名
         """表格拿到键盘焦点时给它一个"当前行即选中行"的起点（键盘可达性的前提）。"""
         if watched is getattr(self, "manage_projects_button", None) \
-                and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+                and event.type() in (QEvent.Type.Resize, QEvent.Type.Show,
+                                     QEvent.Type.LayoutDirectionChange):
             self._place_badge()
         if watched is getattr(self, "table", None) and event.type() == QEvent.Type.FocusIn:
             self._select_current_row_for_keyboard()
@@ -2193,7 +2074,20 @@ class ClickableLabel(QLabel):
 
 
 class StatusLineLabel(QLabel):
-    """状态行文字：不省略；每次换字都按完整宽度重排，并把全文放进悬停提示。"""
+    """状态行文字：放不下时以标准省略号（…）收尾，完整文字在悬停提示里。
+
+    这一行以前是横向滚动（MarqueeLine）：1440 宽的顶栏里它只拿到最小宽度，
+    停在开头的文字被直接裁掉，末尾既没有省略号也看不出「还有下文」，读起来像
+    故障。改成标准省略后，任何宽度下都看得出文字被省略了；``text()`` 仍是完整
+    文字（调用方与测试读的是它），完整内容同时在提示与运行记录里。
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setWordWrap(False)
+        # 宽度由布局给（Ignored 让 sizeHint 不参与最小宽度），高度固定一行。
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setToolTip(text)
 
     def fullText(self) -> str:  # noqa: N802 - 与 ElideLabel 同名，调用方不用改
         return self.text()
@@ -2201,97 +2095,25 @@ class StatusLineLabel(QLabel):
     def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
         super().setText(text)
         self.setToolTip(text)
-        self.adjustSize()
-        view = self.parentWidget().parentWidget() if self.parentWidget() else None
-        if isinstance(view, MarqueeLine):
-            view.refit()
+        self.update()
 
+    def elided_text(self) -> str:
+        """当前宽度下真正画出来的那一行（测试与取证脚本读它）。"""
+        metrics = self.fontMetrics()
+        width = self.contentsRect().width()
+        full = self.text()
+        if width <= 0 or metrics.horizontalAdvance(full) <= width:
+            return full
+        return metrics.elidedText(full, Qt.TextElideMode.ElideRight, width)
 
-class MarqueeLine(QScrollArea):
-    """一行不省略的状态文字：放不下时可横向滚动，悬停时慢慢自动滚，移开回到开头。
-
-    ``label`` 是真正显示文字的 QLabel（样式、``tone`` 属性都在它身上）。文字完整保留
-    在悬停提示里；触控板 / Shift+滚轮横向滚动。
-    """
-
-    #: 自动滚动：每 ``TICK_MS`` 毫秒走 ``STEP_PX`` 像素；到头后停一会儿再回到开头重来。
-    TICK_MS = 30
-    STEP_PX = 1
-    HOLD_TICKS = 40
-
-    def __init__(self, label: QLabel, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.label = label
-        label.setWordWrap(False)
-        label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        self.setWidget(label)
-        self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setWidgetResizable(False)
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.viewport().setAutoFillBackground(False)
-        self.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        self._timer = QTimer(self)
-        self._timer.setInterval(self.TICK_MS)
-        self._timer.timeout.connect(self._advance)
-        self._hold = 0
-        self.set_text("")
-
-    def set_text(self, text: str) -> None:
-        self.label.setText(text)
-        self.setToolTip(text)
-
-    def refit(self) -> None:
-        self.setFixedHeight(self.label.height() + 2)
-        if not self.overflows():
-            self.horizontalScrollBar().setValue(0)
-
-    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        super().showEvent(event)
-        self.label.adjustSize()  # 样式 / 字体生效之后再量一次
-        self.refit()
-
-    def overflows(self) -> bool:
-        return self.label.width() > self.viewport().width()
-
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt naming
-        return QSize(0, self.label.height() + 2)
-
-    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        delta = event.angleDelta()
-        step = delta.x() or delta.y()
-        if self.overflows() and step:
-            bar = self.horizontalScrollBar()
-            bar.setValue(bar.value() - step)
-            self._timer.stop()  # 用户自己在滚，自动滚动让位
-            event.accept()
-            return
-        super().wheelEvent(event)
-
-    def enterEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        super().enterEvent(event)
-        self._hold = self.HOLD_TICKS // 2
-        if self.overflows():
-            self._timer.start()
-
-    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        super().leaveEvent(event)
-        self._timer.stop()
-        self.horizontalScrollBar().setValue(0)
-
-    def _advance(self) -> None:
-        bar = self.horizontalScrollBar()
-        if self._hold > 0:
-            self._hold -= 1
-            return
-        if bar.value() >= bar.maximum():
-            bar.setValue(0)
-            self._hold = self.HOLD_TICKS
-            return
-        bar.setValue(bar.value() + self.STEP_PX)
-        if bar.value() >= bar.maximum():
-            self._hold = self.HOLD_TICKS
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        # QLabel 只会把尾巴硬裁掉；这里按最终宽度省略，并沿用 QSS 给的颜色。
+        painter = QPainter(self)
+        self.style().drawItemText(
+            painter, self.contentsRect(),
+            int(self.alignment() | Qt.AlignmentFlag.AlignVCenter),
+            self.palette(), self.isEnabled(), self.elided_text(),
+            self.foregroundRole())
 
 
 class RunStatusGroup(QFrame):
@@ -2315,7 +2137,8 @@ class RunStatusGroup(QFrame):
         self.percent.setObjectName("runStatusPercent")
         self.line = StatusLineLabel("")
         self.line.setObjectName("runStatusLine")
-        self.line_view = MarqueeLine(self.line)
+        # 兼容旧调用点：状态行本身就是那个「视图」，不再套一层滚动容器。
+        self.line_view = self.line
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(theme_module.SPACE["xs"] + 2)
@@ -2327,10 +2150,9 @@ class RunStatusGroup(QFrame):
         layout.setContentsMargins(*self.PADDING)
         layout.setSpacing(3)
         layout.addLayout(top)
-        layout.addWidget(self.line_view)
-        # The status line scrolls on its own, so only the progress row needs a
-        # hard minimum. Letting the group shrink avoids imposing 256 px on the
-        # unified toolbar at narrow window widths.
+        layout.addWidget(self.line)
+        # 状态行自己会省略，所以只有进度那一行需要硬下限。让整组可以缩到 144，
+        # 窄窗口下才不至于把统一工具栏撑宽。
         self.setMinimumWidth(144)
         self.setMaximumWidth(256)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -2346,7 +2168,7 @@ class RunStatusGroup(QFrame):
                              else f"{int(round(share * 100))}%")
         self.line.setProperty("tone", line_tone or tone)
         style_module.repolish(self.line)
-        self.line_view.set_text(line)
+        self.line.setText(line)
         self.setAccessibleDescription(line)
 
     #: 展开运行记录时「凸」字上半截相对状态组四边的内缩（留给投影）。
@@ -2556,6 +2378,11 @@ class WorkbenchView(QWidget):
     supplementRequested = Signal(str)          # 补生成：交付开关键（如 deliver_epub）
     exportRequested = Signal()
     saveSnapshotRequested = Signal(int)
+    # 交付工作区的文件级/整包动作：版本号随信号一起走，窗口层不必再猜"当前是哪个版本"。
+    downloadDeliveryZipRequested = Signal(int)
+    openDeliveryFolderRequested = Signal(int)
+    saveDeliveryAssetRequested = Signal(str, int)      # 资产名, 版本
+    showDeliveryAssetInfoRequested = Signal(str, int)  # 资产名, 版本
     refreshRequested = Signal()
     termAddRequested = Signal(str, str)     # 从选中文字加入术语库：原文, 译文
     termEditRequested = Signal(object)      # 从术语建议卡编辑这条术语
@@ -2575,6 +2402,7 @@ class WorkbenchView(QWidget):
     editSubmitted = Signal(int)
     revealRequested = Signal(str)
     openAssetRequested = Signal(str)
+    copyPathRequested = Signal(str)
     setupStartRequested = Signal(dict)      # 译前准备的「开始翻译」载荷
     setupCreateProjectRequested = Signal()  # 译前准备里点「新建项目…」
     setupScopeRequested = Signal()          # 译前准备里的「翻译范围…」（#28）
@@ -2720,7 +2548,11 @@ class WorkbenchView(QWidget):
             lambda: self.reviewSelectedRequested.emit(self.selected_indexes()))
 
         # 推荐的下一步：随阶段变化（重试失败的审校 / 处理问题 / 冻结并交付）。
-        self.stage_action_button = _icon_button(QPushButton(""), "arrow-right", "text-on-accent")
+        # 用 ElideButton：文案带数字（「继续处理 1 个必须处理的问题」），长语言里
+        # 会比 240px 上限更宽；普通 QPushButton 只会把两头裁掉，ElideButton 在最终
+        # 宽度下省略成 "…"，完整文字留在提示里。
+        self.stage_action_button = _icon_button(style_module.ElideButton(""), "arrow-right",
+                                                "text-on-accent")
         style_module.set_button(self.stage_action_button, "primary")
         # F1：这是顶栏里最宽的按钮，文案带数字（「继续处理 1 个必须处理的问题」），
         # 它的 minimumSizeHint 直接决定工作台——进而窗口——的最小宽度，会把首页
@@ -2805,7 +2637,11 @@ class WorkbenchView(QWidget):
         header_layout.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(identity_box, 1)
         header_layout.addWidget(self.stage_bar, 2)
-        header_layout.addWidget(self.run_status, 0, Qt.AlignmentFlag.AlignVCenter)
+        # 状态组带一个 stretch：顶栏宽度不够时 Qt 先压缩没有 stretch 的项，之前
+        # 它会被一路压到最小宽度 144——"Noch 9 offene Probleme" 只剩一截。给它一份
+        # 分配权重后，它与步骤条一起承担压缩，1440 宽下能拿到自己需要的宽度；
+        # 真放不下时由 StatusLineLabel 用省略号收尾。
+        header_layout.addWidget(self.run_status, 1, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.check_tab, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.header_actions_bar, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(self.details_tab, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -3484,133 +3320,40 @@ class WorkbenchView(QWidget):
         translation_layout.addWidget(self.setup_page, 1)
 
         # ---- 交付标签页 ----------------------------------------------------
-        # 交付清单按 Web 界面的表达重做：一行一个文件（类型图标 + 名称 + 大小），
-        # 按用途分组；没有冻结交付、没有排除段落时给明确的空状态，而不是一块空白列表。
-        # 交付状态：圆点 + 同色文字（可以冻结 = 进行中，还有问题 = 需处理，已冻结 = 完成）。
-        self.delivery_label = components.StatusLabel(i18n.tr('交付状态：—'), "idle", wrap=True)
-        # 交付动作的按钮用 ElideButton：外语界面里这些措辞会长出一倍
-        # （"Экспортировать копию текущего перевода…"），普通 QPushButton 放不下时
-        # 会把字裁掉一半。
-        self.deliver_button = style_module.ElideButton(i18n.tr('审校完成后冻结交付'))
-        style_module.set_button(self.deliver_button, "primary")
-        self.deliver_button.clicked.connect(self.deliverRequested.emit)
-        # F3：门禁页最响的应该是「去处理」，不是「接受风险并交付」。有阻断项时
-        # 主位换成这一枚，直接跳到第一处必须处理的段落。
-        self.fix_button = style_module.ElideButton(i18n.tr('去处理必须处理的问题'))
-        style_module.set_button(self.fix_button, "primary")
-        self.fix_button.setIcon(icons.icon("shield-check", 16, "text-on-accent"))
-        self.fix_button.setIconSize(QSize(16, 16))
-        self.fix_button.clicked.connect(self._go_fix_blocking)
-        self.fix_button.setVisible(False)
-        # 交付说明：写进交付快照的批准记录（以前固定写"桌面端人工确认"）。
-        self.delivery_note = QLineEdit()
-        self.delivery_note.setPlaceholderText(i18n.tr('交付说明（可选，例如：已完成人工审校）'))
-        self.risk_button = style_module.ElideButton(i18n.tr('接受风险并交付…'))
-        # F3：绕过门禁是下策，样式从"红色实心按钮"降为普通按钮（对话框仍会拦一次）。
-        style_module.set_button(self.risk_button, "plain")
-        self.risk_button.setToolTip(
-            i18n.tr('仍有必须处理的问题时，写下说明并确认后继续交付；问题不会被删除'))
-        self.risk_button.clicked.connect(self.deliverWithRiskRequested.emit)
-        self.risk_button.setVisible(False)
-        self.export_button = style_module.ElideButton(i18n.tr('导出当前译文副本…'))
-        self.export_button.setIcon(icons.icon("download", 16))
-        self.export_button.setIconSize(QSize(16, 16))
-        self.export_button.clicked.connect(self.exportRequested.emit)
-        self.save_snapshot_button = style_module.ElideButton(i18n.tr('保存冻结交付文件…'))
-        self.save_snapshot_button.setIcon(icons.icon("save", 16))
-        self.save_snapshot_button.setIconSize(QSize(16, 16))
-        self.save_snapshot_button.clicked.connect(self._save_snapshot)
-        self.open_asset_button = QPushButton(i18n.tr('用默认应用打开'))
-        self.open_asset_button.setIcon(icons.icon("external-link", 16))
-        self.open_asset_button.setIconSize(QSize(16, 16))
-        self.open_asset_button.clicked.connect(self._open_asset)
-        self.reveal_asset_button = QPushButton(i18n.tr('在{v0}中显示', v0=platform_ui.file_manager_name()))
-        self.reveal_asset_button.setIcon(icons.icon("folder", 16))
-        self.reveal_asset_button.setIconSize(QSize(16, 16))
-        self.reveal_asset_button.clicked.connect(self._reveal_asset)
-        self.asset_list = QListWidget()
-        self.asset_list.setObjectName("assetList")
-        self.asset_list.setItemDelegate(style_module.AssetRowDelegate(self.asset_list))
-        self.asset_list.setMouseTracking(True)
-        self.asset_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.asset_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.asset_list.setMinimumHeight(0)
-        self.asset_list.itemDoubleClicked.connect(self._reveal_asset)
-        self.asset_list.currentItemChanged.connect(self._asset_selection_changed)
+        # 交付页按"内容优先"重做：先看拿到哪些成果（译文 / 双语对照 / 术语表），
+        # 格式只是组内的一行；技术证据与清单收在默认折叠的附件里。
+        # 页面上的文件数、总大小、分组统计全部来自冻结快照的 manifest
+        # （`delivery_panel.build_model`），界面不另算一份。
+        self.delivery = delivery_panel.DeliveryWorkspace()
+        panel = self.delivery
+        self.delivery_panel = panel
+        panel.deliverRequested.connect(self.deliverRequested.emit)
+        panel.deliverWithRiskRequested.connect(self.deliverWithRiskRequested.emit)
+        panel.fixBlockingRequested.connect(self._go_fix_blocking)
+        panel.exportCopyRequested.connect(self.exportRequested.emit)
+        panel.savePackageRequested.connect(self._save_snapshot)
+        panel.downloadZipRequested.connect(self._download_snapshot)
+        panel.openFolderRequested.connect(self._open_snapshot_folder)
+        panel.openFileRequested.connect(self._open_asset)
+        panel.revealFileRequested.connect(self._reveal_asset)
+        panel.saveFileCopyRequested.connect(self._save_asset_copy)
+        panel.copyFilePathRequested.connect(self._copy_asset_path)
+        panel.fileInfoRequested.connect(self._show_asset_info)
 
-        self.asset_header_label = style_module.SectionLabel(i18n.tr('冻结交付文件'))
-        self.asset_meta = QLabel("")
-        self.asset_meta.setObjectName("assetMeta")
-        asset_header = QHBoxLayout()
-        asset_header.setSpacing(theme_module.SPACE["sm"])
-        asset_header.addWidget(self.asset_header_label)
-        asset_header.addStretch(1)
-        asset_header.addWidget(self.asset_meta)
-
-        self.asset_notice = style_module.NoticeStrip("", tone="warn")
-        self.asset_notice.setVisible(False)
-        self.asset_empty = style_module.EmptyState(
-            icon="package", title=i18n.tr('尚未生成冻结交付'),
-            hint=i18n.tr('完成翻译与审校后点「冻结交付」，这里会列出交付包里的每个文件、大小与用途；冻结后的版本不可修改。'))
-        self.asset_empty.setVisible(False)
-
-        asset_footer = QHBoxLayout()
-        asset_footer.setSpacing(theme_module.SPACE["sm"])
-        self.asset_hint = QLabel(i18n.tr('双击文件可在{v0}中显示', v0=platform_ui.file_manager_name()))
-        self.asset_hint.setObjectName("hint")
-        asset_footer.addWidget(self.asset_hint)
-        asset_footer.addStretch(1)
-        asset_footer.addWidget(self.open_asset_button)
-        asset_footer.addWidget(self.reveal_asset_button)
-
-        # 四个动作按钮放一行：中文放得下，外语放不下就折行（每个按钮保留自己的
-        # 宽度，不铺满），按钮文字不会被裁掉半句。
-        delivery_actions = components.FlowRow(spacing=8, fill=False)
-        delivery_actions.addWidget(self.fix_button)
-        delivery_actions.addWidget(self.deliver_button)
-        delivery_actions.addWidget(self.risk_button)
-        delivery_actions.addWidget(self.export_button)
-        delivery_actions.addWidget(self.save_snapshot_button)
-
-        delivery_card = Card()
-        delivery_layout = QVBoxLayout(delivery_card)
-        delivery_layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
-                                           theme_module.SPACE["xl"], theme_module.SPACE["lg"])
-        delivery_layout.setSpacing(theme_module.SPACE["md"])
-        # F11：走完一本书，交付页不该只是一张表单。冻结之后，成品回到画面里——
-        # 左边是这本书的封面，右边是版本与文件名，与下面的文件清单并列。
-        self.delivery_cover = components.DocThumb(width=88, height=116)
-        self.delivery_cover.setVisible(False)
-        self.delivery_product = QLabel("")
-        self.delivery_product.setObjectName("cardTitle")
-        self.delivery_product.setWordWrap(True)
-        self.delivery_product_detail = QLabel("")
-        self.delivery_product_detail.setObjectName("hint")
-        self.delivery_product_detail.setWordWrap(True)
-        product_column = QVBoxLayout()
-        product_column.setSpacing(2)
-        product_column.addWidget(self.delivery_product)
-        product_column.addWidget(self.delivery_product_detail)
-        product_column.addStretch(1)
-        self.delivery_product_row = QWidget()
-        product_row = QHBoxLayout(self.delivery_product_row)
-        product_row.setContentsMargins(0, 0, 0, 0)
-        product_row.setSpacing(theme_module.SPACE["md"])
-        # 成品居中：封面 + 版本/文件名成一组，两侧留白把它放到画面中间（F11）。
-        product_row.addStretch(1)
-        product_row.addWidget(self.delivery_cover, 0, Qt.AlignmentFlag.AlignVCenter)
-        product_row.addLayout(product_column)
-        product_row.addStretch(1)
-        self.delivery_product_row.setVisible(False)
-        delivery_layout.addWidget(self.delivery_product_row)
-        delivery_layout.addWidget(self.delivery_label)
-        delivery_layout.addWidget(self.delivery_note)
-        delivery_layout.addLayout(delivery_actions)
-        delivery_layout.addLayout(asset_header)
-        delivery_layout.addWidget(self.asset_notice)
-        delivery_layout.addWidget(self.asset_list)
-        delivery_layout.addWidget(self.asset_empty)
-        delivery_layout.addLayout(asset_footer)
+        # 旧调用点（窗口信号、既有用例）继续可用：这些控件现在由交付工作区持有。
+        self.delivery_label = panel.status_label
+        self.deliver_button = panel.deliver_button
+        self.fix_button = panel.fix_button
+        self.risk_button = panel.risk_button
+        self.export_button = panel.export_button
+        self.save_snapshot_button = panel.save_package_button
+        self.delivery_note = panel.note_edit
+        self.delivery_cover = panel.cover
+        self.delivery_product = panel.title_label
+        self.delivery_product_detail = panel.filename_label
+        self.delivery_product_row = panel.header.identity_column
+        self.asset_notice = panel.notice
+        self.asset_empty = panel.empty_state
 
         # 补生成：翻译完成后还能从已保存的译文生成、但当初没选的文件（例如电子书）。
         # 不用重新翻译；点一下就走同一道交付门禁，冻结一个包含它的新版本。
@@ -3632,6 +3375,9 @@ class WorkbenchView(QWidget):
         supplement_layout.addLayout(self.supplement_grid)
         self.supplement_buttons: dict[str, QPushButton] = {}
         self._supplement_keys: tuple = ()
+        # 补生成是次要入口：用低权重的浅面，不与四个交付成果卡抢视线。
+        self.supplement_card.set_elevation("flat")
+        self.supplement_card.set_fill("bg-surface-subtle")
         self.supplement_card.setVisible(False)
 
         # 已排除段落：它们已不在工作台里，恢复必须从这里进行。
@@ -3667,13 +3413,12 @@ class WorkbenchView(QWidget):
         # 而不是把最后一组文件挤成半行。
         delivery_content = QWidget()
         delivery_content.setObjectName("pageCanvas")
-        # Golden Gate：交付是一张居中的"检查单"，内容列最宽 820px，两侧留白。
         delivery_column = QWidget()
-        delivery_column.setMaximumWidth(820)
+        delivery_column.setMaximumWidth(panel.MAX_WIDTH)
         delivery_content_layout = QVBoxLayout(delivery_column)
         delivery_content_layout.setContentsMargins(0, theme_module.SPACE["lg"], 0, 0)
         delivery_content_layout.setSpacing(theme_module.SPACE["md"])
-        delivery_content_layout.addWidget(delivery_card)
+        delivery_content_layout.addWidget(panel)
         delivery_content_layout.addWidget(self.supplement_card)
         delivery_content_layout.addWidget(excluded_card)
         delivery_content_layout.addStretch(1)
@@ -3693,8 +3438,6 @@ class WorkbenchView(QWidget):
         delivery_page_layout = QVBoxLayout(delivery_page)
         delivery_page_layout.setContentsMargins(0, 0, 0, 0)
         delivery_page_layout.addWidget(delivery_scroll)
-        # 还没有清单时"打开/显示"就该是灰的，而不是点了没反应。
-        self._asset_selection_changed()
 
         # 页面容器：沿用 QTabWidget（页面增删、可见性、`setCurrentWidget` 都现成），
         # 但它自己的标签栏不显示——导航由头部的阶段步骤条承担（见 `show_page`）。
@@ -6256,61 +5999,75 @@ class WorkbenchView(QWidget):
             delivery_tone = "active"
         else:
             delivery_tone = "idle"
-        # 译文里的说明以分隔符开头（原来接在状态后面）；单独成行时去掉它。
-        self.delivery_label.set_status(status, delivery_tone, detail.strip().lstrip("；;؛、 ").strip())
         # F2/F3：阻断项只数一次（与页头、审校步骤条同一个数），门禁页的主位给「去处理」。
         blocking = self.blocking_items()
-        already_frozen = bool((preview.get("snapshot") or {}).get("current"))
-        show_fix = bool(blocking) and not already_frozen
-        self.fix_button.setVisible(show_fix)
-        if blocking:
-            self.fix_button.setText(
-                i18n.tr('去处理 {v0} 个必须处理的问题', v0=len(blocking)))
-        self.deliver_button.setVisible(not show_fix)
-        self.deliver_button.setEnabled(bool(preview.get("can_deliver")))
-        self.risk_button.setVisible(bool(preview.get("can_accept_risk")) or show_fix)
-        self.delivery_note.setEnabled(bool(preview.get("can_deliver")
-                                           or preview.get("can_accept_risk")))
         snapshot = preview.get("snapshot") or {}
-        # F11：冻结之后把成品放回画面中央——左边封面，右边版本与文件名。
-        # `current` 为假时也要看"有没有冻结版本"：刷新被节流或工作版本后来偏离时，
-        # 成品仍然存在，不能因此把封面收起来（审查阻断项 4）。
-        frozen = bool(snapshot.get("current") or snapshot.get("latest") or self._snapshots)
-        self.delivery_product_row.setVisible(frozen)
-        self.delivery_cover.setVisible(frozen)
+        already_frozen = bool(snapshot.get("current"))
+        show_fix = bool(blocking) and not already_frozen
+        fix_label = (i18n.tr('去处理 {v0} 个必须处理的问题', v0=len(blocking))
+                     if blocking else i18n.tr('去处理必须处理的问题'))
+        if snapshot.get("current"):
+            deliver_label = i18n.tr(
+                '已冻结交付 v{v0}',
+                v0=(snapshot.get("latest") or {}).get("snapshot_version"))
+        elif preview.get("can_deliver"):
+            deliver_label = i18n.tr('冻结交付（生成 v{v0}）', v0=len(self._snapshots) + 1)
+        else:
+            deliver_label = i18n.tr('审校完成后冻结交付')
+        # 有没有冻结版本：`current` 为假时也要看 `latest` 与已载入的快照——刷新被节流、
+        # 或工作版本后来偏离时，成品仍然存在，不能因此把封面收起来（审查阻断项 4）。
+        latest = (snapshot.get("latest")
+                  or (self._snapshots[-1] if self._snapshots else None))
+        frozen = bool(snapshot.get("current") or latest)
+        version = (latest or {}).get("snapshot_version")
+        model = delivery_panel.build_model(
+            latest, resolve=self._snapshot_asset_resolver(version),
+            source_name=str(self._state.get("filename") or ""),
+            integrity=bool(snapshot.get("integrity", True)))
+        panel = self.delivery
+        panel.set_model(model)
+        diverged = bool(snapshot.get("diverged")) or (
+            frozen and bool(self._state.get("p2_done"))
+            and not snapshot.get("current"))
+        panel.set_gate(
+            frozen=frozen, diverged=diverged,
+            status=status, tone=delivery_tone,
+            detail=detail.strip().lstrip("；;؛、 ").strip(),
+            deliver_label=deliver_label,
+            can_deliver=bool(preview.get("can_deliver")),
+            show_fix=show_fix, fix_label=fix_label,
+            show_risk=bool(preview.get("can_accept_risk")) or show_fix,
+            note_enabled=bool(preview.get("can_deliver")
+                              or preview.get("can_accept_risk")),
+            show_gate=(not frozen) or diverged)
+        self.export_button.setEnabled(bool(self._state.get("p2_done")))
+        self.save_snapshot_button.setEnabled(latest is not None)
         if frozen:
             filename = str(self._state.get("filename") or "")
-            if getattr(self, "_delivery_cover_name", None) != filename:
-                self._delivery_cover_name = filename
-                self.delivery_cover.set_document(filename, len(self._state.get("pairs") or []))
+            # 键必须带任务标识：两个任务同名文件（都叫 report.docx）时，
+            # 只看文件名会让 B 继续显示 A 的第一页封面。
+            cover_key = (self.job_id, filename)
+            if getattr(self, "_delivery_cover_name", None) != cover_key:
+                self._delivery_cover_name = cover_key
+                self.delivery_cover.set_document(
+                    filename, len(self._state.get("pairs") or []))
                 self._request_delivery_cover(filename)
-            version = (snapshot.get("latest") or {}).get("snapshot_version")
-            self.delivery_product.setText(
-                i18n.tr('已冻结交付 v{v0}', v0=version) if version is not None
-                else i18n.tr('已冻结交付'))
-            self.delivery_product_detail.setText(i18n.tr(
-                '{v0} · 交付包里的文件见下方清单。', v0=filename or i18n.tr('未命名任务')))
-        if snapshot.get("current"):
-            self.deliver_button.setText(
-                i18n.tr('已冻结交付 v{v0}', v0=snapshot.get('latest', {}).get('snapshot_version')))
-        elif preview.get("can_deliver"):
-            self.deliver_button.setText(
-                i18n.tr('冻结交付（生成 v{v0}）', v0=len(self._snapshots) + 1))
-        else:
-            self.deliver_button.setText(i18n.tr('审校完成后冻结交付'))
-        self.export_button.setEnabled(bool(self._state.get("p2_done")))
-        latest = self._snapshots[-1] if self._snapshots else None
-        self.save_snapshot_button.setEnabled(latest is not None)
-        if latest is not None:
-            self.save_snapshot_button.setText(
-                i18n.tr('保存冻结交付文件 v{v0}…', v0=latest.get('snapshot_version')))
-        self.asset_list.clear()
-        self._fill_delivery_assets(snapshot.get("latest"), snapshot=snapshot)
         # 补生成只在"交付已是当前版本"或"现在就能冻结"时出现：其余时候点了也会被
         # 门禁拒绝，不如不给这个入口。
         offer = bool(snapshot.get("current") or preview.get("can_deliver"))
         self._fill_supplements(adapter.supplementable_outputs(self.job_id, self._state)
                                if offer and self.job_id else [])
+
+    def _snapshot_asset_resolver(self, version):
+        """快照资产名 -> 磁盘路径（找不到版本时不猜路径，让行显式报"文件缺失"）。"""
+        if not self.job_id or not version:
+            return None
+
+        def resolve(name: str):
+            return adapter.core.delivery_snapshot_asset_path(
+                self.job_id, version, name)
+
+        return resolve
 
     def _request_delivery_cover(self, filename: str) -> None:
         """交付页的成品封面：用文档真实的第一页（与首页卡片同一个预览缓存）。"""
@@ -6325,7 +6082,7 @@ class WorkbenchView(QWidget):
             self.delivery_cover.set_image(image)
 
     def _delivery_cover_ready(self, job_id: str) -> None:
-        if job_id != self.job_id or self.delivery_cover.isHidden():
+        if job_id != self.job_id or not self.delivery.model().frozen:
             return
         filename = str(self._state.get("filename") or "")
         self._request_delivery_cover(filename)
@@ -6373,95 +6130,19 @@ class WorkbenchView(QWidget):
         self.supplement_card.setVisible(bool(items))
 
     def _fill_delivery_assets(self, latest: dict | None, *, snapshot: dict | None = None) -> None:
-        """渲染交付文件清单：分组 + 图标 + 大小；空/缺失/不完整各自有话可说。"""
+        """把一份 manifest 交给交付工作区（旧调用点与用例继续走这里）。
+
+        清单本身的分组/统计/缺失标记都在 :mod:`delivery_panel` 里，这里只负责把
+        "快照资产名 -> 磁盘路径"的解析注入进去；任务未加载时不给解析器，行上就不会
+        凭空报"缺失"。
+        """
         latest = latest or {}
-        assets = [item for item in (latest.get("assets") or []) if item.get("name")]
-
-        def resolve(name: str):
-            version = latest.get("snapshot_version")
-            if not self.job_id or not version:
-                return None
-            return adapter.core.delivery_snapshot_asset_path(self.job_id, version, name)
-
-        rows = _asset_rows(latest, resolve=resolve if self.job_id else None)
-        self.asset_list.clear()
-        selected_name = self._selected_asset_name()
-        for row in rows:
-            item = QListWidgetItem(str(row.get("title") or ""))
-            item.setData(Qt.ItemDataRole.UserRole, row)
-            if row.get("kind") == "header":
-                item.setFlags(Qt.ItemFlag.NoItemFlags)
-            else:
-                item.setToolTip(
-                    i18n.tr("{v0}\n大小：{v1}", v0=row.get("title"),
-                            v1=_human_size(row.get("size")))
-                    + (i18n.tr("\n校验：sha256 {v0}…",
-                               v0=str(row.get("sha256"))[:16])
-                       if row.get("sha256") else "")
-                    + (i18n.tr("\n文件在磁盘上找不到；快照本身不可修改，"
-                               "请重新冻结交付。")
-                       if row.get("missing") else ""))
-            self.asset_list.addItem(item)
-
         version = latest.get("snapshot_version")
-        frozen_at = _frozen_at_label(latest.get("created_at"))
-        if not rows:
-            self.asset_list.setVisible(False)
-            self.asset_empty.setVisible(True)
-            self.asset_meta.setText("")
-            self.asset_header_label.setText(i18n.tr('冻结交付文件'))
-        else:
-            self.asset_list.setVisible(True)
-            self.asset_empty.setVisible(False)
-            self.asset_header_label.setText(i18n.tr('冻结交付文件'))
-            summary = _asset_summary(
-                [item for item in (latest.get("assets") or []) if item.get("name")])
-            self.asset_meta.setText(
-                " · ".join(part for part in (
-                    f"v{version}" if version else "", summary,
-                    f"冻结于 {frozen_at}" if frozen_at else "") if part))
-            # 行高由委托固定：这里按真实行数给列表一个刚好放得下的高度，
-            # 少量文件时不出现"最后一行只露一半"的内部滚动条；文件很多时
-            # 才退回滚动（上限 14 行）。
-            headers = sum(1 for row in rows if row.get("kind") == "header")
-            files = len(rows) - headers
-            natural = (headers * style_module.AssetRowDelegate.HEADER_HEIGHT
-                       + files * style_module.AssetRowDelegate.ROW_HEIGHT + 2)
-            cap = 14 * style_module.AssetRowDelegate.ROW_HEIGHT
-            self.asset_list.setFixedHeight(min(natural, cap))
-
-        missing = [row for row in rows
-                   if row.get("kind") == "asset" and row.get("missing")]
-        if missing:
-            names = "、".join(str(row.get("title")) for row in missing[:3])
-            more = f" 等 {len(missing)} 个" if len(missing) > 3 else ""
-            self.asset_notice.set_text(
-                i18n.tr('快照里有 {v0} 个文件在磁盘上缺失（{v1}{v2}）：冻结快照不可修改，请重新冻结交付或从备份恢复。', v0=len(missing), v1=names, v2=more))
-        elif (snapshot or {}).get("integrity") is False and rows:
-            self.asset_notice.set_text(i18n.tr('冻结交付完整性校验未通过：请重新冻结交付。'))
-        else:
-            self.asset_notice.set_text("")
-
-        # 选回用户刚才选中的文件（刷新是每秒发生的，选择不能被轮询清掉）。
-        for index in range(self.asset_list.count()):
-            item = self.asset_list.item(index)
-            data = item.data(Qt.ItemDataRole.UserRole) or {}
-            if data.get("kind") == "asset" and item.text() == selected_name:
-                self.asset_list.setCurrentItem(item)
-                break
-        self._asset_selection_changed()
-
-    def _asset_selection_changed(self, *_args) -> None:
-        """选中态决定"打开/在 Finder 中显示"是否可用（点分组标题不算选中文件）。"""
-        selectable = bool(self._selected_asset_name())
-        if selectable == getattr(self, "_asset_selectable", None):
-            return
-        self._asset_selectable = selectable
-        tip = "" if selectable else "先选择一个交付文件"
-        self.open_asset_button.setEnabled(selectable)
-        self.reveal_asset_button.setEnabled(selectable)
-        self.open_asset_button.setToolTip(tip)
-        self.reveal_asset_button.setToolTip(tip)
+        model = delivery_panel.build_model(
+            latest, resolve=self._snapshot_asset_resolver(version),
+            source_name=str(self._state.get("filename") or ""),
+            integrity=bool((snapshot or {}).get("integrity", True)))
+        self.delivery.set_model(model)
 
     def _render_excluded(self) -> None:
         records = adapter.excluded_segments(self.job_id, self._state) \
@@ -7404,50 +7085,67 @@ class WorkbenchView(QWidget):
         self.target_edit.setPlainText(text)
 
     # ---- 交付资产 ----
+    def _current_delivery_version(self) -> int:
+        """当前展示的交付版本：工作区模型优先（它才是用户看到的那个版本）。"""
+        version = self.delivery.version()
+        if version is not None:
+            return int(version)
+        if self._snapshots:
+            return int(self._snapshots[-1].get("snapshot_version") or 1)
+        return 0
+
     def _asset_path(self, name: str) -> str:
-        latest = self._snapshots[-1] if self._snapshots else None
-        if latest is None:
+        """资产名 -> 冻结快照里的真实路径；不属于当前交付就给空串（不猜）。"""
+        version = self._current_delivery_version()
+        if not self.job_id or not version:
             return ""
-        for asset in latest.get("assets") or []:
-            if str(asset.get("name")) == name:
-                return str(adapter.core.delivery_snapshot_asset_path(
-                    self.job_id, latest.get("snapshot_version"), name))
-        return ""
-
-    def _selected_asset_item(self):
-        """当前选中的**文件**行；选中分组标题或没有选择时返回 None。"""
-        item = self.asset_list.currentItem()
-        if item is not None:
-            data = item.data(Qt.ItemDataRole.UserRole) or {}
-            if data.get("kind") == "asset" and data.get("title"):
-                return item
-        if self.asset_list.count():
-            for index in range(self.asset_list.count()):
-                candidate = self.asset_list.item(index)
-                data = candidate.data(Qt.ItemDataRole.UserRole) or {}
-                if data.get("kind") == "asset":
-                    return candidate
-        return None
-
-    def _selected_asset_name(self) -> str:
-        item = self._selected_asset_item()
-        if item is None:
+        row = self.delivery.row_for(name)
+        if row is None:
             return ""
-        data = item.data(Qt.ItemDataRole.UserRole) or {}
-        return str(data.get("title") or item.text())
+        return str(adapter.core.delivery_snapshot_asset_path(self.job_id, version, name))
 
-    def _open_asset(self) -> None:
-        path = self._asset_path(self._selected_asset_name())
+    def _open_asset(self, name: str = "") -> None:
+        path = self._asset_path(name or "")
         if path:
             self.openAssetRequested.emit(path)
 
-    def _reveal_asset(self, *_args) -> None:
-        path = self._asset_path(self._selected_asset_name())
+    def _reveal_asset(self, name: str = "") -> None:
+        path = self._asset_path(name or "")
         if path:
             self.revealRequested.emit(path)
 
-    def _save_snapshot(self) -> None:
-        if not self._snapshots:
+    def _download_snapshot(self) -> None:
+        version = self._current_delivery_version()
+        if not version:
             return
-        self.saveSnapshotRequested.emit(
-            int(self._snapshots[-1].get("snapshot_version") or 1))
+        self.downloadDeliveryZipRequested.emit(int(version))
+
+    def _open_snapshot_folder(self) -> None:
+        version = self._current_delivery_version()
+        if not version:
+            return
+        self.openDeliveryFolderRequested.emit(int(version))
+
+    def _save_asset_copy(self, name: str) -> None:
+        version = self._current_delivery_version()
+        if not version or not name:
+            return
+        self.saveDeliveryAssetRequested.emit(str(name), int(version))
+
+    def _copy_asset_path(self, name: str) -> None:
+        path = self._asset_path(name)
+        if path:
+            self.copyPathRequested.emit(path)
+
+    def _show_asset_info(self, name: str) -> None:
+        version = self._current_delivery_version()
+        if not version or not name:
+            return
+        self.showDeliveryAssetInfoRequested.emit(str(name), int(version))
+
+    def _save_snapshot(self) -> None:
+        """另存交付文件：复制**当前展示的冻结版本**（不是工作版本）。"""
+        version = self._current_delivery_version()
+        if not version:
+            return
+        self.saveSnapshotRequested.emit(int(version))

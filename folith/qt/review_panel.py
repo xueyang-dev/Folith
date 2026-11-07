@@ -186,6 +186,24 @@ def _coverage_texts(view: dict) -> tuple[str, str]:
     return label, detail
 
 
+def _localized_finding_copy(item: dict, key: str) -> str:
+    """发现项里的一行文案，按当前界面语言取词。
+
+    发现项的 ``summary`` / ``explanation`` / ``recommendation`` 多数是模型写的
+    自由文本，**不能改写**；但交付完整性、确定性检查这类固定措辞在非中文界面
+    里必须能看懂。``i18n.tr_dynamic`` 只做目录精确匹配（含少量 ``{v0}`` 模板），
+    命中不了就原样返回——模型文案不会进目录，所以这是安全边界而不是"顺手翻译"。
+    目录里没有的句子保持中文原文，宁可露中文也不改内容。
+    """
+    value = str(item.get(key) or "").strip()
+    if not value:
+        return ""
+    if str(item.get("kind") or "") in _REVIEW_TASK_KINDS:
+        # 合成项（待审/需重审/失败/跳过）的句子是核心拼好的界面文案。
+        return _localized_task_copy(item).get(key) or i18n.tr_dynamic(value)
+    return i18n.tr_dynamic(value)
+
+
 def _localized_task_copy(item: dict) -> dict:
     """合成审校项（待审 / 需重审 / 失败 / 跳过）的界面文案。
 
@@ -682,12 +700,7 @@ class ReviewPanel(QWidget):
         title = self._item_title(item)
         label = i18n.tr_dynamic(str(item.get("severity_label") or ""))
         decision = i18n.tr_dynamic(str(item.get("decision_label") or ""))
-        summary = str(item.get("summary") or "")
-        if item.get("kind") in _REVIEW_TASK_KINDS:
-            # 合成项（待审/需重审/失败/跳过）的摘要也是界面文案；
-            # 发现项的摘要是模型产出，必须原样显示。
-            summary = _localized_task_copy(item).get("summary") \
-                or i18n.tr_dynamic(summary)
+        summary = _localized_finding_copy(item, "summary")
         # 标题已经写了"审校未完成"，第二行就不再重复一遍同一个词。
         tags = [value for value in (decision, label)
                 if value and value not in title]
@@ -786,7 +799,7 @@ class ReviewPanel(QWidget):
             line.setObjectName("qaAuditSnapshot")
             line.setWordWrap(True)
             card.details_layout.addWidget(line)
-        summary_text = str(snapshot.get("summary") or "")
+        summary_text = i18n.tr_dynamic(str(snapshot.get("summary") or ""))
         if summary_text:
             line = QLabel(f"<b>{_escape(i18n.tr('问题'))}{sep}</b>{_escape(summary_text)}")
             line.setObjectName("qaAuditSnapshot")
@@ -936,7 +949,6 @@ class ReviewPanel(QWidget):
             self._sync_source()
             return
         sep = _colon()
-        task_item = str(item.get("kind") or "") in _REVIEW_TASK_KINDS
         parts = []
         if item.get("entity_source"):
             # #277: 概念决策类术语卡补上决定参考字段，渲染与 #102 过期译法卡同源。
@@ -953,12 +965,9 @@ class ReviewPanel(QWidget):
             # 不是"待处理但没人看过"。
             parts.append(f"<p><b>{_escape(i18n.tr('已记录的决定'))}{sep}</b>"
                          f"{_escape(decision)}</p>")
-        task_copy = _localized_task_copy(item) if task_item else {}
         for label, key in (("问题", "summary"), ("原因", "reason"),
                            ("说明", "explanation"), ("建议", "recommendation")):
-            value = str(item.get(key) or "").strip()
-            if value and task_item:
-                value = task_copy.get(key) or i18n.tr_dynamic(value)
+            value = _localized_finding_copy(item, key)
             if value and not any(value in part for part in parts):
                 parts.append(f"<p><b>{_escape(i18n.tr(label))}{sep}</b>{_escape(value)}</p>")
         from folith.textual import text_direction
@@ -977,8 +986,7 @@ class ReviewPanel(QWidget):
                              f"<p{block} style=\"margin-top:2px\">"
                              f"{self._highlight(value, span)}</p>")
         self.item_body.setHtml("".join(parts))
-        summary_a11y = (task_copy.get("summary") if task_item else "") \
-            or str(item.get("summary") or "")
+        summary_a11y = _localized_finding_copy(item, "summary")
         self.item_body.setAccessibleDescription(
             " · ".join(value for value in (self._item_title(item), chip_text,
                                           summary_a11y)

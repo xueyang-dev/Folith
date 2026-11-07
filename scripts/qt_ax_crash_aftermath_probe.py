@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """AX 崩溃的**后果**探针：崩溃之后，数据还在吗？还能重开吗？
 
-R62 已经证明 macOS 上的外部 AX 扫描会让 Qt 平台插件崩溃（上游 QTBUG-149612），
-而且应用侧没有开关可挡。既然崩溃挡不住，就必须回答用户真正关心的问题：
+R62 已经证明 macOS 上的外部 AX 扫描会让 Qt 平台插件崩溃（上游 QTBUG-149612）。
+2026-11-06 起应用自带运行时修复（`folith/qt/macos_accessibility.py`），默认**不会**
+再这样崩；但"硬崩溃时不弄坏任务"仍然是要长期守住的属性，所以本探针保留，并在
+制造崩溃的相位显式关掉修复（``FOLITH_QT_AX_WORKAROUND=0``）来复现上游缺陷。
+既然崩溃挡不住（对没有修复的构建），就必须回答用户真正关心的问题：
 
     崩溃发生时我正在"打开任务"——崩完以后，任务会不会坏？还能不能继续用？
 
@@ -119,9 +122,15 @@ def diff(before: dict, after: dict) -> list[str]:
 
 
 def run_crash_phase(app: str, data: Path, logs: Path, duration: float, warmup: float) -> dict:
-    """启动候选，AX 扫描 + 选中行 + 打开任务，直到进程死掉或超时。"""
+    """启动候选，AX 扫描 + 选中行 + 打开任务，直到进程死掉或超时。
+
+    从 2026-11-06 起应用自带 QTBUG-149612 的运行时修复（`folith/qt/macos_accessibility.py`），
+    默认不再崩溃。要复现上游缺陷，必须只在**这一相位**关掉修复
+    （``FOLITH_QT_AX_WORKAROUND=0``）；重开相位保持默认，才能验证修好后的构建能正常启动。
+    """
     env = dict(os.environ)
     env["FOLITH_QT_NONINTERACTIVE"] = "1"
+    env["FOLITH_QT_AX_WORKAROUND"] = "0"
     proc = subprocess.Popen(f"exec {app} --data-dir {data} --log-dir {logs}", shell=True, env=env)
     pid = proc.pid
     result: dict = {"pid": pid, "started_at": datetime.now(timezone.utc).isoformat()}

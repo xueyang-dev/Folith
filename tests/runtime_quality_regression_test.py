@@ -12,7 +12,8 @@ from docx import Document
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
 
 import core
-from folith import assets, context, entity_registry, knowledge, model_roles
+from folith import assets, context, delivery, entity_registry, knowledge, model_roles
+from folith.engine import delivery_state as delivery_state_module
 from folith.translation_protocol import (
     TranslationProtocolError,
     parse_translation_array,
@@ -450,3 +451,244 @@ def test_malformed_translation_does_not_pollute_tm_knowledge_or_entities(tmp_pat
         assert candidates == [] and events == [] and warning
     finally:
         core.OUTPUT_DIR, core.call_llm = old_output, old_llm
+
+
+# ================= 交付门禁与持久化发现项的对账（issue 2 / issue 3） =================
+#
+# 交付门禁的报告（validate_delivery_translation_state）是唯一真值来源：
+# * 旧任务里持久化的 delivery_invariant 若当前报告不再出现，必须在打开任务时
+#   标记 resolved（带审计记录），不能永远挡住交付；
+# * 报告里真实存在的确定性阻断项（漏译/截断等）必须进入 review queue，否则
+#   首页/交付页的 status_label 会和门禁互相矛盾；
+# * 对账只清「当前报告不再报告」的项，模型审校发现等无关项绝不误清。
+
+
+def test_open_path_repairs_only_stale_delivery_invariants(tmp_path):
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    try:
+        job_id = "gate-reconcile-0001"
+        wrapper_reason = "译文仍是 JSON/Markdown transport wrapper，不能作为普通正文交付"
+        state = core.new_job_state("gate.docx")
+        state.update(
+            p1_done=True, p2_done=True, report_enabled=False, target_lang="简体中文",
+            paras=["[1]", "A source paragraph.", "Another source paragraph."],
+            pairs=[{"source": "[1]", "target": "[1]"},
+                   {"source": "A source paragraph.", "target": '["真实包装"]'},
+                   {"source": "Another source paragraph.", "target": "另一段译文"}],
+            findings=[
+                # 脚注编号 [1] 现在已豁免，这条旧 invariant 是过时的。
+                {"type": "delivery_invariant", "severity": "blocking",
+                 "segment_index": 0, "segment_id": 0,
+                 "invariant_code": "transport_wrapper",
+                 "summary": wrapper_reason, "reason": wrapper_reason},
+                # 这一段确实还是 transport wrapper：必须保留。
+                {"type": "delivery_invariant", "severity": "blocking",
+                 "segment_index": 1, "segment_id": 1,
+                 "invariant_code": "transport_wrapper",
+                 "summary": wrapper_reason, "reason": wrapper_reason},
+                # 旧数据可能没有 invariant_code，只能按 reason 文本匹配。
+                {"type": "delivery_invariant", "severity": "blocking",
+                 "segment_index": 2, "segment_id": 2,
+                 "summary": wrapper_reason, "reason": wrapper_reason},
+                # 模型审校发现与交付门禁无关，任何对账都不能清掉。
+                {"type": "check", "severity": "blocking",
+                 "segment_index": 2, "segment_id": 2,
+                 "category": "semantic_accuracy",
+                 "summary": "语义偏差", "reason": "译文与原文含义不一致",
+                 "detector": "Translation Core"},
+            ],
+            delivery_status="draft",
+        )
+        core.save_job_state(job_id, state)
+
+        fresh, report = delivery_state_module.reconcile_delivery_gate(job_id)
+        invariants = {finding.get("segment_index"): finding
+                      for finding in fresh["findings"]
+                      if finding.get("type") == "delivery_invariant"}
+        assert invariants[0]["resolved"] is True
+        assert invariants[0]["resolution"]["action"] == "target_rechecked"
+        assert invariants[0]["resolution"]["actor"] == "system"
+        assert invariants[2]["resolved"] is True
+        # 真实阻断项保留，没有被「全量对账」误清。
+        assert invariants[1].get("resolved") is not True
+        review_finding = next(item for item in fresh["findings"]
+                              if item.get("detector") == "Translation Core")
+        assert review_finding.get("resolved") is not True
+        assert report["blocking"] is True
+        assert fresh["has_blocking"] is True
+        assert fresh["review_stats"]["blocking"] == 2
+        assert fresh["delivery_status"] == "review_required"
+        assert any(action.get("action") == "target_rechecked"
+                   for action in fresh["human_actions"])
+        # 打开路径只清过时项，不新增当前报告里的阻断项。
+        assert len(fresh["findings"]) == 4
+
+        # 修复后再次打开不应重复写盘（只读轮询零写入）。
+        signature = core._job_repo.state_signature(job_id)
+        delivery_state_module.reconcile_delivery_gate(job_id)
+        assert core._job_repo.state_signature(job_id) == signature
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_open_path_never_adds_or_reopens_current_blockers(tmp_path):
+    """打开任务不是交付决定：报告里当前存在的阻断项不在这里写进 findings。
+
+    900 段合成书有 450 段触发确定性阻断；若打开时全部持久化，一次 open 会
+    写入 450 条 finding、推进 revision，poll 契约与内存/卡顿都会退化。新增 /
+    重开只允许发生在显式交付、审校动作（_record_delivery_validation_findings）。
+    """
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    try:
+        job_id = "gate-blocker-0001"
+        source = "At thirty-six, he was still renting in L.A. with his wife."
+        truncated = "三十六岁了，他和妻子仍在洛杉矶租房住。"
+        reason = "疑似漏译/截断：原文 58 字符/3 句，译文仅 19 字符/1 句"
+        state = core.new_job_state("Bad Words.docx")
+        state.update(
+            p1_done=True, p2_done=True, report_enabled=False, target_lang="简体中文",
+            paras=[source], pairs=[{"source": source, "target": truncated}],
+            findings=[{
+                "segment_index": 0, "segment_id": 0, "type": "check",
+                "severity": "blocking", "category": "completeness",
+                "summary": "译文疑似遗漏或被截断", "reason": reason,
+                "detector": "Deterministic QA",
+                "resolved": True,
+                "resolution": {"action": "human_fixed",
+                               "note": "人工核对后确认问题已解决",
+                               "timestamp": "2026-11-03T06:23:44+00:00",
+                               "actor": "user"},
+            }],
+            delivery_status="draft",
+        )
+        core.save_job_state(job_id, state)
+        report = core.validate_delivery_translation_state(state)
+        assert [finding.get("summary") for finding in report["blocking_findings"]] == \
+            ["译文疑似遗漏或被截断"]
+
+        signature = core._job_repo.state_signature(job_id)
+        fresh, _report = delivery_state_module.reconcile_delivery_gate(job_id)
+        assert core._job_repo.state_signature(job_id) == signature, "打开路径不得写盘"
+        assert len(fresh["findings"]) == 1
+        assert fresh["findings"][0].get("resolved") is True
+        assert fresh["findings"][0].get("gate_source") is None
+        assert delivery.unresolved_blocking(fresh) == []
+        # 首页零写入也要与门禁一致：人工 resolved 但文本仍截断 → 不得承诺可冻结。
+        assert core.task_status_label(fresh) == "暂不满足交付条件"
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_review_action_reopens_deterministic_blocker_and_open_clears_it_when_fixed(tmp_path):
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    try:
+        job_id = "gate-blocker-0002"
+        source = "At thirty-six, he was still renting in L.A. with his wife."
+        truncated = "三十六岁了，他和妻子仍在洛杉矶租房住。"
+        reason = "疑似漏译/截断：原文 58 字符/3 句，译文仅 19 字符/1 句"
+        state = core.new_job_state("Bad Words.docx")
+        state.update(
+            p1_done=True, p2_done=True, report_enabled=False, target_lang="简体中文",
+            paras=[source], pairs=[{"source": source, "target": truncated}],
+            findings=[{
+                "segment_index": 0, "segment_id": 0, "type": "check",
+                "severity": "blocking", "category": "completeness",
+                "summary": "译文疑似遗漏或被截断", "reason": reason,
+                "detector": "Deterministic QA",
+                "resolved": True,
+                "resolution": {"action": "human_fixed",
+                               "note": "人工核对后确认问题已解决",
+                               "timestamp": "2026-11-03T06:23:44+00:00",
+                               "actor": "user"},
+            }],
+            delivery_status="draft",
+        )
+        core.save_job_state(job_id, state)
+
+        # 显式审校/交付动作：报告仍报它 → reopen 并写盘（唯一允许新增/重开的路径）。
+        current = core.load_job_state(job_id)
+        report = core.validate_delivery_translation_state(current)
+        core._record_delivery_validation_findings(current, report)
+        core.save_job_state(job_id, current)
+        reopened = current["findings"][0]
+        assert reopened.get("resolved") is False
+        assert reopened.get("gate_source") == delivery_state_module.DELIVERY_GATE_SOURCE
+        assert core.task_status_label(current) == "待审校"
+        assert len(delivery.unresolved_blocking(current)) == 1
+        assert current["review_stats"]["blocking"] == 1
+
+        # 文本真的修好后：打开路径只清过时项（不再报 → resolved + 审计记录）。
+        current["pairs"][0]["target"] = (
+            "三十六岁时，他和妻子仍在洛杉矶租房住。他们还没有自己的房子。日子并不宽裕。")
+        core.save_job_state(job_id, current)
+        healed, healed_report = delivery_state_module.reconcile_delivery_gate(job_id)
+        assert healed_report["blocking"] is False
+        assert delivery.unresolved_blocking(healed) == []
+        cleared = healed["findings"][0]
+        assert cleared["resolved"] is True
+        assert cleared["resolution"]["action"] == "target_rechecked"
+        assert healed["review_stats"]["blocking"] == 0
+        assert core.task_status_label(healed) == "可以冻结交付"
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_open_path_never_rewrites_a_frozen_task(tmp_path):
+    """冻结快照的 state identity 不能被打开动作改写，否则会误报"已偏离"。"""
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    try:
+        job_id = "gate-final-0001"
+        wrapper_reason = "译文仍是 JSON/Markdown transport wrapper，不能作为普通正文交付"
+        state = core.new_job_state("frozen.docx")
+        state.update(
+            p1_done=True, p2_done=True, report_enabled=False, target_lang="简体中文",
+            paras=["A source paragraph."],
+            pairs=[{"source": "A source paragraph.", "target": "一段正常译文"}],
+            findings=[{"type": "delivery_invariant", "severity": "blocking",
+                       "segment_index": 0, "segment_id": 0,
+                       "invariant_code": "transport_wrapper",
+                       "summary": wrapper_reason, "reason": wrapper_reason}],
+            delivery_status="final",
+        )
+        core.save_job_state(job_id, state)
+        signature = core._job_repo.state_signature(job_id)
+
+        fresh, _report = delivery_state_module.reconcile_delivery_gate(job_id)
+        assert fresh["delivery_status"] == "final"
+        assert fresh["findings"][0].get("resolved") is not True
+        assert core._job_repo.state_signature(job_id) == signature
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_open_path_does_not_invent_document_level_blockers(tmp_path):
+    """打开任务不是交付决定：文档级门禁问题仍由交付/审校动作记录。
+
+    pair_count_mismatch / source_pages_missing 没有 segment 可对账；打开路径
+    只修复按 segment 定位的过时 invariant 与确定性 QA 阻断项，不在这里改写
+    文档级结论（也避免每次打开都推进 state revision）。
+    """
+    old_output = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    try:
+        job_id = "gate-document-level-0001"
+        state = core.new_job_state("mismatch.docx")
+        state.update(
+            p1_done=True, p2_done=True, report_enabled=False, target_lang="简体中文",
+            paras=["甲。", "乙。"],
+            pairs=[{"source": "甲。", "target": "A."}],
+            delivery_status="draft",
+        )
+        core.save_job_state(job_id, state)
+        report = core.validate_delivery_translation_state(state)
+        assert report["blocking"] is True
+        signature = core._job_repo.state_signature(job_id)
+        fresh, _report = delivery_state_module.reconcile_delivery_gate(job_id)
+        assert fresh["findings"] == []
+        assert core._job_repo.state_signature(job_id) == signature
+    finally:
+        core.OUTPUT_DIR = old_output
