@@ -4337,24 +4337,22 @@ def test_save_acknowledges_latest_queued_text_only(client, monkeypatch):
 def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     """P4 审校第 5 条：侧栏开合时页面按终态宽度排一次版、从侧栏下滑出，
     不在每一帧改变页面宽度（那会让任务库卡片与段落网格逐帧重排）。"""
-    adapter, core, window, app, tmp = (client[key] for key in
-                                       ("adapter", "core", "window", "app", "tmp"))
-    job_id = _seed_job_for_keyboard(adapter, core, tmp, "sidebar-motion.docx", ["甲。", "乙。"])
-    window.show_home()
-    _pump(app, 0.5)
-    # 前面用例可能已经把侧栏收起来了：那样 240 → 0 的过渡就没有位移，动画会被
-    # 直接跳过（CI 上 setter 只被调用一次）。这里先把侧栏摆回展开态，让过渡必然发生。
     from folith.qt import views as views_module
 
+    adapter, core, window, app, tmp = (client[key] for key in
+                                       ("adapter", "core", "window", "app", "tmp"))
+    _seed_job_for_keyboard(adapter, core, tmp, "sidebar-motion.docx", ["甲。", "乙。"])
+    window.show_home()
+    _pump(app, 0.5)
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    # 先摆回展开态：前面的用例可能已经把侧栏收起来，那样 240 → 0 没有位移，
+    # 动画会走同步分支（CI 上 setter 只被调用一次）。
     window.sidebar_clip.setFixedWidth(views_module.HomeView.SIDEBAR_WIDTH)
     window.sidebar_clip.show()
-    _pump(app, 0.1)
-    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    _pump(app, 0.05)
     window._motion._last.clear()  # not a "rapid repeat" of the first navigation
+
     widths: list[int] = []
-    # 记录**每一次 setter 调用**时的页面宽度：以前用 Python 循环 + sleep 采样，
-    # CI 机器一忙就会漏帧（"should have run for a few frames" 偶发红）。
-    # setter 本身就是逐帧回调，挂在它上面与调度无关。
     original_animate = window._motion.animate
 
     def recording_animate(key, start_value, end_value, setter, **kwargs):
@@ -4368,8 +4366,11 @@ def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
         return original_animate(key, start_value, end_value, recording_setter, **kwargs)
 
     monkeypatch.setattr(window._motion, "animate", recording_animate)
-    open_job_and_wait(window, job_id)
-    _pump(app, 0.3)
+    # 直接切页，让过渡只被触发一次：走 open_job 的话同一帧里可能连触发两次，
+    # 第二次会被 motion 当成"快速重复"直接跳帧。
+    window.stack.setCurrentWidget(window.workbench)
+    _pump(app, 0.4)
+
     assert len(widths) >= 2, (
         f"the transition should have run (setter calls={len(widths)}, "
         f"running={window._motion.running('sidebar')})")
