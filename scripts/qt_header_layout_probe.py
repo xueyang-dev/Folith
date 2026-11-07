@@ -3,9 +3,9 @@
 
     # 第一次运行前：把验收任务复制成「原样副本」（每门语言开始前从这里恢复，
     # 保证 7 门语言量到的是同一个任务状态）
-    cp -R /var/folders/.../T/folith-acceptance/data/ed69c82a98d81d7b \
+    cp -R <验收数据目录>/ed69c82a98d81d7b \
         .acceptance-tmp/layout/pristine-data/
-    cp -R /var/folders/.../T/folith-acceptance/data/. .acceptance-tmp/layout-data/
+    cp -R <验收数据目录>/. .acceptance-tmp/layout-data/
 
     ./venv/bin/python scripts/qt_header_layout_probe.py --label before
     ./venv/bin/python scripts/qt_header_layout_probe.py --label after --languages de,ar
