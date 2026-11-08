@@ -4356,7 +4356,11 @@ def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     # 直接切页，让过渡只被触发一次：走 open_job 的话同一帧里可能连触发两次，
     # 第二次会被 motion 当成"快速重复"直接跳帧。
     window.stack.setCurrentWidget(window.workbench)
-    _pump(app, 0.4)
+    # 等过渡真的结束（有界）：固定 0.4s 在忙的 CI 机器上可能还没播完，
+    # 于是 settled() 没跑、侧栏还是可见的（macOS candidate 上就是 assert not True）。
+    assert _pump(app, 5.0, lambda: not window._motion.running("sidebar")), \
+        "the transition should have finished"
+    _pump(app, 0.1)
 
     assert len(widths) >= 2, (
         f"the transition should have run (setter calls={len(widths)}, "
