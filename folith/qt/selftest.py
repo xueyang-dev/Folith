@@ -169,6 +169,7 @@ class Flow:
     # -- helpers -----------------------------------------------------------
     def step(self, name: str, **extra: Any) -> None:
         self.phase = name
+        print(f"selftest-step: {name}", file=__import__("sys").stderr, flush=True)
         self.report["steps"].append(
             {"at": round(time.time() - self.report["started_at"], 2),
              "step": name, **extra})

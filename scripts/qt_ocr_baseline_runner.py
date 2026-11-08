@@ -187,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
             run = subprocess.run(command, env=env, capture_output=True, text=True,
                                  encoding="utf-8", errors="replace",
                                  timeout=900, cwd=str(out_dir))
+            (case_dir / "stderr.txt").write_text(run.stderr, encoding="utf-8")
             case_evidence: dict = {
                 "kind": case["kind"],
                 "fixture": str(fixture),

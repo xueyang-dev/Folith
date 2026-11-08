@@ -3459,13 +3459,16 @@ class MainWindow(QMainWindow):
 
         def done(result) -> None:
             version = result.get("version")
+            print("delivery-step: before-clear", file=sys.stderr, flush=True)
             self.workbench.delivery_note.clear()
             notes = [str(note) for note in result.get("renderer_notes") or []]
             self._notice(i18n.tr('已冻结交付 v{v0}，共 {v1} 个文件。', v0=version,
                                  v1=len(result.get('assets') or []))
                          + ("\n" + "\n".join(notes) if notes else ""), job_id=job_id)
             # 冻结后立刻刷新：资产清单必须马上出现在「交付」页，而不是等下一次轮询。
+            print("delivery-step: before-refresh", file=sys.stderr, flush=True)
             self.refresh_workbench(force=True)
+            print("delivery-step: after-refresh", file=sys.stderr, flush=True)
             if self._current_job_id != job_id:
                 # 用户在等待框里点了「在后台运行」并已切到别的任务：不要弹模态框，
                 # 更不能把"当前任务"当成刚冻结的那个。提示里指明去哪里保存。
@@ -3477,7 +3480,9 @@ class MainWindow(QMainWindow):
                     i18n.tr('保存交付文件'),
                     i18n.tr('交付快照 v{v0} 已生成。\n\n现在选择保存位置并写出文件吗？', v0=version),
                     yes=i18n.tr('选择保存位置'), no=i18n.tr('稍后')):
+                print("delivery-step: before-save", file=sys.stderr, flush=True)
                 self.save_snapshot(int(version or 1), job_id)
+                print("delivery-step: after-save", file=sys.stderr, flush=True)
 
         self._run_with_busy(i18n.tr('冻结交付'), i18n.tr('正在通过交付门禁并生成快照…'),
                             adapter.deliver, job_id, self.config, on_done=done,

@@ -1,0 +1,51 @@
+name: Diagnose frozen macOS OCR
+on:
+  push:
+    branches: [codex/0.8.1-macos-ocr-diagnostics]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: macos-15
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install the release build dependencies
+        run: |
+          python -m venv venv
+          venv/bin/python -m pip install --upgrade pip
+          venv/bin/python -m pip install -r requirements.txt
+          venv/bin/python -m pip install -r requirements-desktop-build.txt PySide6==6.11.2
+          brew install tesseract
+      - name: Build the instrumented app
+        run: bash scripts/build_qt_desktop.sh
+      - name: Repeat the bundled OCR flow with full stderr
+        run: |
+          any_failed=0
+          for trial in 1 2 3 4 5; do
+            if ! venv/bin/python scripts/qt_ocr_baseline_runner.py --no-negative \
+              --frozen-app "$GITHUB_WORKSPACE/dist/qt-desktop/Folith.app/Contents/MacOS/Folith" \
+              --out "$RUNNER_TEMP/ocr-diag/trial-$trial"; then
+              any_failed=1
+              break
+            fi
+          done
+          exit "$any_failed"
+      - name: Collect native crash reports
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/ocr-diag/native-crashes"
+          crash_dir="$HOME/Library/Logs/DiagnosticReports"
+          if test -d "$crash_dir"; then
+            find "$crash_dir" -name 'Folith-*.ips' -exec cp {} "$RUNNER_TEMP/ocr-diag/native-crashes/" \;
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-ocr-crash-evidence
+          path: ${{ runner.temp }}/ocr-diag/
+          if-no-files-found: warn
