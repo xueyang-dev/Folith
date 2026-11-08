@@ -3892,7 +3892,9 @@ class WorkbenchView(QWidget):
                              (runtime.get("status"), runtime.get("detail"),
                               runtime.get("current_operation")), time.monotonic())
         seconds = self.TASK_NOTICE_SECONDS[bool(error)]
+        print("notice-step: before-single-shot", flush=True, file=__import__("sys").stderr)
         QTimer.singleShot(int(seconds * 1000) + 50, self._render_runtime)
+        print("notice-step: after-single-shot", flush=True, file=__import__("sys").stderr)
         self.run_status.setVisible(True)
         self.run_status.set_state(tone=self.run_status.track.tone(), line=message,
                                   line_tone="failed" if error else None)

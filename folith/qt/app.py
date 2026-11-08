@@ -253,6 +253,9 @@ def main(argv: list[str] | None = None) -> int:
         f"build={adapter.app_identity().get('build_id')}")
 
     if args.selftest:
+        import faulthandler
+
+        faulthandler.enable()
         from . import selftest
 
         config = selftest.engine_from_env(adapter, main_window.config)
