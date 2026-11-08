@@ -119,8 +119,11 @@ shasum -a 256 {dmg_name}
 详细步骤在 `manual-acceptance.md`。当前状态与全部证据入口在 `status.md`。
 本轮范围与工程核验在 `freeze-0.5.0.md`，候选发行说明在 `release-notes.md`。
 
-**请用人工键鼠操作，不要挂载 AX 代理 / Computer Use**：macOS 上外部辅助功能扫描会触发上游 Qt 缺陷
-（QTBUG-149612）导致进程原生崩溃，这与本候选无关，且实测没有任何应用侧开关能挡住它。人工键鼠不受影响。
+**关于 AX 代理 / Computer Use（2026-11-06 更新）**：macOS 上外部辅助功能扫描曾触发上游 Qt 缺陷
+（QTBUG-149612）导致进程原生崩溃——这与本候选的业务代码无关，且本版本已在启动时安装运行时修复
+（只对受影响的 Qt 6.11.x / 6.12.0 生效，升级到 Qt 6.12.1+ 后自动停用）。现在可以用 AX 代理 /
+Computer Use 辅助验收；`FOLITH_QT_AX_WORKAROUND=0` 仅用于故意复现旧崩溃做 A/B。**仍未验证**：
+冻结 DMG 上的 A/B 与真实 AX 客户端的完整路径（见 `acceptance-quickstart.md` 第四点五节）。
 
 ## 四、已知限制（不必当缺陷回报）
 
@@ -129,7 +132,7 @@ shasum -a 256 {dmg_name}
 - 仅 **{identity['target_arch']}**（Apple Silicon）；Windows / Intel 不在本轮范围。
 - 扫描件 OCR 随包 `eng`/`chi_sim`/`ara`；缺包会明确报出缺哪个，不会静默改用英语。
 - LibreOffice 未随包：渲染 QA 记为 `NOT_RUN`，不阻塞可用 DOCX 的验收。
-- 挂 AX 代理会崩进程（上游缺陷），但**不会弄坏任务**：崩溃前后任务数据逐项一致、可重开继续用；
+- 若仍撞上这条上游 AX 缺陷，进程会崩，但**不会弄坏任务**：崩溃前后任务数据逐项一致、可重开继续用；
   代价只有最后一次自动保存（1.5 秒）之后的输入。
 
 ## 五、回传

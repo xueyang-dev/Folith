@@ -530,11 +530,26 @@ def record_runtime_human_decision(
     if segment_id is None:
         raise ValueError("finding has no global segment_id")
     event = current_review_event(state, segment_id)
-    if event is None or event.get("review_event_id") != finding.get("review_event_id"):
-        raise ValueError("cannot decide a stale finding")
-    current_fingerprint = str(
-        (event.get("translation_core") or {}).get(
-            "final_consumed_input_fingerprint") or "")
+    finding_event = str(finding.get("review_event_id") or "")
+    if not finding_event:
+        # 旧式发现项：它在 state["findings"] 里，但没有审校收据可对，因此不存在
+        # "被后续审校取代"的判定依据；而交付门禁仍然认它。允许人工处置，指纹用
+        # 发现项自己的（复核的人看到的就是这条记录本身）。
+        # 旧版本写的阻断项没有 `requires_human_confirmation`；核心的死板校验会因此
+        # 拒绝任何人工决定。它既然被当作"人要处理的阻断项"展示出来，就必须可处置，
+        # 这里补上标志（随决定一起落盘，语义也更正确）。
+        if not finding.get("requires_human_confirmation"):
+            finding["requires_human_confirmation"] = True
+        current_fingerprint = str(finding.get("input_fingerprint") or "")
+        if not current_fingerprint and event is not None:
+            current_fingerprint = str((event.get("translation_core") or {}).get(
+                "final_consumed_input_fingerprint") or "")
+    else:
+        if event is None or event.get("review_event_id") != finding_event:
+            raise ValueError("cannot decide a stale finding")
+        current_fingerprint = str(
+            (event.get("translation_core") or {}).get(
+                "final_consumed_input_fingerprint") or "")
     if not current_fingerprint:
         raise ValueError("current review has no input fingerprint")
     updated, record = translation_core.record_human_decision(
@@ -562,7 +577,9 @@ def record_runtime_human_decision(
         "record_type": "human_decision",
         "action": record["decision"],
         "timestamp": record["decided_at"],
-        "review_event_id": event.get("review_event_id"),
+        # 旧式发现项所在段落可能**没有**审校记录（event 为 None）；审计记录里
+        # 如实留空，不要让界面在处置最后一步抛 AttributeError。
+        "review_event_id": (event or {}).get("review_event_id"),
     }
     state.setdefault("human_actions", []).append(audit)
     return state, finding, audit

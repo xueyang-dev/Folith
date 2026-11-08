@@ -113,16 +113,23 @@ class PdfPanel(QWidget):
         head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(self.title, 1)
         head.addWidget(self.close_button)
-        bar = QHBoxLayout()
-        bar.setContentsMargins(0, 0, 0, 0)
-        for widget in (self.prev_button, self.page_box, self.total_label, self.next_button,
-                       self.zoom_box, self.locate_button):
-            bar.addWidget(widget)
-        bar.addStretch(1)
+        # 翻页与工具（缩放、定位当前段）默认排一行；审校页内嵌的原页栏只有约 280 px，
+        # 一行放不下时工具折到第二行，而不是把下拉框和按钮挤得只剩半截字。
+        self._bar = QHBoxLayout()
+        self._bar.setContentsMargins(0, 0, 0, 0)
+        for widget in (self.prev_button, self.page_box, self.total_label, self.next_button):
+            self._bar.addWidget(widget)
+        self._tools = (self.zoom_box, self.locate_button)
+        self._tool_bar = QHBoxLayout()
+        self._tool_bar.setContentsMargins(0, 0, 0, 0)
+        self._tool_bar.addStretch(1)
+        self._wrapped = True
+        self._place_tools(False)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.addLayout(head)
-        layout.addLayout(bar)
+        layout.addLayout(self._bar)
+        layout.addLayout(self._tool_bar)
         layout.addWidget(self.hint)
         layout.addWidget(self.scroll, 1)
 
@@ -266,8 +273,28 @@ class PdfPanel(QWidget):
         else:
             self.image.setPixmap(self._source)
 
+    def _place_tools(self, wrapped: bool) -> None:
+        """把缩放与定位放在翻页那一行末尾，或折到下面单独一行。"""
+        if wrapped == self._wrapped:
+            return
+        self._wrapped = wrapped
+        if wrapped:
+            self._bar.takeAt(self._bar.count() - 1)  # 行尾的弹簧
+            for index, widget in enumerate(self._tools):
+                self._tool_bar.insertWidget(index, widget)
+        else:
+            for widget in self._tools:
+                self._bar.addWidget(widget)
+            self._bar.addStretch(1)
+
+    def _one_row_width(self) -> int:
+        widgets = (self.prev_button, self.page_box, self.total_label, self.next_button, *self._tools)
+        spacing = max(0, self._bar.spacing()) * (len(widgets) - 1)
+        return sum(widget.sizeHint().width() for widget in widgets) + spacing
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
+        self._place_tools(self.width() < self._one_row_width())
         if int(self.zoom_box.currentData() or 0) == 0:
             self._apply_zoom()
 

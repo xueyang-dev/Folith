@@ -6,7 +6,7 @@ Section Card + Card Header Strip、Icon Badge。
 约束（与 ``style.py`` 一致）：
 
 * **颜色只来自语义 token**。控件里不出现颜色字面值；图标只携带 token 名
-  （见 :mod:`folith.qt.icons`），因此主题切换（日间 / 夜间 / 纸面 / 以后的自定义主题色）
+  （见 :mod:`folith.qt.icons`），因此主题切换（日间 / 夜间 / 以后的自定义主题色）
   不需要重建任何控件。
 * **QSS 能表达的交给 QSS**（规则在 ``style.build_qss`` 的"组件库"一节）；QSS 画不出来的
   （进度条的圆头、卡片投影、背景渐变）在这里自绘，并且在**绘制时**读当前主题。
@@ -20,9 +20,9 @@ import sys
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QGuiApplication, QImage, QKeySequence, QLinearGradient,
                            QIcon, QPainter, QPainterPath, QPen, QPixmap, QShortcut)
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit,
-                               QPushButton, QSizePolicy, QSplitter, QSplitterHandle, QToolButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLayout,
+                               QLineEdit, QPushButton, QSizePolicy, QSplitter, QSplitterHandle,
+                               QStackedWidget, QTableWidget, QToolButton, QVBoxLayout, QWidget)
 
 from . import platform_ui, i18n
 from . import icons
@@ -146,6 +146,16 @@ class TrailingClip(QWidget):
         self.content_width: int | None = None
         content.setParent(self)
         content.show()
+        # F1（2026-11-04 UI 审查）：内容页的最小尺寸变了，外壳布局却还拿着建窗时的
+        # 缓存 —— 实测窗口最小宽度偏小 304–499px（870 这个偏小下限会把首页压到它自身
+        # 的最小宽度以下）。这里把内容页的 LayoutRequest 转成自己的 updateGeometry()，
+        # 让父布局重新问一次 sizeHint / minimumSizeHint。
+        content.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt 命名
+        if watched is self.content and event.type() == QEvent.Type.LayoutRequest:
+            self.updateGeometry()
+        return super().eventFilter(watched, event)
 
     def freeze(self, width: int | None) -> None:
         self.content_width = width
@@ -1303,6 +1313,45 @@ class CoverArt(QWidget):
         self._ghost = False
         self._lift = 0.0
         self._scrim = 0.7
+        self._glass_enabled = True
+        self._night_dim = 0.0
+
+    # ---- 调用方（首页卡片）可关掉的两层装饰 ----
+    def set_glass_enabled(self, enabled: bool) -> None:
+        """底部磨砂玻璃 + 压在上面的暗色 scrim 开关（默认开）。
+
+        F8/F9（2026-11-04 UI 审查）：卡片把文件名等信息从纸面上**移到纸页下方**之后，
+        这两层就失去了存在理由——它们原本只为"文字压在图上还读得清"服务，现在只会把
+        纸页下半截染脏（审查原话："灰色蒙层把标题区染脏了"）。关掉时其余绘制不变：
+        纸 / 书 / 书脊压痕 / 外缘亮边照旧。
+        """
+        enabled = bool(enabled)
+        if enabled != self._glass_enabled:
+            self._glass_enabled = enabled
+            self.update()
+
+    def glass_enabled(self) -> bool:
+        return self._glass_enabled
+
+    def set_night_dim(self, amount: float) -> None:
+        """夜间把纸页整体压暗的强度（0 = 不变，1 = 最深），日间不生效。
+
+        F9：夜间一张白纸封面是全屏最亮的东西（实测 5.8% 的像素亮度 >200），在暗界面里
+        刺眼。这里按比例在纸面上叠一层中性暗色——只是"降亮度"，不改色相，所以纸页的
+        纹理和封面图案仍然看得出是一张纸，不是一块死灰。
+
+        实现要点：
+        * 日间 ``amount`` 直接忽略（默认 0.0，调用方传 0 或 theme 判断都一样）；
+        * ``faded=True``（无法读取的文档）本身已经半透明，这里额外压暗减半，免得叠加成
+          漆黑一片、连"这是一份读不了的文档"都看不出来。
+        """
+        amount = max(0.0, min(1.0, float(amount)))
+        if amount != self._night_dim:
+            self._night_dim = amount
+            self.update()
+
+    def night_dim(self) -> float:
+        return self._night_dim
 
     # ---- 数据（与 DocThumb 同名） ----
     def set_document(self, filename: str, segments: int = 0) -> None:
@@ -1422,19 +1471,26 @@ class CoverArt(QWidget):
             painter.fillRect(rect, spine)
             painter.fillRect(QRectF(rect.left() + rect.width() * 0.07, rect.top(), 0.8, rect.height()),
                              QColor(255, 255, 255, 55))
-        painter.drawImage(rect, self._glass_image(source))
-        scrim = QLinearGradient(rect.bottomLeft(), QPointF(rect.left(), rect.top() + rect.height() * 0.5))
-        # 磨砂跟着主题走（色彩审校 C4）：夜间是暗层配白字；浅色主题是**浅色**磨砂配
-        # 深色字——白纸文档上压一层近黑，在浅色首页上就是一块发灰发脏的深色带。
-        if _night():
-            base, strength = QColor(0, 0, 8), self._scrim
-        else:
-            base, strength = theme_module.qcolor(_tokens()["bg-surface"]), 0.88
-        for stop, share in ((0.0, 1.0), (0.45, 0.62), (1.0, 0.0)):
-            colour = QColor(base)
-            colour.setAlpha(int(255 * strength * share))
-            scrim.setColorAt(stop, colour)
-        painter.fillRect(rect, scrim)
+        if self._glass_enabled:
+            painter.drawImage(rect, self._glass_image(source))
+            scrim = QLinearGradient(rect.bottomLeft(), QPointF(rect.left(), rect.top() + rect.height() * 0.5))
+            # 磨砂跟着主题走（色彩审校 C4）：夜间是暗层配白字；浅色主题是**浅色**磨砂配
+            # 深色字——白纸文档上压一层近黑，在浅色首页上就是一块发灰发脏的深色带。
+            if _night():
+                base, strength = QColor(0, 0, 8), self._scrim
+            else:
+                base, strength = theme_module.qcolor(_tokens()["bg-surface"]), 0.88
+            for stop, share in ((0.0, 1.0), (0.45, 0.62), (1.0, 0.0)):
+                colour = QColor(base)
+                colour.setAlpha(int(255 * strength * share))
+                scrim.setColorAt(stop, colour)
+            painter.fillRect(rect, scrim)
+        if self._night_dim > 0 and _night():
+            # 夜间压暗（F9）：只降亮度、不改色相，纸页纹理与封面图案仍看得出是一张纸。
+            # ``faded``（读不了的文档）已经半透明，额外再压暗减半，避免叠成一块黑。
+            strength = self._night_dim * (0.30 if self._faded else 0.52)
+            painter.fillRect(rect, QColor(0, 0, 10, int(255 * strength)))
+
         painter.setClipping(False)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(QColor(255, 255, 255, 60 if _night() else 80), 1))
@@ -1701,6 +1757,53 @@ def status_dot_icon(tone: str):
     return QIcon(pixmap)
 
 
+#: 术语状态 → 状态语气。键是核心的条目状态，值是 :data:`theme.STATUS_TONES` 的键，
+#: 所以「圆点 + 文字」在面板、项目页、表格里是同一套颜色。
+TERM_TONES = {
+    "candidate": "active",       # 候选：等人确认
+    "provisional": "attention",  # 暂定：机器给的低置信建议
+    "locked": "done",            # 已锁定：不会再被模型改写
+    "rejected": "idle",          # 已拒绝：人已经决定不要
+}
+
+#: 表格里状态圆点占的宽度：图标 8px + Qt 的图标/文字间距，再留 4px 呼吸。
+STATUS_CELL_INDENT = 16
+
+
+def status_cell(text: str, tone: str):
+    """表格里的状态格：**圆点 + 同色文字**，与 :class:`StatusLabel` 同一套语气。
+
+    F15（2026-11-04 UI 审查）：项目术语页原来用 ``style.Chip`` 画实心色块，术语面板
+    用纯文字——同一个状态在两个面上是两种样子；全局规则是「圆点 + 文字」。
+
+    为什么不用 :class:`StatusLabel` 本身：一个术语表一次最多摆 300 行，每行一个
+    widget 会让排序、选中与键盘导航都要绕开它；``status_dot_icon`` 本来就是
+    "表格单元格里的 StatusLabel 圆点"，这里再补上同色文字，两处观感同源。
+    """
+    from PySide6.QtGui import QBrush
+    from PySide6.QtWidgets import QTableWidgetItem
+
+    token = theme_module.STATUS_TONES.get(tone, theme_module.STATUS_TONES["idle"])
+    item = QTableWidgetItem(text)
+    item.setIcon(status_dot_icon(tone))
+    item.setForeground(QBrush(theme_module.qcolor(_tokens().get(token, _tokens()["text-muted"]))))
+    item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    return item
+
+
+def status_cell_width(labels) -> int:
+    """状态列的宽度：**量最宽的标签**，不钉死像素。
+
+    外语里 «Ожидает подтверждения» / «En attente de confirmation» 比中文长得多，
+    固定列宽会把文字裁成省略号；两处术语表都用这一个函数算。
+    """
+    from PySide6.QtGui import QFontMetrics
+
+    metrics = QFontMetrics(style_module.font_for(style_module.current_theme()))
+    return STATUS_CELL_INDENT + max((metrics.horizontalAdvance(str(label))
+                                     for label in labels), default=0)
+
+
 def relative_time(stamp: str, *, now=None) -> str:
     """ISO 时间戳 → "刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期"。
 
@@ -1731,9 +1834,44 @@ def relative_time(stamp: str, *, now=None) -> str:
     return moment.strftime("%Y-%m-%d")
 
 
+class DataTable(QTableWidget):
+    """项目页与术语页共用的表格外观（F15：术语曾经有两套表格样式）。
+
+    项目术语页是自己一套（无网格 + 行委托画发丝线 + 30px 表头 + 左对齐），工作台
+    术语面板是 Qt 的默认（默认网格、默认表头、默认行高）——同一份术语数据换个地方
+    看就换一种样子。外观只在这里定义一次：各页只决定**列、选择模式与排序**。
+
+    行线与选中条由 :class:`style.RowDelegate` 画（QSS 画不出"每行之间的细线"），
+    所以两个面都会得到同样的秩序感。
+    """
+
+    def __init__(self, columns: int, *, multi_select: bool = False,
+                 sortable: bool = False, parent: QWidget | None = None) -> None:
+        from PySide6.QtWidgets import QAbstractItemView
+
+        super().__init__(0, columns, parent)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection if multi_select
+                              else QAbstractItemView.SelectionMode.SingleSelection)
+        self.setShowGrid(False)
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.verticalHeader().setVisible(False)
+        self.verticalHeader().setDefaultSectionSize(theme_module.CONTROL["row"] - 4)
+        header = self.horizontalHeader()
+        header.setHighlightSections(False)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.setFixedHeight(theme_module.CONTROL["header"])
+        self.setItemDelegate(style_module.RowDelegate(self))
+        if sortable:
+            self.setSortingEnabled(True)
+
+
 __all__ = [
-    "BADGE_TONES", "DocThumb", "FilterChips", "GradientCanvas", "IconBadge", "MetricCards",
-    "ProgressLine", "SearchBar", "SectionCard", "StatusDot", "StatusLabel", "nav_item", "relative_time",
+    "BADGE_TONES", "DataTable", "DocThumb", "FilterChips", "GradientCanvas", "IconBadge",
+    "MetricCards", "ModeCard", "ModeCards", "OptionCard", "ProgressLine", "SearchBar",
+    "SectionCard", "STATUS_CELL_INDENT", "StatusDot", "StatusLabel", "TERM_TONES",
+    "nav_item", "relative_time", "status_cell", "status_cell_width",
 ]
 
 
@@ -2556,7 +2694,9 @@ class OptionCard(QPushButton):
         # 子控件一开始就带父窗口：没有父窗口时 setVisible(True) 会让它闪成顶层小窗。
         self.icon_label = QLabel(self)
         self.icon_label.setVisible(bool(icon))
-        self.title_label = QLabel(title, self)
+        # 标题用 ElideLabel：俄语「Стандартный」在窄卡里比可用宽度长，普通 QLabel
+        # 会把字直接裁掉（没有省略号、没有提示）。ElideLabel 省略并把全文放进 tooltip。
+        self.title_label = style_module.ElideLabel(title, parent=self)
         self.title_label.setObjectName("optionTitle")
         head.addWidget(self.icon_label)
         head.addWidget(self.title_label, 1)
@@ -2610,6 +2750,206 @@ class OptionCard(QPushButton):
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
         return QSize(96, self.layout().minimumSize().height())
+
+
+class ModeCard(OptionCard):
+    """一张翻译模式卡：图标 + 名称 + 一行细节（成本或步骤，由页面决定）。
+
+    F18（2026-11-04 UI 审查）：同一件事原来有两套设计——准备页是"分段轨道 + 名字 +
+    三行数字"，设置页是"图标 + 名字 + 步骤点"。现在两边都是这一个控件，差别只在
+    **细节行写什么**：准备页写这份文档的成本，设置页写这套模式包含哪几步。
+    """
+
+    def __init__(self, key: str, title: str, description: str = "", icon_name: str = "",
+                 parent: QWidget | None = None, *,
+                 steps: tuple[tuple[str, str, bool], ...] = ()) -> None:
+        super().__init__(key, title, "", icon_name, parent)
+        #: 工作流步骤（键是**已翻译**的步骤名）：悬停提示与面板的一句话说明都读它，
+        #: 卡片上不画小图标——模式的差别用细节行说，不用图标表。
+        self.steps: dict[str, bool] = {label: bool(on) for _icon, label, on in steps}
+        # 旧调用点/测试读 ``_title`` / ``_description``：保留同名别名，避免为了换个外观
+        # 去改一圈无关代码。
+        self._title = self.title_label
+        # 一整句摘要不进卡片布局（卡片只有"图标 + 名称 + 一行细节"），但它仍在
+        # 悬停提示里、也仍可被读屏器读到；这里保留一个隐藏的承载控件。
+        self._description = QLabel(description, self)
+        self._description.setObjectName("presetDesc")
+        self._description.hide()
+        self._estimate_text = ""
+        included = [label for label, on in self.steps.items() if on]
+        tip = [title]
+        if description:
+            tip.append(description)
+        if included:
+            tip.append(" · ".join(included))
+        self._base_tooltip = "\n".join(tip)
+        self.setToolTip(self._base_tooltip)
+        self.setAccessibleDescription(self._base_tooltip)
+
+    def set_estimate(self, tokens: str, duration: str = "", calls: str = "") -> None:
+        """这个模式在这份文档上的大约成本（acceptance-feedback 13.6-3）。
+
+        成本写在**卡片自己的细节行**里，所以下面那句总结不再重复同样的数字（F18）。
+        """
+        self._estimate_text = " · ".join(part for part in (calls, tokens, duration) if part)
+        self.set_detail(self._estimate_text)
+        self.setToolTip("\n".join(part for part in (
+            self._base_tooltip, self._estimate_text) if part))
+        self.setAccessibleDescription(self.toolTip())
+        self.updateGeometry()
+
+    def estimate(self) -> str:
+        """完整的预估文字（窄处可能被省略显示，悬停提示里有全文）。"""
+        return self._estimate_text
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        """按**当前宽度**算高度。
+
+        ``OptionCard.sizeHint`` 用 ``min(hint.width(), 220)`` 估高：细节行一旦折行，
+        三个模式卡并排时窄窗里的实际高度会比它小，"被压扁"的判断就假报警。这里按
+        真实分配到的宽度算，再和布局的最小高度取大值。
+        """
+        hint = self.layout().sizeHint()
+        width = max(hint.width(), self.width() or hint.width())
+        width = min(width, 260)
+        return QSize(width, max(self.heightForWidth(width),
+                                self.layout().minimumSize().height()))
+
+
+class ModeCards(QWidget):
+    """一排 :class:`ModeCard`（准备页与设置页共用，F18）。
+
+    与 :class:`style.SegmentedControl` 同语义：``changed`` 只在**真的换了选项**时发出；
+    ``value()`` 为空表示当前配置不对应任何一项（用户改成了"自定义"，界面据此不高亮）。
+    """
+
+    changed = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._options: dict[str, ModeCard] = {}
+        self._value = ""
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(theme_module.SPACE["sm"])
+        self._row = row
+
+    # ---- 构建/取值 ----
+    def set_options(self, options: list[dict]) -> None:
+        """按目录重建选项：每项 ``{"key", "label", "description", "icon", "steps"}``。"""
+        for button in self._options.values():
+            self._group.removeButton(button)
+            button.hide()      # 先藏，再脱离父级（见 segment_assist 的同类注释）
+            button.setParent(None)
+            button.deleteLater()
+        self._options = {}
+        self._value = ""
+        for item in options:
+            key = str(item.get("key") or "")
+            if not key:
+                continue
+            button = ModeCard(
+                key, str(item.get("label") or key), str(item.get("description") or ""),
+                str(item.get("icon") or ""), steps=tuple(item.get("steps") or ()))
+            button.clicked.connect(lambda _checked=False, k=key: self._pick(k))
+            self._group.addButton(button)
+            self._row.addWidget(button, 1)
+            self._options[key] = button
+        # 选项是在构造之后才装进来的：父级在"还空着"的时候就算过一次尺寸，那份缓存
+        # 不会被自动失效，于是卡片被分到 0 高。逐级打掉最近几层的布局缓存。
+        self._invalidate_ancestors()
+
+    def _invalidate_ancestors(self) -> None:
+        self._row.activate()
+        # 卡片的实际高度可以大于一行文字，但一行的高度是下限：任何祖先都不该把它
+        # 压到 0（不然就是"模式选项被压扁"）。同时刷新自己的尺寸缓存。
+        self.setMinimumHeight(max(self.sizeHint().height(), 1))
+        widget = self
+        for _ in range(4):
+            widget.updateGeometry()
+            layout = widget.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+            widget = widget.parentWidget()
+            if widget is None:
+                break
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        """高度取"最高的那张卡"，不跟着布局算。
+
+        卡片在 ``set_options`` 里刚建出来时还没显示，``QHBoxLayout`` 会跳过隐藏的子控件，
+        于是容器第一次被问尺寸时高度是 0；父布局一旦按 0 分配就再也不问第二次，卡片
+        全被压成 0 高（窄窗用例里的"模式选项被压扁了"）。
+        """
+        hint = super().sizeHint()
+        tallest = max((button.sizeHint().height() for button in self._options.values()),
+                      default=0)
+        return QSize(hint.width(), max(hint.height(), tallest))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        hint = super().minimumSizeHint()
+        tallest = max((button.minimumSizeHint().height()
+                       for button in self._options.values()), default=0)
+        return QSize(hint.width(), max(hint.height(), tallest))
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt 命名
+        """按宽度算高度——**必须实现**。
+
+        卡片带 ``heightForWidth``，容器因此也被标记为"高度依赖宽度"；此时外层
+        ``QBoxLayout`` 问的是 ``heightForWidth()`` 而不是 ``sizeHint()``。QWidget 的
+        默认实现返回 0/``-1``，于是父布局认为这一行不需要高度，三张卡被压成 0 高
+        （窄窗用例单跑就是这样；整文件跑时前面的用例偶然触发过一次重排才正常）。
+        """
+        count = max(1, len(self._options))
+        spacing = theme_module.SPACE["sm"]
+        each = max(1, (max(width, 1) - spacing * (count - 1)) // count)
+        tallest = max((button.heightForWidth(each) for button in self._options.values()),
+                      default=0)
+        return max(tallest, self.sizeHint().height())
+
+    def options(self) -> tuple[str, ...]:
+        return tuple(self._options)
+
+    def button(self, key: str) -> ModeCard | None:
+        return self._options.get(key)
+
+    def set_estimates(self, texts: dict[str, tuple[str, str, str]]) -> None:
+        """每个模式的成本（调用次数、token、耗时）；空字典表示清掉。"""
+        for key, button in self._options.items():
+            tokens, duration, calls = texts.get(key, ("", "", ""))
+            button.set_estimate(tokens, duration, calls)
+        self._row.activate()
+        self.updateGeometry()
+
+    def value(self) -> str:
+        return self._value
+
+    def set_value(self, key: str) -> None:
+        """选中某一项；空值表示**不选中任何一项**（当前配置是自定义）。"""
+        key = str(key or "")
+        if key == self._value:
+            return
+        if not key:
+            self._group.setExclusive(False)
+            for button in self._options.values():
+                button.setChecked(False)
+            self._group.setExclusive(True)
+            self._value = ""
+            return
+        button = self._options.get(key)
+        if button is None:
+            return
+        button.setChecked(True)
+        self._value = key
+
+    def _pick(self, key: str) -> None:
+        if key == self._value:
+            return
+        self._value = key
+        self.changed.emit(key)
 
 
 class AccentPicker(QWidget):

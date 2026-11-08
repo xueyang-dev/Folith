@@ -1,10 +1,10 @@
 """术语页：严格术语治理的任务必须有出口。
 
-核心在 ``quality_mode`` 且有候选术语未冻结时拒绝开始翻译（任务停在"待术语确认"）。
+核心在 ``quality_mode`` 且有候选术语未锁定、未确认时拒绝开始翻译（任务停在"待术语确认"）。
 Qt 原来没有术语面板，接入的旧任务就会卡死。这里钉住：
 
 * 视图模型与核心的开始门禁是同一个条件；
-* 翻译开始前：暂存编辑 → 保存草稿 / 冻结 / 跳过冻结，都落到核心已有的状态上；
+* 翻译开始前：暂存编辑 → 保存草稿 / 锁定 / 跳过锁定，都落到核心已有的状态上；
 * 翻译开始后：逐条修订走核心的版本机制（生成新的术语版本，不改写旧版本）；
 * 面板：暂存不丢、翻译开始后改走即时修订、门禁提示与按钮可见性。
 """
@@ -188,7 +188,7 @@ def _row(i, source, preferred, status="candidate"):
 def test_panel_warns_when_candidates_block_the_start(panel):
     panel.apply("j", _view([_row(1, "Skopos", "目的论")]))
     assert panel.banner.isVisibleTo(panel)
-    assert "冻结" in panel.banner.text()
+    assert "锁定" in panel.banner.text()
     assert panel.freeze_button.isVisibleTo(panel)
     assert panel.bypass_button.isVisibleTo(panel)
     assert not panel.unfreeze_button.isVisibleTo(panel)
@@ -267,7 +267,7 @@ def test_workbench_points_at_the_terms_tab_when_candidates_block_the_start(qapp,
     bench.load(job, adapter.EngineConfig(target_lang="简体中文"), state,
                adapter.segment_rows(job, state), [])
     assert not bench.terms_gate.isHidden(), "被术语门禁挡住时必须有提示"
-    assert "冻结" in bench.terms_gate.text()
+    assert "锁定" in bench.terms_gate.text()
     bench.terms_gate.action_button().click()
     # 术语表在翻译页左栏展开（2026-10-17 试用反馈），不是一整页。
     assert bench.terms_open()
@@ -336,6 +336,42 @@ def test_workbench_stays_at_980px_with_terms_open_and_closed(qapp, job):
     assert bench.minimumSizeHint().width() <= 980
     assert bench.grid_card.isVisibleTo(bench)
     bench.close()
+
+
+@pytest.mark.parametrize('theme_name', ['light', 'dark', 'paper'])
+def test_styled_sidebar_rectangles_survive_resize_cycles(qapp, job, theme_name):
+    from PySide6.QtCore import QPoint
+    from folith.qt import style, views
+
+    style.apply_theme(qapp, theme_name)
+    state = adapter.load_state(job)
+    state.update(p2_done=True, pairs=[{'source': 'Skopos theory matters.',
+                                     'target': '目的论很重要。', 'reviewed': True}])
+    core.save_job_state(job, state)
+    bench = views.WorkbenchView()
+    bench.resize(980, 680)
+    bench.load(job, adapter.EngineConfig(target_lang='简体中文'), state,
+               adapter.segment_rows(job, state), [])
+    bench.show()
+    try:
+        for width, height in ((980, 523), (1280, 720), (1440, 900), (980, 680), (980, 523)):
+            bench.resize(width, height)
+            bench.set_terms_open(True)
+            qapp.processEvents()
+            panel = bench.terms_panel
+            table_bottom = panel.table.mapTo(panel, QPoint(0, panel.table.height())).y()
+            editor_top = panel.editor_card.mapTo(panel, QPoint(0, 0)).y()
+            editor_bottom = panel.editor_card.mapTo(panel, QPoint(0, panel.editor_card.height())).y()
+            actions_top = min(panel.locate_button.mapTo(panel, QPoint(0, 0)).y(),
+                              panel.workspace_button.mapTo(panel, QPoint(0, 0)).y())
+            assert table_bottom <= editor_top
+            assert editor_bottom <= actions_top
+            assert bench.terms_side_scroll.horizontalScrollBar().maximum() == 0
+            bench.set_terms_open(False)
+            qapp.processEvents()
+    finally:
+        bench.close()
+        style.apply_theme(qapp, 'light')
 
 
 def test_workbench_shows_no_gate_notice_once_frozen(qapp, job):

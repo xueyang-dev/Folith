@@ -51,6 +51,52 @@ def test_missing_file_is_reported_not_raised(tmp_path):
     assert file_actions.open_with_default_app("").ok is False
 
 
+def test_open_directory_command_per_platform(tmp_path):
+    """打开冻结交付目录：macOS 用 open、Windows 交给 os.startfile、Linux 用 xdg-open。"""
+    folder = tmp_path / "delivery"
+    folder.mkdir()
+    if sys.platform == "darwin":
+        assert file_actions.command_for(file_actions.OPEN_FOLDER, folder) == \
+            ["open", str(folder)]
+    elif os.name == "nt":
+        assert file_actions.command_for(file_actions.OPEN_FOLDER, folder) is None
+    else:
+        assert file_actions.command_for(file_actions.OPEN_FOLDER, folder) == \
+            ["xdg-open", str(folder)]
+
+
+def test_open_directory_missing_folder_is_reported_not_launched(tmp_path):
+    result = file_actions.open_directory(tmp_path / "gone")
+    assert result.ok is False
+    assert result.argv == []
+    assert "文件夹不存在" in result.describe()
+
+
+def test_open_directory_records_the_command(tmp_path, monkeypatch):
+    folder = tmp_path / "delivery"
+    folder.mkdir()
+    calls: list[list[str]] = []
+    opened: list[str] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(file_actions.subprocess, "run", fake_run)
+    if os.name == "nt":  # pragma: no cover - Windows-only path
+        monkeypatch.setattr(file_actions.os, "startfile",
+                            lambda target: opened.append(target))
+    result = file_actions.open_directory(folder)
+    assert result.ok is True
+    assert result.action == file_actions.OPEN_FOLDER
+    assert result.describe() == f"已在文件管理器中打开：{folder}"
+    if os.name == "nt":  # pragma: no cover - Windows-only path
+        assert opened == [str(folder)]
+        assert calls == []
+    else:
+        assert calls == [file_actions.command_for(file_actions.OPEN_FOLDER, folder)]
+
+
 def test_successful_action_records_the_command(delivered, monkeypatch):
     calls: list[list[str]] = []
 

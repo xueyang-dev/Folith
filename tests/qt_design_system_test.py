@@ -243,17 +243,18 @@ def test_filter_chips_use_the_pill_skin(app):
     assert plain.button("a").objectName() == "segment"
 
 
-# ---- 第四套主题（翠绿）与 logo 着色 -------------------------------------------------
-def test_green_theme_is_a_complete_light_theme(app):
-    assert "green" in theme_tokens.THEME_ORDER
-    assert theme_tokens.SCHEMES["green"] == "light"
-    tokens = theme_tokens.TOKENS["green"]
-    assert tokens["accent"] == "#0f6b4f"            # 设计稿 Primary Green
-    assert tokens["accent-soft"] == "#e6f4ee"       # Green Light
-    assert set(tokens) == set(theme_tokens.TOKENS["light"])
-    assert theme.label("green") == "翠绿"
-    assert theme.resolve("green") == "green"
-    assert style.apply_theme(app, "green") == "green"
+# ---- 主题色（翠绿 / 石板）与 logo 着色 ----------------------------------------------
+def test_retired_full_themes_leave_only_accent_palettes(app):
+    assert theme_tokens.THEME_ORDER == ("light", "dark")
+    assert set(theme_tokens.TOKENS) == {"light", "dark"}
+    palette = theme_tokens.ACCENT_TOKENS["green"]
+    assert palette["accent"] == "#0f6b4f"           # 设计稿 Primary Green
+    assert palette["accent-soft"] == "#e6f4ee"      # Green Light
+    assert theme_tokens.ACCENT_TOKENS["slate"]["accent"] == "#4c5a66"
+    for accent in theme_tokens.ACCENT_TOKENS.values():
+        assert set(accent) == set(theme_tokens.ACCENT_TOKENS["green"])
+        assert set(accent) <= set(theme_tokens.TOKENS["light"])
+    assert style.apply_theme(app, "green") == "light"
     assert not style.night_mode()
 
 
@@ -274,7 +275,7 @@ def test_logo_follows_the_theme_accent(app):
 
     original = branding.logo_pixmap(48, "light")
     day = branding.logo_pixmap(48, "light", tint=theme.tokens("light")["brand-logo-blue"])
-    green = branding.logo_pixmap(48, "green", tint=theme.tokens("green")["accent"])
+    green = branding.logo_pixmap(48, "green", tint=theme_tokens.ACCENT_TOKENS["green"]["accent"])
     # 日间：logo 保持品牌钴蓝（界面主色已与 logo 分开，侧栏日间不着色），图片逐像素不变
     assert day.toImage() == original.toImage()
     # 翠绿：彩色部分的色相移到绿区（约 0.37–0.45），不再是蓝（≈0.6）
@@ -285,9 +286,11 @@ def test_home_sidebar_logo_is_tinted_per_theme(app):
     style.apply_theme(app, "light")
     light_view = views.HomeView()
     light_hue = _hue(light_view._brand_mark.pixmap())
-    style.apply_theme(app, "green")
+    theme.set_accent("green")
+    style.apply_theme(app, "light")
     green_view = views.HomeView()
     assert _hue(green_view._brand_mark.pixmap()) < light_hue - 0.1
+    theme.set_accent("blue")
     style.apply_theme(app, "light")
     light_view.deleteLater()
     green_view.deleteLater()
@@ -296,7 +299,7 @@ def test_home_sidebar_logo_is_tinted_per_theme(app):
 def test_green_logo_uses_the_designed_colour_ramp(app):
     from folith.qt import branding
 
-    logo = branding.logo_pixmap(104, "green", tint=theme.tokens("green")["accent"])
+    logo = branding.logo_pixmap(104, "green", tint=theme_tokens.ACCENT_TOKENS["green"]["accent"])
     image = logo.toImage()
     colours = {(c.red(), c.green(), c.blue())
                for c in (image.pixelColor(x, y) for x in range(0, image.width(), 2)

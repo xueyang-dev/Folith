@@ -41,7 +41,9 @@ def test_annotation_boundaries_expose_ordered_commit_wait(tmp_path, monkeypatch)
 
     def response(pairs, *_):
         if "Section 0" in pairs[0]["source"]:
-            time.sleep(0.03)
+            # 0.12s：这条断言量的是"后续批次要等前一批提交完"，差值必须明显大于
+            # 计时器粒度。0.03s 时 Windows 上量到 9.8ms，刚好低于 10ms 阈值（假红）。
+            time.sleep(0.12)
         return core.AnnotationBatchResult(status="empty")
 
     monkeypatch.setattr(core, "annotate_batch", response)
@@ -53,7 +55,7 @@ def test_annotation_boundaries_expose_ordered_commit_wait(tmp_path, monkeypatch)
     events = [json.loads(line) for line in run.requests_path.read_text(encoding="utf-8").splitlines()]
     batch = {e["phase"]: e["monotonic"] for e in events if e["event"] == "batch_timing" and e["batch_id"] == 2}
     assert batch["queued"] <= batch["worker_started"] <= batch["result_ready"] < batch["commit_started"] <= batch["commit_finished"]
-    assert batch["commit_started"] - batch["result_ready"] > 0.01
+    assert batch["commit_started"] - batch["result_ready"] > 0.05
     assert any(e.get("phase") == "annotation_complete" for e in events)
 
 

@@ -299,7 +299,9 @@ def test_the_mode_cards_show_each_modes_cost(tmp_path, data_dir):
     assert all("token" in text and "分钟" in text and "次调用" in text for text in cards.values()), cards
     assert all(text in panel.mode_selector.button(key).accessibleDescription()
                for key, text in cards.items())
-    assert "预估" in panel.mode_summary.text()
+    # F18（2026-11-04 审查）：成本数字只写在卡片上，下面这句总结不再重复同一组数字；
+    # 卡片已经说了"约 4 次调用 · 620 token · 不到 1 分钟"，这里只补卡片没有的倍数。
+    assert "预估" not in panel.mode_summary.text(), "卡片已经写了数字，总结行不重复"
     assert "倍" not in panel.mode_summary.text(), "标准 is the reference itself"
     panel.mode_selector.button("学术增强").click()
     app.processEvents()

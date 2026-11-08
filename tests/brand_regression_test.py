@@ -187,7 +187,19 @@ def _iter_text_files():
                            ".workbuddy-ai/", ".serena/", ".localize-anything/", "exports/", "tmp/", "skills/", "tests/",
                            # Generated working areas (see .gitignore): benchmark output
                            # and the local video scaffold are not shipped source.
-                           "benchmark/", "video/")):
+                           # `research/` is untracked local research material (not shipped
+                           # source); its docs quote absolute file:/// paths that contain
+                           # the checkout directory name, which is not a brand statement.
+                           "benchmark/", "video/",
+                           # Untracked local material: research notes and promo
+                           # deliverables quote absolute paths that contain the
+                           # checkout directory name. Not shipped source, not a
+                           # brand statement.
+                           "research/", "promo/", "promo-fact-check-20261031/",
+                           "promo-fact-check-20261101/",
+                           # 审查提示词里带着示例用的仓库绝对路径（含旧目录名），
+                           # 那是给审查者执行命令用的，不是品牌表述。
+                           "docs/ui-overhaul/95-review-prompt.md")):
             continue
         if rel.endswith(".egg-info/SOURCES.txt") or ".egg-info/" in rel:
             continue
@@ -216,14 +228,14 @@ def _legacy_hits() -> list[str]:
 def test_public_brand_constants_are_canonical():
     assert brand.APP_NAME == "Folith"
     assert brand.APP_NAME_ZH == "译页"
-    assert brand.WORDMARK == "Folith·译页"
+    assert brand.WORDMARK == "Folith · 译页"
     assert brand.TAGLINE == "Agentic Translation Workspace"
     assert brand.TAGLINE_ZH == "智能体翻译工作台"
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'description = "Folith·译页 — Agentic Translation Workspace"' in pyproject
-    assert "Folith·译页" in readme
+    assert 'description = "Folith · 译页 — Agentic Translation Workspace"' in pyproject
+    assert "Folith · 译页" in readme
     assert "Agentic Translation Workspace" in readme
     assert "智能体翻译工作台" in readme
 

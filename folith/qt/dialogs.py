@@ -139,6 +139,7 @@ class EngineDialog(QDialog):
 
     PAGES = (("general", "settings", "通用"), ("models", "sparkles", "模型"),
              ("vision", "image", "视觉与识别"), ("defaults", "package", "任务默认值"),
+             ("reading", "book-open", "阅读"),
              ("storage", "folder", "存储"), ("about", "info", "关于"))
 
     def __init__(self, config: adapter.EngineConfig, runner: TaskRunner,
@@ -169,8 +170,10 @@ class EngineDialog(QDialog):
         self.academic_preference = False
         self._loading = True
 
-        from .settings_pages import AboutPage, StoragePage
+        from .settings_pages import AboutPage, ReadingPage, StoragePage
 
+        # 阅读排版（F6）：行距与阅读字体。默认跟随界面字体，不写死平台字体族。
+        self.reading_page = ReadingPage()
         self.storage_page = StoragePage(runner)
         self.storage_page.revealRequested.connect(self.revealRequested.emit)
         self.about_page = AboutPage(runner, updater=getattr(parent, "updates", None))
@@ -179,6 +182,7 @@ class EngineDialog(QDialog):
                     "models": self._build_connection_tab,
                     "vision": self._build_vision_tab,
                     "defaults": self._build_task_tab,
+                    "reading": lambda: self.reading_page,
                     "storage": lambda: self.storage_page,
                     "about": lambda: self.about_page}
         # 工作模式的复选框在「任务默认值」里，但「通用」页先建：先把它造出来。
@@ -546,7 +550,10 @@ class EngineDialog(QDialog):
         self._sync_mode_cards()
         mti = QHBoxLayout()
         mti.setSpacing(theme_module.SPACE["lg"])
-        mti_label = QLabel("MTI")
+        mti_label = QLabel(i18n.tr('MTI（翻译硕士）'))
+        mti_label.setToolTip(i18n.tr(
+            'MTI 是翻译硕士（Master of Translation and Interpreting）专业学位；'
+            '打开后，学术写作、案例与合规页面才会出现。'))
         style_module.set_text_role(mti_label, "label")
         mti.addWidget(mti_label)
         mti.addWidget(self.academic_box)

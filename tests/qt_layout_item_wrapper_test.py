@@ -98,3 +98,32 @@ def test_unsorted_terms_rebuild_creates_no_item_wrappers(app):
     before = _item_wrappers(host)
     view._fill_unsorted_terms()
     assert _item_wrappers(host) == before
+
+
+def _delivery_manifest(names):
+    return {"created_at": "2026-11-07T08:00:00+00:00", "snapshot_version": 1,
+            "assets": [{"name": name, "size": 100 + index, "sha256": "0" * 64}
+                       for index, name in enumerate(names)]}
+
+
+def test_delivery_workspace_builds_and_rebuilds_without_item_wrappers(app):
+    """交付页：每次冻结后的刷新都会销毁并重建分组卡片。
+
+    2026-11-07 CI 的 macOS 冻结 App 在「冻结交付 v1」之后的几毫秒里随机段错误（连续两次，
+    每次崩在不同的扫描用例）。崩溃点在交付页刷新之后；分组卡片与页头原先都是
+    「先往子布局里填控件、再 addLayout」，每次重建都留下失效的 QWidgetItem 包装器。
+    """
+    from folith.qt import delivery_panel
+
+    workspace = delivery_panel.DeliveryWorkspace()
+    workspace.resize(1040, 900)
+    before = _item_wrappers()
+    manifests = (["translation.docx", "bilingual.docx", "terms.xlsx",
+                  "delivery_manifest.json"],
+                 ["translation.docx", "terms.xlsx", "delivery_manifest.json"],
+                 ["translation.docx", "bilingual.docx", "delivery_manifest.json"])
+    for names in manifests * 2:
+        workspace.set_model(delivery_panel.build_model(_delivery_manifest(names)))
+        gc.collect()
+    assert _item_wrappers() == before
+    workspace.deleteLater()

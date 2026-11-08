@@ -199,7 +199,6 @@ def install() -> None:
         if latest is not None:
             self.save_snapshot_button.setText(
                 i18n.tr('保存冻结交付文件 v{v0}…', v0=latest.get("snapshot_version")))
-        self.asset_list.clear()
         self._fill_delivery_assets(snapshot.get("latest"), snapshot=snapshot)
         offer = bool(snapshot.get("current") or preview.get("can_deliver"))
         self._fill_supplements(adapter.supplementable_outputs(self.job_id, self._state)
