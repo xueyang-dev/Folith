@@ -241,7 +241,8 @@ def _reconcile_final_delivery_snapshot(job_id, state):
     if state.get("delivery_status") != "final":
         return state
     latest = _snapshots.latest_snapshot(_c.job_dir(job_id))
-    if latest and _snapshots.state_identity(state) != latest.get("translation_state_identity"):
+    if latest and not _snapshots.state_matches_identity(
+            state, latest.get("translation_state_identity")):
         return _invalidate_final_delivery_state(state)
     return state
 
@@ -750,8 +751,8 @@ def delivery_snapshot_status(job_id, state=None):
     if latest is None:
         return {"latest": None, "current": False, "diverged": False, "integrity": False}
     state = state if state is not None else _c.load_job_state(job_id)
-    current_identity = _snapshots.state_identity(state or {})
-    matches = current_identity == latest.get("translation_state_identity")
+    matches = _snapshots.state_matches_identity(
+        state or {}, latest.get("translation_state_identity"))
     integrity = delivery_snapshot_assets_intact(job_id, latest["snapshot_version"])
     return {
         "latest": latest,
@@ -789,7 +790,8 @@ def delivery_snapshot_status_light(job_id):
     if cached is not None and cached[0] == key:
         return dict(cached[1])
     state = _c.load_job_state(job_id)
-    matches = _snapshots.state_identity(state or {}) == latest.get("translation_state_identity")
+    matches = _snapshots.state_matches_identity(
+        state or {}, latest.get("translation_state_identity"))
     names = [item.get("name") for item in latest.get("assets") or []]
     integrity = bool(names) and all(
         name and _snapshots.asset_path(job_root, version, name).is_file() for name in names)
