@@ -100,6 +100,27 @@ def state_identity(state: Dict[str, Any]) -> str:
     return _sha256(payload.encode("utf-8"))
 
 
+def state_matches_identity(state: Dict[str, Any], expected: Optional[str]) -> bool:
+    if not expected:
+        return False
+    if state_identity(state) == expected:
+        return True
+
+    # Loading 0.8.0 tasks adds these 0.8.1 QA defaults in memory. They do
+    # not change the approved state. Preserve the full identity comparison
+    # whenever a switch or any QA record actually differs.
+    defaults = {
+        "qa_triage_enabled": False,
+        "finding_triage": {},
+        "qa_escalation_enabled": False,
+        "qa_escalation": {},
+    }
+    if not all(state.get(key) == value for key, value in defaults.items()):
+        return False
+    legacy_state = {key: value for key, value in state.items() if key not in defaults}
+    return state_identity(legacy_state) == expected
+
+
 def snapshot_root(job_root: Path) -> Path:
     return Path(job_root) / SNAPSHOT_DIR
 
