@@ -76,12 +76,6 @@ jobs:
     name: macOS Qt candidate (build, frozen flow, DMG, release checks)
     runs-on: macos-15
     timeout-minutes: 60
-    # EXPERIMENT (temporary, do not merge): A/B the macOS AX runtime workaround.
-    # The frozen app segfaulted in 3 of 4 runs on this branch; the workaround is
-    # the only macOS-specific, frozen-specific addition. Revert this commit after
-    # the experiment.
-    env:
-      FOLITH_QT_AX_WORKAROUND: "0"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -111,10 +105,6 @@ jobs:
           venv/bin/python scripts/qt_ocr_baseline_runner.py \
             --out "$RUNNER_TEMP/qt-ocr" \
             --frozen-app "$GITHUB_WORKSPACE/dist/qt-desktop/Folith.app/Contents/MacOS/Folith"
-      - name: "EXPERIMENT: show the AX workaround state the frozen app logged"
-        if: always()
-        run: |
-          grep -rh "macOS AX workaround" "$RUNNER_TEMP"/qt-ocr/*/logs/qt-client.log 2>/dev/null | sort | uniq -c || echo "no AX workaround lines logged"
       - name: Build the DMG
         run: bash scripts/build_qt_dmg.sh
       - name: Release manifest and generated notes for this candidate
