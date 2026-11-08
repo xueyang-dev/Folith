@@ -2465,6 +2465,10 @@ class WorkbenchView(QWidget):
         self._loading = False
         self._dirty = False
         self._last_runtime: dict = {}
+        # 新提示替换旧提示，复用随工作台销毁的定时器。
+        self._task_notice_timer = QTimer(self)
+        self._task_notice_timer.setSingleShot(True)
+        self._task_notice_timer.timeout.connect(self._render_runtime)
         self._snapshots: list[dict] = []
         #: The derived, read-only projections that arrive with the state (they
         #: are computed on a worker thread because each walks the document).
@@ -3892,7 +3896,7 @@ class WorkbenchView(QWidget):
                              (runtime.get("status"), runtime.get("detail"),
                               runtime.get("current_operation")), time.monotonic())
         seconds = self.TASK_NOTICE_SECONDS[bool(error)]
-        QTimer.singleShot(int(seconds * 1000) + 50, self._render_runtime)
+        self._task_notice_timer.start(int(seconds * 1000) + 50)
         self.run_status.setVisible(True)
         self.run_status.set_state(tone=self.run_status.track.tone(), line=message,
                                   line_tone="failed" if error else None)
