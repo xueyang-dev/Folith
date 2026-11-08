@@ -255,7 +255,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.selftest:
         import faulthandler
 
-        faulthandler.enable()
+        crash_log = (paths.log_dir / "selftest-faults.log").open("ab")
+        try:
+            faulthandler.enable(file=crash_log, all_threads=False)
+        except OSError as exc:
+            print(f"selftest-faults unavailable: {exc}", file=sys.stderr, flush=True)
         from . import selftest
 
         config = selftest.engine_from_env(adapter, main_window.config)
