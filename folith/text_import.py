@@ -80,7 +80,8 @@ def _object_records(element) -> list[dict]:
 
 def _html_paragraphs(markup: str | bytes, headings: list | None = None,
                      anchors: dict | None = None,
-                     images: list | None = None):
+                     images: list | None = None,
+                     decorations=None):
     """返回 ``(段落, 未纳入内容)``；传入 ``headings`` 列表时，把每个标题块
     ``{"index": 标题段落在结果里的下标, "level": 1–6}`` 追加进去（结构解析用）。
     传入 ``anchors`` 字典时，把元素 id/name 映射到其段落在结果里的下标。
@@ -90,7 +91,12 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
     ``at`` 是“图片之前的完整段落数”：独立图片块落在前后段落之间的边界上，
     段内图片落在该完整段落之后；图片元素本身没有文字，因此不会改变段落序列。
     图片后方的 tail 文本照常并入段落；``<object data>`` 的 fallback 文字照常
-    参与段落，图片资源本身由调用方保留或计入跳过。"""
+    参与段落，图片资源本身由调用方保留或计入跳过。
+
+    传入 ``decorations`` 回调时，每遇到一个元素就调用 ``decorations(element)``；
+    返回非空地址说明该元素通过样式（内联 ``style`` 或样式表选择器）引用了一张
+    背景图，于是按同样的图片记录规则追加一条 ``{"tag": "css-background", ...}``。
+    这里只记录“元素边界上有一张背景图”，不解析 CSS —— 选择器由调用方解析。"""
     if isinstance(markup, bytes):
         markup = decode_text(markup)
     root = html.fromstring(markup)
@@ -152,6 +158,14 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
             if block_frames:
                 block_frames[-1]["has_child_blocks"] = True
             block_frames.append({"records": [], "has_child_blocks": False})
+        if decorations is not None and keep_images and not suppress_images[0]:
+            try:
+                decoration = decorations(node)
+            except Exception:  # noqa: BLE001 - a broken style must not drop text
+                decoration = ""
+            if decoration:
+                add_image({"tag": "css-background", "href": str(decoration),
+                           "at": None})
         if anchors is not None:
             node_id = node.get("id") or node.get("name")
             if node_id and str(node_id) not in anchors:

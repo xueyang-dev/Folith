@@ -63,6 +63,13 @@ _EPUB_XHTML = ('<?xml version="1.0" encoding="UTF-8"?>'
                'xmlns:xlink="http://www.w3.org/1999/xlink">'
                '<head><title>Chapter</title></head><body>{}</body></html>')
 
+_EPUB_XHTML_STYLED = ('<?xml version="1.0" encoding="UTF-8"?>'
+                      '<html xmlns="http://www.w3.org/1999/xhtml" '
+                      'xmlns:xlink="http://www.w3.org/1999/xlink">'
+                      '<head><title>Chapter</title>'
+                      '<link rel="stylesheet" type="text/css" href="{css}"/>'
+                      '</head><body>{body}</body></html>')
+
 _IMAGE_MEDIA_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                       "gif": "image/gif", "webp": "image/webp",
                       "svg": "image/svg+xml", "bmp": "image/bmp"}
@@ -91,13 +98,15 @@ def webp_image(rgb=(0.2, 0.7, 0.3)):
 
 
 def synthetic_epub(chapters, images=None, *, cover=None, cover_meta=False,
-                   cover_property=True, encryption=()):
+                   cover_property=True, encryption=(), stylesheets=None):
     """Build a synthetic EPUB in memory; no sample book is committed.
 
     ``chapters`` items are dicts with ``href``/``body`` plus optional ``zip_name``,
-    ``linear`` and ``media_type``.  ``images`` maps package-relative ZIP names to
-    bytes; their manifest href is percent-encoded.  ``cover`` selects one of
-    those names for the cover declaration.
+    ``linear``, ``media_type`` and ``stylesheet`` (package-relative CSS href,
+    linked from that chapter's head).  ``images`` maps package-relative ZIP names
+    to bytes; their manifest href is percent-encoded.  ``stylesheets`` maps
+    package-relative names to CSS text.  ``cover`` selects one of those image
+    names for the cover declaration.
     """
     from urllib.parse import quote
 
@@ -109,13 +118,22 @@ def synthetic_epub(chapters, images=None, *, cover=None, cover_meta=False,
         href = chapter["href"]
         zip_name = chapter.get("zip_name") or unquote(href)
         media_type = chapter.get("media_type", "application/xhtml+xml")
-        content = (_EPUB_XHTML.format(chapter["body"])
-                   if media_type == "application/xhtml+xml" else chapter["body"])
+        if media_type != "application/xhtml+xml":
+            content = chapter["body"]
+        elif chapter.get("stylesheet"):
+            content = _EPUB_XHTML_STYLED.format(css=chapter["stylesheet"],
+                                                body=chapter["body"])
+        else:
+            content = _EPUB_XHTML.format(chapter["body"])
         files[zip_name] = content.encode("utf-8")
         manifest.append(f'<item id="text-{index}" href="{quote(href, safe="/")}" '
                         f'media-type="{media_type}"/>')
         linear = ' linear="no"' if chapter.get("linear") == "no" else ""
         spine.append(f'<itemref idref="text-{index}"{linear}/>')
+    for index, (name, text) in enumerate((stylesheets or {}).items()):
+        manifest.append(f'<item id="stylesheet-{index}" href="{quote(name)}" '
+                        f'media-type="text/css"/>')
+        files[name] = text.encode("utf-8")
     image_ids = {}
     for index, (name, data) in enumerate(images.items()):
         item_id = f"image-{index}"
@@ -1142,3 +1160,177 @@ def test_epub_svg_wrapper_without_a_readable_bitmap_is_skipped(href, reason):
     assert report["skipped_image_reasons"] == {reason: 1}
     assert any("未纳入译文" in warning for warning in report["warnings"])
     assert content(data).count("<img ") == 0
+
+
+# --- RC3 acceptance fixes -------------------------------------------------
+
+def test_source_refs_rebuild_without_guessing_spaces_between_segments():
+    """S1-01: a paragraph split at a boundary with no blank must still bind.
+
+    The RC3 freeze failed because the map was verified by joining the segments
+    with a single space, so ``这是第一句。这是第二句。`` became
+    ``这是第一句。 这是第二句。`` and the paragraph looked stale.
+    """
+
+    def build(separators):
+        row = {"paragraph_index": 0, "start": 0, "end": 2,
+               "gate": {"status": "passed"}}
+        if separators:
+            row["separators"] = [""]
+        return {
+            "source_paras": ["这是第一句。这是第二句。"],
+            "source_paragraphs": ["这是第一句。这是第二句。"],
+            "pairs": [{"source": "这是第一句。"}, {"source": "这是第二句。"}],
+            "excluded_segments": [{"excluded_id": "ex-1"}],
+            "segmentation": {"mode": "sentence", "paragraph_ranges": [row]},
+        }
+
+    for separators in (True, False):
+        state = build(separators)
+        assert bind_source_references(state) is True
+        assert [pair[SOURCE_REFS] for pair in state["pairs"]] == [[0], [0]]
+
+    # A real structural change still fails closed: no image may bind to it.
+    edited = build(True)
+    edited["pairs"][1]["source"] = "这是第二段。"
+    assert bind_source_references(edited) is False
+    assert SOURCE_REFS not in edited["pairs"][1]
+
+
+def test_excluded_segment_still_binds_a_paragraph_split_without_spaces(tmp_path, monkeypatch):
+    """S1-01 end-to-end: EPUB and DOCX delivery survive the exclusion.
+
+    The RC3 freeze failed exactly here: the task was translated, the map was
+    never backfilled (the space-less boundary looked stale), one segment was
+    excluded, and both exports refused to build.  Dropping the references
+    reproduces that state on disk.
+    """
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    document = Document()
+    document.add_paragraph("这是第一句。这是第二句。")
+    document.add_paragraph("另一段。")
+    stream = io.BytesIO()
+    document.save(stream)
+    source = stream.getvalue()
+    state = translated_state("cjk.docx", source)
+    assert [pair["source"] for pair in state["pairs"]][:2] == ["这是第一句。", "这是第二句。"]
+    core.save_source("cjksplit", source)
+    core.save_job_state("cjksplit", state)
+    index = next(i for i, pair in enumerate(state["pairs"])
+                 if pair["source"] == "另一段。")
+    state = core.mutate_translation_segments(
+        "cjksplit", index, "exclude", exclude_reason="测试排除")
+    assert state["excluded_segments"]
+    for pair in state["pairs"]:
+        pair.pop(SOURCE_REFS, None)
+    core.save_job_state("cjksplit", state)
+
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["chapter_count"] >= 1
+
+    payload, docx_report = build_translation_docx(state, source)
+    assert not any("来源关联" in warning for warning in docx_report["warnings"])
+    rebuilt = Document(io.BytesIO(
+        payload.getvalue() if hasattr(payload, "getvalue") else payload))
+    assert [paragraph.text for paragraph in rebuilt.paragraphs][1:] == [
+        pair["target"] for pair in state["pairs"]]
+
+
+def test_epub_export_keeps_source_spine_and_heading_structure():
+    """S2-01: three source chapters stay three chapters with a usable nav."""
+    source = synthetic_epub([
+        {"href": "text/ch1.xhtml",
+         "body": "<h1>Chapter One</h1><p>First chapter body.</p>"},
+        {"href": "text/ch2.xhtml",
+         "body": "<h1>Chapter Two</h1><p>Second chapter body.</p>"},
+        {"href": "text/ch3.xhtml",
+         "body": "<h1>Chapter Three</h1><p>Third chapter body.</p>"},
+    ])
+    state = translated_state("structured.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["source_document_count"] == 3
+    assert report["source_heading_count"] == 3
+    assert report["chapter_count"] == 3
+    with ZipFile(io.BytesIO(data)) as archive:
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        spine = package.findall("o:spine/o:itemref", OPF)
+        assert len(spine) == 3
+        titles = [next(pair["target"] for pair in state["pairs"]
+                       if pair["source"] == heading)
+                  for heading in ("Chapter One", "Chapter Two", "Chapter Three")]
+        nav = archive.read("EPUB/nav.xhtml").decode("utf-8")
+        for title in titles:
+            assert title in nav
+        for name in sorted(item for item in archive.namelist()
+                           if item.endswith(".xhtml") and "chapter-" in item):
+            page = ET.fromstring(archive.read(name))
+            assert page.find(".//h:h1", XHTML) is not None
+
+
+def test_epub_css_background_image_reaches_the_delivery():
+    """S2-02: a picture that only exists as a CSS background is not dropped."""
+    backdrop = colored_png((0.25, 0.45, 0.8))
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "stylesheet": "../1.css",
+          "body": '<p>Before the picture.</p>'
+                  '<table class="rabbithole"><tr><td>After the picture.</td></tr></table>'}],
+        {"images/rabbithole.png": backdrop},
+        stylesheets={"1.css": 'table.rabbithole { background-image: url("images/rabbithole.png"); }'})
+    state = translated_state("background.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["image_count"] == report["image_reference_count"] == 1
+    assert report["skipped_image_count"] == 0
+    assert report["skipped_image_reasons"] == {}
+    with ZipFile(io.BytesIO(data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("EPUB/images/")]
+        assert len(media) == 1
+        assert archive.read(media[0]) == backdrop
+    page = content(data)
+    assert page.index("<img ") < page.index("After the picture.")
+
+
+def test_epub_unused_css_background_is_reported_instead_of_silently_dropped():
+    """S2-02: a stylesheet image no element uses is counted, not claimed as 0."""
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "stylesheet": "../1.css",
+          "body": "<p>No table in this chapter.</p>"}],
+        {"images/rabbithole.png": colored_png((0.1, 0.6, 0.2))},
+        stylesheets={"1.css": 'table.rabbithole { background-image: url("images/rabbithole.png"); }'})
+    data, report = build_translation_epub(translated_state("unused.epub", source), source)
+    validate_package(data)
+    assert report["image_count"] == 0
+    assert report["skipped_image_count"] == 1
+    assert report["skipped_image_reasons"] == {"css_background": 1}
+    assert any("样式表背景图" in warning for warning in report["warnings"])
+    assert content(data).count("<img ") == 0
+
+
+def test_epub_css_background_used_in_one_chapter_is_not_reported_as_skipped():
+    """S2-02: a shared stylesheet must not inflate the skipped count."""
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "stylesheet": "../1.css",
+          "body": '<table class="rabbithole"><tr><td>Picture chapter.</td></tr></table>'},
+         {"href": "text/ch2.xhtml", "stylesheet": "../1.css",
+          "body": "<p>Plain chapter.</p>"}],
+        {"images/rabbithole.png": colored_png((0.3, 0.3, 0.7))},
+        stylesheets={"1.css": 'table.rabbithole { background-image: url("images/rabbithole.png"); }'})
+    data, report = build_translation_epub(translated_state("shared.epub", source), source)
+    validate_package(data)
+    assert report["image_count"] == 1
+    assert report["skipped_image_count"] == 0
+    assert report["skipped_image_reasons"] == {}
+
+
+def test_epub_inline_style_background_is_collected():
+    """S2-02: the same rule applies when the declaration lives on the element."""
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>Intro.</p><div style="background-image:url(../images/inline.png)">Block.</div>'}],
+        {"images/inline.png": colored_png((0.6, 0.2, 0.4))})
+    data, report = build_translation_epub(translated_state("inline.epub", source), source)
+    validate_package(data)
+    assert report["image_count"] == report["image_reference_count"] == 1
+    assert report["skipped_image_count"] == 0

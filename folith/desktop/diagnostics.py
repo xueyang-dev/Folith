@@ -10,10 +10,20 @@ migration system for diagnostics.
 The export is deliberately narrow: it contains build facts, resolved paths with
 the user name removed, and a filtered error summary.  It never reads the
 provider configuration, environment dumps, tokens, or document contents.
+
+Paths are redacted rather than reported verbatim: a location inside the home
+directory collapses to ``~`` plus the rest of the path (``~/AppData/...`` on
+POSIX, ``~\\AppData\\...`` on Windows), and a location outside it (a data
+directory the user chose on another drive, a work checkout, a system-wide tool)
+becomes ``<external>`` plus its last component.  That last component keeps the
+report readable ("which folder?"), while a drive letter, a project directory or
+an account name never reaches a bundle the user is about to share.  See
+:func:`redact_path`.
 """
 from __future__ import annotations
 
 import json
+import os
 import platform
 import re
 import sys
@@ -66,41 +76,106 @@ class DiagnosticsReport:
 
 # --- redaction -------------------------------------------------------------
 
+#: Stands in for the part of an absolute path that is outside the home
+#: directory.  Only the last component is kept next to it.
+EXTERNAL_PLACEHOLDER = "<external>"
+USER_PLACEHOLDER = "<user>"
+
+_ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/])")
+
+
+def _is_absolute_like(text: str) -> bool:
+    """True for a Windows drive path, a UNC path or a POSIX absolute path.
+
+    Detection is deliberately platform independent: a diagnostic bundle must
+    redact ``D:\\...`` whether it is inspected on Windows or on macOS.
+    """
+    return bool(_ABSOLUTE_RE.match(text))
+
+
+def _strip_home_prefix(text: str, home_text: str) -> str | None:
+    """The part of *text* below *home_text*, or ``None`` when it is not inside.
+
+    A plain ``startswith`` also matched a sibling directory such as
+    ``<home>-old``, which then lost its separator; the check is on whole path
+    components and case-insensitive on Windows, where ``C:\\Users`` and
+    ``c:\\users`` name the same folder.
+    """
+    if not home_text:
+        return None
+    head = text[:len(home_text)]
+    if os.path.normcase(head) != os.path.normcase(home_text):
+        return None
+    rest = text[len(home_text):]
+    if rest and rest[0] not in "\\/":
+        return None
+    return rest
+
+
+def _external_placeholder(text: str) -> str:
+    """``<external>`` plus the last path component, in the path's own style.
+
+    ``D:\\work\\logs`` becomes ``<external>\\logs``; ``/srv/logs`` becomes
+    ``<external>/logs``.  The diagnostic value ("data dir" vs "log dir", the
+    executable's own file name) survives without exposing the prefix.
+    """
+    parts = [part for part in re.split(r"[\\/]+", text.rstrip("\\/")) if part]
+    last = parts[-1] if parts else ""
+    separator = "\\" if "\\" in text else "/"
+    return f"{EXTERNAL_PLACEHOLDER}{separator}{last}" if last else EXTERNAL_PLACEHOLDER
+
+
+def _redact_user_name(text: str, home: Path | None = None) -> str:
+    """Replace the account name anywhere in free text (e.g. a log line)."""
+    home = home or Path.home()
+    try:
+        user_name = home.name
+    except Exception:  # pragma: no cover - defensive
+        return text
+    return text.replace(user_name, USER_PLACEHOLDER) if user_name else text
+
 
 def redact_path(value: str | Path | None, home: Path | None = None) -> str:
-    """Remove the user name from a path (roadmap §3.5).
+    """Report a path without leaking the account or the project it lives in.
 
-    Paths under the home directory become `~/...`; any other occurrence of the
-    user name (for example a temp directory named `pytest-of-<user>`) is
-    replaced with `<user>` so a user-chosen location cannot leak a project or
-    account name into a support bundle.
+    Roadmap §3.5 / RC3 S4-02: the 诊断包 used to carry the raw absolute path of
+    every location.  A path under the home directory collapses to ``~`` plus the
+    remaining path; any other absolute path (a data directory the user put on
+    another drive, a source checkout, a system-wide tool) becomes
+    ``<external>`` plus its last component; the user name is replaced with
+    ``<user>`` wherever it still appears.
+
+    The result is stable on both platforms and never depends on the separator of
+    the running system: ``D:\\work\\logs`` and ``/srv/logs`` both keep only
+    their last component.
     """
     if value is None:
         return ""
     text = str(value)
     home = home or Path.home()
     try:
-        home_text = str(home)
-        user_name = home.name
+        home_text = str(home).rstrip("\\/")
     except Exception:  # pragma: no cover - defensive
         return text
-    if home_text and text.startswith(home_text):
-        text = "~" + text[len(home_text):]
-    if user_name:
-        text = text.replace(user_name, "<user>")
-    return text
+    rest = _strip_home_prefix(text, home_text)
+    if rest is not None:
+        text = "~" + rest
+    elif _is_absolute_like(text):
+        text = _external_placeholder(text)
+    return _redact_user_name(text, home)
 
 
 def _redact_text(text: str, home: Path | None = None) -> str:
     """Redact the home directory anywhere in the text, plus secret-looking values.
 
     Log lines carry the home path in the middle (after a timestamp), so a prefix
-    replacement is not enough.
+    replacement is not enough.  A log line is *not* a path, so it is never turned
+    into an ``<external>`` placeholder: only the home prefix and the user name
+    are rewritten here.
     """
     home = home or Path.home()
     home_text = str(home)
-    redacted = text.replace(home_text, "~")
-    redacted = redact_path(redacted, home)
+    redacted = _redact_user_name(text.replace(home_text, "~"), home)
     # Specific credential shapes first: the generic `key: value` rule would
     # otherwise consume only the word "Bearer" and leave the token behind.
     for pattern in _SECRET_PATTERNS:
@@ -289,7 +364,12 @@ def collect_error_summary(paths: desktop_paths.DesktopPaths,
 
 def write_diagnostics(paths: desktop_paths.DesktopPaths, *,
                       pywebview_version: str | None = None) -> Path:
-    """Write `<log_dir>/diagnostics.json`; returns the path (best effort)."""
+    """Write `<log_dir>/diagnostics.json`; returns the path (best effort).
+
+    The file mirrors the collected facts, so its ``locations`` are already
+    redacted: user data and log directories inside the home directory appear as
+    ``~/...``, and a directory outside it as ``<external>/<last component>``.
+    """
     report = DiagnosticsReport(
         facts=collect(paths=paths, pywebview_version=pywebview_version),
         errors=collect_error_summary(paths),
@@ -335,7 +415,13 @@ def collect_tools() -> dict[str, Any]:
 def export_bundle(destination: str | Path, *,
                   paths: desktop_paths.DesktopPaths | None = None,
                   pywebview_version: str | None = None) -> Path:
-    """Write a redacted diagnostics bundle the user can attach to a report."""
+    """Write a redacted diagnostics bundle the user can attach to a report.
+
+    Redaction happens while collecting (see :func:`redact_path`), so the bundle
+    holds ``~/...`` for directories under the home directory and
+    ``<external>/<last component>`` for anything outside it — never a drive
+    letter, a project directory or an account name.
+    """
     paths = paths or desktop_paths.resolve_paths()
     target = Path(destination).expanduser()
     facts = collect(paths=paths, pywebview_version=pywebview_version)

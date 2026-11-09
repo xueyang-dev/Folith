@@ -1967,6 +1967,13 @@ class ElideButton(QPushButton):
         #: 调用方给的说明性悬停提示（例如"这个按钮会做什么/为什么不可用"）。
         #: 省略逻辑只在**没有**说明时才用完整文字补位，不能把说明覆盖掉。
         self._hint = ""
+        # QPushButton 默认水平策略是 Minimum（只许变宽），布局会把它的 sizeHint
+        # 当成硬下限——长语言里按钮就把整栏（乃至窗口）撑住。既然这个类本来就会
+        # 在空间不足时省略，策略要允许收缩：Preferred 带 ShrinkFlag，布局的下限
+        # 走 minimumSizeHint，文字仍以省略号 + 悬停提示保持可读。
+        policy = self.sizePolicy()
+        policy.setHorizontalPolicy(QSizePolicy.Policy.Preferred)
+        self.setSizePolicy(policy)
         self.setText(text)
 
     def setText(self, text: str) -> None:  # noqa: N802 - Qt 命名
@@ -2288,7 +2295,10 @@ class StatStrip(QFrame):
             cell_layout = QHBoxLayout(cell)
             cell_layout.setContentsMargins(0, 0, 0, 0)
             cell_layout.setSpacing(theme_module.SPACE["xs"])
-            name = QLabel(label)
+            # 指标名可省略：长语言（西语/俄语）里四个指标横排能把审校页的最小
+            # 宽度撑到 1000+，窗口因此拒绝缩到窄窗（S3-04）。数值永远完整，
+            # 名称放不下时省略、完整文字进悬停提示。
+            name = ElideLabel(label)
             name.setObjectName("statLabel")
             value = QLabel("—")
             value.setObjectName("statValue")

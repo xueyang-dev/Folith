@@ -26,6 +26,7 @@ from functools import lru_cache
 from . import i18n, platform_ui
 from . import style as style_module
 from . import theme as theme_module
+from .flow_layout import FlowRow
 
 
 @lru_cache(maxsize=4096)
@@ -38,7 +39,8 @@ def cell_direction(text: str, language: str | None = None) -> Qt.LayoutDirection
 
 #: 普通行的高度（与表格默认行高一致）。
 ROW_HEIGHT = 26
-#: 展开行里，编辑框下面那一条（未保存提示与保存按钮）的高度。
+#: 展开行里，编辑框下面那一条（未保存提示与保存按钮）的**最小**高度。
+#: 实际高度按列宽动态计算：按钮折行后保存条会变高（见 InlineSegmentEditor.footer_height）。
 FOOTER_HEIGHT = 32
 #: 编辑框最少显示的行数：短句也要一眼看出"这里可以写"。
 MIN_EDITOR_LINES = 2
@@ -214,18 +216,32 @@ class InlineSegmentEditor(QWidget):
 
         self.state_label = QLabel("")
         self.state_label.setObjectName("inlineState")
-        self.hint_label = QLabel(i18n.tr('{v0} 保存 · {v1} 保存并进入下一段', v0=platform_ui.shortcut_text("save"), v1=platform_ui.shortcut_text("save_next")))
+        # 提示文字只是加速键说明：放不下就省略，完整文字留在悬停提示里。它不能
+        # 和按钮抢宽度——按钮被压到半截字时，"保存"就不可辨了（S3-01）。
+        self.hint_label = style_module.ElideLabel(
+            i18n.tr('{v0} 保存 · {v1} 保存并进入下一段',
+                    v0=platform_ui.shortcut_text("save"),
+                    v1=platform_ui.shortcut_text("save_next")))
         self.hint_label.setObjectName("hint")
 
+        # 保存条分两层：上面一行是"● 未保存 + 快捷键提示"，下面一层是动作按钮。
+        # 按钮走 FlowRow：译文列在 1280 逻辑 px 下只有约 280–400 px，英文/西语/俄语
+        # 的 "Discard changes / Save and next" 单行放不下，折行而不是硬裁（S3-01）。
+        # 高度随折行层数变化，见 :meth:`footer_height`。
         self.footer = QWidget()
-        self.footer.setFixedHeight(FOOTER_HEIGHT)
-        footer = QHBoxLayout(self.footer)
-        footer.setContentsMargins(0, 2, 0, 0)
-        footer.setSpacing(theme_module.SPACE["sm"])
-        footer.addWidget(self.state_label)
-        footer.addWidget(self.hint_label)
-        footer.addStretch(1)
-        self._footer_layout = footer
+        self._footer_layout = QVBoxLayout(self.footer)
+        self._footer_layout.setContentsMargins(0, 2, 0, 0)
+        self._footer_layout.setSpacing(theme_module.SPACE["xs"])
+        # 先挂空布局再填控件：先填后挂会让 PySide 给每个条目留下 QWidgetItem
+        # 包装器，浮层销毁后包装器残留（见 tests/qt_layout_item_wrapper_test.py）。
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(theme_module.SPACE["sm"])
+        self._footer_layout.addLayout(status_row)
+        self._footer_buttons = FlowRow(spacing=theme_module.SPACE["sm"], fill=False)
+        self._footer_layout.addLayout(self._footer_buttons)
+        status_row.addWidget(self.state_label, 0)
+        status_row.addWidget(self.hint_label, 1)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -259,11 +275,36 @@ class InlineSegmentEditor(QWidget):
         self.source_view.hide()
 
     def add_footer_button(self, button) -> None:
-        self._footer_layout.addWidget(button)
+        self._footer_buttons.addWidget(button)
 
     def set_footer_visible(self, visible: bool) -> None:
-        if self.footer.isVisible() != visible:
+        if self.footer.isVisibleTo(self) != visible:
             self.footer.setVisible(visible)
+        if visible:
+            self._sync_footer_height()
+
+    def footer_height(self, width: int | None = None) -> int:
+        """保存条在给定宽度下需要的高度（按钮折行后会变高）。
+
+        ``views._place_inline_editor`` 用它算展开行的高度；固定 32 px 的单行
+        保存条在长语言里放不下三个按钮（S3-01），高度必须跟着折行层数走。
+        """
+        width = max(1, int(width if width is not None else self.width()))
+        layout = self.footer.layout()
+        if layout is None:
+            return FOOTER_HEIGHT
+        return max(FOOTER_HEIGHT, int(layout.heightForWidth(width)))
+
+    def _sync_footer_height(self) -> None:
+        if self.footer.isHidden():
+            return
+        height = self.footer_height(self.width())
+        if self.footer.height() != height:
+            self.footer.setFixedHeight(height)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().resizeEvent(event)
+        self._sync_footer_height()
 
     def editor_height(self, width: int) -> int:
         """编辑框按内容需要的高度（不含保存条）：用与编辑框相同的排版算一遍。

@@ -110,7 +110,12 @@ class FlowRow(QLayout):
 
     def minimumSize(self) -> QSize:  # noqa: N802 - Qt naming
         items = self._visible()
-        width = max((_preferred_width(item) for item in items), default=0)
+        # 最小宽度取每个控件**自己声明**的下限（``minimumSizeHint`` / ``minimumWidth``），
+        # 而不是 ``sizeHint``：可省略的控件（``ElideButton`` 等）与设置了
+        # ``maximumWidth`` 的控件本来就能在窄窗里收窄；按 sizeHint 报最小值会让
+        # 整栏（乃至整个窗口）拒绝缩到 980 这类窄宽度。排版仍按 ``sizeHint``
+        # 分配宽度（见 ``_preferred_width``），放不下就折行，不会因此硬裁文字。
+        width = max((item.minimumSize().width() for item in items), default=0)
         height = max((item.sizeHint().height() for item in items), default=0)
         margins = self.contentsMargins()
         return QSize(width + margins.left() + margins.right(), height + margins.top() + margins.bottom())
