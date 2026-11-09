@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtWidgets import QLayout, QSizePolicy, QWidget
+from PySide6.QtWidgets import QLayout, QSizePolicy, QWidget, QWidgetItem
 
 from . import theme as theme_module
 
@@ -58,12 +58,20 @@ class FlowRow(QLayout):
     def __init__(self, parent: QWidget | None = None, spacing: int | None = None,
                  *, fill: bool = True) -> None:
         super().__init__(parent)
-        self._items = []
+        items = self._items = []
+        self.destroyed.connect(lambda *_: items.clear())
         self._fill = bool(fill)
         self.setContentsMargins(0, 0, 0, 0)
         self.setSpacing(theme_module.SPACE["xs"] if spacing is None else spacing)
 
     # QLayout plumbing
+    def addWidget(self, widget: QWidget) -> None:  # noqa: N802 - Qt naming
+        # FlowRow stores and releases its own items. The C++ addWidget()
+        # creates an item PySide treats as C++-owned, even for a Python layout.
+        self.addChildWidget(widget)
+        self.addItem(QWidgetItem(widget))
+        self.invalidate()
+
     def addItem(self, item) -> None:  # noqa: N802 - Qt naming
         self._items.append(item)
 

@@ -414,10 +414,13 @@ def test_progress_moves_per_page_and_pause_does_not_deadlock(slow_job):
     # runtime_state keeps only the latest 24 user events. Later translation
     # telemetry can evict the early pause event; check the durable log instead.
     events = core.read_runtime_events("pause-job", visibility="user")
-    assert any(e["event"] == "scan_pausing" for e in events)
-    assert any(e["event"] == "job_paused" for e in events)
-    messages = [e["message"] for e in events]
-    assert any("正在暂停：等正在识别的页完成" in m for m in messages)
+    names = [e["event"] for e in events]
+    assert names.index("job_paused") < names.index("job_continued")
+    # A request arriving just before a checkpoint can go directly to paused.
+    if "scan_pausing" in names:
+        waiting = names.index("scan_pausing")
+        assert waiting < names.index("job_paused")
+        assert "正在暂停：等正在识别的页完成" in events[waiting]["message"]
     # 事件日志不逐页刷屏：30 页最多每 5 页一条进度事件。
     assert sum(1 for e in events if e["event"] == "scan_progress") <= 7
 

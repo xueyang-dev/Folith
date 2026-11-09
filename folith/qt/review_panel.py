@@ -422,16 +422,6 @@ class ReviewPanel(QWidget):
         self.queue_heading = style_module.SectionLabel(i18n.tr('审校队列'))
         self._filter_chips: dict[str, QPushButton] = {}
         # 长语言下分组标签很长：用可换行的 FlowRow，窄列里折行而不是互相挤压。
-        chip_row = components.FlowRow(spacing=6, fill=False)
-        chip_row.setContentsMargins(12, 0, 12, 0)
-        for key in GROUP_ORDER:
-            chip = QPushButton("")
-            chip.setProperty("qaFilter", True)
-            chip.setCheckable(True)
-            chip.clicked.connect(
-                lambda _checked=False, name=key: self._focus_group(name))
-            chip_row.addWidget(chip)
-            self._filter_chips[key] = chip
         self.queue_area = QFrame()
         self.queue_area.setObjectName("qaQueue")
         queue_layout = QVBoxLayout(self.queue_area)
@@ -444,7 +434,17 @@ class ReviewPanel(QWidget):
         queue_header_layout.setContentsMargins(16, 10, 16, 10)
         queue_header_layout.addWidget(self.queue_heading)
         queue_layout.addWidget(queue_header)
+        chip_row = components.FlowRow(spacing=6, fill=False)
         queue_layout.addLayout(chip_row)
+        chip_row.setContentsMargins(12, 0, 12, 0)
+        for key in GROUP_ORDER:
+            chip = QPushButton("")
+            chip.setProperty("qaFilter", True)
+            chip.setCheckable(True)
+            chip.clicked.connect(
+                lambda _checked=False, name=key: self._focus_group(name))
+            chip_row.addWidget(chip)
+            self._filter_chips[key] = chip
         queue_layout.addWidget(self.list, 1)
         queue_layout.addWidget(self.empty_label)
         self.queue_area.setMinimumWidth(250)
@@ -539,16 +539,6 @@ class ReviewPanel(QWidget):
             '撤销这条自动处理结论；撤销会暂存撤回候选，仍需采用才会改正文。'))
         self.audit_revoke_button.clicked.connect(self._emit_audit_revoke)
         self.audit_revoke_button.setVisible(False)
-        action_row = components.FlowRow(spacing=6, fill=False)
-        for widget in (self.apply_button, self.edit_button, self.confirm_button,
-                       self.confirm_source_button, self.review_button,
-                       self.audit_revoke_button):
-            action_row.addWidget(widget)
-        alternative_row = components.FlowRow(spacing=6, fill=False)
-        for widget in (self.open_button, self.preserve_button,
-                       self.retranslate_button, self.style_rule_button):
-            alternative_row.addWidget(widget)
-
         # 名字译法不一：同一个部件（与「检查与修复」抽屉共用），代替逐段的动作行。
         self.conflict = NameConflictWidget()
         self.conflict.previewRequested.connect(self.entityPreviewRequested.emit)
@@ -590,8 +580,17 @@ class ReviewPanel(QWidget):
         action_layout.setContentsMargins(16, 12, 16, 12)
         action_layout.setSpacing(8)
         action_layout.addWidget(self.note_edit)
+        action_row = components.FlowRow(spacing=6, fill=False)
         action_layout.addLayout(action_row)
+        for widget in (self.apply_button, self.edit_button, self.confirm_button,
+                       self.confirm_source_button, self.review_button,
+                       self.audit_revoke_button):
+            action_row.addWidget(widget)
+        alternative_row = components.FlowRow(spacing=6, fill=False)
         action_layout.addLayout(alternative_row)
+        for widget in (self.open_button, self.preserve_button,
+                       self.retranslate_button, self.style_rule_button):
+            alternative_row.addWidget(widget)
         action_layout.addWidget(self.hint)
         action_layout.addWidget(self.shortcut_hint)
 

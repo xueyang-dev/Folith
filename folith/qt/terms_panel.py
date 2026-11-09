@@ -237,11 +237,6 @@ class TermsPanel(QWidget):
                        self.lock_selected_button, self.reject_selected_button,
                        self.lock_all_button, self.undo_form_button):
             edit_actions.addWidget(widget)
-        gate_actions = components.FlowRow(spacing=6)
-        for widget in (self.freeze_button, self.save_button, self.bypass_button,
-                       self.unfreeze_button):
-            gate_actions.addWidget(widget)
-
         editor_card = _TermsEditorCard()
         editor_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         editor_layout = QVBoxLayout(editor_card)
@@ -267,15 +262,15 @@ class TermsPanel(QWidget):
         filter_layout.setContentsMargins(0, 0, 0, 0)
         filter_layout.setSpacing(6)
         filter_top = components.FlowRow(spacing=6)
+        filter_layout.addLayout(filter_top)
         filter_top.addWidget(self.search_edit)
         filter_top.addWidget(self.current_segment_box)
         filters = components.FlowRow(spacing=6)
+        filter_layout.addLayout(filters)
         self.search_edit.setMinimumWidth(160)
         self.search_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        filter_layout.addLayout(filter_top)
         filters.addWidget(self.filter_box)
         filters.addWidget(self.conflict_box)
-        filter_layout.addLayout(filters)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
@@ -331,12 +326,16 @@ class TermsPanel(QWidget):
         self.content_layout.addLayout(list_layout, 3)
         self.content_layout.addWidget(self.detail_host, 2)
         layout.addLayout(self.content_layout, 1)
+        gate_actions = components.FlowRow(spacing=6)
         layout.addLayout(gate_actions)
+        for widget in (self.freeze_button, self.save_button, self.bypass_button,
+                       self.unfreeze_button):
+            gate_actions.addWidget(widget)
         quick_actions = components.FlowRow(spacing=6)
+        layout.addLayout(quick_actions)
         quick_actions.addWidget(self.locate_button)
         quick_actions.addWidget(self.workspace_button)
         quick_actions.addWidget(self.conflicts_button)
-        layout.addLayout(quick_actions)
         layout.addWidget(self.duplicates_button)
         layout.addWidget(self.hint)
         layout.addStretch(0)

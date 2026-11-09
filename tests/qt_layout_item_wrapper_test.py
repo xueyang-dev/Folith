@@ -72,6 +72,20 @@ def test_name_conflict_rebuild_creates_no_item_wrappers(app):
     assert _item_wrappers() == before
 
 
+def test_destroyed_workbench_leaves_no_layout_item_wrappers(app):
+    from folith.qt.views import WorkbenchView
+
+    def valid_item_ids():
+        gc.collect()
+        return {id(item) for item in gc.get_objects()
+                if type(item) is QWidgetItem and Shiboken.isValid(item)}
+
+    before = valid_item_ids()
+    view = WorkbenchView()
+    Shiboken.delete(view)
+    assert valid_item_ids() <= before
+
+
 def test_project_overview_rebuild_creates_no_item_wrappers(app):
     view = ProjectsView()
     view._detail = {"project": {"description": "说明", "target_lang": "简体中文"}}
