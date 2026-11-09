@@ -109,27 +109,35 @@ class PdfPanel(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setWidget(self.image)
 
+        # 先建外层、把子布局挂上去，再往里放控件。反过来（先填后挂）时，PySide 会给
+        # 每个条目留下一个 QWidgetItem 包装器；`_place_tools` 之后在两条工具行之间
+        # 搬控件，Qt 会删掉旧条目，包装器随即变成野指针，等新对象落到同一地址就会在
+        # 不相关的行段错误（tests/qt_layout_item_wrapper_test.py）。
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
+
         head = QHBoxLayout()
+        layout.addLayout(head)
         head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(self.title, 1)
         head.addWidget(self.close_button)
         # 翻页与工具（缩放、定位当前段）默认排一行；审校页内嵌的原页栏只有约 280 px，
         # 一行放不下时工具折到第二行，而不是把下拉框和按钮挤得只剩半截字。
         self._bar = QHBoxLayout()
+        layout.addLayout(self._bar)
         self._bar.setContentsMargins(0, 0, 0, 0)
         for widget in (self.prev_button, self.page_box, self.total_label, self.next_button):
             self._bar.addWidget(widget)
         self._tools = (self.zoom_box, self.locate_button)
         self._tool_bar = QHBoxLayout()
+        layout.addLayout(self._tool_bar)
         self._tool_bar.setContentsMargins(0, 0, 0, 0)
         self._tool_bar.addStretch(1)
-        self._wrapped = True
-        self._place_tools(False)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.addLayout(head)
-        layout.addLayout(self._bar)
-        layout.addLayout(self._tool_bar)
+        # 默认不折行：工具直接跟在翻页控件后面，收尾弹簧也在这条行上。
+        for widget in self._tools:
+            self._bar.addWidget(widget)
+        self._bar.addStretch(1)
+        self._wrapped = False
         layout.addWidget(self.hint)
         layout.addWidget(self.scroll, 1)
 
