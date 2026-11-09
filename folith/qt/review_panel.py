@@ -327,7 +327,11 @@ class ReviewPanel(QWidget):
 
         def button(text: str, icon_name: str, token: str = "text-secondary",
                    name: str = "") -> QPushButton:
-            widget = QPushButton(text)
+            # 可省略按钮：审校页的动作按钮在长语言里比窗口的一半还宽（西语
+            # "Confirmar y volver a traducir"），用它的 sizeHint 当最小宽度会
+            # 把这页的布局最小宽度撑到 1000+（S3-04）。放得下全句、放不下省略
+            # 并保留完整悬停提示；排版仍按 sizeHint 折行（FlowRow）。
+            widget = style_module.ElideButton(text)
             widget.setIcon(icons.icon(icon_name, 16, token))
             widget.setIconSize(QSize(16, 16))
             if name:
@@ -378,20 +382,26 @@ class ReviewPanel(QWidget):
         top.setContentsMargins(16, 10, 16, 10)
         top.setSpacing(6)
         top.addWidget(self.overview, 0)
-        text_column = QVBoxLayout()
-        text_column.setSpacing(2)
-        text_column.addWidget(self.headline)
-        text_column.addWidget(self.detail)
         # Readiness is independent of QA counts. Keep the secondary actions on
         # the same row while allowing the status copy to wrap in long languages.
+        # 布局一律"先挂空、后填控件"：先填后挂会让 PySide 给每个条目留下
+        # QWidgetItem 包装器，面板销毁后残留（tests/qt_layout_item_wrapper_test.py）。
         controls_row = QHBoxLayout()
         controls_row.setSpacing(8)
-        controls_row.addLayout(text_column, 1)
-        controls_row.addWidget(self.evidence_toggle, 0, Qt.AlignmentFlag.AlignTop)
-        controls_row.addWidget(self.review_all_button, 0, Qt.AlignmentFlag.AlignTop)
-        controls_row.addWidget(self.batch_unify_button, 0, Qt.AlignmentFlag.AlignTop)
-        controls_row.addWidget(self.concept_button, 0, Qt.AlignmentFlag.AlignTop)
         top.addLayout(controls_row)
+        text_column = QVBoxLayout()
+        text_column.setSpacing(2)
+        controls_row.addLayout(text_column, 1)
+        text_column.addWidget(self.headline)
+        text_column.addWidget(self.detail)
+        # 顶栏那排按钮改成可折行的 FlowRow：四颗按钮在长语言里横排会把这页的
+        # 最小宽度撑到 1000+，窗口因此拒绝缩到 980 逻辑 px（S3-04）。折行后
+        # 最小宽度只取决于最宽的那一颗，按钮文字仍然完整。
+        controls_flow = components.FlowRow(spacing=8, fill=False)
+        controls_row.addLayout(controls_flow, 0)
+        for widget in (self.evidence_toggle, self.review_all_button,
+                       self.batch_unify_button, self.concept_button):
+            controls_flow.addWidget(widget)
         top.addWidget(self.triage_toggle)
 
         # ---- 左：队列 --------------------------------------------------------
@@ -1251,6 +1261,21 @@ class ReviewPanel(QWidget):
         if not hasattr(self, "workspace_area"):
             return
         self._apply_narrow_evidence(getattr(self, "_narrow_evidence", False))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        """证据栏不参与整页的最小宽度（S3-04）。
+
+        180/280 px 是证据栏的**显示**宽度。把它算进布局最小宽度时，西语/俄语的
+        审校页最小宽度到 1229/1331，窗口永远缩不到 980 逻辑 px。证据栏在窄窗下
+        本来就可折叠/与译文工作区互斥切换（``_apply_narrow_evidence``），因此
+        这里把它从最小宽度里扣掉：窗口先缩到 980，随之而来的 resizeEvent 再把
+        它收成可切换面板；宽窗下它仍按 sizeHint/最大宽度拿到 200–320 px。
+        """
+        hint = super().minimumSizeHint()
+        area = getattr(self, "evidence_area", None)
+        if area is not None and area.isVisibleTo(self):
+            hint.setWidth(max(0, hint.width() - area.minimumSizeHint().width()))
+        return hint
 
     def _block(self, label: str, value: str) -> str:
         """Work-area 里一个独立文本块（标签 + 正文），原文/译文各自成块。"""

@@ -588,6 +588,12 @@ class DeliveryGroupCard(QFrame):
         text_column.setSpacing(theme_module.SPACE["xxs"])
         self.title_label = QLabel(group.title, identity)
         self.title_label.setObjectName("deliveryGroupTitle")
+        # 身份列只有 212 px；"Bilingual document / Documento bilingüe /
+        # Двуязычный документ" 一比一翻译就比这一列宽（S3-03）。标题折行而不是
+        # 被硬裁，完整文字同时进悬停提示与无障碍名称。
+        self.title_label.setWordWrap(True)
+        self.title_label.setToolTip(group.title)
+        self.title_label.setAccessibleName(group.title)
         self.hint_label = QLabel(group.hint, identity)
         self.hint_label.setObjectName("deliveryGroupHint")
         self.hint_label.setWordWrap(True)
