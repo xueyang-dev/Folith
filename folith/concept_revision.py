@@ -40,6 +40,7 @@ def preview_concept_revision(
     *,
     preferred_target: str = "",
     exclusions: Sequence[int] = (),
+    known_forms: Sequence[str] = (),
 ) -> Dict[str, Any]:
     """一次概念决策的受影响段落预览（纯函数，不写任何状态）。
 
@@ -47,6 +48,11 @@ def preview_concept_revision(
     是 ``state["concept_decisions"]``。``exclusions`` 是调用方（UI 逐段勾选）
     决定不参与本次批量的 segment 索引——这些段仍出现在 ``rows`` 里（带
     ``excluded: true``）供确认，但 ``stage`` 会跳过它们。
+
+    ``known_forms`` 是任务中所有实体和词汇的已知译名（通过
+    :func:`folith.consistency.collect_known_forms` 一次性收集），保护包含
+    某个替换形式作为真子串的较长译名不被误改。当 ``known_forms`` 未提供时，
+    自动从 ``records``（实体登记表）回退收集，以保持向后兼容。
 
     返回 ``{"preferred_target", "rows", "protected", "unchanged", "reason"}``；
     ``reason`` 非空表示没有可执行的修订（keep_variants / 未决策 / 无竞争译法）。
@@ -78,6 +84,24 @@ def preview_concept_revision(
 
     members = [_spelling(form) for form in card.get("members") or [] if _spelling(form)]
     excluded = set(exclusions or ())
+
+    # Use caller-supplied known_forms (collected once per operation from the
+    # full state via consistency.collect_known_forms).  Fall back to collecting
+    # from records (entity registry only) for backward compatibility with
+    # callers that have not yet been updated.
+    if known_forms:
+        all_known_forms: List[str] = list(known_forms)
+    else:
+        all_known_forms = []
+        for rec in (records or []):
+            pref = _spelling(rec.get("preferred_target"))
+            if pref:
+                all_known_forms.append(pref)
+            for obs in rec.get("observations") or []:
+                obs_t = _spelling(obs.get("target"))
+                if obs_t:
+                    all_known_forms.append(obs_t)
+
     rows: List[Dict[str, Any]] = []
     for index, pair in enumerate(pairs or []):
         if not isinstance(pair, Mapping) or pair.get("excluded"):
@@ -99,14 +123,28 @@ def preview_concept_revision(
             continue
         # An exception can also change a segment already using the document's
         # preferred form; exclude the per-segment destination, not the global one.
-        pattern = consistency.variant_pattern(
-            [variant for variant in variants if variant.casefold() != replacement.casefold()])
+        variants_in_segment = [v for v in variants
+                                if v.casefold() != replacement.casefold()]
+        pattern = consistency.variant_pattern(variants_in_segment)
         if pattern is None:
             continue
         matched = list(dict.fromkeys(match.group() for match in pattern.finditer(target)))
         if not matched:
             continue
-        after = pattern.sub(lambda _match: replacement, target)
+        # Build protected set: replacement target + any known form from the full
+        # entity registry that (a) contains a variant as a proper substring AND
+        # (b) is not itself one of the variants being replaced.
+        # Condition (b) prevents e.g. "弗朗茨·卡夫卡" (a form to replace that
+        # contains "卡夫卡") from being incorrectly shielded from replacement.
+        variants_cf = {v.casefold() for v in variants_in_segment}
+        protected = {replacement}
+        for form in all_known_forms:
+            if (form
+                    and form.casefold() not in variants_cf
+                    and any(v in form and v != form for v in variants_in_segment)):
+                protected.add(form)
+        after = consistency.safe_replace(target, variants_in_segment, replacement,
+                                         protected)
         if after == target:
             result["unchanged"] += 1
             continue

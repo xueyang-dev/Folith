@@ -431,6 +431,9 @@ class MainWindow(QMainWindow):
         from .concept_dialog import open_concept_workflow
         self.workbench.review_panel.conceptRequested.connect(
             lambda: open_concept_workflow(self))
+        from .batch_unify_dialog import open_batch_unify_dialog
+        self.workbench.review_panel.batchUnifyRequested.connect(
+            lambda: open_batch_unify_dialog(self))
         self.workbench.rescanRequested.connect(self.rescan_source)
         self.workbench.reportRepairRequested.connect(self.repair_report)
         self.workbench.reportAnswerRequested.connect(self.answer_report_question)
@@ -451,6 +454,7 @@ class MainWindow(QMainWindow):
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
         # #289: 审计列表的撤销信号 → 适配器 → 既有核心函数。
         self.workbench.reviewRevokeRequested.connect(self.revoke_auto_handling)
+        self.workbench.reviewTriageToggleRequested.connect(self.set_auto_handling)
         self.workbench.glossaryDraftRequested.connect(self.save_glossary_draft)
         self.workbench.glossaryFreezeRequested.connect(self.freeze_glossary)
         self.workbench.glossaryUnfreezeRequested.connect(self.unfreeze_glossary)
@@ -1690,6 +1694,11 @@ class MainWindow(QMainWindow):
         # test_destroyed_window_drops_delayed_tips 就是这么崩的）。
         QTimer.singleShot(0, self, self._sync_minimum_size)
 
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        """Expose the same window minimum to Qt and to callers of minimumSize()."""
+        minimum = self.minimumSize()
+        return minimum if not minimum.isEmpty() else super().minimumSizeHint()
+
     def _sync_minimum_size(self) -> None:
         """让窗口的 minimumSize 与当前布局的 minimumSizeHint 一致。
 
@@ -1704,7 +1713,15 @@ class MainWindow(QMainWindow):
         central = self.centralWidget()
         if central is not None and central.layout() is not None:
             central.layout().activate()
-        hint = self.minimumSizeHint()
+        # Read the layout's natural minimum. Including the previous explicit
+        # minimum would prevent the window from shrinking after a page change.
+        hint = super().minimumSizeHint()
+        if central is not None:
+            # 中央部件自己也可能被布局约束写入了一个更大的最小尺寸（Linux 上实测
+            # minimumSizeHint 607、Qt 却按 805 兜底），一并算进去。
+            hint = hint.expandedTo(central.minimumSize())
+            if central.layout() is not None:
+                hint = hint.expandedTo(central.layout().minimumSize())
         layout = self.layout()
         if layout is not None:
             layout.activate()
@@ -1725,13 +1742,13 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
-        self._sync_minimum_size()
         # A frozen page width belongs to the window size the transition began
         # with; a resize mid-transition jumps straight to the final layout.
         settle = getattr(self, "_sidebar_settle", None)
         if settle is not None and self._motion.running("sidebar"):
             self._motion.stop("sidebar")
             settle()
+        self._sync_minimum_size()
 
     def _sync_sidebar(self, *_args) -> None:
         current = self.stack.currentWidget()
@@ -1760,6 +1777,7 @@ class MainWindow(QMainWindow):
                 frame(target)
                 self.sidebar_clip.setVisible(visible)
                 self.stack_clip.freeze(None)
+                self._sync_minimum_size()
 
             self._sidebar_settle = settled
             self._motion.animate("sidebar", start, target, frame, kind="view", finished=settled)
@@ -3309,6 +3327,22 @@ class MainWindow(QMainWindow):
         # 队列里，未处理的发现项不会被跳过。
         self.workbench.review_panel.consume_advance_hint()
 
+    def set_auto_handling(self, enabled: bool) -> None:
+        """打开或关闭本任务的自动处理；失败时刷新页面，让勾选状态回到实际值。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            result = adapter.set_auto_handling(job_id, enabled)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法切换自动处理'), str(exc))
+        else:
+            self._notice(
+                i18n.tr('已开启自动处理：{v0} 条发现有确定依据，已移入审计组。',
+                        v0=result["verified_safe"])
+                if enabled else i18n.tr('已关闭自动处理：所有发现回到人工队列。'))
+        self.refresh_workbench(force=True)
+
     def revoke_auto_handling(self, record_key: str) -> None:
         """#289: 撤销一条自动处理结论——窗口层是唯一写状态的地方。
 
@@ -3973,7 +4007,12 @@ class MainWindow(QMainWindow):
         """首次启动：全新用户看欢迎窗口，老用户只看一页「新变化」。返回显示了哪一种。"""
         from . import onboarding
 
-        if onboarding._automatic():
+        import os as _os
+
+        # 脚本化 / 开发环境：显式跳过，别再让"新手指南/新变化"挡住每一次启动。
+        # `FOLITH_SKIP_ONBOARDING=1` 优先于一切；offline/offscreen 与
+        # `FOLITH_QT_NONINTERACTIVE=1` 走 `_automatic()`。
+        if _os.environ.get("FOLITH_SKIP_ONBOARDING") == "1" or onboarding._automatic():
             return ""
         try:
             has_jobs = bool(adapter.list_jobs())

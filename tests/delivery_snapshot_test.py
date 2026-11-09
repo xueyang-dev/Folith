@@ -76,6 +76,41 @@ def test_first_approval_freezes_assets_manifest_and_identity():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_old_final_snapshot_stays_current_after_qa_defaults_are_loaded(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "snapshotlegacy0001"
+    _job(job_id)
+    _, ok, errors = core.approve_delivery(job_id, note="0.8.0 frozen")
+    assert ok, errors
+
+    # Reconstruct the 0.8.0 on-disk shape, before these four fields existed.
+    job_root = core.job_dir(job_id)
+    state_path = job_root / "state.json"
+    raw = json.loads(state_path.read_text())
+    for key in ("qa_triage_enabled", "finding_triage",
+                "qa_escalation_enabled", "qa_escalation"):
+        raw.pop(key, None)
+    state_path.write_text(json.dumps(raw), encoding="utf-8")
+    manifest_path = job_root / "delivery_snapshots" / "v1" / "snapshot_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["translation_state_identity"] = snapshots.state_identity(raw)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    loaded = core.load_job_state(job_id)
+    assert loaded["delivery_status"] == "final"
+    assert loaded["delivery_approval"] == raw["delivery_approval"]
+    assert core.delivery_snapshot_status(job_id, loaded)["current"]
+    assert core.delivery_snapshot_status_light(job_id)["current"]
+
+    edited = dict(loaded, qa_triage_enabled=True)
+    assert core.delivery_snapshot_status(job_id, edited)["diverged"]
+    loaded["pairs"][0]["target"] = "编辑后的译文"
+    core.save_job_state(job_id, loaded)
+    assert core.load_job_state(job_id)["delivery_status"] == "draft"
+    assert core.delivery_snapshot_status(job_id)["diverged"]
+    assert core.list_delivery_snapshots(job_id)[0] == manifest
+
+
 def test_mutation_keeps_old_bytes_and_second_approval_creates_new_version():
     tmp = Path(tempfile.mkdtemp(prefix="delivery-snapshot-versions-"))
     old_dir = core.OUTPUT_DIR

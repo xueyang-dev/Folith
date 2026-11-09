@@ -360,12 +360,12 @@ class _TaskCard(QFrame):
     #: 卡片宽度范围（px）：列数 = 可用宽度能放下几张；再宽只会让书面变成海报。
     MIN_WIDTH = 180
     #: 236 → 200：与 `ASPECT` 一起把卡片高度收回来（980×640 下第一张卡要完整可见）。
-    MAX_WIDTH = 200
+    MAX_WIDTH = 236
     #: 书面四周给投影与抬起留的空间。
     PAD = QMargins(8, 8, 8, 12)
     #: 书面的高 / 宽。F8 把文字移到纸页下方之后整卡变高，980×640 下第一张卡会掉出
     #: 首屏（qt_trial_feedback_test）；比例收到 1.14、上限 200 把高度还回去。
-    ASPECT = 1.14
+    ASPECT = 1.34
     LIFT = 6
 
     def __init__(self, row: adapter.JobRow, *, tone: str,
@@ -476,6 +476,9 @@ class _TaskCard(QFrame):
     TEXT_GAP = 6
     #: 文件名最多显示的行数（F8：两行折行，不再省略成头尾几个字符）。
     TITLE_LINES = 2
+    #: 纸页下方文字块的估算高度（两行标题 + 元信息 + 状态行 + 两处间距）。
+    #: 卡片按高度收窄时要把它算进去，否则"第一排整张看见"会被文字块顶掉。
+    TEXT_BLOCK = 68
 
     def _paper_height(self, inner: int) -> int:
         return round(max(40, inner) * self.ASPECT)
@@ -1698,7 +1701,8 @@ class HomeView(QWidget):
         viewport = self.card_scroll.viewport().height() if hasattr(self, "card_scroll") else 0
         if viewport > 0:
             pad = _TaskCard.PAD
-            room = viewport - self.CARD_HEADING_ROOM - pad.top() - pad.bottom()
+            room = (viewport - self.CARD_HEADING_ROOM - pad.top() - pad.bottom()
+                    - _TaskCard.TEXT_GAP - _TaskCard.TEXT_BLOCK)
             by_height = int(room / _TaskCard.ASPECT) + pad.left() + pad.right()
             width = min(width, max(self.CARD_MIN_SHORT_WIDTH, by_height))
         return width
@@ -2417,6 +2421,7 @@ class WorkbenchView(QWidget):
     sourceConfirmRequested = Signal(int, str)           # segment index, note
     # #289: 审计列表的撤销（由窗口层调用适配器 → 既有核心函数；面板不写状态）
     reviewRevokeRequested = Signal(str)                 # triage record key
+    reviewTriageToggleRequested = Signal(bool)          # 本任务的自动处理开关
     # 术语页（暂存修改 / 冻结 / 逐条修订）
     glossaryDraftRequested = Signal(list)
     glossaryFreezeRequested = Signal(list)
@@ -2460,6 +2465,10 @@ class WorkbenchView(QWidget):
         self._loading = False
         self._dirty = False
         self._last_runtime: dict = {}
+        # 新提示替换旧提示，复用随工作台销毁的定时器。
+        self._task_notice_timer = QTimer(self)
+        self._task_notice_timer.setSingleShot(True)
+        self._task_notice_timer.timeout.connect(self._render_runtime)
         self._snapshots: list[dict] = []
         #: The derived, read-only projections that arrive with the state (they
         #: are computed on a worker thread because each walks the document).
@@ -2548,9 +2557,8 @@ class WorkbenchView(QWidget):
             lambda: self.reviewSelectedRequested.emit(self.selected_indexes()))
 
         # 推荐的下一步：随阶段变化（重试失败的审校 / 处理问题 / 冻结并交付）。
-        # 用 ElideButton：文案带数字（「继续处理 1 个必须处理的问题」），长语言里
-        # 会比 240px 上限更宽；普通 QPushButton 只会把两头裁掉，ElideButton 在最终
-        # 宽度下省略成 "…"，完整文字留在提示里。
+        # ElideButton：外语文案放不下时省略（"…"）并把完整文字放进悬停提示，
+        # 普通 QPushButton 只会把字裁掉（俄语实测少半句、数字看不见）。
         self.stage_action_button = _icon_button(style_module.ElideButton(""), "arrow-right",
                                                 "text-on-accent")
         style_module.set_button(self.stage_action_button, "primary")
@@ -2558,7 +2566,6 @@ class WorkbenchView(QWidget):
         # 它的 minimumSizeHint 直接决定工作台——进而窗口——的最小宽度，会把首页
         # 也一起撑宽（俄语 1418px）。给一个上限，放不下时按钮自己省略（有完整提示）。
         self.stage_action_button.setMaximumWidth(240)
-        self.stage_action_button.setToolTip("")
         self.stage_action_button.clicked.connect(self._run_stage_action)
         self.stage_action_button.setVisible(False)
         self._stage_action: dict | None = None
@@ -2598,14 +2605,14 @@ class WorkbenchView(QWidget):
         # 换成可折行的 FlowRow：放不下就折到第二行，最小宽度降到 874/1072/1123/1149，
         # 四种语言都 ≤1280。交付页的四个按钮早就是这么排的（F1 证据见
         # docs/ui-overhaul/10-f1-width-evidence.md）。
-        run_controls = components.FlowRow(spacing=theme_module.SPACE["sm"], fill=False)
+        self.header_actions_bar = QWidget()
+        self.header_actions_bar.setContentsMargins(0, 0, 0, 0)
+        run_controls = components.FlowRow(self.header_actions_bar,
+                                          spacing=theme_module.SPACE["sm"], fill=False)
         run_controls.setContentsMargins(0, 0, 0, 0)
         for button in (self.start_button, self.pause_button,
                        self.cancel_button, self.retry_button, self.stage_action_button):
             run_controls.addWidget(button)
-        self.header_actions_bar = QWidget()
-        self.header_actions_bar.setContentsMargins(0, 0, 0, 0)
-        self.header_actions_bar.setLayout(run_controls)
 
         # ---- Golden Gate 统一工具栏（一行，贴住窗口顶边，底部一条发丝线） ----------
         #   返回 · 文件名（下面一行是状态芯片 + 运行说明） · 阶段胶囊（居中）
@@ -3001,6 +3008,7 @@ class WorkbenchView(QWidget):
         inspector_layout.setSpacing(theme_module.SPACE["sm"])
         # 标题 + 上一段 / 下一段：窄栏或长语言里按钮折到标题下面一行，而不是被挤出去。
         title_row = components.FlowRow(spacing=theme_module.SPACE["xs"])
+        inspector_layout.addLayout(title_row)
         self.selection_title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         nav_pair = QWidget()
         nav_pair.setObjectName("transparent")
@@ -3011,7 +3019,6 @@ class WorkbenchView(QWidget):
         nav.addWidget(self.next_button, 1)
         title_row.addWidget(self.selection_title)
         title_row.addWidget(nav_pair)  # 上一段 / 下一段 总是挨在一起，要折就一起折
-        inspector_layout.addLayout(title_row)
         inspector_layout.addWidget(self.segment_status)
         self.segment_status.setWordWrap(True)
         self.segment_status.setMinimumHeight(self.segment_status.fontMetrics().lineSpacing() * 2)
@@ -3078,13 +3085,13 @@ class WorkbenchView(QWidget):
         self.ask_box.input.setVisible(False)
         self.ask_box.button.setVisible(False)
 
-        def row_of(*widgets) -> components.FlowRow:
+        def add_button_row(layout, *widgets) -> None:
             # 放得下就一行等分铺满，放不下就折行：操作台永远不会把按钮挤出右边。
             row = components.FlowRow()
+            layout.addLayout(row)
             for widget in widgets:
                 widget.setSizePolicy(QSizePolicy.Policy.Expanding, widget.sizePolicy().verticalPolicy())
                 row.addWidget(widget)
-            return row
 
         # 只对单独一段有意义的部分：选多段时整组收起。
         self.single_segment_section = QWidget()
@@ -3123,15 +3130,15 @@ class WorkbenchView(QWidget):
         self.exclude_button.setVisible(False)
         self.segment_more_button.setMenu(more_menu)
         self.segment_more_button.setToolTip(i18n.tr('更多段落操作'))
-        ops.addLayout(row_of(self.copy_source_button, self.restore_button,
-                             self.structure_button, self.view_source_button,
-                             self.segment_more_button))
+        add_button_row(ops, self.copy_source_button, self.restore_button,
+                       self.structure_button, self.view_source_button,
+                       self.segment_more_button)
         single.addWidget(self.segment_ops_section)
         inspector_layout.addWidget(self.single_segment_section)
 
         inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 操作')))
-        inspector_layout.addLayout(row_of(self.review_button, self.review_selected_button,
-                                          self.analyze_button, self.retranslate_button))
+        add_button_row(inspector_layout, self.review_button, self.review_selected_button,
+                       self.analyze_button, self.retranslate_button)
         self.assist_row = QWidget()
         assist = components.FlowRow(self.assist_row)
         self.assist_input.setMinimumWidth(160)
@@ -3484,8 +3491,15 @@ class WorkbenchView(QWidget):
         terms_layout = QVBoxLayout(self.terms_side)
         terms_layout.setContentsMargins(0, 8, theme_module.SPACE["sm"], 0)
         terms_layout.addLayout(terms_head)
-        # 表格负责滚动；完整编辑器复用同一面板，避免两份暂存状态。
-        terms_layout.addWidget(self.terms_panel, 1)
+        # The compact panel can be taller than the available workspace in a
+        # short window. Scroll the complete panel instead of compressing its
+        # editor and navigation controls into overlapping rectangles.
+        self.terms_side_scroll = QScrollArea()
+        self.terms_side_scroll.setWidgetResizable(True)
+        self.terms_side_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.terms_side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.terms_side_scroll.setWidget(self.terms_panel)
+        terms_layout.addWidget(self.terms_side_scroll, 1)
         self._terms_side_layout = terms_layout
         self.terms_panel.workspaceRequested.connect(self._open_terms_workspace)
         self.terms_panel.locateRequested.connect(self._locate_panel_term)
@@ -3508,6 +3522,7 @@ class WorkbenchView(QWidget):
         self.review_panel.editRequested.connect(self.show_segment_for_edit)
         # #289: 撤销 → 窗口层 → 适配器 → 核心（revert 候选 / revoke）。
         self.review_panel.triageRevokeRequested.connect(self.reviewRevokeRequested.emit)
+        self.review_panel.triageToggleRequested.connect(self.reviewTriageToggleRequested.emit)
         self.tabs.addTab(self.review_panel,
                          icons.icon("shield-check", 16, "text-secondary"),
                          i18n.tr('审校'))
@@ -3881,7 +3896,7 @@ class WorkbenchView(QWidget):
                              (runtime.get("status"), runtime.get("detail"),
                               runtime.get("current_operation")), time.monotonic())
         seconds = self.TASK_NOTICE_SECONDS[bool(error)]
-        QTimer.singleShot(int(seconds * 1000) + 50, self._render_runtime)
+        self._task_notice_timer.start(int(seconds * 1000) + 50)
         self.run_status.setVisible(True)
         self.run_status.set_state(tone=self.run_status.track.tone(), line=message,
                                   line_tone="failed" if error else None)
@@ -5003,7 +5018,7 @@ class WorkbenchView(QWidget):
         self._terms_dialog = dialog
         dialog.setWindowTitle(i18n.tr('术语管理'))
         layout = QVBoxLayout(dialog)
-        self._terms_side_layout.removeWidget(self.terms_panel)
+        self.terms_side_scroll.takeWidget()
         layout.addWidget(self.terms_panel)
         self.terms_panel.set_compact(False)
         dialog.resize(1000, 700)
@@ -5012,8 +5027,8 @@ class WorkbenchView(QWidget):
         finally:
             self._terms_dialog = None
             layout.removeWidget(self.terms_panel)
-            self._terms_side_layout.addWidget(self.terms_panel, 1)
             self.terms_panel.set_compact(True)
+            self.terms_side_scroll.setWidget(self.terms_panel)
             self.terms_panel.show()
 
     def _locate_panel_term(self, term: dict) -> None:
@@ -5343,6 +5358,24 @@ class WorkbenchView(QWidget):
         self._setup_view = new_view
         if self._setup_view is not None:
             self.setup_panel.load(self._setup_view)
+            self._sync_setup_min_width()
+
+    #: 准备页的两栏（封面 + 表单）在更窄时右栏会被切掉：语言下拉、模式卡和说明文字
+    #: 都靠省略显示，横向又没有滚动条可救。中文/俄语实测 820 是能完整放下的下限。
+    SETUP_MIN_WIDTH = 820
+
+    def _sync_setup_min_width(self) -> None:
+        """准备页的滚动区不能比面板的自然宽度更窄。
+
+        ``QScrollArea`` 几乎不报最小宽度，横向滚动条又是关掉的：窗口被拖窄时内容
+        会被直接切掉（复审实测中文 438、俄语 556）。把下限钉在面板算出来的宽度上。
+        """
+        needed = max(self.setup_panel.minimumSizeHint().width(), self.SETUP_MIN_WIDTH)
+        if needed > 0 and self.setup_scroll.minimumWidth() != needed:
+            self.setup_scroll.setMinimumWidth(needed)
+            # 面板在折叠分割区里，光设滚动区的最小宽度传不到窗口（实测窗口仍能缩到
+            # 438）。工作台自己也要有这个下限。
+            self.setMinimumWidth(max(needed + 16, self.minimumWidth()))
 
     def set_setup_choices(self, choices: dict) -> None:
         """填准备面板的目录（``adapter.setup_choices``）；进程内只需一次。"""
@@ -6505,10 +6538,18 @@ class WorkbenchView(QWidget):
             metrics = table.fontMetrics()
             tallest = 0
             for text, width in ((source, widths[0]), (target, widths[1])):
+                inner = max(40, width - 2 * segment_editor.CELL_PAD - 10)
                 rect = metrics.boundingRect(
-                    QRect(0, 0, max(40, width - 2 * segment_editor.CELL_PAD - 10), 100000),
+                    QRect(0, 0, inner, 100000),
                     int(Qt.TextFlag.TextWordWrap), text or " ")
-                tallest = max(tallest, rect.height())
+                # 与阅读行距那边同一口径：Linux 字体回退会把整段中文当长词只量一行。
+                # 也只在"只量到一行"时复核，避免给几千行加逐字成本。
+                height = rect.height()
+                if height <= metrics.lineSpacing():
+                    height = max(height, segment_editor._wrapped_height(
+                        text or " ", metrics, inner,
+                        segment_editor._font_pixels(table.font())))
+                tallest = max(tallest, height)
             cached = max(segment_editor.ROW_HEIGHT, tallest + 2 * segment_editor.CELL_PAD + 4)
             self._height_cache[key] = cached
         return cached
@@ -6587,9 +6628,17 @@ class WorkbenchView(QWidget):
         self._sync_inline_target(position)
         footer = segment_editor.FOOTER_HEIGHT if editor.footer.isVisibleTo(editor) else 0
         cap = max(160, int(table.viewport().height() * 0.6))
+        # 再把编辑框自己的文档高度算进来：它是 Qt 真实排版出来的结果，不受字体回退
+        # 与逐字量宽的影响（Linux 上曾出现译文变长、行高不动：60 > 60）。
+        document = editor.edit.document()
+        document_height = int(document.documentLayout().documentSize().height() or 0)
         wanted = max(segment_editor.source_height(table, self._rows[position].source,
                                                   source_width),
                      editor.editor_height(target_width - 8) + footer + 8,
+                     document_height + footer + 8,
+                     # 编辑态的高度不能低于该行非编辑态的自然高度，否则展开行反而
+                     # 比其它行矮、长译文的最后几行被裁掉（Linux CI 的 60 > 60）。
+                     self._natural_height(position),
                      segment_editor.ROW_HEIGHT)
         height = min(wanted, cap)
         if table.rowHeight(position) != height:

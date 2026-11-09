@@ -461,7 +461,9 @@ def test_the_translation_mode_panel_is_modes_plus_a_collapsed_advanced_section(
         assert panel.mode_selector.options() == ("快速", "标准", "学术增强")
         for key in panel.mode_selector.options():
             button = panel.mode_selector.button(key)
-            assert button._title.text()
+            # 标题是 ElideLabel：窄卡里显示省略、完整文字必须还在（F18 一度换成普通
+            # QLabel，俄语「Стандартный」被直接裁掉且没有提示）。
+            assert button._title.fullText(), key
             # 一行摘要不再占位，但仍在悬停提示里。
             assert button._description.isHidden()
             assert button._description.text() in button.toolTip()
@@ -1513,3 +1515,62 @@ def test_a_started_task_keeps_the_switches_it_actually_ran_with(data_env):
         enable_source_cleanup=False)
     effective = adapter.pipeline_kwargs(config, core.load_job_state(job_id))
     assert effective["enable_review"] is True
+
+
+@pytest.mark.parametrize("language", ["zh-CN", "ru"])
+def test_the_prepare_page_never_narrows_below_its_content(data_env, qt_app, language):
+    """准备页不能缩到内容被横向切掉（复审实测中文 438、俄语 556，没有横向滚动条）。
+
+    这一页是竖排表单：先保证面板自己有"自然宽度"下限，再保证工作台把这条下限
+    带到窗口最小宽度上——两者任一缺失，窗口都能被拖窄到内容外面去。
+    """
+    from folith.qt import i18n, views
+
+    previous = i18n.language()
+    i18n.set_language(language)
+    try:
+        job_id = _new_task(data_env)
+        view = adapter.task_setup_view(adapter.EngineConfig(), job_id)
+        bench = views.WorkbenchView()
+        bench.resize(1200, 800)
+        bench.set_setup(view)
+        qt_app.processEvents()
+        panel = bench.setup_panel
+        needed = panel.minimumSizeHint().width()
+        assert needed >= panel.sizeHint().width(), (
+            f"面板最小宽度 {needed} 小于自然宽度 {panel.sizeHint().width()}")
+        assert bench.minimumWidth() >= views.WorkbenchView.SETUP_MIN_WIDTH, (
+            f"工作台最小宽度 {bench.minimumWidth()} 低于准备页两栏的下限"
+            f"（{views.WorkbenchView.SETUP_MIN_WIDTH}）")
+        assert bench.minimumWidth() <= 1280, (
+            f"准备页把窗口下限撑到了 {bench.minimumWidth()}，超过契约的 1280")
+        bench.close()
+    finally:
+        i18n.set_language(previous)
+
+
+def test_a_long_mode_title_elides_instead_of_being_cut(qt_app):
+    """俄语「Стандартный」在窄卡里比可用宽度长：要省略并保留完整悬停提示。"""
+    from folith.qt import components, style
+
+    # 直接量 ElideLabel：宽度给得足够小，任何平台的字体都放不下，结果与字体度量无关。
+    label = style.ElideLabel("Стандартный")
+    label.resize(48, 24)
+    label.show()
+    qt_app.processEvents()
+    try:
+        assert label.fullText() == "Стандартный", "完整标题不能丢"
+        assert label.text() != label.fullText(), "放不下时要省略，而不是把字裁掉"
+        assert label.toolTip() == "Стандартный", "省略后要有完整悬停提示"
+    finally:
+        label.close()
+
+    # 模式卡本身也要保留完整标题（窄卡里显示的是省略版）。
+    card = components.ModeCard("k", "Стандартный", "", "")
+    card.resize(120, 120)
+    card.show()
+    qt_app.processEvents()
+    try:
+        assert card._title.fullText() == "Стандартный"
+    finally:
+        card.close()

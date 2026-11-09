@@ -372,7 +372,41 @@ def reading_height(text: str, font, width: int) -> int:
                                 int(Qt.TextFlag.TextWordWrap), body)
     natural = max(1.0, float(metrics.lineSpacing()) / max(1.0, _font_pixels(font)))
     target = max(1.0, float(style_module.reading_line_height(body)))
-    return int(math.ceil(rect.height() * target / natural))
+    measured = float(rect.height())
+    if measured <= metrics.lineSpacing():
+        # 只量到一行时才用逐字累加复核：正常换行的文本走 boundingRect 的快路径，
+        # 不给几千行的书加成本（CI 的 macOS 上曾因此超时）。
+        measured = max(measured,
+                       _wrapped_height(body, metrics, width, _font_pixels(font)))
+    return int(math.ceil(measured * target / natural))
+
+
+def _wrapped_height(text: str, metrics, width: int, pixels: int = 0) -> int:
+    """按"逐字累加宽度"估算换行高度（CJK 逐个字可断行）。
+
+    ``QFontMetrics.boundingRect(…, TextWordWrap, …)`` 在 Linux 的字体回退下会把整段
+    中文当成一个长词，只量出一行；行高因此不随译文变长而增长（CI 上
+    ``test_longer_translation_that_arrives_grows_the_open_row`` 就是 ``60 > 60``）。
+    缺字形时 ``horizontalAdvance()`` 甚至返回 0，所以这里对全角字符按字号兜底。
+    结果只当**下限**用，偶尔高估一两行，绝不会把字裁掉。
+    """
+    limit = max(40, int(width))
+    pixels = float(max(1, int(pixels or 14)))
+    narrow = float(max(metrics.averageCharWidth(), 0) or round(pixels * 0.6))
+    lines, current = 1, 0.0
+    for char in text:
+        advance = float(metrics.horizontalAdvance(char))
+        if advance <= 0:
+            code = ord(char)
+            wide = (0x2E80 <= code <= 0x9FFF or 0xAC00 <= code <= 0xD7AF
+                    or 0xF900 <= code <= 0xFAFF or 0xFF00 <= code <= 0xFF60)
+            advance = pixels if wide else narrow
+        if current + advance > limit and current > 0:
+            lines += 1
+            current = advance
+        else:
+            current += advance
+    return lines * metrics.lineSpacing()
 
 
 def source_height(table: QAbstractItemView, text: str, width: int) -> int:

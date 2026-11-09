@@ -184,3 +184,68 @@
 **118 passed / 9:19** 也不再崩。
 
 这条只解释本轮引入的那次崩溃；报告前面记录的"长进程偶发段错误"是否同一根因，还要单独复核。
+
+
+## 第四轮复审（2026-11-05 17:xx）
+
+| 复审发现 | 处理 |
+| --- | --- |
+| 修复提交到了 `feat/epub-images` | **我的失误**。已在临时 worktree 上把 `07f465d4`、`b38f1a2b` cherry-pick 到 `feat/ui-overhaul`（新哈希 `1003b916`、`fcbed769`），后续修正也提交在该分支。`feat/epub-images` 上的重复提交**未**删除——那需要改写分支，等你决定 |
+| 两份文档被从磁盘删除 | **我的失误**，已从提交历史恢复：`docs/issue-triage-0.8.1.md`（8 820 B）、`docs/ui-overhaul/95-review-prompt.md`（10 738 B），字节数与复审记录一致。后者含旧目录名，已把该路径加入品牌审计的白名单（它本就是审查用的命令示例，不是品牌表述） |
+| 页头按钮限宽 240 后文字被裁 | **真**。改用 `ElideButton`：放不下时省略并保留完整悬停提示，图标不再被挤掉 |
+| `qt_trial_feedback_test` 2 条顺序相关失败 | **真**。根因**不是**我先前判断的"应用字体不同"（复审指出：单独跑时先应用浅色/深色主题都能过，失败与通过时字体都是 13px）。真正的污染源是本分支新增的 `tests/qt_reading_grid_test.py`：它在 import 时就 `os.environ.setdefault("QT_SCALE_FACTOR", "2")`，而 pytest 收集阶段会 import 全部模块，于是**整个进程被放大 2×**，几何类断言（tether 偏 24px、首屏卡片偏 ~15px）随之漂移。已删掉那行（矩形与绘制同源，1× 下该模块 11 条全过）。另：`_card_width()` 需要把 F8 的文字块算进高度预算——去掉预算时「setup banner」那条会红（复审复现一致）。**更正一条我做错的实验**：我曾说"还原到 1.34/236 首屏两条真的红"，那次我把比例和预算**一起**改回去了，结论被混淆；复审按"只改比例、保留预算"跑 68 条全过，我按同样条件重跑也是 **96 passed**。所以比例已还原为 `1.34 / 236`（更接近一页纸/书脊方向），真正解决问题的是高度预算而不是压扁卡片 |
+| 西/法/德/俄/阿单数语法 | 已把「数量 + 复数名词」的措辞改成与数量无关（`Resolver problemas obligatorios ({v0})` 等），5 个语言 4 条键 |
+| 每次启动被新手指南/新变化挡住 | 新增 `FOLITH_SKIP_ONBOARDING=1` 显式跳过（与既有 `FOLITH_QT_NONINTERACTIVE`、offscreen 判断并列） |
+| golden | **用户已同意，已重新生成**（`tests/fixtures/qa_triage_switch_off_golden.json`）：diff 只有 3 行，正是 `delivery.title`、`delivery.detail`、`delivery.tone`；`panel_rows` 与其余字段逐字节未变 |
+| 误带的 9 个 docx 夹具 | 已 `git checkout 93b1de02 -- tests/fixtures/docx_contract` 还原（同尺寸、不同字节，是测试写回的产物） |
+
+
+## golden 重新生成（2026-11-06，经用户同意）
+
+- 生成方式：用同一条 `_view(triage_enabled=False)` 产出 `projection` / `panel_rows`，按原文件格式（`projection` 为对象、`panel_rows` 为数组、两空格缩进）写回。
+- 逐字段对比旧快照：**只有三处**——`delivery.title`（`翻译审校已完成` → `暂时无法交付`）、`delivery.detail`（`当前译文的审校状态允许继续准备交付` → `还有 1 个必须处理的问题`）、`delivery.tone`（`success` → `warning`）。`panel_rows` 4 条完全一致，其余字段无差异。
+- `git diff` 该文件：`1 file changed, 3 insertions(+), 3 deletions(-)`。
+
+单进程全量（`-k "qt or brand or ui_overhaul"`，1504 条）：
+
+```
+1 failed, 1503 passed, 6 skipped — 15:17，无崩溃
+```
+
+唯一失败是 `qt_terms_panel_test::test_workbench_stays_at_980px_with_terms_open_and_closed`——干净 HEAD 上同样顺序相关地失败，与本次改动无关。**已与基线持平。**
+
+
+## 与 origin/main 合并（2026-11-06，`bdf440a5` 0.8.1 QA 集成）
+
+| 事项 | 处理 |
+| --- | --- |
+| 7 个语言目录冲突 | `git merge`（不变基、不改写）报冲突只因两边都在文件尾部加键；**逐键三方比对后没有任何一个键的值真正冲突**。合并按本分支顺序保留、main 的 82 个新键追加在末尾，`git diff` 只有新增行（7 文件 +581/−7）。 |
+| 覆盖率 | `qt_i18n_coverage.py --strict`：7 个语言 **1765/1765** 全通过。 |
+| 词表门禁 | `check_ui_locales.py`：**0 errors**，且基线为空（见下）。 |
+| 词表：**第一版合并做错了** | 我最初的合并把本分支**故意删掉的 56 个旧措辞键**又加了回来（只看了"main 有新键"，没看"本分支删过"），于是词表门禁被基线放宽。复审指出后已按正确的三方规则重做：只补 main 真正新增的 26 个键，保持本分支的 56 个删除，`check_ui_locales.py` 基线恢复为空。 |
+| 模式卡片被压扁 | **不是合并回归，是本分支的既有 bug**：`git worktree` 在合并前的 `e4ad47a8` 上单跑同一条用例也失败。根因：`ModeCards.set_options()` 里卡片刚建出来还没显示，`QHBoxLayout` 跳过隐藏子控件 → 容器 sizeHint 高度 0 → 父布局按 0 分配且不再重问。已让 `ModeCards.sizeHint()/minimumSizeHint()` 取「最高的那张卡」。`qt_task_setup_test.py` 57 条全过。 |
+
+### `qt_layout_item_wrapper_test` 两条：main 上同样失败
+
+在**干净的 origin/main**（`bdf440a5`）worktree 上跑同一个单进程全量：
+
+```
+4 failed, 1518 passed, 6 skipped, 2 errors
+  qt_client_window_test::test_dialogs_never_block_a_scripted_run
+  qt_layout_item_wrapper_test::test_project_overview_rebuild_creates_no_item_wrappers
+  qt_layout_item_wrapper_test::test_unsorted_terms_rebuild_creates_no_item_wrappers
+  qt_terms_panel_test::test_workbench_stays_at_980px_with_terms_open_and_closed
+```
+
+结论：那两条「过期 QWidgetItem 包装」用例在 main 自己身上、只在长进程里失败，与本分支无关，也不该由 UI 分支修。它们和段错误排查是同一类线索，留给那条独立排查。
+
+
+## 第四轮复审后的三项修正（2026-11-06）
+
+| 项 | 处理 |
+| --- | --- |
+| 合并把 56 个旧键复活 | 已重做：`ours` 为准、只补 `theirs` 中**不在 base 里**的键（26 个）。7 个目录键数回到 2512/2513，词表基线清空，覆盖率仍 1765/1765 |
+| 准备页能缩到内容被切 | 根因：`QScrollArea` 几乎不报最小宽度 + 横向滚动条关闭，窗口能压到中文 438 / 俄语 556。已给 `WorkbenchView` 一个 `SETUP_MIN_WIDTH = 820` 下限（两栏完整放下的实测值）并经滚动区/工作台传上去。实测四语言窗口最小宽度 **852**（≤1280） |
+| 模式卡用例单跑仍失败 | 根因：`ModeCards` 因为子卡片带 `heightForWidth` 也被标记成"高度依赖宽度"，而它没实现 `heightForWidth()`，外层 `QBoxLayout` 拿到 0 → 卡片被压成 0 高。已实现 `heightForWidth()` 并给一行的高度下限；该用例**单跑与整文件都通过** |
+
+新增用例：`test_the_prepare_page_never_narrows_below_its_content[zh-CN|ru]`（面板最小宽度 ≥ 自然宽度、工作台 ≥ `SETUP_MIN_WIDTH`、且 ≤ 1280）。

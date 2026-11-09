@@ -3737,12 +3737,16 @@ def test_resize_and_fullscreen_round_trip_keep_the_workbench_usable(client):
     assert window.minimumHeight() <= 875, (
         f"主窗口最小高度 {window.minimumHeight()} 超过 1440x900 屏幕的可用高度（约 875pt）")
 
-    # 缩到"允许的最小尺寸"和"更大的尺寸"都必须生效（在这个范围内窗口可以自由缩放）。
-    #
-    # 最小尺寸这一档允许 1px 取整差：布局的最小宽度可能是分数（侧栏 + 间隙 + 页面栈），
-    # `minimumSize()` 向下取整、Qt 用布局真实下限向上兜住，于是 resize(870, …) → 871。
-    # 窗口最小尺寸由 `MainWindow._sync_minimum_size()` 保持与布局一致（打开任务、每次
-    # 刷新都会同步），所以这里只剩 1px；8px 那类真实漂移已经被它挡掉（见 git 历史）。
+    # The sidebar transition changes the layout's minimum until it settles.
+    assert _pump(app, 2, lambda: window._sidebar_settle is None)
+    # The previous page's explicit minimum must not cap the new layout.
+    window.resize(1400, 900)
+    _pump(app, 0.5)
+    window.setMinimumSize(1400, 900)
+    window._sync_minimum_size()
+    assert window.minimumWidth() < 1400 and window.minimumHeight() < 900
+
+    # At the settled minimum and at a larger size the workbench stays usable.
     minimum = window.minimumSize()
     for width, height, tolerance in ((minimum.width(), minimum.height(), 1), (1400, 900, 0)):
         window.resize(width, height)
@@ -4324,21 +4328,47 @@ def test_save_acknowledges_latest_queued_text_only(client, monkeypatch):
 def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     """P4 审校第 5 条：侧栏开合时页面按终态宽度排一次版、从侧栏下滑出，
     不在每一帧改变页面宽度（那会让任务库卡片与段落网格逐帧重排）。"""
+    from folith.qt import views as views_module
+
     adapter, core, window, app, tmp = (client[key] for key in
                                        ("adapter", "core", "window", "app", "tmp"))
-    job_id = _seed_job_for_keyboard(adapter, core, tmp, "sidebar-motion.docx", ["甲。", "乙。"])
+    _seed_job_for_keyboard(adapter, core, tmp, "sidebar-motion.docx", ["甲。", "乙。"])
     window.show_home()
     _pump(app, 0.5)
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    # 先摆回展开态：前面的用例可能已经把侧栏收起来，那样 240 → 0 没有位移，
+    # 动画会走同步分支（CI 上 setter 只被调用一次）。
+    window.sidebar_clip.setFixedWidth(views_module.HomeView.SIDEBAR_WIDTH)
+    window.sidebar_clip.show()
+    _pump(app, 0.05)
     window._motion._last.clear()  # not a "rapid repeat" of the first navigation
-    widths = []
-    open_job_and_wait(window, job_id)
-    while window._motion.running("sidebar"):
-        widths.append(window.stack.width())
-        app.processEvents()
-        time.sleep(0.01)
-    _pump(app, 0.2)
-    assert len(widths) > 2, "the transition should have run for a few frames"
+
+    widths: list[int] = []
+    original_animate = window._motion.animate
+
+    def recording_animate(key, start_value, end_value, setter, **kwargs):
+        if key != "sidebar":
+            return original_animate(key, start_value, end_value, setter, **kwargs)
+
+        def recording_setter(value):
+            widths.append(window.stack.width())
+            return setter(value)
+
+        return original_animate(key, start_value, end_value, recording_setter, **kwargs)
+
+    monkeypatch.setattr(window._motion, "animate", recording_animate)
+    # 直接切页，让过渡只被触发一次：走 open_job 的话同一帧里可能连触发两次，
+    # 第二次会被 motion 当成"快速重复"直接跳帧。
+    window.stack.setCurrentWidget(window.workbench)
+    # 等过渡真的结束（有界）：固定 0.4s 在忙的 CI 机器上可能还没播完，
+    # 于是 settled() 没跑、侧栏还是可见的（macOS candidate 上就是 assert not True）。
+    assert _pump(app, 5.0, lambda: not window._motion.running("sidebar")), \
+        "the transition should have finished"
+    _pump(app, 0.1)
+
+    assert len(widths) >= 2, (
+        f"the transition should have run (setter calls={len(widths)}, "
+        f"running={window._motion.running('sidebar')})")
     assert len(set(widths)) == 1, f"page width changed during the transition: {sorted(set(widths))}"
     assert not window.sidebar_clip.isVisible()
     assert window.stack.width() == window.stack_clip.width(), "the page follows the window again"
@@ -4768,7 +4798,9 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
     job = adapter.import_documents([source], window.config)[0].job_id
     open_job_and_wait(window, job)
     setup = window.workbench.setup_panel
-    assert _pump(app, 5, lambda: setup.source_size().get("segments") == 4)
+    scope_button = setup.source_section.scope_button
+    assert _pump(app, 5, lambda: setup.source_size().get("segments") == 4
+                 and scope_button.isEnabled()), "the outline must be ready before opening scope"
     observed = []
 
     def choose_scope():
@@ -4787,7 +4819,7 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
             dialog.reject()
 
     QTimer.singleShot(0, choose_scope)
-    window.workbench.setup_panel.source_section.scope_button.click()
+    scope_button.click()
     assert observed and "将排除" in observed[0], observed
     assert _pump(app, 5, lambda: setup.source_size().get("segments") == 2)
     state = client["core"].load_job_state(job)

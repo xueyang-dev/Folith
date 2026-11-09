@@ -131,7 +131,8 @@ def build_qss(theme: str) -> str:
       ghost(透明) / danger(红字) / link(蓝字无框)；工具栏图标按钮是方形。
     * **状态用小圆角芯片**，不要整块彩色背景。
     """
-    t = theme_module.tokens(theme)
+    t = dict(theme_module.tokens(theme))
+    t.update(theme_module.qa_surface_tokens(theme))
     r = theme_module.RADIUS
     # 侧栏选中项的「玻璃片」：浅色半透明面 + 同色系的亮边，投影由 components.glass_selection 加。
     # 第三轮试用反馈：选中态太抢、投影太重——改成平的半透明面（不再上白下灰的渐变），
@@ -279,7 +280,10 @@ QLabel#caption, QLabel#hint {{ font-size: {f['caption']}px; color: {t['text-seco
 QLabel#faint {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
 QLabel#metric {{ font-size: {f['metric']}px; font-weight: 700; color: {t['text-primary']}; }}
 /* These existing semantic names previously fell through to the body style. */
-QLabel#termsHeading, QLabel#reviewHeadline {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
+QLabel#termsHeading {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
+/* The review readiness line is a secondary status strip now, not a page title;
+   the compact metric overview above it carries the visual weight. */
+QLabel#reviewHeadline {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-secondary']}; }}
 QLabel#reviewItemTitle {{ font-size: {f['card']}px; font-weight: 600; color: {t['text-primary']}; }}
 QLabel[role="muted"] {{ font-size: {f['caption']}px; color: {t['text-secondary']}; }}
 QLabel#statusError {{ color: {t['danger']}; font-weight: 600; }}
@@ -679,8 +683,26 @@ QLabel#groupCaption {{ font-size: {f['label']}px; font-weight: 600; color: {t['t
 QListWidget#issueList {{ background: {t['bg-surface-sunken']}; border: none;
     border-radius: {r['md']}px; font-size: {f['caption']}px; }}
 /* 审校队列：与"检查与修复"的列表同一套沉底面板，不用输入框的描边盒子。 */
-QListWidget#reviewQueue {{ background: {t['bg-surface-sunken']}; border: none;
-    border-radius: {r['md']}px; font-size: {f['caption']}px; }}
+QListWidget#reviewQueue {{ background: transparent; border: none;
+    border-radius: 0; font-size: {f['label']}px; }}
+QListWidget#reviewQueue::item {{ border-radius: 0; padding: 4px 12px; }}
+QListWidget#reviewQueue::item:selected {{ background: {t['qa-selected']};
+    color: {t['text-primary']}; }}
+QListWidget#reviewQueue:focus {{ border: 1px solid {t['qa-focus']}; }}
+/* 决策工作台：分组标题是一行轻量的分节标题，不是一排大按钮——扁平、左对齐、
+   只在悬停时给极浅底色，让左栏读起来像一份队列而不是一排控件。 */
+QPushButton#reviewGroupHeader {{
+    text-align: left; padding: 4px 8px; border: none; border-radius: {r['md']}px;
+    background: transparent; color: {t['text-secondary']};
+    font-size: {f['label']}px; font-weight: 600;
+}}
+QPushButton#reviewGroupHeader:hover {{ background: {t['bg-hover']}; color: {t['text-primary']}; }}
+QPushButton#reviewGroupHeader:checked {{ background: transparent; color: {t['text-primary']}; }}
+QFrame#qaQueue QPushButton[qaFilter="true"] {{ text-align: left; padding: 4px 6px; border: none;
+    border-radius: 2px; background: transparent; color: {t['text-secondary']}; }}
+QFrame#qaQueue QPushButton[qaFilter="true"]:hover {{ background: {t['qa-hover']}; }}
+QFrame#qaQueue QPushButton[qaFilter="true"]:checked {{ background: {t['qa-selected']}; color: {t['accent']}; }}
+QFrame#qaQueue QPushButton[qaFilter="true"]:focus {{ border: 1px solid {t['qa-focus']}; }}
 QLabel#attentionHeading {{ font-size: {f['label']}px; font-weight: 700; color: {t['warning']}; }}
 /* 底栏字数：本身可点（打开字数浮窗）。 */
 QLabel#wordTotal {{ color: {t['text-secondary']}; font-size: {f['caption']}px; background: transparent; }}
@@ -1031,12 +1053,25 @@ QTextBrowser#qaView {{
 }}
 /* 审校详情：同样是只读报告面；发现项文字长，留出与检查项一致的阅读内边距。 */
 QTextBrowser#reviewDetail {{
-    background: {t['bg-surface-sunken']};
-    border: 1px solid {t['border-faint']};
-    border-radius: {r['md']}px;
-    padding: {sp['sm']}px;
+    background: {t['qa-section']};
+    border: none;
+    min-height: 0;
+    padding: {sp['xs']}px;
+    font-size: {f['reading']}px;
     color: {t['text-primary']};
 }}
+/* Scoped workspace materials; the rest of Folith retains its existing surfaces. */
+QFrame#qaToolbar {{ background: {t['qa-toolbar']}; border-bottom: 1px solid {t['qa-border']}; }}
+QFrame#qaToolbar QLabel#statLabel {{ font-size: {f['label']}px; color: {t['text-secondary']}; }}
+QFrame#qaToolbar QLabel#statValue {{ font-size: {f['body']}px; font-weight: 600; }}
+QFrame#qaQueue {{ background: {t['qa-queue']}; border: none; }}
+QFrame#qaWorkspace {{ background: {t['qa-workspace']};
+    border-left: 1px solid {t['qa-border']}; border-right: 1px solid {t['qa-border']}; }}
+QFrame#qaEvidence {{ background: {t['qa-inspector']}; border: none; }}
+QFrame#qaPanelHeader {{ background: transparent; border-bottom: 1px solid {t['qa-border']}; }}
+QFrame#qaActionBar {{ background: {t['qa-toolbar']}; border-top: 1px solid {t['qa-border']}; }}
+QTextBrowser#reviewEvidence {{ background: transparent; border: none;
+    padding: 8px 12px; color: {t['text-primary']}; font-size: {f['body']}px; }}
 QComboBox {{
     background: {t['bg-surface']};
     color: {t['text-primary']};
@@ -2004,6 +2039,9 @@ class ElideLabel(QLabel):
         self._full_text = str(text or "")
         self._mode = mode
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        # 构造时也要挂上完整文字：以前只有外部再调 setText() 才设 tooltip，
+        # 于是"用构造函数建的省略标签"省略了却没有悬停提示。
+        self.setToolTip(self._full_text)
         self._apply(0)
 
     def setText(self, value: str) -> None:  # noqa: N802 - Qt 命名

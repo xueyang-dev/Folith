@@ -223,10 +223,17 @@ def test_clearing_the_editor_is_not_undone_by_the_next_refresh(bench):
 def test_longer_translation_that_arrives_grows_the_open_row(bench):
     """The overlay is synced before the row height is measured, or text gets clipped."""
     view, app = bench
+    # 把译文列压窄：行高是否随文字增长取决于真的换行了几行。宽列 + 缺中文字形的
+    # 环境里，这段文字可能只排一两行，天然高度在"展开行最小高度"以下，就没有
+    # 可增长的余地（CI 上 60 > 60）。压窄列宽让所有平台都真的换行。
+    view.segment_list.setColumnWidth(2, 320)
     view.select_segment(0)
     _pump(app)
     before = view.segment_list.rowHeight(0)
-    longer = "后台返回了一段明显更长的译文，" * 6
+    # 24 次（约 310 字）：译文列在 CI 上会被拉伸到很宽，次数少时只排一两行，天然
+    # 高度仍在"展开行最小高度"（60）以下，行高没有可增长的余地。取足够长，让任何
+    # 列宽下都至少排三行。
+    longer = "后台返回了一段明显更长的译文，" * 24
 
     _apply_targets(view, {0: longer})
     _pump(app)

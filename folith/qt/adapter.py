@@ -1129,10 +1129,12 @@ def preview_term_revision(state: dict, source_term: str, old_target: str,
                           forbidden: Sequence[str] = ()) -> dict:
     """术语修订预览（纯函数）：原文锚定、逐段分类，不改任何状态。"""
     from folith import term_revision as _tr
+    from folith import consistency as _consistency
 
     return _tr.preview_term_revision(
         source_term, old_target, new_target, state.get("pairs") or [],
-        forbidden=forbidden)
+        forbidden=forbidden,
+        known_forms=_consistency.collect_known_forms(state))
 
 
 def replace_term_targets(job_id: str, source_term: str, old_target: str,
@@ -2051,6 +2053,19 @@ def resolve_findings(job_id: str, finding_ids: Sequence[str], action: str,
     return state
 
 
+def set_auto_handling(job_id: str, enabled: bool) -> dict:
+    """打开或关闭这个任务的自动处理（QA 分诊）。不改译文，也不放宽交付门禁。"""
+    from folith import finding_triage as _triage
+    from folith.engine import triage_resolution
+
+    if enabled and not _triage.enabled({_triage.ENABLED_KEY: True}):
+        raise AdapterError(f"环境变量 {_triage.ENV_SWITCH} 已关闭 QA 分诊。")
+    try:
+        return triage_resolution.set_triage_enabled(job_id, enabled)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
 def revoke_auto_handling(job_id: str, record_key: str,
                          reason: str = "人工在审计列表撤销") -> dict:
     """撤销一条自动处理结论（#289）：这一项回到人工队列。
@@ -2634,6 +2649,20 @@ def accept_entity_variants(job_id: str, source: str) -> dict:
         return core.accept_entity_variants(job_id, source)
     except (RuntimeError, ValueError) as exc:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def batch_apply_entity_repair(job_id: str, source: str, target: str) -> dict:
+    """批量统一流程用：在同一个动作里计算预览再应用（无需调用方持有预览列表）。
+
+    核心的 apply_entity_repair 会在写入前再次验证预览，所以这里的 preview 只是
+    "调用方看过的那份"，两步之间若有其他写入则核心会抛异常，由批量流程记为失败。
+    """
+    from . import i18n
+    state = load_state(job_id)
+    preview = entity_repair_preview(job_id, source, target, state=state)
+    if not preview:
+        raise AdapterError(i18n.tr("没有需要修改的段落。"))
+    return apply_entity_repair(job_id, source, target, preview)
 
 
 # ================= 活动记录（运行时事件） =================

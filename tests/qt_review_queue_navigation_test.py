@@ -134,6 +134,17 @@ def test_typing_in_the_note_field_does_not_trigger_actions(panel):
     panel.shortcut_handlers()["confirm"]()
     assert "resolve" not in seen, "打字时快捷键不得触发决定"
 
+    # Exercise actual key delivery: a no-op shortcut handler alone would still
+    # swallow shortcut letters before the line edit receives them.
+    from PySide6.QtTest import QTest
+    QTest.keyClicks(panel.note_edit, "nonce")
+    assert panel.note_edit.text() == "nonce"
+    assert panel.selected_item()["id"] == "finding:1"
+    panel.list.setFocus()
+    QApplication.processEvents()
+    assert all(shortcut.isEnabled() for shortcut in panel._shortcuts)
+    panel.close()
+
 
 # ------------------------------------------------------------ 下一项导航 --------
 

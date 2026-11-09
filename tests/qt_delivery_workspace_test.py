@@ -384,10 +384,16 @@ def test_integrity_failure_is_reported_not_hidden(workspace, tmp_path):
 
 
 def test_long_and_non_ascii_filenames_elide_but_keep_the_full_name(app, tmp_path):
+    # 文件名受文件系统 255 字节限制（UTF-8 下一个汉字 3 字节），中文名不能无限加长；
+    # Linux CI 缺中文字形时每个字很窄，所以宽窗下的"必须省略"只用 ASCII 长名断言
+    # （约 200 个字符，任何字体下都放不进 1040 px 的名字列），中文长名只在窄窗断言。
     long_zh = ("translation_关于开展 2026 年度第二季度跨区域合规审查与风险评估工作的"
                "最终交付说明文件（修订版，含附件与附录）.docx")
     long_en = ("translation_A-very-long-deliverable-file-name-that-keeps-going-and-"
-               "going-and-going-without-end-for-layout-testing-final.docx")
+               "going-and-going-without-end-for-layout-testing-final-and-then-some-"
+               "more-words-to-make-sure-it-cannot-fit-in-any-font-at-all-"
+               "and-some-more-padding-padding-padding.docx")
+    assert len(long_en.encode()) < 250 and len(long_zh.encode()) < 250
     names = [long_zh, long_en, "bilingual.docx"]
     for name in names:
         (tmp_path / name).write_bytes(b"x")
@@ -432,7 +438,8 @@ def test_long_and_non_ascii_filenames_elide_but_keep_the_full_name(app, tmp_path
         short = panel.row_for("bilingual.docx")
         assert short.name_label.text() == "bilingual.docx"
         assert short.name_label.fullText() == "bilingual.docx"
-        assert panel.row_for(long_zh).name_label.text() != long_zh
+        assert panel.row_for(long_zh).name_label.fullText() == long_zh
+        assert panel.row_for(long_en).name_label.text() != long_en
     finally:
         panel.hide()
         panel.deleteLater()

@@ -86,26 +86,27 @@ class IssueCard(QFrame):
         self.actions.setSpacing(theme_module.SPACE["xs"])
         self._actions_end = False
 
-        head = QHBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.setSpacing(theme_module.SPACE["xs"])
-        head.addWidget(self.title, 1)
-        head.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignTop)
-        self.toggle.setVisible(collapsible)
-        column = QVBoxLayout()
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(theme_module.SPACE["xs"] + 2)
-        column.addLayout(head)
-        column.addWidget(self.summary)
-        column.addLayout(self.body)
-        column.addWidget(self.details)
-        column.addLayout(self.actions)
         outer = QHBoxLayout(self)
         outer.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"] + 2,
                                  theme_module.SPACE["sm"], theme_module.SPACE["sm"] + 2)
         outer.setSpacing(theme_module.SPACE["sm"])
         outer.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop)
+        # Attach before filling to avoid stale PySide QWidgetItem wrappers.
+        column = QVBoxLayout()
         outer.addLayout(column, 1)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(theme_module.SPACE["xs"] + 2)
+        head = QHBoxLayout()
+        column.addLayout(head)
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(theme_module.SPACE["xs"])
+        head.addWidget(self.title, 1)
+        head.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignTop)
+        self.toggle.setVisible(collapsible)
+        column.addWidget(self.summary)
+        column.addLayout(self.body)
+        column.addWidget(self.details)
+        column.addLayout(self.actions)
         self.set_tone(tone)
         self.toggle.setChecked(expanded or not collapsible)
         self._sync_toggle(self.toggle.isChecked())
@@ -298,8 +299,9 @@ class FollowupPanel(QWidget):
         self.extraction_details = label(muted=True, rich=True)
         self.extraction_note = label(muted=True)
         self.extraction_note.setText(i18n.tr(
-            '导出是重建的译文文档，不是原文件的格式保真输出：排版、表格与样式不会还原；'
-            'EPUB / PDF / DOCX 来源的原图按阅读顺序保留（Markdown 图片不纳入）。'))
+            '导出是重建的译文文档，不是原文件的格式保真输出：排版、表格与样式不会还原。'
+            '源文件有图时，图片仅保留在译文 EPUB、纯译文 DOCX 和原格式 PDF/DOCX（对应来源）'
+            '交付中；双语对照 DOCX 与纯译文 PDF 不含图片，Markdown 图片不纳入。'))
         for widget in (self.extraction_warning, self.extraction_details, self.extraction_note):
             self.extraction_card.details_layout.addWidget(widget)
 
@@ -334,10 +336,10 @@ class FollowupPanel(QWidget):
             self.rescan_card.details_layout.addWidget(box)
         self.rescan_card.details_layout.addWidget(self.rescan_status)
         rescan_row = QHBoxLayout()
+        self.rescan_card.details_layout.addLayout(rescan_row)
         rescan_row.setContentsMargins(0, 0, 0, 0)
         rescan_row.addWidget(self.rescan_button)
         rescan_row.addStretch(1)
-        self.rescan_card.details_layout.addLayout(rescan_row)
 
         content = QWidget()
         content.setObjectName("pageCanvas")

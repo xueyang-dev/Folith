@@ -141,3 +141,18 @@ def test_epub_per_chapter_extraction_matches_full_sequence():
     assert [text for group in groups for text in group] == paragraphs
     assert per_chapter_facts == facts
     assert facts["chapters"] == len(groups)
+
+
+@pytest.mark.parametrize("suffix,data", [
+    (".md", "# 标题\n\n![图](image.png)\n\n正文。".encode()),
+    (".md", b"![only image](image.png)\n"),
+    (".txt", b"Text paragraph."),
+])
+def test_text_and_markdown_reports_do_not_claim_images_are_preserved(suffix, data):
+    _paragraphs, _warnings, report = core.extract_document_paragraphs_with_report(
+        "source" + suffix, data)
+    notes = " ".join(report["notes"])
+    assert "图片仅保留" not in notes
+    assert "译文 EPUB" not in notes
+    if suffix in {".md", ".markdown"}:
+        assert "Markdown 图片不纳入" in notes

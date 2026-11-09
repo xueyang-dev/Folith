@@ -794,8 +794,10 @@ def test_epub_paragraph_sequence_and_image_boundaries_are_stable():
     assert paragraphs == ["Alpha", "Beta", "GammaDelta", "Nested", "Omega"]
     epub_paragraphs, nodes, _media, _source_warnings, _cover = _epub_source(source)
     assert epub_paragraphs == paragraphs
-    shape = [node["ref"] if node["kind"] == "text" else "IMG" for node in nodes]
-    assert shape == [0, "IMG", 1, "IMG", 2, "IMG", 3, "IMG", 4]
+    shape = [f"T{node['ref']}" if node["kind"] == "text" else "IMG" for node in nodes]
+    # ``<div><img/><p>Nested</p></div>``: the image sits at the current
+    # boundary before the nested paragraph, not at the end of the whole div.
+    assert shape == ["T0", "IMG", "T1", "IMG", "T2", "IMG", "IMG", "T3", "T4"]
 
 
 def test_legacy_epub_task_without_source_refs_exports_images_to_both_formats():
@@ -919,3 +921,224 @@ def test_epub_non_linear_spine_items_are_skipped_like_text():
     assert report["image_count"] == 0
     assert report["image_reference_count"] == 0
     assert "Note text." not in content(data)
+
+
+# ---------------------------------------------------------------------------
+# Regression: images must stay between child paragraphs of a container block
+# ---------------------------------------------------------------------------
+
+def _node_shape(nodes):
+    return [f"T{node['ref']}" if node["kind"] == "text" else "IMG" for node in nodes]
+
+
+@pytest.mark.parametrize("body,paragraphs,shape", [
+    # Image directly between two child paragraphs of a container block.
+    ('<div><p>A</p><img src="../images/a.png"/><p>B</p></div>',
+     ["A", "B"], ["T0", "IMG", "T1"]),
+    ('<section><p>A</p><img src="../images/a.png"/><p>B</p>'
+     '<img src="../images/b.png"/><p>C</p></section>',
+     ["A", "B", "C"], ["T0", "IMG", "T1", "IMG", "T2"]),
+    ('<blockquote><p>A</p><img src="../images/a.png"/><p>B</p></blockquote>',
+     ["A", "B"], ["T0", "IMG", "T1"]),
+    # Figure image + caption: image before the caption paragraph.
+    ('<section><p>A</p><figure><img src="../images/a.png"/>'
+     '<figcaption>Cap</figcaption></figure><p>B</p></section>',
+     ["A", "Cap", "B"], ["T0", "IMG", "T1", "T2"]),
+    ('<p>A</p><figure><img src="../images/a.png"/>'
+     '<figcaption>Cap</figcaption></figure><p>B</p>',
+     ["A", "Cap", "B"], ["T0", "IMG", "T1", "T2"]),
+    # Nested containers must not push the image to the outer block's end.
+    ('<div><div><p>A</p><img src="../images/a.png"/><p>B</p></div></div>',
+     ["A", "B"], ["T0", "IMG", "T1"]),
+    ('<section><div><p>A</p><img src="../images/a.png"/><p>B</p></div>'
+     '<p>C</p></section>',
+     ["A", "B", "C"], ["T0", "IMG", "T1", "T2"]),
+    # Image and paragraphs share the outer block; a leading image stays before A.
+    ('<div><img src="../images/a.png"/><p>A</p>'
+     '<img src="../images/b.png"/><p>B</p><img src="../images/c.png"/></div>',
+     ["A", "B"], ["IMG", "T0", "IMG", "T1", "IMG"]),
+])
+def test_epub_images_stay_between_child_paragraphs(body, paragraphs, shape):
+    image = illustration()
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "body": body}],
+        {"images/a.png": image, "images/b.png": image, "images/c.png": image})
+    extracted, _warnings, _report = core.extract_document_paragraphs_with_report(
+        "book.epub", source)
+    assert extracted == paragraphs
+    epub_paragraphs, nodes, _media, _source_warnings, _cover = _epub_source(source)
+    assert epub_paragraphs == paragraphs
+    assert _node_shape(nodes) == shape
+
+
+@pytest.mark.parametrize("body,paragraphs,shape", [
+    ('<p><img src="../images/a.png"/>文字</p><p>B</p>',
+     ["文字", "B"], ["T0", "IMG", "T1"]),
+    ('<p>文字<img src="../images/a.png"/>尾部</p><p>B</p>',
+     ["文字尾部", "B"], ["T0", "IMG", "T1"]),
+    ('<div><img src="../images/a.png"/>文字</div><p>B</p>',
+     ["文字", "B"], ["T0", "IMG", "T1"]),
+    ('<div>文字<img src="../images/a.png"/>尾部</div><p>B</p>',
+     ["文字尾部", "B"], ["T0", "IMG", "T1"]),
+])
+def test_epub_inline_images_follow_their_complete_paragraph(body, paragraphs, shape):
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml", "body": body}],
+        {"images/a.png": illustration()})
+    extracted, _warnings, _report = core.extract_document_paragraphs_with_report(
+        "book.epub", source)
+    assert extracted == paragraphs
+    epub_paragraphs, nodes, _media, _source_warnings, _cover = _epub_source(source)
+    assert epub_paragraphs == paragraphs
+    assert _node_shape(nodes) == shape
+
+
+def test_epub_object_data_image_is_kept_once_and_fallback_text_survives():
+    picture = colored_png((0.3, 0.4, 0.7))
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>A</p><object data="../images/obj.png">'
+                  '<p>Fallback text</p><img src="../images/obj.png"/>'
+                  '</object><p>B</p>'}],
+        {"images/obj.png": picture})
+    paragraphs, _warnings, _report = core.extract_document_paragraphs_with_report(
+        "book.epub", source)
+    assert paragraphs == ["A", "Fallback text", "B"]
+    data, report = build_translation_epub(translated_state("book.epub", source), source)
+    validate_package(data)
+    assert report["image_count"] == report["image_reference_count"] == 1
+    assert content(data).count("<img ") == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("EPUB/images/")]
+        assert len(media) == 1
+        assert archive.read(media[0]) == picture
+
+
+def test_epub_object_data_that_is_not_an_image_is_reported_not_lost():
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>A</p><object data="../files/not-image.bin"></object><p>B</p>'}],
+        {"files/not-image.bin": b"not an image resource"})
+    data, report = build_translation_epub(translated_state("book.epub", source), source)
+    validate_package(data)
+    assert report["image_count"] == 0
+    assert report["source_image_reference_count"] == 1
+    assert report["skipped_image_count"] == 1
+    assert report["skipped_image_reasons"] == {"unsupported": 1}
+    assert any("未纳入译文" in warning for warning in report["warnings"])
+
+
+def test_epub_img_referenced_svg_is_kept_in_epub_and_rasterized_for_docx():
+    svg = (b'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">'
+           b'<rect width="40" height="20" fill="red"/></svg>')
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>A</p><div><img src="../images/vector.svg"/></div><p>B</p>'}],
+        {"images/vector.svg": svg})
+    state = translated_state("book.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["image_count"] == report["image_reference_count"] == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        item = next(item for item in package.findall("o:manifest/o:item", OPF)
+                    if item.get("media-type") == "image/svg+xml")
+        assert archive.read("EPUB/" + item.get("href")) == svg
+    payload, docx_report = build_translation_docx(state, source)
+    document = Document(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload))
+    assert len(document.inline_shapes) == 1
+    assert docx_report["image_count"] == 1
+
+
+def test_epub_unconvertible_svg_is_skipped_for_docx_with_a_warning():
+    broken = b"<svg><this is not a valid svg"
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>A</p><div><img src="../images/broken.svg"/></div><p>B</p>'}],
+        {"images/broken.svg": broken})
+    state = translated_state("book.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["image_count"] == 1
+    payload, docx_report = build_translation_docx(state, source)
+    document = Document(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload))
+    assert not document.inline_shapes
+    assert docx_report["image_count"] == 0
+    assert docx_report["skipped_image_count"] == 1
+    assert docx_report["skipped_image_reasons"] == {"unsupported_format": 1}
+    assert any("格式不受支持" in warning for warning in docx_report["warnings"])
+
+
+def test_epub_docx_falls_back_to_text_when_source_association_cannot_be_bound():
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>First paragraph.</p><div><img src="../images/a.png"/></div>'
+                  '<p>Last paragraph.</p>'}],
+        {"images/a.png": illustration()})
+    state = translated_state("legacy.epub", source)
+    state["segment_structure_history"] = [{"operation": "merge"}]
+    payload, report = build_translation_docx(state, source)
+    document = Document(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload))
+    assert not document.inline_shapes
+    assert report["image_count"] == 0
+    assert any("纯文字重建" in warning and "来源关联" in warning
+               for warning in report["warnings"])
+    # The fallback must not keep claiming that images were preserved.
+    assert not any("按原阅读顺序保留" in warning or "图片已保留" in warning
+                   or "图片内部文字保持原样" in warning
+                   for warning in report["warnings"])
+    texts = [paragraph.text for paragraph in document.paragraphs][1:]
+    assert texts == [pair["target"] for pair in state["pairs"]]
+
+
+def test_epub_svg_wrapper_with_embedded_bitmap_is_unwrapped_for_epub_and_docx():
+    inner = illustration()
+    wrapper = (b'<svg xmlns="http://www.w3.org/2000/svg" '
+               b'xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 240 120">'
+               b'<image xlink:href="inner.png" width="240" height="120"/></svg>')
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>A</p><div><img src="../images/wrap.svg"/></div><p>B</p>'}],
+        {"images/wrap.svg": wrapper, "images/inner.png": inner})
+    state = translated_state("book.epub", source)
+    data, report = build_translation_epub(state, source)
+    validate_package(data)
+    assert report["image_count"] == report["image_reference_count"] == 1
+    with ZipFile(io.BytesIO(data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("EPUB/images/")]
+        assert len(media) == 1
+        assert media[0].endswith(".png")
+        assert archive.read(media[0]) == inner
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        assert not any(item.get("media-type") == "image/svg+xml"
+                       for item in package.findall("o:manifest/o:item", OPF))
+    payload, docx_report = build_translation_docx(state, source)
+    document = Document(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload))
+    assert len(document.inline_shapes) == 1
+    assert docx_report["image_count"] == 1
+    with ZipFile(io.BytesIO(payload.getvalue() if hasattr(payload, "getvalue") else payload)) as archive:
+        media_parts = [archive.read(name) for name in archive.namelist()
+                       if name.startswith("word/media/")]
+    assert media_parts == [inner]
+
+
+@pytest.mark.parametrize("href,reason", [
+    ("missing.png", "missing"),
+    ("https://example.com/remote.png", "external"),
+])
+def test_epub_svg_wrapper_without_a_readable_bitmap_is_skipped(href, reason):
+    wrapper = (f'<svg xmlns="http://www.w3.org/2000/svg" '
+               f'xmlns:xlink="http://www.w3.org/1999/xlink">'
+               f'<image xlink:href="{href}" width="10" height="10"/></svg>').encode()
+    source = synthetic_epub(
+        [{"href": "text/ch1.xhtml",
+          "body": '<p>A</p><div><img src="../images/wrap.svg"/></div><p>B</p>'}],
+        {"images/wrap.svg": wrapper})
+    data, report = build_translation_epub(translated_state("book.epub", source), source)
+    validate_package(data)
+    assert report["image_count"] == 0
+    assert report["source_image_reference_count"] == 1
+    assert report["skipped_image_count"] == 1
+    assert report["skipped_image_reasons"] == {reason: 1}
+    assert any("未纳入译文" in warning for warning in report["warnings"])
+    assert content(data).count("<img ") == 0
