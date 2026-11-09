@@ -106,8 +106,6 @@ class NameConflictWidget(QWidget):
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
-        actions.addWidget(self.confirm_button)
-        actions.addStretch(1)
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(theme_module.SPACE["sm"])
@@ -115,6 +113,8 @@ class NameConflictWidget(QWidget):
         column.addWidget(self.preview_hint)
         column.addWidget(self.preview_view)
         column.addLayout(actions)
+        actions.addWidget(self.confirm_button)
+        actions.addStretch(1)
         self._rows: list[QWidget] = []
 
     # ================= 数据 =================

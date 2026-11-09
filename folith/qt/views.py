@@ -2605,14 +2605,14 @@ class WorkbenchView(QWidget):
         # 换成可折行的 FlowRow：放不下就折到第二行，最小宽度降到 874/1072/1123/1149，
         # 四种语言都 ≤1280。交付页的四个按钮早就是这么排的（F1 证据见
         # docs/ui-overhaul/10-f1-width-evidence.md）。
-        run_controls = components.FlowRow(spacing=theme_module.SPACE["sm"], fill=False)
+        self.header_actions_bar = QWidget()
+        self.header_actions_bar.setContentsMargins(0, 0, 0, 0)
+        run_controls = components.FlowRow(self.header_actions_bar,
+                                          spacing=theme_module.SPACE["sm"], fill=False)
         run_controls.setContentsMargins(0, 0, 0, 0)
         for button in (self.start_button, self.pause_button,
                        self.cancel_button, self.retry_button, self.stage_action_button):
             run_controls.addWidget(button)
-        self.header_actions_bar = QWidget()
-        self.header_actions_bar.setContentsMargins(0, 0, 0, 0)
-        self.header_actions_bar.setLayout(run_controls)
 
         # ---- Golden Gate 统一工具栏（一行，贴住窗口顶边，底部一条发丝线） ----------
         #   返回 · 文件名（下面一行是状态芯片 + 运行说明） · 阶段胶囊（居中）
@@ -3008,6 +3008,7 @@ class WorkbenchView(QWidget):
         inspector_layout.setSpacing(theme_module.SPACE["sm"])
         # 标题 + 上一段 / 下一段：窄栏或长语言里按钮折到标题下面一行，而不是被挤出去。
         title_row = components.FlowRow(spacing=theme_module.SPACE["xs"])
+        inspector_layout.addLayout(title_row)
         self.selection_title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         nav_pair = QWidget()
         nav_pair.setObjectName("transparent")
@@ -3018,7 +3019,6 @@ class WorkbenchView(QWidget):
         nav.addWidget(self.next_button, 1)
         title_row.addWidget(self.selection_title)
         title_row.addWidget(nav_pair)  # 上一段 / 下一段 总是挨在一起，要折就一起折
-        inspector_layout.addLayout(title_row)
         inspector_layout.addWidget(self.segment_status)
         self.segment_status.setWordWrap(True)
         self.segment_status.setMinimumHeight(self.segment_status.fontMetrics().lineSpacing() * 2)
@@ -3085,13 +3085,13 @@ class WorkbenchView(QWidget):
         self.ask_box.input.setVisible(False)
         self.ask_box.button.setVisible(False)
 
-        def row_of(*widgets) -> components.FlowRow:
+        def add_button_row(layout, *widgets) -> None:
             # 放得下就一行等分铺满，放不下就折行：操作台永远不会把按钮挤出右边。
             row = components.FlowRow()
+            layout.addLayout(row)
             for widget in widgets:
                 widget.setSizePolicy(QSizePolicy.Policy.Expanding, widget.sizePolicy().verticalPolicy())
                 row.addWidget(widget)
-            return row
 
         # 只对单独一段有意义的部分：选多段时整组收起。
         self.single_segment_section = QWidget()
@@ -3130,15 +3130,15 @@ class WorkbenchView(QWidget):
         self.exclude_button.setVisible(False)
         self.segment_more_button.setMenu(more_menu)
         self.segment_more_button.setToolTip(i18n.tr('更多段落操作'))
-        ops.addLayout(row_of(self.copy_source_button, self.restore_button,
-                             self.structure_button, self.view_source_button,
-                             self.segment_more_button))
+        add_button_row(ops, self.copy_source_button, self.restore_button,
+                       self.structure_button, self.view_source_button,
+                       self.segment_more_button)
         single.addWidget(self.segment_ops_section)
         inspector_layout.addWidget(self.single_segment_section)
 
         inspector_layout.addWidget(style_module.SectionLabel(i18n.tr('AI 操作')))
-        inspector_layout.addLayout(row_of(self.review_button, self.review_selected_button,
-                                          self.analyze_button, self.retranslate_button))
+        add_button_row(inspector_layout, self.review_button, self.review_selected_button,
+                       self.analyze_button, self.retranslate_button)
         self.assist_row = QWidget()
         assist = components.FlowRow(self.assist_row)
         self.assist_input.setMinimumWidth(160)

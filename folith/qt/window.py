@@ -1695,19 +1695,9 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self, self._sync_minimum_size)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
-        """设过最小值以后就以它为准。
-
-        Qt 会拿 ``minimumSizeHint()`` 和 ``minimumSize()`` 里较大的那个去钳制
-        ``resize()``；两边不一致时，"缩到最小"会被悄悄放大（CI 上 minimumSize 报
-        607、实际按 805 兜底）。
-        """
-        if getattr(self, "_syncing_minimum", False):
-            return super().minimumSizeHint()
-        hint = super().minimumSizeHint()
+        """Expose the same window minimum to Qt and to callers of minimumSize()."""
         minimum = self.minimumSize()
-        if minimum.width() > 0 or minimum.height() > 0:
-            hint = hint.expandedTo(minimum)
-        return hint
+        return minimum if not minimum.isEmpty() else super().minimumSizeHint()
 
     def _sync_minimum_size(self) -> None:
         """让窗口的 minimumSize 与当前布局的 minimumSizeHint 一致。
@@ -1723,7 +1713,9 @@ class MainWindow(QMainWindow):
         central = self.centralWidget()
         if central is not None and central.layout() is not None:
             central.layout().activate()
-        hint = self.minimumSizeHint()
+        # Read the layout's natural minimum. Including the previous explicit
+        # minimum would prevent the window from shrinking after a page change.
+        hint = super().minimumSizeHint()
         if central is not None:
             # 中央部件自己也可能被布局约束写入了一个更大的最小尺寸（Linux 上实测
             # minimumSizeHint 607、Qt 却按 805 兜底），一并算进去。
@@ -1750,13 +1742,13 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
-        self._sync_minimum_size()
         # A frozen page width belongs to the window size the transition began
         # with; a resize mid-transition jumps straight to the final layout.
         settle = getattr(self, "_sidebar_settle", None)
         if settle is not None and self._motion.running("sidebar"):
             self._motion.stop("sidebar")
             settle()
+        self._sync_minimum_size()
 
     def _sync_sidebar(self, *_args) -> None:
         current = self.stack.currentWidget()
@@ -1785,6 +1777,7 @@ class MainWindow(QMainWindow):
                 frame(target)
                 self.sidebar_clip.setVisible(visible)
                 self.stack_clip.freeze(None)
+                self._sync_minimum_size()
 
             self._sidebar_settle = settled
             self._motion.animate("sidebar", start, target, frame, kind="view", finished=settled)
