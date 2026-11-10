@@ -1,0 +1,120 @@
+{
+  "schema": "folith-import-report-v1",
+  "kind": "tmx",
+  "file": {
+    "name": "metadata_rich.tmx",
+    "bytes": 2451,
+    "sha256": "d5ca20283edf2da6f5c1070a4116e8d0dc6cac5ff98443440f25936143a7e958"
+  },
+  "generated_at": "2026-11-10T21:18:14+00:00",
+  "status": "partial",
+  "language_pair": {
+    "expected_target": "简体中文",
+    "expected_tag": "zh-CN",
+    "declared_source": "en",
+    "declared_targets": [
+      "zh-CN"
+    ],
+    "declared_target_tags": [
+      "zh-CN"
+    ],
+    "status": "match",
+    "action": "none",
+    "mismatch_units": 0,
+    "undeclared_target_units": 1,
+    "message": "语言对一致：文件声明 zh-CN，任务目标 zh-CN。 / Declared and expected target languages match."
+  },
+  "counts": {
+    "total": 8,
+    "imported": 4,
+    "skipped_conflict": 1,
+    "skipped_ineligible": 1,
+    "skipped_unsupported_inline": 1,
+    "skipped_language_unknown": 0,
+    "skipped_language_mismatch": 0,
+    "skipped_missing_pair": 1,
+    "skipped_write_failed": 0
+  },
+  "metadata_loss": {
+    "total_affected": 3,
+    "categories": [
+      {
+        "category": "tmx_tu_attributes",
+        "label": "TU 属性（creationdate/changeid 等）",
+        "affected": 2,
+        "fields": [
+          "changeid",
+          "creationdate",
+          "creationid"
+        ]
+      },
+      {
+        "category": "tmx_prop",
+        "label": "TU 的 prop（客户/领域等）",
+        "affected": 1,
+        "fields": [
+          "client",
+          "domain"
+        ]
+      },
+      {
+        "category": "tmx_note",
+        "label": "TU 的 note",
+        "affected": 1,
+        "fields": [
+          "explanation"
+        ]
+      },
+      {
+        "category": "tmx_tuv_attributes",
+        "label": "TUV 属性（xml:lang 以外）",
+        "affected": 1,
+        "fields": [
+          "creationdate"
+        ]
+      },
+      {
+        "category": "tmx_extra_languages",
+        "label": "第三种及以后的语言",
+        "affected": 1,
+        "fields": [
+          "fr"
+        ]
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "code": "conflict_skipped",
+      "message": "与现有翻译记忆冲突，未覆盖已审校条目。",
+      "count": 1
+    },
+    {
+      "code": "ineligible_units",
+      "message": "源文不含字母/数字或译文不可用，未入库。",
+      "count": 1
+    },
+    {
+      "code": "unsupported_inline_content",
+      "message": "含无法可靠处理的行内内容，整单元不导入。",
+      "count": 1
+    },
+    {
+      "code": "missing_language_pair_units",
+      "message": "缺少双语（语言对）内容，未入库。",
+      "count": 1
+    },
+    {
+      "code": "metadata_dropped",
+      "message": "部分单元元数据未保留（见元数据丢失清单）。",
+      "count": 3
+    }
+  ],
+  "error": "",
+  "recovery": "已写入 4 条；被跳过的单元没有入库，既有条目未被覆盖。同一文件重新导入不会重复写入（已存在的键计入冲突跳过）。 / Partial import: skipped units were not stored and no existing entry was overwritten. Re-importing the same file does not duplicate entries.",
+  "persistence": {
+    "directory": "docs/evidence/tm-migration-0.8.2",
+    "json": "docs/evidence/tm-migration-0.8.2/sample-tmx-report.json",
+    "markdown": "docs/evidence/tm-migration-0.8.2/sample-tmx-report.md"
+  }
+}

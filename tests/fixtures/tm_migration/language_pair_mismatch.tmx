@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture for issue #150: every target tuv declares zh-TW while the caller
+     imports for Simplified Chinese. Declared behaviour: the file is blocked,
+     no unit is stored, and the report says why. -->
+<tmx version="1.4">
+  <header creationtool="Trados" segtype="sentence" adminlang="en" srclang="en"
+          datatype="plaintext"/>
+  <body>
+    <tu tuid="t1">
+      <tuv xml:lang="en"><seg>First traditional unit</seg></tuv>
+      <tuv xml:lang="zh-TW"><seg>第一個繁體單元</seg></tuv>
+    </tu>
+    <tu tuid="t2">
+      <tuv xml:lang="en"><seg>Second traditional unit</seg></tuv>
+      <tuv xml:lang="zh-TW"><seg>第二個繁體單元</seg></tuv>
+    </tu>
+    <tu tuid="t3">
+      <tuv xml:lang="en"><seg>Third traditional unit</seg></tuv>
+      <tuv xml:lang="zh-TW"><seg>第三個繁體單元</seg></tuv>
+    </tu>
+  </body>
+</tmx>

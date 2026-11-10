@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture for issue #150: one TMX unit per classified outcome.
+     Unit 1: metadata-rich (tu attributes, prop, note) + importable
+     Unit 2: third language (fr) + importable
+     Unit 3: conflicts with pre-seeded memory (+ a prop that must NOT count as loss,
+             because the unit is not imported)
+     Unit 4: ineligible source (no letters/digits) (+ a note that must NOT count)
+     Unit 5: unsupported inline content (<sub>)
+     Unit 6: target tuv without xml:lang (language known only from the caller)
+     Unit 7: single text-bearing tuv (missing pair)
+     Unit 8: importable + tuv-level attribute -->
+<tmx version="1.4">
+  <header creationtool="Trados" creationtoolversion="2024.1" segtype="sentence"
+          adminlang="en" srclang="en" datatype="plaintext"
+          creationdate="20240101T000000Z" o-tmf="Trados"/>
+  <body>
+    <tu tuid="u1" creationdate="20240101T000000Z" changeid="c1" creationid="alice">
+      <prop type="client">Acme</prop>
+      <prop type="domain">Legal</prop>
+      <note type="explanation">Reviewed by the legal team</note>
+      <tuv xml:lang="en"><seg>The contract is binding.</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>合同具有约束力。</seg></tuv>
+    </tu>
+    <tu tuid="u2" changeid="c2">
+      <tuv xml:lang="en"><seg>Hello world</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>你好世界</seg></tuv>
+      <tuv xml:lang="fr"><seg>Bonjour le monde</seg></tuv>
+    </tu>
+    <tu tuid="u3">
+      <prop type="client">Acme</prop>
+      <tuv xml:lang="en"><seg>Existing entry</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>已有条目</seg></tuv>
+    </tu>
+    <tu tuid="u4">
+      <note type="explanation">Dropped with the ineligible unit</note>
+      <tuv xml:lang="en"><seg>###</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>装饰行</seg></tuv>
+    </tu>
+    <tu tuid="u5">
+      <tuv xml:lang="en"><seg>Water is H<sub>2</sub>O.</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>水是 H<sub>2</sub>O。</seg></tuv>
+    </tu>
+    <tu tuid="u6">
+      <tuv xml:lang="en"><seg>Unlabelled target unit</seg></tuv>
+      <tuv><seg>未标注语言的译文</seg></tuv>
+    </tu>
+    <tu tuid="u7">
+      <tuv xml:lang="en"><seg>Lonely source only</seg></tuv>
+    </tu>
+    <tu tuid="u8">
+      <tuv xml:lang="en" creationdate="20230101T000000Z"><seg>Plain unit</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>普通单元</seg></tuv>
+    </tu>
+  </body>
+</tmx>

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture for issue #150 (TBX): one termEntry per classified outcome.
+     te-1: multiple termNotes, a second term in zh-CN, and a third language (fr)
+     te-2: termNote + descrip/definition
+     te-3: single language only (missing pair)
+     te-4: second langSet without xml:lang (language unknown)
+     te-5: target langSet declares zh-TW (language mismatch for 简体中文) -->
+<martif type="TBX" xml:lang="en">
+  <martifHeader>
+    <fileDesc>
+      <sourceDesc><p>Folith issue #150 fixture</p></sourceDesc>
+    </fileDesc>
+    <encodingDesc><p type="XCSURI">Folith default XCS</p></encodingDesc>
+  </martifHeader>
+  <text>
+    <body>
+      <termEntry id="te-1">
+        <langSet xml:lang="en">
+          <tig><term>Skopos theory</term></tig>
+        </langSet>
+        <langSet xml:lang="zh-CN">
+          <tig>
+            <term>目的论</term>
+            <termNote type="termStatus">preferred</termNote>
+          </tig>
+          <tig><term>目的论学说</term></tig>
+        </langSet>
+        <langSet xml:lang="fr">
+          <tig><term>théorie du skopos</term></tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="te-2">
+        <langSet xml:lang="en">
+          <tig><term>fidelity</term></tig>
+        </langSet>
+        <langSet xml:lang="zh-CN">
+          <tig>
+            <term>忠实性</term>
+            <termNote type="termStatus">preferred</termNote>
+          </tig>
+        </langSet>
+        <descripGrp>
+          <descrip type="definition">Faithfulness to the source text.</descrip>
+        </descripGrp>
+      </termEntry>
+      <termEntry id="te-3">
+        <langSet xml:lang="en">
+          <tig><term>single language</term></tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="te-4">
+        <langSet xml:lang="en">
+          <tig><term>unlabelled target</term></tig>
+        </langSet>
+        <langSet>
+          <tig><term>未标注语言</term></tig>
+        </langSet>
+      </termEntry>
+      <termEntry id="te-5">
+        <langSet xml:lang="en">
+          <tig><term>traditional only</term></tig>
+        </langSet>
+        <langSet xml:lang="zh-TW">
+          <tig><term>僅繁體</term></tig>
+        </langSet>
+      </termEntry>
+    </body>
+  </text>
+</martif>

@@ -1,0 +1,112 @@
+{
+  "schema": "folith-import-report-v1",
+  "kind": "tbx",
+  "file": {
+    "name": "metadata_rich.tbx",
+    "bytes": 2276,
+    "sha256": "898e541d72859f86dc7ca2bc09e36916c46c22e9207cf2df657b3bda41861149"
+  },
+  "generated_at": "2026-11-10T21:18:14+00:00",
+  "status": "partial",
+  "language_pair": {
+    "expected_target": "简体中文",
+    "expected_tag": "zh-CN",
+    "declared_source": "en",
+    "declared_targets": [
+      "zh-CN",
+      "zh-TW"
+    ],
+    "declared_target_tags": [
+      "zh-CN",
+      "zh-TW"
+    ],
+    "status": "partial_mismatch",
+    "action": "warned",
+    "mismatch_units": 1,
+    "undeclared_target_units": 0,
+    "message": "文件同时声明了 zh-CN, zh-TW，其中与任务目标 zh-CN 不符的 1 个单元已拒绝导入（不会改标为目标语言）。 / Units whose declared target differs were rejected, never retagged."
+  },
+  "counts": {
+    "total": 5,
+    "imported": 2,
+    "skipped_conflict": 0,
+    "skipped_ineligible": 0,
+    "skipped_unsupported_inline": 0,
+    "skipped_language_unknown": 1,
+    "skipped_language_mismatch": 1,
+    "skipped_missing_pair": 1,
+    "skipped_write_failed": 0
+  },
+  "metadata_loss": {
+    "total_affected": 2,
+    "categories": [
+      {
+        "category": "tbx_term_entry_attributes",
+        "label": "termEntry 属性（id 以外）",
+        "affected": 0,
+        "fields": []
+      },
+      {
+        "category": "tbx_term_note",
+        "label": "termNote",
+        "affected": 2,
+        "fields": [
+          "termStatus"
+        ]
+      },
+      {
+        "category": "tbx_extra_languages",
+        "label": "第三种及以后的语言",
+        "affected": 1,
+        "fields": [
+          "fr"
+        ]
+      },
+      {
+        "category": "tbx_multiple_terms",
+        "label": "同语言多词条",
+        "affected": 1,
+        "fields": [
+          "zh-CN"
+        ]
+      },
+      {
+        "category": "tbx_descrip",
+        "label": "descrip（定义/领域等）",
+        "affected": 1,
+        "fields": [
+          "definition"
+        ]
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "code": "language_pair_mismatch",
+      "message": "文件同时声明了 zh-CN, zh-TW，其中与任务目标 zh-CN 不符的 1 个单元已拒绝导入（不会改标为目标语言）。 / Units whose declared target differs were rejected, never retagged.",
+      "count": 1
+    },
+    {
+      "code": "language_unknown_units",
+      "message": "语言无法确定（缺 xml:lang 且调用方未给目标语言），未入库。",
+      "count": 1
+    },
+    {
+      "code": "missing_language_pair_units",
+      "message": "缺少双语（语言对）内容，未入库。",
+      "count": 1
+    },
+    {
+      "code": "metadata_dropped",
+      "message": "部分单元元数据未保留（见元数据丢失清单）。",
+      "count": 2
+    }
+  ],
+  "error": "",
+  "recovery": "已写入 2 条；被跳过的单元没有入库，既有条目未被覆盖。同一文件重新导入不会重复写入（已存在的键计入冲突跳过）。 / Partial import: skipped units were not stored and no existing entry was overwritten. Re-importing the same file does not duplicate entries.",
+  "persistence": {
+    "directory": "docs/evidence/tm-migration-0.8.2",
+    "json": "docs/evidence/tm-migration-0.8.2/sample-tbx-report.json",
+    "markdown": "docs/evidence/tm-migration-0.8.2/sample-tbx-report.md"
+  }
+}
