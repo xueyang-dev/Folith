@@ -39,10 +39,12 @@ OCR_DPI_BASELINE = 220
 #: 被网关回 502，而客户端超时是 180 s——**网关比客户端先放弃**，多路请求同时
 #: 排在网关后面时更容易一起撞上限（首批 5 页里 4 页失败、任务 5 分钟没进展）。
 #: 因此默认值按连接类型分档：官方端点 3 路；自定义 relay / 网关 2 路。
-#: 显式参数与 FOLIOTHREAD_VLM_PAGE_WORKERS 仍然优先（语义不变），上限 8 路。
+#: 显式参数与既有的页并发环境变量仍然优先（语义不变），上限 8 路。
 VISION_PAGE_WORKERS_DEFAULT = 3
 VISION_PAGE_WORKERS_RELAY_DEFAULT = 2
 VISION_PAGE_WORKERS_MAX = 8
+#: 既有的页并发环境变量名（与 folith.document_understanding 的历史行为一致）。
+VISION_PAGE_WORKERS_ENV = "FOLIOTHREAD_VLM_PAGE_WORKERS"
 
 #: 「网关超时早于客户端超时」的诊断提示。放在配置层而不是某条 UI 路径里：
 #: 它是连接属性，不是某一页的偶发错误（原有超时值不变，见 #220 C1）。
@@ -78,11 +80,11 @@ def vision_connection_is_relay(provider="", base_url="", providers=None):
 def vision_page_workers(provider="", base_url="", *, workers=None, environ=None):
     """视觉读页并发：显式参数 > 环境变量 > 按连接类型的默认值。
 
-    ``workers`` / ``FOLIOTHREAD_VLM_PAGE_WORKERS`` 的语义与以前一致（1..8 夹紧），
+    ``workers`` / :data:`VISION_PAGE_WORKERS_ENV` 的语义与以前一致（1..8 夹紧），
     只有「都没给」时的默认值按官方端点 / relay 分档（#220 C1）。
     """
     env = os.environ if environ is None else environ
-    for candidate in (workers, (env or {}).get("FOLIOTHREAD_VLM_PAGE_WORKERS")):
+    for candidate in (workers, (env or {}).get(VISION_PAGE_WORKERS_ENV)):
         try:
             value = int(candidate)
         except (TypeError, ValueError):

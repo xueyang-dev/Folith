@@ -88,7 +88,7 @@ A3、C2、C3、D3、E1、E2、B1 已在 #300 / #303 合入，B5 需要真实视�
 | `VISION_PAGE_WORKERS_DEFAULT` | **3** | 官方端点 |
 | `VISION_PAGE_WORKERS_RELAY_DEFAULT` | **2** | 自定义 relay / 网关（`vision_connection_is_relay`：未登记服务商，或已登记但 base_url 被改到别处） |
 | `VISION_PAGE_WORKERS_MAX` | 8 | 上限不变 |
-| 覆盖顺序 | 显式参数 > `FOLIOTHREAD_VLM_PAGE_WORKERS` > 按连接的默认值 | 原有语义不变；显式值仍夹紧在 1..8 |
+| 覆盖顺序 | 显式参数 > 现有的页并发环境变量（见 `folith/document_understanding.page_worker_count()`）> 按连接的默认值 | 原有语义不变；显式值仍夹紧在 1..8 |
 | `VISION_GATEWAY_TIMEOUT_HINT` | — | "网关超时早于客户端超时"的诊断提示，含 502 / 110 s / 180 s / 降并发建议 |
 
 `folith/document_understanding.page_worker_count()` 现在按 provider / base_url

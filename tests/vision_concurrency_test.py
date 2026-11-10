@@ -45,22 +45,22 @@ def test_default_concurrency_is_lower_on_a_relay_than_on_an_official_endpoint():
 
 
 def test_an_explicit_value_and_the_environment_keep_their_meaning(monkeypatch):
-    monkeypatch.delenv("FOLIOTHREAD_VLM_PAGE_WORKERS", raising=False)
+    monkeypatch.delenv(ocr_config.VISION_PAGE_WORKERS_ENV, raising=False)
     # Explicit argument beats the connection default, clamped to 1..8 like before.
     assert ocr_config.vision_page_workers(workers=1) == 1
     assert ocr_config.vision_page_workers(workers=8) == 8
     assert ocr_config.vision_page_workers(workers=40) == 8
     assert ocr_config.vision_page_workers(workers=0) == 1
     # Environment variable beats the default, same clamp.
-    monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "4")
+    monkeypatch.setenv(ocr_config.VISION_PAGE_WORKERS_ENV, "4")
     assert ocr_config.vision_page_workers("DeepSeek", "https://api.deepseek.com") == 4
     # An unparsable value falls back to the connection default, never crashes.
-    monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "many")
+    monkeypatch.setenv(ocr_config.VISION_PAGE_WORKERS_ENV, "many")
     assert ocr_config.vision_page_workers(
         "DeepSeek", "https://api.deepseek.com") \
         == ocr_config.VISION_PAGE_WORKERS_DEFAULT
     # Explicit argument still wins over the environment.
-    monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "6")
+    monkeypatch.setenv(ocr_config.VISION_PAGE_WORKERS_ENV, "6")
     assert ocr_config.vision_page_workers(workers=2) == 2
 
 
