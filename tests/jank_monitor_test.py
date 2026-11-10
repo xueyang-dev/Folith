@@ -353,3 +353,41 @@ def test_render_frames_names_the_python_function():
     assert frames[-1].endswith("in test_render_frames_names_the_python_function")
     assert any(frame.startswith("jank_monitor_test.py:") for frame in frames)
     assert ":" in frames[-1] and " in " in frames[-1]
+
+
+def test_ui_health_starts_registers_and_stops_the_sampler(tmp_path):
+    """The production entry point must own the sampler, not just the tests."""
+    pytest.importorskip("PySide6")
+    script = r'''
+from pathlib import Path
+from types import SimpleNamespace
+import sys
+from PySide6.QtGui import QGuiApplication
+from folith import trace
+from folith.desktop.paths import DesktopPaths
+from folith.qt.ui_health import UiHealthMonitor
+
+root = Path(sys.argv[1])
+app = QGuiApplication([])
+paths = DesktopPaths(root / "data", root / "logs").ensure()
+window = SimpleNamespace(_cached_state={}, _current_job_id="",
+                         runner=SimpleNamespace(_running=[]), winId=lambda: 0)
+monitor = UiHealthMonitor(app, window, paths, timeout=5.0)
+monitor.start()
+assert monitor.jank is not None, "sampler was not started"
+assert monitor.jank in trace._GUI_STALL_SOURCES, "sampler not registered with the run record"
+monitor.pulse()  # the heartbeat must carry the stall counters
+snapshot = monitor.jank.snapshot()
+assert set(snapshot) == {"enabled", "slow", "severe", "longest_ms", "top_function"}, snapshot
+assert snapshot["enabled"] is True
+monitor.stop()
+assert monitor.jank is None
+assert monitor.jank not in trace._GUI_STALL_SOURCES
+print("ui health sampler wired", flush=True)
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path)],
+                            cwd=Path(__file__).resolve().parents[1],
+                            env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ui health sampler wired" in result.stdout
