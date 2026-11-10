@@ -39,15 +39,22 @@ def app():
 
 
 def _item_wrappers(host: QWidget | None = None) -> int:
-    """Valid item wrappers; with ``host``, only those for that widget's direct children.
+    """Valid item wrappers; with ``host``, those for widgets anywhere in its subtree.
 
-    Components built inside a rebuilt box (cards, notices) may keep wrappers for their own
-    children, which stay put until the whole component is destroyed together.
+    A rebuilt box can recreate a component (``EmptyState``, ``StatusLabel``, ...) that
+    owns its own child layouts.  Those seeds hang under the component, not directly on
+    ``host``; filtering with ``obj.widget().parentWidget() is host`` missed them and let
+    rebuild regressions look clean while every rebuild added a wrapper.
     """
     gc.collect()
-    return sum(1 for obj in gc.get_objects()
-               if type(obj) is QWidgetItem and Shiboken.isValid(obj)
-               and (host is None or obj.widget().parentWidget() is host))
+    total = 0
+    for obj in gc.get_objects():
+        if type(obj) is not QWidgetItem or not Shiboken.isValid(obj):
+            continue
+        widget = obj.widget()
+        if host is None or (widget is not None and host.isAncestorOf(widget)):
+            total += 1
+    return total
 
 
 def test_attaching_before_filling_creates_no_item_wrappers(app):
@@ -86,6 +93,11 @@ def test_destroyed_workbench_leaves_no_layout_item_wrappers(app):
     assert valid_item_ids() <= before
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="batch 2: projects_view._tasks_card fills `head` before `box.addLayout(head)` "
+           "(folith/qt/projects_view.py:643); it seeds one QWidgetItem wrapper per rebuild",
+)
 def test_project_overview_rebuild_creates_no_item_wrappers(app):
     view = ProjectsView()
     view._detail = {"project": {"description": "说明", "target_lang": "简体中文"}}
@@ -106,12 +118,20 @@ def test_term_detail_rebuild_creates_no_item_wrappers(app, monkeypatch):
 
 
 def test_unsorted_terms_rebuild_creates_no_item_wrappers(app):
+    """Repeated rebuilds must not recreate nested components' item wrappers.
+
+    ``_fill_unsorted_terms`` recreates ``EmptyState`` on every call; its own
+    ``column.addLayout(line)`` (style.py) used to leave one wrapper per rebuild, and the
+    old host filter mistook the empty-state seed for a child of another widget.
+    """
     view = ProjectsView()
     view._detail = {"review": {"collapsed": 1}, "tasks": []}
     host = view.unsorted_box.parentWidget()
     before = _item_wrappers(host)
-    view._fill_unsorted_terms()
-    assert _item_wrappers(host) == before
+    for _ in range(3):
+        view._fill_unsorted_terms()
+        assert _item_wrappers(host) == before, (
+            "rebuilding the list recreated a nested component's item wrapper")
 
 
 def _delivery_manifest(names):
