@@ -166,7 +166,7 @@ LEGACY_LINE_ALLOWLIST = {
     # （复现命令与证据出处），不是品牌表述；与 docs/desktop-d0/environment.md 的
     # "FolioThread/venv" 同类，属于证据路径而不是旧品牌 prose。
     "docs/segfault-audit-harness.md": ("/Users/xueyang/Dev/FolioThread",),
-    "docs/segfault-fix-report-0.8.1.md": ("/Users/xueyang/Dev/FolioThread",),
+    "docs/segfault-fix-report-0.8.1.md": ("/Users/xueyang/Dev/FolioThread", "FolioThread/venv"),
     "scripts/qt_stale_wrapper_probe.py": ("/Users/xueyang/Dev/FolioThread",),
     "scripts/release_checks.py": ('"/FolioThread/venv"',),
     "scripts/write_desktop_build_info.py": ("editable `foliothread 0.4.0`",),
