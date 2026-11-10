@@ -141,3 +141,29 @@ def test_delivery_workspace_builds_and_rebuilds_without_item_wrappers(app):
         gc.collect()
     assert _item_wrappers() == before
     workspace.deleteLater()
+
+
+def test_pdf_panel_builds_and_rewraps_without_item_wrappers(app):
+    """原页面板：构造时先挂后填，折行搬工具按钮时也不制造/连累包装器。
+
+    32149301 给 PdfPanel 加了「工具行折行」：窄宽度下把缩放、定位从翻页行搬到第二行，
+    Qt 会删掉被搬控件的旧 QWidgetItem。构造时若还是「先填后挂」，那次搬移就会把构造留
+    下的包装器变成野指针，之后新对象落到同一地址即崩溃
+    （SignalManager::retrieveMetaObject ← Sbk_QObject_Init）。所以这里先断言构造本身
+    不产生包装器，再断言搬移与 resize 也不会新增。
+    """
+    from folith.qt.pdf_panel import PdfPanel
+
+    before = _item_wrappers()
+    panel = PdfPanel()
+    assert _item_wrappers() == before
+    # 折行/并行的两条路径在真实窗口里由 resizeEvent 按宽度触发，这里直接驱动。
+    for wrapped in (True, False, True, False):
+        panel._place_tools(wrapped)
+        gc.collect()
+    assert _item_wrappers() == before
+    for width in (320, 1000, 320, 1000):
+        panel.resize(width, 700)
+        app.processEvents()
+    assert _item_wrappers() == before
+    panel.deleteLater()
