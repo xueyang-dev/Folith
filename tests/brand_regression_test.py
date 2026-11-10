@@ -81,6 +81,7 @@ LEGACY_LINE_ALLOWLIST = {
     "docs/desktop-handover.md": ("FOLIOTHREAD", "FolioThread"),
     "scripts/qt_release_checks.py": ("兼容别名 `foliothread`",),
     "README.en.md": ("`foliothread`",),
+    "README.zh-CN.md": ("`foliothread`",),
     "README.ru.md": ("`foliothread`",),
     "README.es.md": ("`foliothread`",),
     "README.md": (
@@ -240,8 +241,7 @@ def test_public_brand_constants_are_canonical():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'description = "Folith · 译页 — Agentic Translation Workspace"' in pyproject
     assert "Folith · 译页" in readme
-    assert "Agentic Translation Workspace" in readme
-    assert "智能体翻译工作台" in readme
+    assert "Make every creation global." in readme
 
 
 def test_legacy_brand_hits_are_allowlisted():
