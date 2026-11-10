@@ -484,12 +484,6 @@ class TaskSetupPanel(QWidget):
         self.subtitle_label.setObjectName("hint")
         self.subtitle_label.setWordWrap(True)
 
-        head = QVBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.setSpacing(theme_module.SPACE["xxs"])
-        head.addWidget(self.title_label)
-        head.addWidget(self.subtitle_label)
-
         # 两栏：左边是这份文档（agent 读到了什么），右边是要做的决定。
         # 右栏自上而下按"必须 → 常用 → 可以不管"排列，「开始翻译」紧跟在决定之后。
         # F5（2026-11-04 UI 审查）：主行动「开始翻译」原来跟着内容一起滚，1238×720 的
@@ -516,10 +510,16 @@ class TaskSetupPanel(QWidget):
         column = QVBoxLayout(content)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(theme_module.SPACE["lg"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        head = QVBoxLayout()
+        column.addLayout(head)
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(theme_module.SPACE["xxs"])
+        head.addWidget(self.title_label)
+        head.addWidget(self.subtitle_label)
         # 页头（「译前准备」+ 说明）不再显示：工作台顶部的阶段条已经标出「准备」。
         self.title_label.setVisible(False)
         self.subtitle_label.setVisible(False)
-        column.addLayout(head)
 
         options = self._build_context_card()
         # ① 必须：原文语言 → 目标语言（这一页仅有的两个大号控件）。
@@ -540,6 +540,7 @@ class TaskSetupPanel(QWidget):
         self.source_hint.setContentsMargins(4, 0, 0, 0)
         self.source_hint.setVisible(False)
         languages = QGridLayout()
+        column.addLayout(languages)
         languages.setContentsMargins(0, 0, 0, 0)
         languages.setHorizontalSpacing(theme_module.SPACE["md"])
         languages.setVerticalSpacing(theme_module.SPACE["xs"])
@@ -550,7 +551,6 @@ class TaskSetupPanel(QWidget):
         languages.addWidget(self.source_hint, 2, 0, 1, 2)
         languages.setColumnStretch(0, 1)
         languages.setColumnStretch(1, 1)
-        column.addLayout(languages)
         # ② 原文结构（#27，只读）：里面写了什么——本地解析的章节/页/段落分组
         #    与原文预览，未调用模型；摘要行收起时也把答案说出来。区块里带
         #    「翻译范围…」按钮（#28）：开始前排除不打算付费翻译的章节。
@@ -733,7 +733,9 @@ class TaskSetupPanel(QWidget):
             lambda _index: self._sync_document_summary())
         self.ocr_language_box.currentIndexChanged.connect(
             lambda _index: self._sync_document_summary())
+        ocr_layout.addWidget(style_module.SectionLabel(i18n.tr('扫描件识别')))
         ocr_grid = QGridLayout()
+        ocr_layout.addLayout(ocr_grid)
         ocr_grid.setContentsMargins(0, 0, 0, 0)
         ocr_grid.setHorizontalSpacing(theme_module.SPACE["md"])
         ocr_grid.setVerticalSpacing(theme_module.SPACE["sm"])
@@ -758,8 +760,6 @@ class TaskSetupPanel(QWidget):
         ocr_grid.addWidget(self.ocr_quality_field, 2, 0, 1, 2)
         ocr_grid.setColumnStretch(0, 1)
         ocr_grid.setColumnStretch(1, 1)
-        ocr_layout.addWidget(style_module.SectionLabel(i18n.tr('扫描件识别')))
-        ocr_layout.addLayout(ocr_grid)
         self.ocr_hint = QLabel(i18n.tr(_OCR_SOURCE_HINTS[False]))
         self.ocr_hint.setObjectName("hint")
         self.ocr_hint.setWordWrap(True)
@@ -1213,10 +1213,10 @@ class TaskSetupPanel(QWidget):
         self.delivery_seg = style_module.SegmentedControl([])
         self.delivery_seg.changed.connect(self._on_delivery_preset)
         head = QHBoxLayout()
+        body.addLayout(head)
         head.setContentsMargins(0, 0, 0, 0)
         head.addStretch(1)
         head.addWidget(self.delivery_seg)
-        body.addLayout(head)
 
         # 实时汇总：把"选了哪套方案"与"实际会产出什么"直接对上。方案是**快捷入口**，
         # 勾选才是事实，两者一旦不一致就换到「自定义」，这一行说的就是事实。
