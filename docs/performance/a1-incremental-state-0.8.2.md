@@ -65,7 +65,7 @@
 | 单条记录超预算 | 默认 512 KiB | `ResyncRequired(record_too_large)` |
 | 积压 | 默认 >32 条/次或 >256 条未读 | `ResyncRequired(backlog)`（丢弃中间 delta 也安全：记录写的是绝对值） |
 | `state.json` 变化 | 只 stat 签名 | `SnapshotChanged(worker_active)`；**是否重建由 P2 决定**（运行中通常是流水线自己的 compaction，不必重建；无 worker 即外部写，必须重建） |
-| `FOLIOTHREAD_WORKBENCH_DELTA=0` | 构造时读环境 | `mode == "legacy"`，每次 `poll()` 返回 `LegacyMode` |
+| `FOLITH_WORKBENCH_DELTA=0` | 构造时读环境 | `mode == "legacy"`，每次 `poll()` 返回 `LegacyMode` |
 
 **游标**：`start(cursor_seq=state["journal_cursor"])`，字节偏移从 0 起——`load_state` 与 feed 打开之间写入的记录不会丢。`reset(cursor_seq)` 用于 resync 之后重新对齐。
 
@@ -185,7 +185,7 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 - 完整但不可解析/缺字段 → `corrupt_record`；未知 schema/mutation → `permanent`；
 - 超 512 KiB 记录、积压 → 各自原因；
 - `SnapshotChanged` 只报一次，携带 `worker_active`；
-- `FOLIOTHREAD_WORKBENCH_DELTA=0` → `LegacyMode`；
+- `FOLITH_WORKBENCH_DELTA=0` → `LegacyMode`；
 - `as_payload()` JSON 往返；
 - 与 `state_journal.read_mutations_from` 的读取后缀/偏移等价（同文件、同 offset、同 seq）。
 
@@ -201,7 +201,7 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 
 ## 8. 回滚开关
 
-`FOLIOTHREAD_WORKBENCH_DELTA=0`（也认 `false|no|off|disabled`）：`StateFeed.mode == "legacy"`，`poll()` 恒返回 `LegacyMode`。P2 接线后该开关让客户端走原有整份轮询，**不改任何数据**。永久性不兼容（未知 schema/mutation）也会让 P2 调用 `feed.disable(reason)` 切到同一 legacy 路径。
+`FOLITH_WORKBENCH_DELTA=0`（也认 `false|no|off|disabled`）：`StateFeed.mode == "legacy"`，`poll()` 恒返回 `LegacyMode`。P2 接线后该开关让客户端走原有整份轮询，**不改任何数据**。永久性不兼容（未知 schema/mutation）也会让 P2 调用 `feed.disable(reason)` 切到同一 legacy 路径。
 
 ---
 

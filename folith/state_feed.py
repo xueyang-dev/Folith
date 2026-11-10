@@ -48,9 +48,9 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from folith.translation_candidates import BASELINE_FIELDS, pair_signature
 
-#: Rollback switch: ``FOLIOTHREAD_WORKBENCH_DELTA=0`` puts the client back on
+#: Rollback switch: ``FOLITH_WORKBENCH_DELTA=0`` puts the client back on
 #: the whole-state poll without touching any data.
-DELTA_ENV = "FOLIOTHREAD_WORKBENCH_DELTA"
+DELTA_ENV = "FOLITH_WORKBENCH_DELTA"
 
 #: Schema of the delta payload itself (the journal record keeps its own
 #: ``schema`` field; both are checked).
