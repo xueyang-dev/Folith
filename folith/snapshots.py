@@ -17,7 +17,45 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 SNAPSHOT_DIR = "delivery_snapshots"
 MANIFEST_FILE = "snapshot_manifest.json"
+MANIFEST_INDENT = 2
 _VERSION_RE = re.compile(r"^v(\d+)$")
+
+
+def manifest_bytes(manifest: Mapping[str, Any]) -> bytes:
+    """Canonical bytes of a snapshot manifest — one serializer, every writer.
+
+    RC3 S4-05: the frozen ``snapshot_manifest.json`` in the snapshot folder and
+    the copy inside the delivery ZIP parsed equal but were not the same bytes.
+    ``write_text(..., encoding="utf-8")`` opens the file in text mode, so on
+    Windows every ``\\n`` became ``\\r\\n``, while ``ZipFile.writestr`` stored the
+    string as-is.  The fix is to serialize once and always write *bytes*:
+    UTF-8, sorted keys, two-space indent, exactly one trailing newline.  Sorted
+    keys also make the bytes independent of the insertion order of the state
+    dicts the manifest is copied from.
+    """
+    text = json.dumps(dict(manifest), ensure_ascii=False, indent=MANIFEST_INDENT,
+                      sort_keys=True)
+    return (text + "\n").encode("utf-8")
+
+
+def stored_manifest_bytes(job_root: Path, version: int,
+                          manifest: Mapping[str, Any] | None = None) -> bytes:
+    """Manifest bytes exactly as frozen on disk, or its canonical form.
+
+    A snapshot frozen before :func:`manifest_bytes` existed can still carry CRLF
+    line endings.  A delivery ZIP must reproduce the frozen folder byte for byte,
+    so the stored file wins whenever it is readable; only a missing manifest
+    falls back to the canonical serializer.
+    """
+    path = snapshot_root(job_root) / f"v{int(version)}" / MANIFEST_FILE
+    try:
+        return path.read_bytes()
+    except OSError:
+        pass
+    if manifest is None:
+        manifest = next((item for item in list_snapshots(job_root)
+                         if item.get("snapshot_version") == int(version)), None)
+    return manifest_bytes(manifest or {})
 
 
 def _now_iso() -> str:
@@ -218,9 +256,7 @@ def _create_snapshot_locked(root, job_root, job_id, state, assets,
                 item["name"]: item["sha256"] for item in asset_records
             },
         }
-        (temp_dir / MANIFEST_FILE).write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8")
+        (temp_dir / MANIFEST_FILE).write_bytes(manifest_bytes(manifest))
         temp_dir.rename(final_dir)
         return manifest
     except Exception:
@@ -320,6 +356,5 @@ def archive(job_root: Path, version: int) -> Optional[bytes]:
             if data is None:
                 return None
             bundle.writestr(item["name"], data)
-        bundle.writestr(MANIFEST_FILE, json.dumps(
-            manifest, ensure_ascii=False, indent=2) + "\n")
+        bundle.writestr(MANIFEST_FILE, stored_manifest_bytes(job_root, version, manifest))
     return output.getvalue()

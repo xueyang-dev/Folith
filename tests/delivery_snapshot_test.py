@@ -86,13 +86,13 @@ def test_old_final_snapshot_stays_current_after_qa_defaults_are_loaded(tmp_path,
     # Reconstruct the 0.8.0 on-disk shape, before these four fields existed.
     job_root = core.job_dir(job_id)
     state_path = job_root / "state.json"
-    raw = json.loads(state_path.read_text())
+    raw = json.loads(state_path.read_text(encoding="utf-8"))
     for key in ("qa_triage_enabled", "finding_triage",
                 "qa_escalation_enabled", "qa_escalation"):
         raw.pop(key, None)
     state_path.write_text(json.dumps(raw), encoding="utf-8")
     manifest_path = job_root / "delivery_snapshots" / "v1" / "snapshot_manifest.json"
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["translation_state_identity"] = snapshots.state_identity(raw)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -350,6 +350,137 @@ def test_load_asset_rehashes_after_same_size_rewrite_with_restored_mtime():
         assert path.stat().st_mtime_ns == stat.st_mtime_ns
 
         assert snapshots.load_asset(root, 1, name) is None
+    finally:
+        core.OUTPUT_DIR = old_dir
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_this_module_reads_and_writes_utf8_explicitly():
+    """RC3 S4-01: a GBK-default host must not decide how these fixtures decode.
+
+    The acceptance hosts default to cp936, so a bare ``read_text()`` decodes a
+    UTF-8 fixture as GBK and raises ``UnicodeDecodeError``.  Every read/write in
+    this module therefore names UTF-8 explicitly, and this guard fails as soon
+    as a new call forgets it — the same defect cannot come back silently.
+    """
+    import ast
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    offenders = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        if isinstance(function, ast.Attribute):
+            # Path.read_text/Path.write_text; `fitz.open(...)` is not a text read.
+            name = function.attr
+            if name not in {"read_text", "write_text"}:
+                continue
+        elif isinstance(function, ast.Name) and function.id == "open":
+            name = "open"   # the builtin: text mode unless told otherwise
+        else:
+            continue
+        if any(keyword.arg == "encoding" for keyword in node.keywords):
+            continue
+        offenders.append(f"{name}() at line {node.lineno} without encoding=")
+    assert not offenders, offenders
+
+
+def test_snapshot_manifest_bytes_match_between_the_folder_and_the_zip():
+    """RC3 S4-05: the ZIP entry and the frozen file must be the same bytes."""
+    tmp = Path(tempfile.mkdtemp(prefix="delivery-snapshot-manifest-bytes-"))
+    old_dir = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp
+    try:
+        job_id = "snapshotmanifest001"
+        _job(job_id)
+        _, ok, errors = core.approve_delivery(job_id, note="字节一致")
+        assert ok, errors
+        manifest_path = snapshots.asset_path(
+            Path(core.job_dir(job_id)), 1, snapshots.MANIFEST_FILE)
+        frozen = manifest_path.read_bytes()
+
+        # Text-mode writing on Windows rewrote every "\n" as "\r\n", while the
+        # ZIP stored the LF-only string: parsed equal, byte-different.
+        assert b"\r\n" not in frozen
+        assert frozen.endswith(b"\n") and not frozen.endswith(b"\n\n")
+        # The frozen bytes are the canonical serialization of their own JSON,
+        # so freezing the same state again cannot produce different bytes.
+        assert snapshots.manifest_bytes(json.loads(frozen)) == frozen
+
+        archive = core.delivery_snapshot_archive(job_id, 1)
+        assert archive
+        with ZipFile(BytesIO(archive)) as bundle:
+            assert bundle.read(snapshots.MANIFEST_FILE) == frozen
+    finally:
+        core.OUTPUT_DIR = old_dir
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_manifest_bytes_do_not_depend_on_key_insertion_order():
+    """One canonical serializer: sorted keys, two-space indent, one newline."""
+    first = {"zeta": 1, "alpha": {"b": 2, "a": 3}, "assets": [{"name": "a"}]}
+    second = {"assets": [{"name": "a"}], "alpha": {"a": 3, "b": 2}, "zeta": 1}
+    assert snapshots.manifest_bytes(first) == snapshots.manifest_bytes(second)
+    assert snapshots.MANIFEST_INDENT == 2
+    text = snapshots.manifest_bytes(first).decode("utf-8")
+    assert text.startswith('{\n  "alpha": {')
+    assert text.endswith("\n") and "\r\n" not in text
+    # UTF-8 without ASCII escaping: a reviewer's note stays readable.
+    assert "首版确认".encode("utf-8") in snapshots.manifest_bytes(
+        {"note": "首版确认"})
+
+
+def test_refreezing_the_same_state_writes_the_same_manifest_bytes(tmp_path):
+    """The manifest is a function of the state, not of time or dict order."""
+    state = {
+        "pairs": [{"source": "Source text", "target": "译文"}],
+        "delivery_approval": {"actor": "reviewer", "note": "首版确认",
+                              "timestamp": "2026-01-01T00:00:00+00:00"},
+    }
+    root = tmp_path / "job"
+    root.mkdir()
+    manifests = [
+        snapshots.create_snapshot(root, "same-state", dict(state),
+                                  {"a.txt": b"a"}, {}, {})
+        for _ in range(2)
+    ]
+    assert [item["snapshot_version"] for item in manifests] == [1, 2]
+    without_version = [
+        snapshots.manifest_bytes({key: value for key, value in item.items()
+                                  if key != "snapshot_version"})
+        for item in manifests
+    ]
+    assert without_version[0] == without_version[1]
+    for version in (1, 2):
+        on_disk = snapshots.snapshot_root(root) / f"v{version}" / snapshots.MANIFEST_FILE
+        assert on_disk.read_bytes() == snapshots.manifest_bytes(manifests[version - 1])
+
+
+def test_legacy_snapshot_manifest_bytes_survive_into_the_zip():
+    """A snapshot frozen before the canonical serializer still ships as-is.
+
+    Changing the serializer must not rewrite history: the ZIP is an archive of
+    the frozen folder, so an older CRLF manifest must reach the ZIP unchanged.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="delivery-snapshot-legacy-manifest-"))
+    old_dir = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp
+    try:
+        job_id = "snapshotlegacybytes"
+        _job(job_id)
+        _, ok, errors = core.approve_delivery(job_id, note="旧版清单")
+        assert ok, errors
+        manifest_path = snapshots.asset_path(
+            Path(core.job_dir(job_id)), 1, snapshots.MANIFEST_FILE)
+        legacy = manifest_path.read_text(encoding="utf-8").replace(
+            "\n", "\r\n").encode("utf-8")
+        manifest_path.write_bytes(legacy)
+
+        archive = core.delivery_snapshot_archive(job_id, 1)
+        assert archive
+        with ZipFile(BytesIO(archive)) as bundle:
+            assert bundle.read(snapshots.MANIFEST_FILE) == legacy
     finally:
         core.OUTPUT_DIR = old_dir
         shutil.rmtree(tmp, ignore_errors=True)

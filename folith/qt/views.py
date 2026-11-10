@@ -2854,6 +2854,9 @@ class WorkbenchView(QWidget):
         self.next_button = _icon_button(QPushButton(i18n.tr('下一段')), "chevron-right")
         self.prev_button.clicked.connect(lambda: self._step(-1))
         self.next_button.clicked.connect(lambda: self._step(1))
+        # 保存条的三个按钮交给 FlowRow 折行（S3-01）：1280 逻辑 px 下英文
+        # "Discard changes / Save and next" 各占一行，文字完整；极端窄窗里单颗
+        # 按钮仍宽于整列时才会被裁，这类窗口已低于本任务的目标宽度。
         self.discard_draft_button = QPushButton(i18n.tr('放弃修改'))
         style_module.set_button(self.discard_draft_button, "plain")
         self.discard_draft_button.setToolTip(
@@ -6626,7 +6629,8 @@ class WorkbenchView(QWidget):
         # 先让译文浮层跟上数据，再按它算高度：反过来行高会按旧文本定死，
         # 后台译进来的长段落就被截断（#166）。
         self._sync_inline_target(position)
-        footer = segment_editor.FOOTER_HEIGHT if editor.footer.isVisibleTo(editor) else 0
+        footer = (editor.footer_height(max(1, target_width - 8))
+                  if editor.footer.isVisibleTo(editor) else 0)
         cap = max(160, int(table.viewport().height() * 0.6))
         # 再把编辑框自己的文档高度算进来：它是 Qt 真实排版出来的结果，不受字体回退
         # 与逐字量宽的影响（Linux 上曾出现译文变长、行高不动：60 > 60）。

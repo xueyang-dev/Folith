@@ -53,11 +53,75 @@ def test_collect_reports_the_roadmap_facts(tmp_paths):
     system = facts["system"]
     assert system["os"] and system["os_version"] and system["architecture"]
     locations = facts["locations"]
-    # Under the home directory paths collapse to `~`; elsewhere the user name is
-    # removed instead of leaking an account/project name.
-    assert locations["data_dir"].startswith(("~", "/"))
+    # A path inside the home directory collapses to `~`; a path outside it keeps
+    # only its last component behind a placeholder (RC3 S4-02).  The former
+    # Windows-only assumption "starts with ~ or /" is what broke this test: a
+    # data dir on another drive starts with a drive letter.
+    assert locations["data_dir"].startswith(("~", "<external>")), locations["data_dir"]
+    assert str(Path.home()) not in locations["data_dir"]
     assert Path.home().name not in json.dumps(facts)
     assert str(Path.home()) not in json.dumps(facts)
+
+
+def test_paths_outside_the_home_directory_keep_no_absolute_prefix(tmp_path):
+    """RC3 S4-02: an outside location must not leak its drive/project prefix.
+
+    pytest's ``tmp_path`` normally sits under the user profile on Windows, so
+    the outside case is built explicitly: a sibling of the home directory, with
+    no account name and no project path in it.
+    """
+    outside = _outside_home(tmp_path)
+    paths = desktop_paths.DesktopPaths(data_dir=outside / "data",
+                                       log_dir=outside / "logs")
+    target = tmp_path / "diagnostics-external.json"
+    diagnostics.export_bundle(target, paths=paths)
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    locations = payload["diagnostics"]["locations"]
+    assert set(locations) == {"data_dir", "log_dir", "launcher_log",
+                             "service_log", "job_count"}
+    for name, expected in (("data_dir", "data"), ("log_dir", "logs"),
+                           ("launcher_log", "launcher.log"),
+                           ("service_log", "service.log")):
+        value = locations[name]
+        assert value.replace("\\", "/") == f"<external>/{expected}", (name, value)
+        # No drive letter, no absolute prefix, no account or project name.
+        assert ":" not in value, (name, value)
+        assert str(outside).replace("\\", "/") not in value.replace("\\", "/")
+        assert str(Path.home()) not in value
+        assert Path.home().name not in value
+
+
+def test_redact_path_is_platform_independent(tmp_path):
+    """The same redaction rules must hold for Windows and POSIX path shapes."""
+    home = tmp_path / "home" / "account-name"
+    inside = str(home / "Folith" / "data")
+    assert diagnostics.redact_path(inside, home).replace("\\", "/") == "~/Folith/data"
+    assert diagnostics.redact_path(home, home) == "~"
+    # Windows drive path and POSIX absolute path, both outside the home.
+    assert diagnostics.redact_path("D:\\work\\logs", home) == "<external>\\logs"
+    assert diagnostics.redact_path("/srv/logs", home) == "<external>/logs"
+    assert diagnostics.redact_path("/srv/logs", home) != "/srv/logs"
+    # A sibling that merely shares the home prefix is not inside the home.
+    sibling = str(home) + "-old" + "\\logs"
+    assert diagnostics.redact_path(sibling, home).startswith("<external>")
+    # Relative paths and empty values are left readable.
+    assert diagnostics.redact_path("outputs/task", home) == "outputs/task"
+    assert diagnostics.redact_path("", home) == ""
+    assert diagnostics.redact_path(None, home) == ""
+    # The account name never survives, even when it is the only component left.
+    assert "account-name" not in diagnostics.redact_path(str(home / "x"), home)
+
+
+def _outside_home(base: Path) -> Path:
+    """A path outside ``Path.home()`` on this host (it may not exist)."""
+    home = Path.home()
+    candidate = base / "outside-home"
+    try:
+        candidate.relative_to(home)
+    except ValueError:
+        return candidate
+    return home.parent / f"{home.name}-folith-diagnostics"
 
 
 def test_job_state_is_reported_as_unversioned_with_observed_schemas(tmp_paths):

@@ -4969,8 +4969,12 @@ def delivery_archive_bytes(job_id: str, version: int) -> bytes:
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, data in payload:
             bundle.writestr(name, data)
-        bundle.writestr(_snapshots.MANIFEST_FILE, json.dumps(
-            manifest, ensure_ascii=False, indent=2) + "\n")
+        try:
+            manifest_payload = Path(core.delivery_snapshot_asset_path(
+                job_id, wanted, _snapshots.MANIFEST_FILE)).read_bytes()
+        except OSError:
+            manifest_payload = _snapshots.manifest_bytes(manifest)
+        bundle.writestr(_snapshots.MANIFEST_FILE, manifest_payload)
     return output.getvalue()
 
 
