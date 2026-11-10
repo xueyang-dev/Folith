@@ -239,6 +239,8 @@ class MainWindow(QMainWindow):
         self._delta_first_poll = False
         self._delta_projection_at = 0.0
         self._delta_projection_in_flight = False
+        #: A poll was requested while a slow projection held the read slot.
+        self._pending_poll = False
         #: A job the feed cannot be used for any more (unknown schema/mutation).
         self._delta_legacy_job = ""
         #: Start writing queued edits once the GUI has been idle this long.  The
@@ -2060,7 +2062,14 @@ class MainWindow(QMainWindow):
         puts the window back on the whole-state path exactly as before.
         """
         job_id = self._current_job_id
-        if not job_id or self._state_load_in_flight:
+        if not job_id:
+            return
+        if self._state_load_in_flight:
+            if self._delta_projection_in_flight:
+                # Only the slow projection is running; remember that a poll was
+                # requested so it runs as soon as the projection settles.  A
+                # state/feed read in flight is left to finish on its own.
+                self._pending_poll = True
             return
         if self._delta_ready(job_id):
             self._poll_workbench_delta(job_id)
@@ -2242,6 +2251,10 @@ class MainWindow(QMainWindow):
         if not due:
             return
         self._delta_projection_in_flight = True
+        # The old poll made "a projection is being prepared" observable through
+        # _state_load_in_flight; keep that contract so callers (and tests) that
+        # wait for a settled workbench wait for the projections too.
+        self._state_load_in_flight = True
         count_occurrences = self.workbench.terms_open()
         refresh_delivery = terminal_change
 
@@ -2257,6 +2270,7 @@ class MainWindow(QMainWindow):
 
         def done(payload) -> None:
             self._delta_projection_in_flight = False
+            self._state_load_in_flight = False
             if (job_id != self._current_job_id or self._opening_job_id
                     or self._closing_accepted or payload is None):
                 return
@@ -2274,9 +2288,13 @@ class MainWindow(QMainWindow):
                 refresh_delivery=refresh_delivery)
             self._sync_menu_state()
             self._delta_projection_at = time.monotonic()
+            if self._pending_poll:
+                self._pending_poll = False
+                self._poll_workbench()
 
         def failed(_message: str, _detail: str) -> None:
             self._delta_projection_in_flight = False
+            self._state_load_in_flight = False
 
         self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-projections")

@@ -232,3 +232,37 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 2. `views.py` 的 12 处 `id(self._state)` 缓存键（`views.py:5202/4896/4842/4857/4871/4937` 等）仍是"对象身份"语义；P2 迁移时需要静态检查白名单，本次已把可用的域常量放在 `workbench_rows.DOMAINS` / `state_feed` 的域映射里。
 3. `word_count.document_count` 的 `repetitions` 依赖全序；`DocumentCountIndex.append` 用"seen 计数"复刻了同一语义，但**只对追加有效**。若未来允许非末尾插入（目前结构编辑直接整份重建），索引需要 reset，已在 `update` 用 `ValueError` 兜住。
 4. `state_journal.read_mutations_from` 与我们新增的读取器语义一致（测试对照）；若将来 journal 增加新 mutation 类型，`state_feed.READABLE_JOURNAL_SCHEMAS` 与 `MUTATION_TRANSLATION_BATCH` 需要同步——否则会按设计永久回退 legacy（安全但掉性能），请在新 mutation 合入时一起改。
+
+---
+
+## 13. P2 接线（`feat/0.8.2-324-a1-workbench-wiring`）实测
+
+在 A3 批 4 修复后的 `views.py`/`window.py` 上接 `StateFeed`：`_poll_workbench` 先走增量，整份路径保留为 `_poll_workbench_full`（打开任务、显式刷新、快照、断档、永久回退、`FOLITH_WORKBENCH_DELTA=0`）。`workbench.apply_delta` 只 upsert 变化行；`_queue_segment_paint(positions=...)` 只重画这些行；字数用增量 `DocumentCountIndex` 传入；慢投影（review/delivery/followup/terms/academic/details）走独立节奏。
+
+### 13.1 GUI 线程代价（本机开发机，offscreen，20 批 × 4 段，中位）
+
+| 规模 | 每批 `apply_delta`（行更新+重画+计数）p50 / p95 / max | 整份重建一次（旧路径） |
+|---:|---|---:|
+| 1,000 段 | **0.75 / 0.97 / 3.72 ms** | 546 ms |
+| 10,000 段 | **2.08 / 8.45 / 12.83 ms** | 5,057 ms |
+
+读法：书长 10× 时整份重建近似线性（9.3×），单批增量亚线性（2.8×）且绝对值 1–13 ms。**2.8× 说明还有残余 O(n)**：`apply_delta` 里仍调用的 `_render_stage` → `blocking_items()` 会遍历 pairs；`_render_activity` 也会做一次 stat。这条留到 P3（阶段条改为吃 delta 的计数器）后应变成常数级。验收口径（每批 GUI 耗时与书长无关）在"数量级"上成立，但严格"常数"还差这一处。
+
+### 13.2 测试稳定性状态（如实）
+
+`tests/qt_workbench_poll_test.py`、`qt_workbench_projection_test.py`、`qt_workbench_delta_test.py` 各连跑 3 次（本机同时有 A3 冻结版加压任务）：
+
+| 文件 | 3 次结果 |
+|---|---|
+| `qt_workbench_poll_test.py` | 7 passed；5 passed/2 failed；5 passed/2 failed |
+| `qt_workbench_projection_test.py` | 5 passed/1 failed（3 次相同：`test_idle_delivery_preview_refreshes_on_its_worker_cadence`） |
+| `qt_workbench_delta_test.py` | 6 passed/1 failed（3 次相同：cost 测试的 journal 串场，已修） |
+
+之后已修：慢投影占用读槽时统一置 `_state_load_in_flight`（等待语义与旧轮询一致）、投影完成后的 pending poll 接力、cost 测试清理同一 job 的旧 journal。修后单独复跑：delivery 用例通过、cost 用例通过并给出上表数字；但 `qt_workbench_poll_test.py` 中三个依赖"一次 poll 即收敛"的用例在连跑中仍有 1–2 次失败（`_cached_state` 未更新 / `review_queue` 未被调用），**根因尚未定位**，怀疑与机器负载下 5 s 等待窗口有关，但未经证明。**因此 P2 仍判"需一轮"**。
+
+### 13.3 P3 未做（本轮）
+
+- 12 处 `id(self._state)` → 域版本号（最危险，未动；静态检查脚本也未落）。
+- `SnapshotChanged(worker_active)` 目前一律整份重建（P2 简化，保留旧行为）。
+- 慢投影按域调度：已按 5 s/脏域节奏，但未做"每域独立在飞/独立失效"。
+- 阶段条 `_render_stage` 的 O(n)（见 13.1）。

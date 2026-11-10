@@ -281,36 +281,72 @@ def test_an_older_delta_can_never_replace_a_newer_one(client):
 # GUI-thread cost is independent of book length (the acceptance measurement)
 # ---------------------------------------------------------------------------
 def test_per_batch_gui_cost_does_not_grow_with_the_book(client, capsys):
-    """Measure the GUI seam at 1k and 10k segments.
+    """Measure the GUI-thread cost at 1k and 10k segments.
 
-    Not a wall-clock gate (CI machines differ); the assertion is only that the
-    per-batch cost stays in the same order of magnitude while the document grows
-    10x.  The printed numbers are what the report quotes.
+    Two numbers per size:
+    * per-batch: the window's GUI-thread part of one committed batch (the
+      ``apply_delta`` call: row upsert + repaint + count update), measured with
+      the same seam the window uses;
+    * one whole rebuild: ``refresh_workbench(force=True)`` on the same job --
+      the path the batch used to take every second (state load + rows +
+      projections + grid).
+    Not a wall-clock gate (CI machines differ); the assertion only requires the
+    per-batch number to stay in the same order of magnitude as the book grows
+    10x.
     """
     window, adapter, core, app = client["window"], client["adapter"], client["core"], client["app"]
     timings = {}
+    rebuild = {}
     for segments in (1000, 10000):
         job_id = _book_job(client, segments)
+        # A previous size in this test may have used the same job id (same
+        # document bytes); start this measurement from an empty journal.
+        _journal_path(core, job_id).unlink(missing_ok=True)
+        window._drop_delta_state()
         open_job_and_wait(window, job_id)
         window.timer.stop()
         window.refresh_workbench()
         workbench = window.workbench
-        assert _pump(app, 120, lambda: workbench.segment_list.rowCount() == segments
+        assert _pump(app, 300, lambda: workbench.segment_list.rowCount() == segments
                      and not workbench._paint_timer.isActive())
         state = core.load_job_state(job_id)
+
         samples = []
-        for batch in range(20):
-            indexes = list(range(batch * 4, batch * 4 + 4))
-            _append_record(core, job_id, seq=batch + 1, offset=indexes[0],
-                           pairs=_changed_pairs(state, indexes, suffix=f"计时{batch}"))
+        original_apply = workbench.apply_delta
+
+        def timed_apply(*args, **kwargs):
             started = time.perf_counter()
-            window._poll_workbench_delta(job_id)
-            assert _pump(app, 20, lambda: window._delta_applied_seq == batch + 1)
-            samples.append((time.perf_counter() - started) * 1000)
+            try:
+                return original_apply(*args, **kwargs)
+            finally:
+                samples.append((time.perf_counter() - started) * 1000)
+
+        workbench.apply_delta = timed_apply
+        try:
+            for batch in range(20):
+                indexes = list(range(batch * 4, batch * 4 + 4))
+                _append_record(core, job_id, seq=batch + 1, offset=indexes[0],
+                               pairs=_changed_pairs(state, indexes, suffix=f"计时{batch}"))
+                window._poll_workbench_delta(job_id)
+                assert _pump(app, 60, lambda: window._delta_applied_seq == batch + 1)
+        finally:
+            workbench.apply_delta = original_apply
         samples.sort()
-        timings[segments] = samples[len(samples) // 2]
-        # Reset for the next size: a different job means a different feed.
-        assert window._delta_applied_seq == 20
-    print(f"\nper-batch delta apply p50: 1k={timings[1000]:.2f} ms, "
-          f"10k={timings[10000]:.2f} ms")
-    assert timings[10000] < timings[1000] * 3 + 5.0, timings
+        timings[segments] = {
+            "p50": samples[len(samples) // 2],
+            "p95": samples[int(len(samples) * 0.95) - 1],
+            "max": samples[-1],
+        }
+
+        started = time.perf_counter()
+        window.refresh_workbench(force=True)
+        rebuild[segments] = (time.perf_counter() - started) * 1000
+        window.timer.stop()
+
+    print("\nGUI-thread cost (ms):")
+    for segments in (1000, 10000):
+        value = timings[segments]
+        print(f"  {segments:>6} segments: per-batch apply_delta "
+              f"p50={value['p50']:.2f} p95={value['p95']:.2f} max={value['max']:.2f} | "
+              f"whole rebuild once={rebuild[segments]:.0f}")
+    assert timings[10000]["p50"] < timings[1000]["p50"] * 3 + 5.0, timings
