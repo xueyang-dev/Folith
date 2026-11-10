@@ -1409,22 +1409,51 @@ class RunContext:
         return summary
 
     def _gui_jank_window(self) -> Dict[str, Any]:
-        """Run-scoped GUI stall view from every registered source (#323).
+        """Run-scoped GUI stall block from every registered source (#323).
 
         The sampler is process-wide; this narrows it to the run by diffing the
         counters against the checkpoint taken in ``__init__``.  Sources that
         raise are skipped: a diagnostic must never fail a run.
+
+        One monitor per process is the normal case and its window is returned
+        flat.  If more than one is ever registered, each keeps its own record
+        under ``sources`` — updating one shared dict would let the last source
+        silently overwrite the others.
+
+        ``measured`` is always present: a run that never had a sampler must not
+        read like a run with zero stalls.
         """
-        merged: Dict[str, Any] = {}
+        windows: List[Dict[str, Any]] = []
         for source, token in list(self._gui_stall_tokens):
             try:
                 window = source.summary_since(token)
             except Exception:
                 continue
-            if isinstance(window, dict):
-                merged.update(window)
-        self.gui_jank = merged
-        return merged
+            if not isinstance(window, dict):
+                continue
+            window = dict(window)
+            window["source"] = f"{type(source).__module__}.{type(source).__qualname__}"
+            if window.get("enabled") is False:
+                window["measured"] = False
+                window["reason"] = "stall sampler disabled (FOLITH_JANK_MONITOR=0)"
+            else:
+                window["measured"] = True
+            windows.append(window)
+        if not windows:
+            result: Dict[str, Any] = {
+                "measured": False,
+                "reason": ("no GUI stall source was registered for this run "
+                           "(headless run, or the UI health monitor never started)"),
+            }
+        elif len(windows) == 1:
+            result = windows[0]
+        else:
+            result = {
+                "measured": any(window.get("measured") for window in windows),
+                "sources": windows,
+            }
+        self.gui_jank = result
+        return result
 
     def generate_stages_doc(self) -> Dict[str, Any]:
         return {

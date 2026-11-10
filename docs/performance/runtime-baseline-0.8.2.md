@@ -70,8 +70,12 @@ gets a **run-scoped window**:
 The window is a diff against a checkpoint taken when `RunContext` is created,
 so a stall from an earlier task in the same app session is not attributed to a
 later one.  Wiring: `folith.qt.ui_health` registers the sampler with
-`folith.trace.register_gui_stall_source`; the engine stays Qt-free and headless
-runs simply get `"gui_jank": {}`.
+`folith.trace.register_gui_stall_source`; the engine stays Qt-free, and a run
+with no sampler says so instead of looking like a zero-stall run:
+
+```json
+{"measured": false, "reason": "no GUI stall source was registered for this run …"}
+```
 
 ### 3. Run-window fields (`gui_jank`)
 
@@ -79,6 +83,8 @@ runs simply get `"gui_jank": {}`.
 {
   "version": 1,
   "scope": "run_window",
+  "measured": true,
+  "source": "folith.qt.jank_monitor.JankMonitor",
   "enabled": true,
   "window": {"started_at": "…", "observed_s": 120.4},
   "pulse_interval_ms": 25.0,
@@ -107,13 +113,20 @@ Reading rules:
   `observed_s`).
 - `stall_ms` percentiles are over recorded stalls only (p50 of a healthy run is
   the median stall, not the median ping).  `JankMonitor.summary()` additionally
-  reports `interval_ms` percentiles over **all** pulses for the whole session.
+  reports `interval_ms` percentiles over all pulses, but only over the retained
+  sample window (`retention.interval_samples`, 20 000 pulses ≈ 8 minutes at
+  40 Hz); the counters next to them are exact for the whole session.
 - `top_stacks` is ranked by `total_ms` (accumulated stall time), identical
   stacks aggregated.  `count`/`total_ms` are exact for the window;
   `max_ms` is `null` when that stack also stalled before the window (a delta of
   maxima is not derivable).
 - `longest.stack` is the largest stall still present in the retained event
   ring; the numeric `longest.interval_ms` is exact.
+- `measured` is always present.  `false` plus a `reason` means *nothing was
+  sampled* (headless run, monitor never started, or
+  `FOLITH_JANK_MONITOR=0`); it must never be read as "zero stalls".  When more
+  than one sampler is registered, the block carries a `sources` list with one
+  sub-record per source instead of letting one overwrite another.
 
 The process-lifetime view (`JankMonitor.summary()`, also embedded by the
 harness as `metrics.gui_jank_process`) adds `scope`, all-pulse percentiles,
@@ -144,15 +157,18 @@ Scenario status:
 
 | Scenario | Meaning | State |
 | --- | --- | --- |
-| S1 | ~10k-segment EPUB translating while the user scrolls / edits / switches pages | harness implemented (source + frozen `--selftest` path); real-machine run pending |
+| S1 | ~10k-segment EPUB translating while the user scrolls / edits / switches pages | harness implemented (source + frozen `--selftest` path, both measured); source-mode macOS run done, frozen run pending |
 | S2 | ≥300-page scanned PDF, paging + thumbnails during OCR | declared, not implemented |
 | S3 | open a finished large task, switch tasks | declared, not implemented |
 | S4 | 8-hour run against a local mock gateway | declared, not implemented |
 
-The frozen `--selftest` path does not start the UI-health monitor (that branch
-of `folith/qt/app.py` returns before it), so it currently yields the run record's
-`resources` but no stall window.  That is a known gap for the real-machine
-round, not a measurement.
+`folith/qt/app.py` now starts the UI health monitor **before** the scripted
+`--selftest` flow, so a selftest run (source or frozen) writes the same
+`gui_jank` block and `gui_jank.json` as an interactive run, and its report
+carries `gui_jank.measured`.  If a build ever runs without the monitor, the run
+record says `{"measured": false, "reason": …}` instead of implying zero stalls.
+The frozen `.app` run itself is still pending for the reasons above (no 0.8.2
+artifact in this round, and a real provider is not available).
 
 ## Baseline report
 

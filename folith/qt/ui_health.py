@@ -72,7 +72,13 @@ class UiHealthMonitor:
         a 1 s pulse quantises every measurement to 1 s and cannot resolve the
         100 ms threshold at all.  The heartbeat still carries the counters, so
         an incident report says what the last-known stall state was.
+
+        Idempotent: a repeated ``start()`` (tests rebuild the monitor) must not
+        leave a second sampler running — it would double-count every stall and
+        leak its watcher thread.
         """
+        if self.jank is not None:
+            return self.jank
         monitor = JankMonitor(enabled=jank_monitor_enabled())
         try:
             monitor.start()

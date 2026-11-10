@@ -252,6 +252,18 @@ def main(argv: list[str] | None = None) -> int:
     log(f"qt client started: data_dir={paths.data_dir} "
         f"build={adapter.app_identity().get('build_id')}")
 
+    # Start the UI health monitor for every scripted flow, not only for the
+    # interactive client: a run whose responsiveness was never measured must not
+    # look like a run with zero stalls in its performance record (#323 F3).
+    from .ui_health import UiHealthMonitor
+
+    monitor = UiHealthMonitor(app, main_window, paths, identity=adapter.app_identity())
+    try:
+        monitor.start()
+    except OSError as exc:
+        monitor.stop()
+        log(f"UI watchdog unavailable: {type(exc).__name__}")
+
     if args.selftest:
         from . import selftest
 
@@ -276,20 +288,22 @@ def main(argv: list[str] | None = None) -> int:
         report = flow.run(adapter, adapter.core, fixtures)
         report["identity"] = adapter.app_identity()
         report["engine"] = {"provider": config.provider, "model": config.model}
+        # The flow's own run record carries the measured window; this copy makes
+        # the selftest report say "measured / not measured" in one glance.
+        sampler = monitor.jank
+        report["gui_jank"] = (
+            {"measured": True, **sampler.snapshot()}
+            if sampler is not None and sampler.enabled
+            else {"measured": False,
+                  "reason": ("stall sampler disabled" if sampler is not None
+                             else "UI health monitor unavailable")})
         selftest.write_report(report, args.result)
         main_window.timer.stop()
+        monitor.stop()
         if lock is not None:
             lock.release()
         return 0 if report.get("ok") else 1
 
-    from .ui_health import UiHealthMonitor
-
-    monitor = UiHealthMonitor(app, main_window, paths, identity=adapter.app_identity())
-    try:
-        monitor.start()
-    except OSError as exc:
-        monitor.stop()
-        log(f"UI watchdog unavailable: {type(exc).__name__}")
     try:
         code = app.exec()
     finally:

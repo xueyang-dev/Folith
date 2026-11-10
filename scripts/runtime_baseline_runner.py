@@ -153,6 +153,34 @@ def read_run_records(data_dir: Path, job_id: str) -> list[dict]:
     return rows
 
 
+def _normalize_window(window: dict) -> dict:
+    """Make a sampler window answer "measured?" the same way a run record does."""
+    block = dict(window)
+    if block.get("enabled") is False:
+        block["measured"] = False
+        block["reason"] = "stall sampler disabled (FOLITH_JANK_MONITOR=0)"
+    else:
+        block.setdefault("measured", True)
+    return block
+
+
+def _stall_window_from_records(records: list[dict]) -> dict:
+    """The last stall window a run record actually measured, else an explicit miss.
+
+    "No window" and "zero stalls" must not look the same to a reader: a record
+    without a measured window says so instead of collapsing to ``{}``.
+    """
+    for row in reversed(records):
+        block = row.get("gui_jank")
+        if isinstance(block, dict) and block.get("measured", True):
+            return block
+    return {
+        "measured": False,
+        "reason": "no run record carried a GUI stall window (sources list is empty "
+                  "or the sampler was disabled)",
+    }
+
+
 def _count_lines(path: Path) -> int:
     try:
         return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
@@ -254,9 +282,15 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
         result["traceback"] = traceback.format_exc()
     finally:
         result["wall_time_s"] = round(time.monotonic() - started, 2)
-        if jank is not None:
-            result["gui_jank"] = jank.summary_since(checkpoint) if checkpoint else {}
-            result["gui_jank_process"] = jank.summary()
+        if jank is not None and checkpoint is not None:
+            result["gui_jank"] = _normalize_window(jank.summary_since(checkpoint))
+            result["gui_jank_process"] = _normalize_window(jank.summary())
+        else:
+            result["gui_jank"] = {
+                "measured": False,
+                "reason": "the UI health monitor did not start, so no stall "
+                          "window exists for this run",
+            }
         monitor.stop()
         _teardown(app, window)
     return result
@@ -371,10 +405,10 @@ def run_frozen(args: argparse.Namespace, fixture: Path, data_dir: Path,
         "segments": (report.get("run") or {}).get("segments"),
         "edited_segments": None,
     }
-    result["gui_jank"] = {}
-    result["failures"].append(
-        "frozen --selftest entrypoint does not start the UI health monitor, so no "
-        "stall window is available from this path yet")
+    # The selftest entry point now starts the UI health monitor before the flow,
+    # so its run records carry a measured window; if a build predates that, the
+    # report says "not measured" instead of implying zero stalls.
+    result["gui_jank"] = _stall_window_from_records(result["run_records"])
     return result
 
 
@@ -485,8 +519,14 @@ def main(argv: list[str] | None = None) -> int:
         "metrics": {
             # Run-scoped stall window straight from the sampler; the run record
             # below is the product's own copy of the same measurement.
-            "gui_jank": result.get("gui_jank") or {},
-            "gui_jank_process": result.get("gui_jank_process") or {},
+            "gui_jank": result.get("gui_jank") or {
+                "measured": False,
+                "reason": "this mode did not collect a stall window",
+            },
+            "gui_jank_process": result.get("gui_jank_process") or {
+                "measured": False,
+                "reason": "this mode did not collect a session-level stall view",
+            },
             "ui_health": result.get("ui_health") or {},
             "run_records": result.get("run_records") or [],
         },
@@ -501,8 +541,9 @@ def main(argv: list[str] | None = None) -> int:
     path = write_report(args, payload)
     print(json.dumps({"ok": payload["ok"], "report": str(path),
                       "scenario": payload["scenario"], "mode": payload["environment"]["mode"],
-                      "slow_count": (payload["metrics"]["gui_jank"] or {}).get("slow_count"),
-                      "severe_count": (payload["metrics"]["gui_jank"] or {}).get("severe_count")},
+                      "gui_jank_measured": payload["metrics"]["gui_jank"].get("measured"),
+                      "slow_count": payload["metrics"]["gui_jank"].get("slow_count"),
+                      "severe_count": payload["metrics"]["gui_jank"].get("severe_count")},
                      ensure_ascii=False, indent=2))
     return 0 if payload["ok"] else 1
 

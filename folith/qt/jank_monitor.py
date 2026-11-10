@@ -26,10 +26,13 @@ Stack capture
     instead, and the report says so.
 
 Cost
-    GUI thread: one ``time.monotonic()`` call and a comparison per pulse.
-    Helper thread: an ``Event.wait`` in a loop, plus one ``sys._current_frames``
-    call per poll *only while a stall is suspected*.  Everything is bounded
-    (see ``retention`` in :meth:`JankMonitor.summary`).
+    GUI thread per pulse: one ``time.monotonic()`` read, one lock acquisition,
+    one counter increment and one bounded-deque append (which allocates one
+    tuple).  No stack work ever happens on the GUI thread.
+    Helper thread: an ``Event.wait`` in a loop with two lock acquisitions and
+    one monotonic read per poll, plus one ``sys._current_frames`` call per poll
+    *only while a stall is suspected*.  Everything is bounded (see
+    ``retention`` in :meth:`JankMonitor.summary`).
 
 Both the clock and the stack getter are constructor arguments, so a test can
 inject a blocking call and assert the captured stack names that call.
@@ -194,6 +197,9 @@ class JankMonitor:
             now = self._clock()
             self._last_pulse = now
             self._observed_from = now
+            # A capture from a previous session must not be attributed to the
+            # first stall of this one.
+            self._pending_stack = ()
             if self._gui_ident is None:
                 self._gui_ident = threading.get_ident()
         self._stop.clear()
@@ -228,6 +234,7 @@ class JankMonitor:
             thread.join(timeout=2.0)
         with self._lock:
             self._started = False
+            self._pending_stack = ()
         return self.summary()
 
     def _qt_timer(self) -> Any:
@@ -257,8 +264,10 @@ class JankMonitor:
     def mark_pulse(self, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """Record one event-loop pulse; return the jank event when one was taken.
 
-        The fast path is a subtraction and a comparison: no allocation and no
-        stack work happens on the GUI thread unless a threshold was crossed.
+        The fast path costs one monotonic read, one lock acquisition, one
+        counter increment and one bounded-deque append (one tuple); rendering a
+        stack never happens on the GUI thread, and only while a stall is
+        suspected.
         """
         if not self._enabled:
             return None
@@ -307,17 +316,33 @@ class JankMonitor:
             entry = {"count": 0, "total_ms": 0.0, "max_ms": 0.0,
                      "first_at": event["at"], "last_at": event["at"]}
             self._aggregates[key] = entry
-            while len(self._aggregates) > self.top_n:
-                victim = min(self._aggregates, key=lambda item: self._aggregates[item]["total_ms"])
-                del self._aggregates[victim]
+        # Accumulate *before* trimming.  A key enters the map with total_ms 0,
+        # so trimming first would let every new hotspot evict itself and never
+        # reach top_stacks — the opposite of what the report promises.
         entry["count"] += 1
         entry["total_ms"] = round(entry["total_ms"] + interval_ms, 1)
         entry["max_ms"] = round(max(entry["max_ms"], interval_ms), 1)
         entry["last_at"] = event["at"]
+        self._trim_aggregates_locked(keep=key)
         self._recent.append(event)
         if self._longest is None or interval_ms > self._longest["interval_ms"]:
             self._longest = dict(event)
         return event
+
+    def _trim_aggregates_locked(self, *, keep: Tuple[str, ...]) -> None:
+        """Drop the least-accumulated stack, never the one just observed.
+
+        Counters (``slow_count``, ``severe_count``, ``longest``) stay exact; a
+        stack that leaves the Top-N map simply stops contributing to
+        ``total_ms``.  ``keep`` protects the newest observation: it exists so a
+        brand-new hotspot cannot evict itself before it is visible.
+        """
+        while len(self._aggregates) > self.top_n:
+            candidates = [item for item in self._aggregates if item != keep]
+            if not candidates:
+                return
+            victim = min(candidates, key=lambda item: self._aggregates[item]["total_ms"])
+            del self._aggregates[victim]
 
     # -- helper thread -----------------------------------------------------
     def _watch(self) -> None:

@@ -61,3 +61,29 @@ def test_runner_reads_the_product_run_record_not_a_parallel_one(tmp_path):
     assert rows[0]["gui_jank"] == {"slow_count": 4}
     assert rows[0]["gui_jank_file"] is True
     assert rows[0]["resources_jsonl_lines"] == 1
+
+
+def test_stall_window_is_explicit_about_not_being_measured():
+    """Review F3: a missing window must produce `measured: false`, never `{}`."""
+    empty = runner._stall_window_from_records([])
+    assert empty["measured"] is False
+    assert empty["reason"]
+
+    unmeasured = runner._stall_window_from_records(
+        [{"gui_jank": {"measured": False, "reason": "no source"}}])
+    assert unmeasured["measured"] is False
+    assert unmeasured["reason"]
+
+    measured = {"measured": True, "slow_count": 2, "top_stacks": []}
+    chosen = runner._stall_window_from_records(
+        [{"gui_jank": {"measured": False}}, {"gui_jank": measured}])
+    assert chosen == measured
+
+
+def test_disabled_sampler_window_says_not_measured():
+    """`enabled: false` is not the same statement as `measured: false`."""
+    block = runner._normalize_window({"enabled": False, "slow_count": 0})
+    assert block["measured"] is False
+    assert "FOLITH_JANK_MONITOR" in block["reason"]
+    measured = runner._normalize_window({"enabled": True, "slow_count": 0})
+    assert measured["measured"] is True
