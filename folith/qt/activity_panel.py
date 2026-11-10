@@ -74,15 +74,15 @@ class ActivityPanel(QWidget):
         self.log_button.clicked.connect(self.revealLogRequested.emit)
 
         foot = QHBoxLayout()
-        foot.setContentsMargins(0, 0, 0, 0)
-        foot.addWidget(self.log_button)
-        foot.addStretch(1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         layout.addWidget(self.list, 1)
         layout.addWidget(self.empty, 1)
         layout.addLayout(foot)
+        foot.setContentsMargins(0, 0, 0, 0)
+        foot.addWidget(self.log_button)
+        foot.addStretch(1)
         self.set_rows([])
 
     def set_rows(self, rows: list[dict], *, signature: str = "") -> None:
