@@ -27,7 +27,7 @@ from shiboken6 import Shiboken  # noqa: E402
 
 from concept_workflow_test import concept_job, save  # noqa: E402,F401
 from folith.engine import concept_workflow as engine  # noqa: E402
-from folith.qt import adapter, batch_unify_dialog, concept_dialog  # noqa: E402
+from folith.qt import adapter, batch_unify_dialog, concept_dialog, window as window_module  # noqa: E402
 
 
 @pytest.fixture
@@ -130,3 +130,73 @@ def test_notification_details_dialog_is_deleted_on_close(app):
     _flush_deferred_deletes()
     app.processEvents()
     assert not Shiboken.isValid(dialog)
+
+
+def test_settings_dialog_opens_closes_and_reopens(app, monkeypatch):
+    """Settings is a WA_DeleteOnClose dialog; closing must forget it, reopening must work.
+
+    The ``destroyed`` handler used to be a lambda capturing the window, which kept a
+    reference cycle alive across Qt-side deletion.  Resolve via weakref instead; this
+    test drives close -> reopen -> close so the lifecycle stays honest.
+    """
+    from PySide6.QtCore import Signal
+
+    class FakeSettingsDialog(QDialog):
+        revealRequested = Signal()
+        diagnosticsRequested = Signal()
+        shortcutsRequested = Signal()
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.pages = []
+
+        def show_page(self, page):
+            self.pages.append(page)
+
+    created = []
+
+    class FakeWindow(QWidget):
+        def __init__(self):
+            super().__init__()
+            self._settings_window = None
+
+        def _settings_form(self):
+            dialog = FakeSettingsDialog(self)
+            created.append(dialog)
+            return dialog
+
+        def reveal_path(self, *_args, **_kwargs):
+            pass
+
+        def show_diagnostics(self, *_args, **_kwargs):
+            pass
+
+        def show_shortcuts(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(window_module, "_automation", lambda: False)
+    fake = FakeWindow()
+
+    window_module.MainWindow.open_settings(fake, "general")
+    assert len(created) == 1
+    first = created[0]
+    assert fake._settings_window is first
+    assert first.pages == ["general"]
+
+    first.close()
+    _flush_deferred_deletes()
+    _flush_deferred_deletes()
+    app.processEvents()
+    assert fake._settings_window is None
+    assert not Shiboken.isValid(first)
+
+    window_module.MainWindow.open_settings(fake, "models")
+    assert len(created) == 2 and created[1] is not first
+    assert fake._settings_window is created[1]
+    assert created[1].pages == ["models"]
+
+    created[1].close()
+    _flush_deferred_deletes()
+    _flush_deferred_deletes()
+    app.processEvents()
+    assert fake._settings_window is None

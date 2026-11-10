@@ -3203,7 +3203,8 @@ class MainWindow(QMainWindow):
 
         def ready(preview):
             # Let the preview operation finish before starting another operation.
-            QTimer.singleShot(0, lambda: self._confirm_terminology_replacement(job_id, preview))
+            QTimer.singleShot(0, self,
+                              lambda: self._confirm_terminology_replacement(job_id, preview))
 
         self._run_with_busy(i18n.tr('术语替换预览'), i18n.tr('正在计算替换预览…'),
                             adapter.preview_terminology_replacement, job_id, entry_id, old,
@@ -3966,7 +3967,17 @@ class MainWindow(QMainWindow):
             dialog.revealRequested.connect(self.reveal_path)
             dialog.diagnosticsRequested.connect(self.show_diagnostics)
             dialog.shortcutsRequested.connect(self.show_shortcuts)
-            dialog.destroyed.connect(lambda *_: setattr(self, "_settings_window", None))
+            # A lambda that captures `self` on a WA_DeleteOnClose dialog keeps a
+            # reference cycle alive across Qt-side destruction (stale PySide
+            # wrappers -> SIGSEGV).  Close over a weakref instead.
+            window_ref = weakref.ref(self)
+
+            def _forget_settings(*_args, _ref=window_ref):
+                target = _ref()
+                if target is not None:
+                    target._settings_window = None
+
+            dialog.destroyed.connect(_forget_settings)
             self._settings_window = dialog
         if page:
             dialog.show_page(page)
