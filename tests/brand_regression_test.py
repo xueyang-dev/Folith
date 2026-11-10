@@ -162,6 +162,10 @@ LEGACY_LINE_ALLOWLIST = {
         "FolioThread/venv", 'version("foliothread")'),
     "docs/desktop-d2/evidence-log.md": (
         "FOLIOTHREAD_", "foliothread-app-icon.png", "`foliothread-*`"),
+    # 0.8.1 SIGSEGV 诊断报告与探针里记录的是本机 worktree / 解释器的绝对路径
+    # （复现命令与证据出处），不是品牌表述；与 docs/desktop-d0/environment.md 的
+    # "FolioThread/venv" 同类，属于证据路径而不是旧品牌 prose。
+    "docs/segfault-fix-report-0.8.1.md": ("FolioThread/venv",),
     "scripts/release_checks.py": ('"/FolioThread/venv"',),
     "scripts/write_desktop_build_info.py": ("editable `foliothread 0.4.0`",),
     "scripts/d0_slice_runner.py": ("FOLIOTHREAD_",),
