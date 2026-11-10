@@ -280,76 +280,115 @@ def test_an_older_delta_can_never_replace_a_newer_one(client):
 # ---------------------------------------------------------------------------
 # GUI-thread cost is independent of book length (the acceptance measurement)
 # ---------------------------------------------------------------------------
-def test_per_batch_gui_cost_does_not_grow_with_the_book(client, capsys):
-    """Measure the GUI-thread cost at 1k and 10k segments.
+def test_per_batch_delta_touches_only_the_batch(client, capsys):
+    """Deterministic proof that one batch costs O(batch), at 1k and 10k segments.
 
-    Two numbers per size:
-    * per-batch: the window's GUI-thread part of one committed batch (the
-      ``apply_delta`` call: row upsert + repaint + count update), measured with
-      the same seam the window uses;
-    * one whole rebuild: ``refresh_workbench(force=True)`` on the same job --
-      the path the batch used to take every second (state load + rows +
-      projections + grid).
-    Not a wall-clock gate (CI machines differ); the assertion only requires the
-    per-batch number to stay in the same order of magnitude as the book grows
-    10x.
+    The assertions are contract-based, never wall-clock: while 20 batches are
+    applied at each size, the whole-state read, the whole-row rebuild and the
+    full word recount must be called **zero** times, and the incremental count
+    index must be updated once per changed row.  Timings are printed for the
+    report and are not part of the pass/fail decision (a machine under load can
+    make any wall-clock assertion flaky).  A deliberately loose 200 ms
+    order-of-magnitude guard is kept for CI; set
+    ``FOLITH_SKIP_TIMING_ASSERTIONS=1`` to skip even that.
     """
+    import os
+
+    from folith import word_count
+
     window, adapter, core, app = client["window"], client["adapter"], client["core"], client["app"]
+    calls = {"load_state": 0, "segment_rows": 0, "document_count": 0, "count_update": 0}
+    original_load, original_rows = adapter.load_state, adapter.segment_rows
+    original_count, original_update = word_count.document_count, word_count.DocumentCountIndex.update
+
+    adapter.load_state = lambda job: (calls.__setitem__("load_state", calls["load_state"] + 1),
+                                      original_load(job))[1]
+    adapter.segment_rows = lambda job, state=None: (
+        calls.__setitem__("segment_rows", calls["segment_rows"] + 1),
+        original_rows(job, state))[1]
+    word_count.document_count = lambda rows: (
+        calls.__setitem__("document_count", calls["document_count"] + 1),
+        original_count(rows))[1]
+    word_count.DocumentCountIndex.update = lambda self, position, row: (
+        calls.__setitem__("count_update", calls["count_update"] + 1),
+        original_update(self, position, row))[1]
+
     timings = {}
     rebuild = {}
-    for segments in (1000, 10000):
-        job_id = _book_job(client, segments)
-        # A previous size in this test may have used the same job id (same
-        # document bytes); start this measurement from an empty journal.
-        _journal_path(core, job_id).unlink(missing_ok=True)
-        window._drop_delta_state()
-        open_job_and_wait(window, job_id)
-        window.timer.stop()
-        window.refresh_workbench()
-        workbench = window.workbench
-        assert _pump(app, 300, lambda: workbench.segment_list.rowCount() == segments
-                     and not workbench._paint_timer.isActive())
-        state = core.load_job_state(job_id)
+    try:
+        for segments in (1000, 10000):
+            job_id = _book_job(client, segments)
+            # A previous size in this test may have used the same job id (same
+            # document bytes); start this measurement from an empty journal.
+            _journal_path(core, job_id).unlink(missing_ok=True)
+            window._drop_delta_state()
+            open_job_and_wait(window, job_id)
+            window.timer.stop()
+            window.refresh_workbench()
+            workbench = window.workbench
+            assert _pump(app, 300, lambda: workbench.segment_list.rowCount() == segments
+                         and not workbench._paint_timer.isActive())
+            # Start from a settled workbench: a slow projection or background
+            # read left over from opening must not overlap the measurement.
+            assert _pump(app, 60, lambda: not window._state_load_in_flight)
+            state = core.load_job_state(job_id)
 
-        samples = []
-        original_apply = workbench.apply_delta
+            calls.update(load_state=0, segment_rows=0, document_count=0, count_update=0)
+            samples = []
+            original_apply = workbench.apply_delta
 
-        def timed_apply(*args, **kwargs):
-            started = time.perf_counter()
+            def timed_apply(*args, **kwargs):
+                started = time.perf_counter()
+                try:
+                    return original_apply(*args, **kwargs)
+                finally:
+                    samples.append((time.perf_counter() - started) * 1000)
+
+            workbench.apply_delta = timed_apply
             try:
-                return original_apply(*args, **kwargs)
+                for batch in range(20):
+                    indexes = list(range(batch * 4, batch * 4 + 4))
+                    _append_record(core, job_id, seq=batch + 1, offset=indexes[0],
+                                   pairs=_changed_pairs(state, indexes, suffix=f"计时{batch}"))
+                    # Use the public dispatch: it owns the in-flight hand-off.
+                    window._poll_workbench()
+                    assert _pump(app, 60, lambda: window._delta_applied_seq == batch + 1
+                                 and not window._state_load_in_flight)
             finally:
-                samples.append((time.perf_counter() - started) * 1000)
+                workbench.apply_delta = original_apply
 
-        workbench.apply_delta = timed_apply
-        try:
-            for batch in range(20):
-                indexes = list(range(batch * 4, batch * 4 + 4))
-                _append_record(core, job_id, seq=batch + 1, offset=indexes[0],
-                               pairs=_changed_pairs(state, indexes, suffix=f"计时{batch}"))
-                window._poll_workbench_delta(job_id)
-                assert _pump(app, 60, lambda: window._delta_applied_seq == batch + 1)
-        finally:
-            workbench.apply_delta = original_apply
-        samples.sort()
-        timings[segments] = {
-            "p50": samples[len(samples) // 2],
-            "p95": samples[int(len(samples) * 0.95) - 1],
-            "max": samples[-1],
-        }
+            # The contract: no whole-state read/rebuild/recount, and exactly one
+            # incremental update per changed row.
+            assert calls == {"load_state": 0, "segment_rows": 0,
+                             "document_count": 0, "count_update": 80}, calls
+            assert all(sample is not None for sample in samples)
+            samples.sort()
+            timings[segments] = {
+                "p50": samples[len(samples) // 2],
+                "p95": samples[int(len(samples) * 0.95) - 1],
+                "max": samples[-1],
+            }
 
-        started = time.perf_counter()
-        window.refresh_workbench(force=True)
-        rebuild[segments] = (time.perf_counter() - started) * 1000
-        window.timer.stop()
+            started = time.perf_counter()
+            window.refresh_workbench(force=True)
+            rebuild[segments] = (time.perf_counter() - started) * 1000
+            window.timer.stop()
+    finally:
+        adapter.load_state, adapter.segment_rows = original_load, original_rows
+        word_count.document_count = original_count
+        word_count.DocumentCountIndex.update = original_update
 
-    print("\nGUI-thread cost (ms):")
+    print("\nGUI-thread cost (ms, informational only):")
     for segments in (1000, 10000):
         value = timings[segments]
         print(f"  {segments:>6} segments: per-batch apply_delta "
               f"p50={value['p50']:.2f} p95={value['p95']:.2f} max={value['max']:.2f} | "
               f"whole rebuild once={rebuild[segments]:.0f}")
-    assert timings[10000]["p50"] < timings[1000]["p50"] * 3 + 5.0, timings
+    if not os.environ.get("FOLITH_SKIP_TIMING_ASSERTIONS"):
+        # CI order-of-magnitude guard only; this is not the performance gate.
+        assert timings[1000]["p50"] < 200.0, timings
+        assert timings[10000]["p50"] < 200.0, timings
+
 
 def test_one_poll_converges_without_a_settle_window(client):
     """The old contract: after a state change, ONE poll converges.

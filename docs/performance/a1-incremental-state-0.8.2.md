@@ -246,6 +246,7 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 | 1,000 段 | **0.77 / 1.06 / 4.06 ms** | 445 ms |
 | 10,000 段 | **1.67 / 10.52 / 14.14 ms** | 4,859 ms |
 
+（机器空载、load≈3、与 poll 文件同会话复测 3 次：1k p50 **0.39–0.58 ms**、10k p50 **0.74–0.89 ms**，p95 ≤ 1.06 ms；整份重建 21–24 ms / 771–968 ms。10k 单批仍是整份重建的 1/30–1/40。）
 （同一测量在 P3 首项之前是 1k `0.75/0.97/3.72`、10k `2.08/8.45/12.83`，重建 546/5,057 ms。P3 首项做了两处：`blocking_count` 缓存（`unresolved_blocking` 原本每批扫 findings）与选中段计数改为按位置直取（原本整表扫描，批次碰到当前段时触发）。10k p50 2.08→1.67 ms，但仍有 2.2× 残差；p95 受机器负载影响反而更高（同机 load 80+）。**剩下的增长不在 Python 扫描**，下一步应在 Qt 绘制/行高路径上做 profile 再判断，不能继续猜。）
 
 读法：书长 10× 时整份重建近似线性（9.3×），单批增量亚线性（2.8×）且绝对值 1–13 ms。**2.8× 说明还有残余 O(n)**：`apply_delta` 里仍调用的 `_render_stage` → `blocking_items()` 会遍历 pairs；`_render_activity` 也会做一次 stat。这条留到 P3（阶段条改为吃 delta 的计数器）后应变成常数级。验收口径（每批 GUI 耗时与书长无关）在"数量级"上成立，但严格"常数"还差这一处。
@@ -287,3 +288,22 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 3. 读完成后再 stat 一次签名，若期间状态又变了（`_repoll_if_changed`）也补一次 poll（有 `_repoll_pending` 去重）。
 
 修后：目标 3 用例连跑 3 次 **3/3 全绿**；新增确定性用例 `test_one_poll_converges_without_a_settle_window`（journal delta 与快照写入各"一次 poll 收敛"，只驱动事件循环、不设固定等待）连跑 **5/5 全绿**。
+
+### 13.5 开 PR 前的两处清理（2026-11-11 复核）
+
+1. **调试探针已删除**：定位"poll 请求被丢弃"时临时加入的 `tests/tmp_probe_test.py` 已 `git rm`，不进 PR（它的 900 段 job 构造与 fixture 复用只用于一次性取证）。
+2. **耗时测试已去时序化**：`test_per_batch_gui_cost_does_not_grow_with_the_book` 改名为 `test_per_batch_delta_touches_only_the_batch`，**断言全部改为契约式**：
+   - 20 批（1k 与 10k 各一轮）期间 `adapter.load_state` / `adapter.segment_rows` / `word_count.document_count` 调用 **0 次**；
+   - `DocumentCountIndex.update` 恰好等于变化行数（80 = 20 批 × 4 段）；
+   - 耗时只 `print`（p50/p95/max 与整份重建对照），不参与通过/失败；保留一条 **200 ms 的 CI 数量级护栏**（明确注释"不是性能验收"，`FOLITH_SKIP_TIMING_ASSERTIONS=1` 可跳过）。
+   - 该测试与 `qt_workbench_poll_test.py` **同会话**连跑 3 次全绿（CI 真实跑法）；此前"单独跑绿、同会话红"来自跨用例共享 job/journal 与墙钟断言，现由"每轮清空 journal + `_drop_delta_state`"和去墙钟断言两条共同消除。
+
+同会话 3 次原始结果（load 3.6→3.2，`pytest tests/qt_workbench_poll_test.py tests/qt_workbench_delta_test.py`）：
+
+| 次 | 结果 | 每批 p50（1k / 10k） | 整份重建（1k / 10k） |
+|---|---|---|---|
+| 1 | **15 passed**（1:05） | 0.58 / 0.89 ms | 23 / 968 ms |
+| 2 | **15 passed**（1:04） | 0.47 / 0.74 ms | 24 / 784 ms |
+| 3 | **15 passed**（1:03） | 0.39 / 0.81 ms | 21 / 771 ms |
+
+此前同会话红的原因是：测量直接调用 `_poll_workbench_delta` 绕过了窗口的在飞/接力逻辑，且上一轮 poll 文件的读可能仍在飞。改为走公开的 `_poll_workbench()`，并在每批后等"已应用且无在读"再进入下一批，纯粹由状态驱动、不依赖墙钟。
