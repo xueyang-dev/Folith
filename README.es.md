@@ -206,7 +206,7 @@ El idioma de origen también guía la ubicación de líneas en las páginas esca
 - **Quién recibe qué**: el texto del documento y las imágenes de las páginas escaneadas se envían a los proveedores de modelos **que tú configures**, y se tratan según sus condiciones de privacidad. Asegúrate de que puedes procesar el documento de ese modo.
 - **No se sube nada más**: la aplicación no tiene telemetría, analítica ni cuentas. Aparte de los proveedores de modelos, la única petición de red es leer la información de la última versión en GitHub cuando pulsas Buscar actualizaciones; no se descarga ni instala nada automáticamente.
 - **Los datos se quedan en tu equipo**: tareas, términos, memoria de traducción y ajustes están en el directorio de datos local — macOS: `~/Library/Application Support/Folith/data`; Windows: `%LOCALAPPDATA%\Folith\data`.
-- **Cómo se guardan las claves de API**: en un archivo de configuración JSON local dentro del directorio de datos (permisos 0600, legible solo por el usuario actual). **No** están en el llavero del sistema y no tienen cifrado adicional. No sincronices el directorio de datos en lugares compartidos ni lo compartas con otras personas.
+- **Cómo se guardan las claves de API**: en un archivo de configuración JSON local dentro del directorio de datos. En macOS, la aplicación intenta establecer permisos 0600; en Windows, el acceso depende de los permisos del archivo y de la carpeta. **No** se guardan en el llavero del sistema y no tienen cifrado adicional. No sincronices el directorio de datos en lugares compartidos ni lo compartas con otras personas.
 
 ---
 

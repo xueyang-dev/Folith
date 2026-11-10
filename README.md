@@ -206,7 +206,7 @@ The source language also guides line positioning on scanned pages (the bundled T
 - **Who receives what**: document text and scanned page images are sent to the model provider(s) **you configure**, and are handled under their privacy terms. Make sure you are allowed to process the document that way.
 - **Nothing else is uploaded**: the app itself has no telemetry, analytics or accounts. Apart from model providers, the only network request is reading the latest version info from GitHub when you press Check for Updates; nothing is downloaded or installed automatically.
 - **Data stays on your machine**: tasks, terms, translation memory and settings live in the local data directory — macOS: `~/Library/Application Support/Folith/data`; Windows: `%LOCALAPPDATA%\Folith\data`.
-- **How API keys are stored**: in a local JSON config file inside the data directory (permissions 0600, readable only by the current user). They are **not** in the system keychain and are not otherwise encrypted. Do not sync the data directory to shared locations or share it with others.
+- **How API keys are stored**: in a local JSON config file inside the data directory. On macOS, the app attempts to set permissions to 0600; on Windows, access depends on the file and folder permissions. They are **not** stored in the system keychain or otherwise encrypted. Do not sync the data directory to shared locations or share it with others.
 
 ---
 
