@@ -182,7 +182,7 @@ PyPI 上有发行包 `foliothread`（代码模块名为 `folith`），但它**�
 | | 支持 |
 | :--- | :--- |
 | **导入** | PDF（含扫描件）/ DOCX / EPUB（无 DRM）/ TXT / Markdown；单个文件上限 512 MB，超过请拆分后再导入 |
-| **交付文件** | 纯译文 DOCX、双语对照 DOCX、EPUB（来源为 PDF 或 DOCX）、PDF（保留原版式的 PDF 只适用于 PDF 来源）、原格式译文 DOCX（只适用于 DOCX 来源，默认关闭）、术语表、TMX、TBX、JSONL、`delivery_manifest.json` 交付清单 |
+| **交付文件** | 纯译文 DOCX、双语对照 DOCX、EPUB（来源为 PDF 或 DOCX）、PDF（保留原版式的 PDF 只适用于 PDF 来源）、原格式译文 DOCX（`original_format.docx`，只适用于 DOCX 来源，默认关闭）、术语表、TMX、TBX、JSONL、`delivery_manifest.json` 交付清单 |
 | **语言资产** | 术语表与翻译记忆：XLSX、TBX、TMX 导入导出；JSONL |
 | **原文语言** | 自动识别，或手动选择 21 种之一：English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español、Italiano、Português、Русский、Nederlands、Polski、Українська、Tiếng Việt、Türkçe、العربية、فارسی、עברית、اردو、ئۇيغۇرچە |
 | **目标语言** | 21 种：简体中文、繁体中文、English、日本語、한국어、Deutsch、Français、Español、Русский、Português、Italiano、Nederlands、Polski、Українська、Tiếng Việt、Türkçe、العربية、فارسی、עברית、اردو、ئۇيغۇرچە |
@@ -223,10 +223,10 @@ Folith 本身免费开源。翻译产生的模型调用费用由你和模型服�
 - 智能 QA 分诊为实验功能，默认关闭。
 - macOS 安装包仅支持 Apple 芯片和 macOS 15.8.1 或更高；未签名、未公证。
 - Windows 安装包未签名；Windows 10 x64、ARM64 Windows 和干净虚拟机上的兼容性尚未验证。
-- 最终安装包的部分人工验收项（系统文件面板、中文输入法、睡眠 / 唤醒、首次放行、真实模型服务等）可能在发布后才完成，每个版本已验证和待验证的范围以对应的[发布说明](docs/release-notes-0.8.0.md)为准。
+- 最终安装包的部分人工验收项（系统文件面板、中文输入法、睡眠 / 唤醒、首次放行、真实模型服务等）可能在发布后才完成，最新版本已验证和待验证的范围见[最新发布页面](https://github.com/xueyang-dev/Folith/releases/latest)。
 - 不支持有 DRM 的 EPUB。
 - 表格和文本框里的图片不会保留到译文 DOCX；双语对照 DOCX 不含图片。
-- 默认导出的是新生成的文件，不会写回原 DOCX 的版式；DOCX 来源可在交付选项中另开「原格式译文」（`original_format.docx`），在原文件上写回译文并保留样式、表格、脚注与页眉页脚，默认关闭，尚未做原生 macOS / Windows 人工验收。
+- 默认导出的是新生成的文件，不会写回原 DOCX 的版式；DOCX 来源可在交付选项中另开「原格式译文」（`original_format.docx`），基于原 DOCX 生成译文副本并保留样式、表格、脚注与页眉页脚，默认关闭，尚未做原生 macOS / Windows 人工验收。
 - 简体中文以外的界面语言属于实验功能。
 - 扫描页由视觉模型识别，可能出错，请对照原页检查。
 
@@ -268,7 +268,7 @@ Folith 本身免费开源。翻译产生的模型调用费用由你和模型服�
 
 - [ ] 代码签名与公证
 - [ ] 在更多 Windows 版本和干净虚拟机上验收
-- [ ] DOCX 原格式写回（保留原始排版与样式）
+- [ ] 原格式译文 DOCX 的 macOS 和 Windows 原生人工验收
 - [ ] 翻译记忆模糊匹配
 - [ ] 文档跨版本增量翻译
 
@@ -276,7 +276,8 @@ Folith 本身免费开源。翻译产生的模型调用费用由你和模型服�
 
 ## 📖 文档
 
-- [最新发布说明与验收记录](docs/release-notes-0.8.0.md)
+- [最新发布及验收状态](https://github.com/xueyang-dev/Folith/releases/latest)
+- [0.8.0 发布说明](docs/release-notes-0.8.0.md)
 - [发布计划](docs/release-plan.md)
 - [项目与长期记忆](docs/project-memory.md)
 - [译文 EPUB / DOCX 导出](docs/epub-export.md)

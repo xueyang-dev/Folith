@@ -1,31 +1,36 @@
-# Folith · 译页
+<div align="center">
 
-<p align="center">
-  <img src="folith/resources/brand/folith-lockup.png" alt="Folith · 译页 — Agentic Translation Workspace" width="840">
-</p>
+<img src="folith/resources/brand/folith-lockup.png" alt="Folith · 译页" width="640" />
 
-<p align="center">
-  <strong>Un espacio de trabajo de traducción para documentos largos y localización profesional</strong>
-</p>
+# Make every creation global.
 
-<p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases/latest"><img src="https://img.shields.io/github/v/release/xueyang-dev/Folith?label=%C3%BAltima%20versi%C3%B3n&color=0052fe" alt="Última versión"></a>
-  <img src="https://img.shields.io/badge/Windows-x64-lightgrey.svg" alt="Windows x64">
-  <img src="https://img.shields.io/badge/macOS-15.8.1%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.8.1+ Apple Silicon">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
-</p>
+**Espacio de traducción de código abierto, diseñado para documentos largos y nativo de IA.**
 
-<p align="center">
-  <a href="README.zh-CN.md">简体中文</a> | <a href="README.md">English</a> | <a href="README.ru.md">Русский</a> | <strong>Español</strong>
-</p>
+Entiende el documento completo. Traduce con contexto. Revisa con control. Entrega con confianza.
 
-> La versión que se mantiene es el [README en chino simplificado](README.zh-CN.md). Esta página es una traducción; si difieren, prevalece la china. La interfaz de la aplicación está en chino simplificado por defecto, así que los nombres de los controles se dan como aparecen en la interfaz en español (una configuración regional experimental).
+[**Descargar Folith**](https://github.com/xueyang-dev/Folith/releases/latest) · [Inicio rápido](#-inicio-rápido) · [Ver la demostración](https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8)
+
+[![Última versión](https://img.shields.io/github/v/release/xueyang-dev/Folith?label=Release&color=0052fe)](https://github.com/xueyang-dev/Folith/releases/latest) ![Windows x64](https://img.shields.io/badge/Windows-x64-lightgrey) ![macOS 15.8.1+ Apple Silicon](https://img.shields.io/badge/macOS-15.8.1%2B%20Apple%20Silicon-lightgrey) <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License"></a>
+
+<a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ru.md">Русский</a> · <strong>Español</strong>
+
+</div>
 
 ---
 
-**Folith · 译页** («páginas traducidas») es un banco de trabajo de escritorio para traducir libros, informes técnicos, monografías académicas y otros documentos largos. Es de código abierto, prioriza el trabajo local y funciona en Windows y macOS. Trata un documento como un trabajo completo: importas un PDF / DOCX / EPUB / TXT / Markdown (escaneados incluidos), primero lee todo el texto y construye un perfil y un glosario, y después traduce por lotes con contexto. Un revisor independiente comprueba cada segmento y tú decides en cada caso. Cuando la puerta de entrega se supera, todo se congela en un paquete de entrega trazable.
+**¿Por qué Folith?**
 
-Traducir un pasaje es fácil. Lo difícil es usar las mismas palabras en el capítulo nueve que en el dos, que tus propias ediciones nunca se sobrescriban, dejar constancia de cada cambio y poder explicar el origen de un archivo entregado. Folith está hecho para eso.
+Los documentos largos necesitan más que una traducción frase por frase. Un nombre del segundo capítulo debe traducirse de forma coherente en el noveno, y tus ediciones deben seguir bajo tu control.
+
+| Entiende el conjunto | Mantén la coherencia | Conserva el control |
+| :--- | :--- | :--- |
+| Crea el contexto de todo el documento antes de traducir. | Reutiliza terminología y memoria de traducción dentro de un proyecto. | Revisa las sugerencias antes de aplicarlas y genera entregas trazables. |
+
+Folith conecta **la preparación del documento, la traducción asistida por modelos, la revisión humana y la entrega** en un flujo de trabajo de escritorio continuo. Comienza con libros, trabajos de investigación y otros documentos largos, con una visión más amplia de localización de contenidos.
+
+> El inglés es el idioma de la página principal; el [README en chino simplificado](README.zh-CN.md) sigue siendo la fuente editorial mantenida y prevalece si hay diferencias. La interfaz está en chino simplificado por defecto; los nombres de los controles de abajo corresponden a la versión española experimental.
+
+**Folith · 译页** («páginas traducidas») es un banco de trabajo de escritorio para traducir libros, informes técnicos, monografías académicas y otros documentos largos. Es de código abierto, prioriza el trabajo local y funciona en Windows y macOS. Trata un documento como un trabajo completo: importas un PDF / DOCX / EPUB / TXT / Markdown (escaneados incluidos), primero lee todo el texto y construye un perfil y un glosario, y después traduce por lotes con contexto. Un revisor independiente comprueba cada segmento y tú decides en cada caso. Cuando la puerta de entrega se supera, todo se congela en un paquete de entrega trazable.
 
 ---
 
@@ -34,6 +39,56 @@ Traducir un pasaje es fácil. Lo difícil es usar las mismas palabras en el cap�
 https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8
 
 Un libro, desde la importación, pasando por la preparación, la traducción y la revisión humana, hasta la entrega, en un minuto. Las imágenes de la interfaz se capturaron fuera de pantalla desde el cliente de Folith con un libro de ejemplo sintético de dominio público (*Los hermanos Karamázov*) y no contienen archivos reales de usuarios; las tomas marcadas como «Illustration» son explicaciones animadas.
+
+---
+
+## 🚀 Instalación
+
+Todos los paquetes de escritorio están en la página de la [última versión](https://github.com/xueyang-dev/Folith/releases/latest); `<versión>` en los nombres de archivo de abajo es el número de esa versión. La misma página publica `SHA256SUMS.txt` para comprobar la descarga. Esto confirma que el archivo está íntegro y no ha sido sustituido; no equivale a una firma.
+
+### Cliente de escritorio para macOS
+
+Descarga `Folith-Qt-<versión>-macos-arm64.dmg`, ábrelo y arrastra Folith a Aplicaciones.
+
+- Requisitos: macOS 15.8.1 o posterior en Apple silicon (serie M). Los Mac con Intel no son compatibles.
+- El paquete no está firmado ni notarizado. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
+- Tesseract (inglés, chino simplificado, árabe) viene incluido, así que no hay que instalar nada más.
+- Verificación (opcional): ejecuta `shasum -a 256 Folith-Qt-<versión>-macos-arm64.dmg` en Terminal y compáralo con `SHA256SUMS.txt`.
+- Tras abrirla, añade una conexión de modelo en Ajustes (ver Inicio rápido más abajo).
+
+### Cliente de escritorio para Windows x64
+
+- **Instalador (recomendado):** `Folith-Setup-<versión>-windows-x64.exe`. Ejecútalo, elige una carpeta e inicia Folith desde el menú Inicio. Se instala solo para el usuario actual y no requiere permisos de administrador. Al desinstalar se elimina solo la aplicación; las tareas, términos, memoria y ajustes se conservan en `%LOCALAPPDATA%\Folith`.
+- **Portátil:** `Folith-Qt-<versión>-windows-x64.zip`. Haz clic derecho → Extraer todo, mantén junta la carpeta `Folith` extraída y ejecuta `Folith\Folith.exe`. No lo ejecutes desde la vista previa del ZIP.
+
+No hace falta Python, Git ni herramientas de desarrollo. Tesseract (inglés, chino simplificado, árabe) viene incluido; PaddleOCR y LibreOffice no. La plataforma principal es Windows 11 x64; Windows 10 x64 es un objetivo de compatibilidad no verificado y no hay versión para ARM64.
+
+La compilación para Windows no está firmada. SmartScreen puede mostrar un aviso la primera vez: comprueba la suma SHA-256 y elige **Más información → Ejecutar de todas formas**. No desactives la seguridad de Windows de forma global.
+
+### Ejecutar desde el código fuente (desarrolladores)
+
+```bash
+git clone https://github.com/xueyang-dev/Folith.git
+cd Folith
+python -m pip install -e .
+python -m folith.qt
+```
+
+Requiere Python 3.10+; PySide6 forma parte de las dependencias. Opcionalmente, instala [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) para localizar las líneas de las páginas escaneadas. Sin él, las páginas escaneadas pasan por completo al modelo de visión.
+
+### Paquete de Python (para desarrolladores)
+
+El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith`), pero **no es la forma recomendada de obtener la aplicación**. PyPI sigue con la versión 0.6.0 y la interfaz Streamlit antigua; no se actualiza junto con las versiones de GitHub y el comando `folith` de allí no inicia el cliente de escritorio. Usa los paquetes de macOS / Windows de arriba o ejecuta desde el código fuente.
+
+---
+
+## ⚡ Inicio rápido
+
+1. **Añade una conexión de modelo**: abre Ajustes → Modelo, pulsa Añadir conexión, elige un proveedor, introduce la clave de API y el nombre del modelo y pulsa Probar y guardar; la conexión solo se guarda si la prueba tiene éxito.
+2. **Importa un documento**: en la biblioteca de tareas pulsa Importar documento… y elige un archivo PDF / DOCX / EPUB / TXT / Markdown.
+3. **Elige un modo**: en la página de preparación, Rápido, Estándar o Exhaustivo. Cada tarjeta muestra el número estimado de llamadas, los tokens de entrada y el tiempo para este documento.
+4. **Traduce y revisa**: pulsa Iniciar traducción. Al terminar, revisa segmento a segmento en el banco y atiende los elementos de Revisar y corregir, a la derecha.
+5. **Congela la entrega**: cuando los problemas estén resueltos y la puerta se supere, pulsa Congelar y guardar entrega…, elige dónde guardar y obtendrás la traducción, la copia bilingüe, el glosario, la memoria de traducción y el manifiesto.
 
 ---
 
@@ -92,56 +147,6 @@ Tras la revisión, el resultado se congela en una versión de entrega inmutable 
 
 ---
 
-## 🚀 Instalación
-
-Todos los paquetes de escritorio están en la página de la [última versión](https://github.com/xueyang-dev/Folith/releases/latest); `<versión>` en los nombres de archivo de abajo es el número de esa versión. La misma página publica `SHA256SUMS.txt` para comprobar la descarga. Esto confirma que el archivo está íntegro y no ha sido sustituido; no equivale a una firma.
-
-### Cliente de escritorio para macOS
-
-Descarga `Folith-Qt-<versión>-macos-arm64.dmg`, ábrelo y arrastra Folith a Aplicaciones.
-
-- Requisitos: macOS 15.8.1 o posterior en Apple silicon (serie M). Los Mac con Intel no son compatibles.
-- El paquete no está firmado ni notarizado. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
-- Tesseract (inglés, chino simplificado, árabe) viene incluido, así que no hay que instalar nada más.
-- Verificación (opcional): ejecuta `shasum -a 256 Folith-Qt-<versión>-macos-arm64.dmg` en Terminal y compáralo con `SHA256SUMS.txt`.
-- Tras abrirla, añade una conexión de modelo en Ajustes (ver Inicio rápido más abajo).
-
-### Cliente de escritorio para Windows x64
-
-- **Instalador (recomendado):** `Folith-Setup-<versión>-windows-x64.exe`. Ejecútalo, elige una carpeta e inicia Folith desde el menú Inicio. Se instala solo para el usuario actual y no requiere permisos de administrador. Al desinstalar se elimina solo la aplicación; las tareas, términos, memoria y ajustes se conservan en `%LOCALAPPDATA%\Folith`.
-- **Portátil:** `Folith-Qt-<versión>-windows-x64.zip`. Haz clic derecho → Extraer todo, mantén junta la carpeta `Folith` extraída y ejecuta `Folith\Folith.exe`. No lo ejecutes desde la vista previa del ZIP.
-
-No hace falta Python, Git ni herramientas de desarrollo. Tesseract (inglés, chino simplificado, árabe) viene incluido; PaddleOCR y LibreOffice no. La plataforma principal es Windows 11 x64; Windows 10 x64 es un objetivo de compatibilidad no verificado y no hay versión para ARM64.
-
-La compilación para Windows no está firmada. SmartScreen puede mostrar un aviso la primera vez: comprueba la suma SHA-256 y elige **Más información → Ejecutar de todas formas**. No desactives la seguridad de Windows de forma global.
-
-### Ejecutar desde el código fuente (desarrolladores)
-
-```bash
-git clone https://github.com/xueyang-dev/Folith.git
-cd Folith
-python -m pip install -e .
-python -m folith.qt
-```
-
-Requiere Python 3.10+; PySide6 forma parte de las dependencias. Opcionalmente, instala [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) para localizar las líneas de las páginas escaneadas. Sin él, las páginas escaneadas pasan por completo al modelo de visión.
-
-### Paquete de Python (para desarrolladores)
-
-El paquete `foliothread` existe en PyPI (el módulo del código se llama `folith`), pero **no es la forma recomendada de obtener la aplicación**. PyPI sigue con la versión 0.6.0 y la interfaz Streamlit antigua; no se actualiza junto con las versiones de GitHub y el comando `folith` de allí no inicia el cliente de escritorio. Usa los paquetes de macOS / Windows de arriba o ejecuta desde el código fuente.
-
----
-
-## ⚡ Inicio rápido
-
-1. **Añade una conexión de modelo**: abre Ajustes → Modelo, pulsa Añadir conexión, elige un proveedor, introduce la clave de API y el nombre del modelo y pulsa Probar y guardar; la conexión solo se guarda si la prueba tiene éxito.
-2. **Importa un documento**: en la biblioteca de tareas pulsa Importar documento… y elige un archivo PDF / DOCX / EPUB / TXT / Markdown.
-3. **Elige un modo**: en la página de preparación, Rápido, Estándar o Exhaustivo. Cada tarjeta muestra el número estimado de llamadas, los tokens de entrada y el tiempo para este documento.
-4. **Traduce y revisa**: pulsa Iniciar traducción. Al terminar, revisa segmento a segmento en el banco y atiende los elementos de Revisar y corregir, a la derecha.
-5. **Congela la entrega**: cuando los problemas estén resueltos y la puerta se supere, pulsa Congelar y guardar entrega…, elige dónde guardar y obtendrás la traducción, la copia bilingüe, el glosario, la memoria de traducción y el manifiesto.
-
----
-
 ## ✨ Características
 
 | Etapa | Qué ocurre |
@@ -175,7 +180,7 @@ Aquí «agéntico» significa concretamente: un rol de revisor independiente, re
 | | Compatible |
 | :--- | :--- |
 | **Importación** | PDF (incluidos escaneados) / DOCX / EPUB (sin DRM) / TXT / Markdown; hasta 512 MB por archivo, divide los documentos más grandes antes de importarlos |
-| **Archivos de entrega** | DOCX solo con la traducción, DOCX bilingüe, EPUB (de fuentes PDF o DOCX), PDF (el PDF que conserva la maquetación solo se aplica a fuentes PDF), glosario, TMX, TBX, JSONL, el manifiesto `delivery_manifest.json` |
+| **Archivos de entrega** | DOCX solo con la traducción, DOCX bilingüe, EPUB (de fuentes PDF o DOCX), PDF (el PDF que conserva la maquetación solo se aplica a fuentes PDF), DOCX en formato original (`original_format.docx`, solo para fuentes DOCX y desactivado por defecto), glosario, TMX, TBX, JSONL, el manifiesto `delivery_manifest.json` |
 | **Recursos lingüísticos** | Glosario y memoria de traducción: importación y exportación XLSX, TBX, TMX; JSONL |
 | **Idioma de origen** | Detección automática o uno de 21: English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español, Italiano, Português, Русский, Nederlands, Polski, Українська, Tiếng Việt, Türkçe, العربية, فارسی, עברית, اردو, ئۇيغۇرچە |
 | **Idioma de destino** | 21: 简体中文, 繁體中文, English, 日本語, 한국어, Deutsch, Français, Español, Русский, Português, Italiano, Nederlands, Polski, Українська, Tiếng Việt, Türkçe, العربية, فارسی, עברית, اردو, ئۇيغۇرچە |
@@ -213,12 +218,13 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 
 ## ⚠️ Limitaciones conocidas
 
+- El triaje inteligente de QA es experimental y está desactivado por defecto.
 - El paquete de macOS solo es compatible con Apple silicon y macOS 15.8.1 o posterior; no está firmado ni notarizado.
 - El paquete de Windows no está firmado; no se ha verificado la compatibilidad con Windows 10 x64, Windows en ARM64 ni máquinas virtuales limpias.
-- Algunos elementos de aceptación manual de los paquetes finales (paneles de archivos del sistema, método de entrada chino, suspensión / reactivación, aprobación del primer arranque, un servicio de modelo real, etc.) pueden completarse después de la publicación; lo verificado y lo pendiente de cada versión figura en las [notas de la versión](docs/release-notes-0.8.0.md) (en chino) correspondientes.
+- Algunos elementos de aceptación manual de los paquetes finales (paneles de archivos del sistema, método de entrada chino, suspensión / reactivación, aprobación del primer arranque, un servicio de modelo real, etc.) pueden completarse después de la publicación; lo verificado y lo pendiente de la última versión figura en la [página de la última versión](https://github.com/xueyang-dev/Folith/releases/latest) (en chino).
 - No se admiten EPUB con DRM.
 - Las imágenes dentro de tablas y cuadros de texto no se conservan en el DOCX traducido; el DOCX bilingüe no contiene imágenes.
-- Por defecto se generan archivos nuevos y no se reescribe la maquetación del DOCX original. Con fuente DOCX puede activarse «Traducción en formato original» en las opciones de entrega (`original_format.docx`): escribe la traducción en el archivo original conservando estilos, tablas, notas al pie, encabezados y pies de página. Desactivado por defecto; aún sin aceptación manual nativa en macOS / Windows.
+- Por defecto se generan archivos nuevos y no se reescribe la maquetación del DOCX original. Con fuente DOCX puede activarse «Traducción en formato original» en las opciones de entrega (`original_format.docx`): genera una copia traducida a partir del DOCX original conservando estilos, tablas, notas al pie, encabezados y pies de página. Desactivado por defecto; aún sin aceptación manual nativa en macOS / Windows.
 - Los idiomas de interfaz distintos del chino simplificado son experimentales.
 - Las páginas escaneadas las reconoce el modelo de visión y pueden contener errores; compáralas con la página original.
 
@@ -260,7 +266,7 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 - [ ] Firma de código y notarización
 - [ ] Aceptación en más versiones de Windows y en una VM limpia
-- [x] Reescritura en el DOCX original conservando maquetación y estilos (opcional, desactivada por defecto)
+- [ ] Aceptación manual nativa en macOS y Windows del DOCX opcional en formato original
 - [ ] Coincidencias aproximadas en la memoria de traducción
 - [ ] Traducción incremental entre versiones de un documento
 
@@ -270,7 +276,8 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 (La mayoría de los documentos están en chino.)
 
-- [Notas de la última versión y registro de aceptación](docs/release-notes-0.8.0.md)
+- [Última versión y estado de aceptación](https://github.com/xueyang-dev/Folith/releases/latest)
+- [Notas de la versión 0.8.0](docs/release-notes-0.8.0.md)
 - [Plan de publicación](docs/release-plan.md)
 - [Proyectos y memoria a largo plazo](docs/project-memory.md)
 - [Exportación de la traducción a EPUB / DOCX](docs/epub-export.md)
