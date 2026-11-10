@@ -40,13 +40,23 @@ pair_key = "tu:" + external_id + ":" + sha256(source_text)[:16]
   禁止静默沿用旧身份，也禁止按内容相似度猜测"还是同一段"。
 - 身份账本（`IdentityLedger`：external_id → 源文摘要 + pair key）随导入
   更新；账本版本不识别时显式报错，不猜语义。
-- 无外部 id 的单元必须由适配器**显式赋号并报告**；契约层对空 id 直接
-  抛错（`IDENTITY_MISSING` 拒绝路径）。
+- **身份映射必须单射**：同一批导入里重复的外部 TU id 是身份层缺陷（损坏的
+  CAT 文件、跨 `<file>` 复用 id、按 `id` 而非 `file+id` 去重都会造成），
+  契约按 `DUPLICATE_EXTERNAL_ID` **单元级拒绝**该单元——绝不允许多个 TU
+  共用同一 `pair_key`（注入时后写覆盖前写，段落内容会静默丢失），也绝不把
+  "文件内重复 id"谎报成 `source_changed`。首次出现的单元照常导入，账本保留
+  首次身份，重复单元不进 `identities`。
+- 无外部 id 的单元由适配器**显式赋号并报告**；若仍未赋号，契约按
+  `IDENTITY_MISSING` **单元级拒绝**（`unit_ref` 用 1 基位置引用 `#1`、`#2`…），
+  其余单元继续导入——单个坏单元不得中断整份文件。
 - 不可证明稳定的再指派**不是拒绝**：单元照常导入，但报告必须让用户看见
   "这些段被视为新段落"。需要保留历史关联时由适配器在文件内自担。
 
-可测试判定：同一 fixture 导入两次 → 身份账本 diff 为空；篡改任一单元源文
-再导入 → 该单元出现在 `reassignments`，其余单元身份不变。
+可测试判定：同一 fixture 导入两次 → 身份键与身份账本 JSON 逐字节相同
+（`ledger_first.to_json() == ledger_second.to_json()`）；篡改任一单元源文
+再导入 → 该单元出现在 `reassignments`，其余单元身份不变；重复外部 id →
+`DUPLICATE_EXTERNAL_ID` 单元级拒绝且只产出一个身份；空外部 id →
+`IDENTITY_MISSING` 单元级拒绝且其余单元照常导入。
 
 ## 2. Inline 标签语义
 
@@ -59,26 +69,33 @@ pair_key = "tu:" + external_id + ":" + sha256(source_text)[:16]
   成对标签（open/close）必须同 `code_name` 正确嵌套闭合；自闭合标签无配对
   语义。违反即错误清单（确定性输出）。
 - **译文标签集合 ⊆ 源文标签集合**（`validate_target_tags`）：译文出现的每个
-  编号标签必须存在于源文（多余标签 = 错误），且负载一致；允许整对省略
-  格式标签（目标语言词序调整），不允许半对——半对会被成对校验捕获。
-  "标签个数相等"不是校验目标，配对合法性才是。
+  编号标签必须存在于源文（多余标签 = 错误）。同编号标签必须 **`kind` /
+  `code_name` / `payload` 三者同时**与源文一致——只比负载会让"把 open 改声明
+  为 self_closing"或"open/close 互换"这类改写绕过整对闭合校验，导出即写出
+  未闭合/倒置的标签。允许整对省略格式标签（目标语言词序调整），不允许半对：
+  半对（含方向改写）会被成对校验或同编号比对捕获。"标签个数相等"不是校验
+  目标，配对合法性才是。
 - 标签校验不通过的单元按 `TAG_STRUCTURE_INVALID` 显式拒绝（单元级），
   不得截断半句入库（沿用 TMX `_tmx_seg_text` "宁可不导入，不导入半句"）。
 
 可测试判定：嵌套/自闭合合法序列零错误；乱序关闭、未闭合、多余开启、译文
-多余标签、负载不一致各产出精确错误。
+多余标签、负载不一致、**同编号标签的 `kind` 不一致、`kind` 互换、配对语义名
+被改写**各产出精确错误；一处交叉嵌套只报一条最具体的错误（不把同一处结构
+缺陷拆成"嵌套错乱 + 外层未闭合"两条）。
 
 ## 3. 状态映射
 
 双向映射表（`STATUS_MAP` / `map_cat_status` / `map_folith_status`）。别名
-归一后才查表；**表外状态一律显式拒绝**（`StatusMappingError` →
+归一后才查表：**大小写、首尾空白、连字符与下划线等价**（XLIFF 1.2/2.0 的
+`state` 取值用连字符，如 `signed-off` / `needs-translation`，与表内下划线
+写法同义）。**表外状态一律显式拒绝**（`StatusMappingError` →
 `UNMAPPABLE_STATUS` 拒绝路径），绝不猜近似语义。
 
 | 规范状态 | 别名（示例） | → Folith pair 字段 | 说明 |
 | --- | --- | --- | --- |
-| `confirmed` | final, reviewed, signed_off, approved | `target_provenance="human_edit"`, `human_edited=True`, `reviewed=True`, `review_status="reviewed"`, `from_tm=False` | CAT 已确认 = 人工作者且人工定稿：进库即受人工保护（批量替换跳过） |
-| `translated` | draft, pre_translated, translation_complete | `target_provenance="generated"`, `human_edited=False`, `reviewed=False`, `review_status="not_reviewed"`, `from_tm=False` | 已翻未确认 = 可用工作译文，仍须走本应用审校门禁 |
-| `untranslated` | new, empty, not_translated | 同 `translated`，且 `target=""` | 待生成 |
+| `confirmed` | final, reviewed, signed_off（`signed-off`）, approved | `target_provenance="human_edit"`, `human_edited=True`, `reviewed=True`, `review_status="reviewed"`, `from_tm=False` | CAT 已确认 = 人工作者且人工定稿：进库即受人工保护（批量替换跳过） |
+| `translated` | draft, pre_translated, translation_complete, needs_review_translation, needs_review_adaptation, needs_review_l10n | `target_provenance="generated"`, `human_edited=False`, `reviewed=False`, `review_status="not_reviewed"`, `from_tm=False` | 已翻未确认 = 可用工作译文，仍须走本应用审校门禁 |
+| `untranslated` | new, empty, not_translated, initial, needs_translation（`needs-translation`） | 同 `translated`，**且 `target=""`** | 待生成。`target=""` 是**破坏性字段**：导入时必须**整体覆盖**单元字段，不得与旧译文 merge（否则旧译文残留、单元会被重新判成 `translated`） |
 | `locked` | read_only, protected | `{"excluded": True}` | 适配器不得生成译文：单元不进 `pairs`，登记进既有排除账本 `excluded_segments`；排除不计为已翻译 |
 
 反向映射（导出方向）：`excluded → locked`；`reviewed → confirmed`；有译文
@@ -89,20 +106,34 @@ CAT 状态描述定稿程度，保护标记描述"谁动的"，两者正交。
 {generated, human_edit, reviewed, tm_approved, candidate_adopted}`），
 不发明新值。
 
-可测试判定：映射表每个规范状态、每个别名、大小写变体全分支覆盖；表外
-状态（含空串）必抛 `StatusMappingError`；反向映射四分支全覆盖。
+可测试判定：映射表每个规范状态、每个别名、大小写变体全分支覆盖；**连字符
+写法（`signed-off` / `needs-translation` / `initial` / `needs-review-*`）与
+下划线写法等价**；表外状态（含空串、`needs-review`、`rejected`）必抛
+`StatusMappingError`；反向映射四分支全覆盖，且 `untranslated` 的闭环不靠
+测试手工补 `target`。
 
 ## 4. 元数据保全
 
 - 适配器无法解释为契约语义的属性/节点，必须作为 `PreservedFragment`
   （`location` + 原样 `payload`）**逐字节携带**；`location` 是适配器自述的
   结构位置。契约层不解释其内容，只保证"进得来、出得去"。
-- 导出时全部保全片段必须原样写回。no-op 往返验收（第 6 节）兜底验证：
-  任何静默丢弃都会成为结构 diff 的一条差异。
+- 导出时全部保全片段必须原样写回。**这一条必须由确定性核对判定，不能只靠
+  结构 diff**：适配器无法投影的节点在源树与导出树里通常都不存在，`diff` 两
+  侧都看不见它——这类丢失恰好是结构 diff 唯一看不见的丢失。契约因此提供
+  `verify_preserved(exported_tree, preserved)`：按 `payload` **逐字符精确
+  匹配**导出树中的等价子树，找不到即判失败；匹配口径是"`payload` 等于导出树
+  某节点子树按 `json.dumps(node, ensure_ascii=False, sort_keys=True)` 序列化
+  的结果"，`location` 只用于报告、不参与匹配；空 `payload` 无法证明写回，
+  显式报错。`no_op_verdict(..., preserved=...)` 把缺失片段计入
+  `unexplained`/`missing_preserved`，**且不接受白名单豁免**（把"静默丢弃"
+  白名单掉就违背本节）。
 - 禁止以"看起来是注释/上下文"为由改写、归一或丢弃保全内容。
 
 可测试判定：`synthetic-notes` fixture 的注释与上下文组按原样出现在报告
-`preserved` 清单；导出树缺失任一片段时 no-op 判定失败并给出精确路径。
+`preserved` 清单；导出树缺失任一片段（或片段内容被改写）时
+`verify_preserved` 返回缺失清单，`no_op_verdict(..., preserved=...)` 判
+失败并给出精确位置；**同一场景下不带 `preserved` 的结构 diff 仍为空**
+（用测试固定这条边界，避免文档再次声称 diff 覆盖了它）。
 
 ## 5. 拒绝语义
 
@@ -118,15 +149,19 @@ CAT 状态描述定稿程度，保护标记描述"谁动的"，两者正交。
 | 单元级 | `PENDING_TRACK_CHANGES` | 单元内未决修订（绝不代用户接受或拒绝修订） |
 | 单元级 | `UNMAPPABLE_STATUS` | 状态不在映射表内 |
 | 单元级 | `TAG_STRUCTURE_INVALID` | 标签配对/嵌套校验不通过 |
-| 单元级 | `IDENTITY_MISSING` | 无外部 id 且适配器未显式赋号 |
+| 单元级 | `IDENTITY_MISSING` | 无外部 id 且适配器未显式赋号（`unit_ref` 用 1 基位置引用 `#n`） |
+| 单元级 | `DUPLICATE_EXTERNAL_ID` | 同一文件内重复的外部 TU id（身份映射不再单射；拒绝重复出现的那个单元） |
 
 `ImportReport` 汇总接受清单、拒绝（含范围/码/单元/原因）、身份再指派与
-保全清单；`file_rejected` 为真时调用方**不得**产出任何可交付结果。拒绝码
-与范围在 `ImportReport.add_rejection` 处集中校验，写错即抛错。
+保全清单；`file_rejected` 为真时调用方**不得**产出任何可交付结果——这一点
+由契约强制：`add_rejection` 收到文件级拒绝即**清空 `accepted`** 并记一条
+`warnings`，`to_json` 也不会输出部分结果。拒绝码与范围在
+`ImportReport.add_rejection` 处集中校验，写错即抛错。
 
 可测试判定：`synthetic-unknown-namespace` 与 `synthetic-track-changes`
 fixture 产出指定拒绝码的单元级拒绝；文件级拒绝码登记到 `file` 范围即令
-`file_rejected` 为真；未知拒绝码被拒绝登记。
+`file_rejected` 为真**且 `accepted == []`**；未知拒绝码被拒绝登记；
+重复/缺失外部 id 各产出对应单元级拒绝（见第 1 节）。
 
 ## 6. Round-trip 结构比较工具
 
@@ -134,20 +169,30 @@ fixture 产出指定拒绝码的单元级拒绝；文件级拒绝码登记到 `f
 （`{"name", "attrs", "text", "children"}`；任何格式皆可投影）：
 
 - `canonical_snapshot`：属性键排序等与内容无关的序列化差异在规范化时消除，
-  不算差异；文本逐字符比较，不做空白归一。
+  不算差异；文本逐字符比较，不做空白归一。**契约键只有 `name` / `attrs` /
+  `text` / `children`；节点字典里的其他键（`tail` / `nsmap` / `cdata` /
+  `line` …）不丢弃**，而是原样收进规范化结果的 `extra` 段参与比较（嵌套值
+  按确定键序排列）。否则"只改这些键"的导出会被 no-op 闸门静默判过。
 - `diff_snapshots`：精确差异清单（路径 + `added/removed/changed` + 前后
-  值）。路径 `/name:0/child:1@attr`、`.../node#text`，`:i` 为子节点位置
-  （0 基，用冒号而非方括号：方括号会被 fnmatch 当成字符类，白名单将无法
-  按字面匹配路径）——插入/删除会使后续位置移位，这正是 no-op 验收想要
-  暴露的。
+  值）。路径 `/name:0/child:1@attr`、`.../node#text`、`.../node!key`
+  （`!key` 即非契约键），`:i` 为子节点位置（0 基，用冒号而非方括号：方括号
+  会被 fnmatch 当成字符类，白名单将无法按字面匹配路径）——插入/删除会使
+  后续位置移位，这正是 no-op 验收想要暴露的。
 - `no_op_verdict`：no-op 模式（解析 → 原样导出 → 再解析）下，重导出树与
   源树的 diff 必须为空，或差异全部落入**显式白名单**（`{"path": glob,
   "kinds": [...]}`，由调用方逐条声明，契约层不内置任何默认豁免）；白名单外
-  差异判失败，`unexplained` 即失败原因清单。
+  差异判失败，`unexplained` 即失败原因清单。传入 `preserved=` 时同时核对
+  保全片段写回（见第 4 节）：缺失片段计入 `unexplained` 与
+  `missing_preserved`，**不接受白名单豁免**。
+- **边界**：本工具比较的是**树投影等价**，不是字节级 XML 往返（CDATA 与普通
+  文本、注释/处理指令只能靠投影约定表达）。"逐字节保全"由 `PreservedFragment`
+  的 `payload` 携带，不由此工具证明。
 
 可测试判定：`synthetic-noop-roundtrip` 判空通过；`synthetic-tampered`
 （属性改动 / 丢节点 / 文本变化）输出与 fixture 内黄金 diff 逐条一致；
-白名单只豁免声明的路径与类型，路径不符或类型不符均判失败。
+白名单只豁免声明的路径与类型，路径不符或类型不符均判失败；**只改
+`tail`/`nsmap`/`line` 等非契约键 → `ok=False`**；导出缺保全片段 →
+`ok=False`（即便结构 diff 为空）。
 
 ## 7. Fixture corpus
 
@@ -156,11 +201,31 @@ fixture 产出指定拒绝码的单元级拒绝；文件级拒绝码登记到 `f
 须先取得授权并登记来源，无授权来源的样本不进入仓库。生成器是唯一权威
 来源，手工编辑 JSON 会在重建时被覆盖。
 
+**fixture 必须随 PR 提交**：测试在 fixture 缺失时直接失败（不自动重建），并
+有一条测试把生成器产物与提交物逐字节比对——否则"语料已提交"这条验收不可
+判定，且测试会写入仓库目录。
+
 ## 失败 / 回滚行为
 
 契约层为新增纯库 + 文档 + fixture，无写入路径，不触碰任务状态；回滚 =
 移除 `folith/interop/`、`docs/tu-contract-v1.md`、
 `tests/fixtures/tu_contract/` 与测试文件，不影响任何现有功能。
+
+## v1 已知限制（不阻塞本契约，但下游不得误读）
+
+以下各项本版本**没有**定义或没有覆盖，按"不猜语义"原则留给后续 issue /
+裁定，适配器不得据本节自行发明口径：
+
+- **`locked` 的落点**：第 3 节的正向映射给出 pair 字段 `{"excluded": True}`，
+  而规范落点是排除账本 `excluded_segments`（另一种记录形状，本契约未定义
+  其类型/键名）；二者如何统一、锁定段落是否"工作台可见只读"，待用户裁定。
+- **`source_digest` 的哈希域**：摘要吃的是带占位符的 `source_text`，因此
+  纯标签重编号会被判成源文变化；摘要输入口径（是否去占位符/归一空白）与
+  `docs/docx-contract-v1.md` 的身份口径冲突一并待裁定。
+- **标签配对的扩展语义**：按 `code_name` 栈式配对，尚无 `rid` 配对键、
+  无法表达 XLIFF 2.0 `<pc>`，"允许整对省略"与"写回必须禁止整对省略"的
+  严格度也不可配（属 v1.1 扩展）。
+- **没有字节级往返保证**：no-op 验收比较树投影等价（见第 6 节末）。
 
 ## Out of Scope
 

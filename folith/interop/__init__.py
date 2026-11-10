@@ -13,6 +13,7 @@ from folith.interop.structural_diff import (
     canonical_snapshot,
     diff_snapshots,
     no_op_verdict,
+    verify_preserved,
     whitelist_allows,
 )
 from folith.interop.tu_contract import (
@@ -58,5 +59,6 @@ __all__ = [
     "source_digest",
     "validate_tag_sequence",
     "validate_target_tags",
+    "verify_preserved",
     "whitelist_allows",
 ]

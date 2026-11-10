@@ -248,7 +248,8 @@
           "name": "note",
           "attrs": {},
           "text": "keep me",
-          "children": 0
+          "children": 0,
+          "extra": {}
         },
         "after": null
       }

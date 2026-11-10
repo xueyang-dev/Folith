@@ -105,25 +105,42 @@ def _sequence_errors(text: str, tags: Sequence[InlineTag]) -> list[str]:
     if len(set(ids_in_text)) != len(ids_in_text):
         errors.append("同一占位符在文本中出现多次")
 
-    stack: list[InlineTag] = []
-    for placeholder_id in ids_in_text:
-        tag = next((item for item in tags if int(item.tag_id) == placeholder_id), None)
+    # 配对：按 code_name 各维护一条开启栈（配对语义名相等即可配对，嵌套是否
+    # 正确由下一条确定性检查单独判定）。配对失败各报一条最具体的错误。
+    by_id = {int(tag.tag_id): tag for tag in tags}
+    opened: dict[str, list[int]] = {}
+    pairs: list[tuple[int, int, str]] = []
+    for position, placeholder_id in enumerate(ids_in_text):
+        tag = by_id.get(placeholder_id)
         if tag is None:
             continue
         if tag.kind == "open":
-            stack.append(tag)
+            opened.setdefault(tag.code_name, []).append(position)
         elif tag.kind == "close":
-            if not stack:
-                errors.append(f"标签 {placeholder_id}（{tag.code_name}）关闭时没有未配对的开启")
-            elif stack[-1].code_name != tag.code_name:
+            pending = opened.get(tag.code_name) or []
+            if not pending:
                 errors.append(
-                    f"标签 {placeholder_id} 关闭的是 {tag.code_name}，"
-                    f"但最内层未闭合的是 {stack[-1].code_name}（嵌套错乱）")
-                stack.pop()
-            else:
-                stack.pop()
-    for tag in stack:
-        errors.append(f"标签 {tag.tag_id}（{tag.code_name}）开启后未闭合")
+                    f"标签 {placeholder_id}（{tag.code_name}）关闭时没有未配对的开启")
+                continue
+            pairs.append((pending.pop(), position, tag.code_name))
+    for code_name, positions in opened.items():
+        for position in positions:
+            errors.append(
+                f"标签 {ids_in_text[position]}（{code_name}）开启后未闭合")
+
+    # 嵌套检查：两个配对区间交叉（外开 < 内开 < 外关 < 内关）即嵌套错乱。
+    # 一处结构缺陷只报一条——不再像"边报错边 pop 栈"那样把同一处交叉拆成
+    # "嵌套错乱 + 某个外层开启后未闭合"两条互相矛盾的错误（N2）。
+    pairs.sort(key=lambda item: (item[0], item[1]))
+    for index, (_outer_open, outer_close, outer_name) in enumerate(pairs):
+        for inner_open, inner_close, inner_name in pairs[index + 1:]:
+            if inner_open >= outer_close:
+                continue
+            # 内层在外层之前就看得到、且在外层关闭之后仍未闭合 → 交叉。
+            if inner_close > outer_close:
+                errors.append(
+                    f"标签 {ids_in_text[outer_close]} 关闭的是 {outer_name}，"
+                    f"但最内层未闭合的是 {inner_name}（嵌套错乱）")
     return errors
 
 
@@ -144,10 +161,16 @@ def validate_target_tags(
     """「译文标签集合 ⊆ 源文标签集合」的确定性检查。
 
     - 译文里出现源文没有的标签 → 错误（多余标签）；
-    - 同编号标签的负载必须与源文完全一致（不得伪造负载）；
+    - 同编号标签的 ``kind`` / ``code_name`` / ``payload`` 必须与源文完全一致：
+      payload 相同但把 open 改声明为 self_closing、把 open/close 互换、或换掉
+      配对语义名，同样是错误（不得改写标签方向，不得伪造负载）；
     - 译文自身必须成对/自闭合合法（允许整对省略格式标签，不允许半对）。
     """
     errors = _sequence_errors(target_text, target_tags)
+    # 同编号标签必须 **kind / code_name / payload 三者同时**与源文一致：
+    # 只比 payload 会让"把 open 改声明为 self_closing"或"open/close 互换"
+    # 这类改写整对闭合的行为静默通过，导出即写出未闭合/倒置的标签。
+    # 同一标签只报最具体的一条错误（先方向、再配对语义、最后负载）。
     source_by_id = {}
     for tag in source_tags:
         source_by_id[int(tag.tag_id)] = tag
@@ -155,6 +178,14 @@ def validate_target_tags(
         origin = source_by_id.get(int(tag.tag_id))
         if origin is None:
             errors.append(f"译文标签 {tag.tag_id} 在源文中不存在（多余标签）")
+        elif origin.kind != tag.kind:
+            errors.append(
+                f"译文标签 {tag.tag_id} 的类型 {tag.kind} 与源文 {origin.kind} "
+                f"不一致（不得改写标签方向）")
+        elif origin.code_name != tag.code_name:
+            errors.append(
+                f"译文标签 {tag.tag_id} 的配对语义 {tag.code_name!r} 与源文 "
+                f"{origin.code_name!r} 不一致（不得改写配对）")
         elif origin.payload != tag.payload:
             errors.append(f"译文标签 {tag.tag_id} 的负载与源文不一致（不得伪造）")
     return errors
@@ -169,8 +200,16 @@ def validate_target_tags(
 
 STATUS_ALIASES: dict[str, frozenset[str]] = {
     "confirmed": frozenset({"final", "reviewed", "signed_off", "approved"}),
-    "translated": frozenset({"draft", "pre_translated", "translation_complete"}),
-    "untranslated": frozenset({"new", "empty", "not_translated"}),
+    "translated": frozenset({
+        "draft", "pre_translated", "translation_complete",
+        # XLIFF 1.2 的"已翻待审"族：有译文、但尚未定稿。
+        "needs_review_translation", "needs_review_adaptation",
+        "needs_review_l10n"}),
+    "untranslated": frozenset({
+        "new", "empty", "not_translated",
+        # XLIFF 2.0 ``initial`` 与 XLIFF 1.2 ``needs-translation``：都表示
+        # 该单元还没有可用译文。
+        "initial", "needs_translation"}),
     "locked": frozenset({"read_only", "protected"}),
 }
 
@@ -194,13 +233,15 @@ STATUS_MAP: dict[str, dict[str, Any]] = {
         "review_status": "not_reviewed",
         "from_tm": False,
     },
-    # 未翻 = 空译文待生成。
+    # 未翻 = 空译文待生成。``target=""`` 是**破坏性**字段：导入时必须整体覆盖
+    # 单元字段，绝不能在旧译文上 merge（否则旧译文会残留并被重新判成 translated）。
     "untranslated": {
         "target_provenance": "generated",
         "human_edited": False,
         "reviewed": False,
         "review_status": "not_reviewed",
         "from_tm": False,
+        "target": "",
     },
     # 锁定 = 适配器不得为它生成译文：单元不进 pairs，由适配器登记进既有
     # 排除账本（``excluded_segments``），排除不计为已翻译。
@@ -213,7 +254,10 @@ class StatusMappingError(ValueError):
 
 
 def _canonical_status(cat_status: str) -> str | None:
-    value = str(cat_status or "").strip().casefold()
+    # 别名归一：大小写、首尾空白、以及连字符/下划线等价。XLIFF 1.2/2.0 的
+    # ``state`` 取值用连字符（``signed-off`` / ``needs-translation``），契约
+    # 表用下划线；不归一会让每个适配器各自发明一遍拼写口径。
+    value = str(cat_status or "").strip().casefold().replace("-", "_")
     if not value:
         return None
     for canonical, aliases in STATUS_ALIASES.items():
@@ -295,6 +339,7 @@ UNIT_SCOPE_CODES = frozenset({
     "UNMAPPABLE_STATUS",       # 状态不在映射表内
     "TAG_STRUCTURE_INVALID",   # 标签配对/嵌套校验不通过
     "IDENTITY_MISSING",        # 无外部 id 且适配器未显式赋号
+    "DUPLICATE_EXTERNAL_ID",   # 同一文件内重复的外部 TU id（身份不可单射）
 })
 
 
@@ -327,11 +372,21 @@ class ImportReport:
         if rejection.scope == "unit" and rejection.code not in UNIT_SCOPE_CODES:
             raise ValueError(f"未知的单元级拒绝码：{rejection.code}")
         self.rejections.append(rejection)
+        if rejection.scope == "file":
+            # 文件级拒绝 = 整文件拒绝：不产出任何部分结果，已接受的单元作废。
+            dropped = len(self.accepted)
+            self.accepted.clear()
+            if dropped:
+                self.warnings.append(
+                    f"文件级拒绝 {rejection.code}：已丢弃 {dropped} 个已接受单元，"
+                    f"不产出部分结果")
 
     def to_json(self) -> dict[str, Any]:
         return {
             "contract_version": self.contract_version,
-            "accepted": list(self.accepted),
+            # 文件级拒绝时接受清单必然为空（add_rejection 已清空）；这里再兜一层，
+            # 保证任何构造路径都不会把部分结果写进报告。
+            "accepted": [] if self.file_rejected else list(self.accepted),
             "file_rejected": self.file_rejected,
             "rejections": [
                 {"scope": item.scope, "code": item.code,
@@ -407,22 +462,46 @@ class IdentityLedger:
 def reconcile_identities(
     units: Iterable[Mapping[str, Any]],
     ledger: IdentityLedger | None = None,
-) -> tuple[list[dict[str, str]], list[dict[str, str]], IdentityLedger]:
-    """为每个单元确定 pair 身份，返回 ``(identities, reassignments, ledger)``。
+) -> tuple[list[dict[str, str]], list[dict[str, str]], IdentityLedger,
+           list[Rejection]]:
+    """为每个单元确定 pair 身份，返回
+    ``(identities, reassignments, ledger, rejections)``。
 
     - 账本没有该 id，或 id 存在且源文摘要一致 → 身份按规则计算（可复现）；
     - id 存在但摘要变化 → 旧身份不可证明稳定，生成新身份并记入
-      ``reassignments``（``reason=source_changed``）。
+      ``reassignments``（``reason=source_changed``）；
+    - 单元没有外部 id → **单元级拒绝** ``IDENTITY_MISSING``（``unit_ref`` 是
+      1 基位置引用 ``#n``），其余单元继续导入；
+    - 同一批次内重复的外部 id → **单元级拒绝** ``DUPLICATE_EXTERNAL_ID``：
+      身份映射必须单射，两个 TU 共用同一 ``pair_key`` 会让注入互相覆盖；
+      重复单元不进入 ``identities``，账本保留首次出现的身份，也不谎报
+      ``source_changed``。
 
     返回的账本已更新到本次导入之后的状态（同一文件重复导入身份可复现）。
     """
     ledger = ledger or IdentityLedger()
     identities: list[dict[str, str]] = []
     reassignments: list[dict[str, str]] = []
-    for unit in units:
-        external_id = str((unit or {}).get("external_id") or "").strip()
+    rejections: list[Rejection] = []
+    seen_positions: dict[str, int] = {}
+    for position, unit in enumerate(units, start=1):
+        unit = unit or {}
+        external_id = str(unit.get("external_id") or "").strip()
         if not external_id:
-            raise ValueError("单元缺少外部 id；适配器必须显式赋号并报告")
+            rejections.append(Rejection(
+                scope="unit", code="IDENTITY_MISSING",
+                reason="单元没有外部 TU id；适配器必须显式赋号后重新提交该单元",
+                unit_ref=f"#{position}"))
+            continue
+        if external_id in seen_positions:
+            rejections.append(Rejection(
+                scope="unit", code="DUPLICATE_EXTERNAL_ID",
+                reason=(f"文件内重复的外部 TU id {external_id!r}"
+                        f"（首次出现在第 {seen_positions[external_id]} 个单元）；"
+                        f"身份映射必须单射，该单元不得与首次出现的单元共用身份"),
+                unit_ref=external_id))
+            continue
+        seen_positions[external_id] = position
         digest = str(unit.get("source_digest") or "") or source_digest(
             str(unit.get("source_text") or ""))
         known = ledger.entries.get(external_id)
@@ -445,4 +524,4 @@ def reconcile_identities(
             "source_digest": digest,
             "pair_key": pair_key,
         }
-    return identities, reassignments, ledger
+    return identities, reassignments, ledger, rejections
