@@ -222,6 +222,37 @@ def test_slow_request_is_not_an_interruption(tmp_path):
     assert summary["wall_time_s"] >= 0.2
 
 
+class _ManualTracker(ActiveTimeTracker):
+    """Real tracker with the heartbeat thread replaced by explicit ticks."""
+
+    def start_sampling(self):
+        self.start()
+
+    def stop_sampling(self):
+        return self.stop()
+
+
+def test_active_seconds_is_committed_only_and_never_reinterpolates(tmp_path):
+    """Two reads at the same instant are identical; the wall clock is not re-read."""
+    clock = [100.0]
+    tracker = _ManualTracker(interval_s=0.5, wall_clock=lambda: clock[0])
+    run = RunContext("committed", output_dir=tmp_path, level=TraceLevel.STANDARD,
+                     active_tracker=tracker)
+    clock[0] += 0.2
+    tracker.tick()
+    first = run.active_seconds()
+    clock[0] += 0.001  # the wall clock moves, the committed value must not
+    second = run.active_seconds()
+    assert first == second == pytest.approx(0.2)
+    assert run.active_time_summary()["active_seconds"] == first
+    # The tracked value behind the accessor is the committed one, not "now".
+    assert tracker.snapshot()["active_seconds"] == first
+
+    summary = run.finish()
+    assert summary["wall_time_s"] == run.active_seconds()
+    assert run.active_seconds() == run.active_seconds()  # frozen after finish
+
+
 def test_trace_manager_exposes_the_same_accessor(tmp_path):
     from folith.trace import TraceManager
 
@@ -230,11 +261,18 @@ def test_trace_manager_exposes_the_same_accessor(tmp_path):
     run = manager.start_run("manager-active", output_dir=tmp_path)
     try:
         time.sleep(0.05)
-        assert manager.active_seconds("manager-active") == pytest.approx(
-            run.active_seconds(), abs=1e-6)
+        # Same instance, so this cannot be a second calculation; the tolerance
+        # (10 ms) is two orders of magnitude above the 0.1 ms rounding unit and
+        # one below the 5 s heartbeat, so a green result cannot depend on a
+        # clock delta between the two calls.
+        assert manager.get_active_run("manager-active") is run
+        reported = manager.active_seconds("manager-active")
+        expected = run.active_seconds()
+        assert reported == pytest.approx(expected, abs=0.01)
         block = manager.active_time("manager-active")
         assert block["method"] == "wall_clock_heartbeat"
         assert block["running"] is True
+        assert block["active_seconds"] == pytest.approx(expected, abs=0.01)
     finally:
         manager.finish_run("manager-active")
 

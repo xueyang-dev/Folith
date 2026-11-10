@@ -141,13 +141,19 @@ report's unaccounted time / retry observation, labelled as such.
 `folith/trace.py` exposes one definition, so no consumer recomputes it:
 
 ```python
-run.active_seconds()              # float, live while the run is running
+run.active_seconds()              # float; committed heartbeat value, frozen at finish
 run.interrupted_spans()           # list of spans
 run.active_time_summary()         # the whole block above
 trace.trace.active_seconds(job_id)   # active run's value, or None
 trace.trace.active_time(job_id)
 sum_active_time(history_entries)  # task total over resumed segments
 ```
+
+`active_seconds()` returns the **committed** heartbeat value, never an
+interpolation to "now": two reads at the same instant are identical, and the
+number is exactly the one written to `summary.json`.  While a run is live it
+advances one heartbeat at a time (5 s by default), which is finer than any
+minute-level display needs.
 
 **The UI does not use it yet.**  Current location (read-only investigation):
 `folith/qt/views.py: run_status_view()` computes

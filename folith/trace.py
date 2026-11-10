@@ -1188,11 +1188,18 @@ class RunContext:
     # never ``finished_at - started_at``.
 
     def active_seconds(self) -> float:
-        """Seconds actually worked in this run (live while it is running)."""
+        """Seconds actually worked in this run; frozen once the run finished.
+
+        Returns the *committed* heartbeat value — the same number written to
+        ``summary.json`` — and never interpolates to "now".  Two calls at the
+        same instant therefore return the same number, which is what lets a
+        caller compare a UI reading with the report without timing drift.
+        While the run is live the value advances one heartbeat at a time.
+        """
         with self._lock:
             if self._active_time_snapshot is not None:
                 return float(self._active_time_snapshot.get("active_seconds") or 0.0)
-            return float(self._active_time.current())
+            return float(self._active_time.snapshot().get("active_seconds") or 0.0)
 
     def interrupted_spans(self) -> List[Dict[str, Any]]:
         """Interruption spans detected in this run, oldest first."""
