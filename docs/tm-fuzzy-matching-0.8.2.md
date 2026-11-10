@@ -18,6 +18,8 @@ Issue：[#148 \[TM\] Fuzzy matching: scoring, provenance and candidate ranking](
   **163.9 ms**（预算截断时如实标注 `scan_truncated`）。
 - 回滚是单参数、无数据迁移：`fuzzy=False`，或部署级
   `FOLIOTHREAD_TM_FUZZY=0`。
+- 截断是**可判定的**：返回的是带 `scan_truncated` / `reason` 的 `list` 子类，
+  空结果也能区分"预算耗尽没找到"与"TM 里确实没有"。
 
 ## 2. 读取接口
 
@@ -50,13 +52,39 @@ items = tm_candidates(
 | `reviewed` | 记录是否审校过（进索引的前提，恒为 `True`） |
 | `provenance` | 记录自带来源（如 `tmx_import`），没有则空串 |
 | `target_lang` | 条目声明的目标语言（原样写法） |
-| `scan_truncated` | 模糊检索是否因工作预算耗尽而"部分检索"（§6） |
+| `scan_truncated` | 该条目所属检索是否"部分检索"（便捷位；**空结果**要看返回对象上的同名属性） |
 
 排序键：分数降序 → 等价程度（exact > normalized > fuzzy）→ 原文 → 键。
 全部是确定性比较：同一输入、同一 TM 永远得到同一顺序，与插入顺序无关。
 
 失败即关闭：目标语言无法证明时返回 `[]`（与 `tm_index` 的 fail-closed 语义
 一致），旧版无作用域条目既不参与也不会"顺带"返回。
+
+### 返回的是 `TmCandidates`（list 子类）——空结果也带完备性状态
+
+`tm_candidates` 返回 `list` 的子类，**列表行为完全不变**（`len` / 迭代 / 下标 /
+切片 / `== []` / JSON 序列化都照旧），额外挂本次检索的状态：
+
+| 属性 | 含义 | 取值 |
+| --- | --- | --- |
+| `scan_truncated` | 本次检索是否"部分检索"（受工作预算限制） | `bool` |
+| `reason` | 完备性或 fail-closed 原因 | `complete` / `eval_budget_exhausted` / `scan_budget_exhausted` / `eval_budget_exhausted+scan_budget_exhausted` / `no_target_language` / `empty_source` |
+| `evaluated` | 实际做了多少次昂贵的 `ratio()` 评估 | `int` |
+| `scanned` | 进入阶段二候选池（廉价上界过线）的条数 | `int` |
+| `window_size` | 长度窗口内条目总数（预算裁剪前） | `int` |
+
+**空结果必须能读出状态**——这是最容易出问题的一处：
+
+```python
+items = tm_candidates(tm, source, "简体中文")
+if not items and items.scan_truncated:
+    # 预算用完了、什么都没找到：不等于"TM 里没有相似段"，UI 要如实说明
+    ...
+```
+
+截断信息不依赖候选条目存在（旧实现只把 `scan_truncated` 挂在候选上，空结果
+时会完全丢失，等于静默截断）。注意 `list(items)` / 切片 / JSON 得到的是普通
+list，状态只在**返回值本身**上。
 
 ## 3. 为什么是"候选"而不是"命中"
 
@@ -83,13 +111,24 @@ items = tm_candidates(
 4. **上界剪枝（无损）**：`real_quick_ratio()`（长度上界，O(1)）→
    `quick_ratio()`（字符重集上界，O(len)）；上界低于阈值/第 K 名分数的候选
    不算昂贵的 `ratio()`。
-5. **Top-K 剪枝（无损）**：给出 `limit` 时用"当前第 K 名分数"抬高剪枝线，
-   返回结果与"全量排序后取前 N 名"逐条相同（有测试锁定）。
-6. **工作预算（有损，但如实标注）**：阶段一只保留字符重集上界最高的
-   `max_evals=400` 条进阶段二；预算耗尽时按"上界降序、同分按位置升序"截断，
-   `scan_truncated=True`。深度样板段的 TM（整篇同一句式）里字符重集上界几乎
-   等于 1，前几层剪枝不起作用，50k 穷举会把一次查询拖到数秒——这是唯一
+5. **Top-K 剪枝（无损，前提是没触发预算）**：给出 `limit` 时用"当前第 K 名
+   分数"抬高剪枝线。**当 `scan_truncated == False` 时**，返回结果与"全量排序
+   后取前 N 名"逐条相同（有测试锁定）；一旦预算截断，阶段一按"字符重集上界
+   降序"淘汰，而上界排序 **不等于** 精确 `ratio` 排序，前 N 名可能与全量
+   结果不同。
+6. **工作预算（有损，但如实标注）**，两条独立路径：
+   - `max_evals=400`：阶段一只保留字符重集上界最高的 400 条进阶段二；
+   - `max_scan=6000`：长度窗口本身超过廉价扫描上限时，只扫窗口内"长度最接近
+     查询"的 6000 条（`_tm_window_positions`），窗口尾部根本不看。
+   任一触发都会在 `TmCandidates` 上置 `scan_truncated=True`，`reason` 写明
+   是哪一路（可能两者同时）。深度样板段的 TM（整篇同一句式）里字符重集上界
+   几乎等于 1，前几层剪枝不起作用，50k 穷举会把一次查询拖到数秒——这是
    需要预算兜底的场景。
+
+**索引是快照**：`tm_candidate_index` 只在构建时读 `tm`；之后 `tm` 有增删、
+审校状态或目标语言变化时必须重建索引，复用旧索引只会按旧快照返回（不会读出
+错数据，但会漏掉新条目）。一次运行内 TM 不变时复用是安全的，也是 50k 规模
+下的推荐用法。
 
 两项**不做**：不做 LLM/embedding 检索；不为相似度建第二份 TM 真值。
 
@@ -202,6 +241,12 @@ items = tm_candidates(
 - 预算是性能旋钮而不是正确性旋钮：`FOLIOTHREAD_TM_FUZZY_MAX_EVALS`（默认
   400）越小越快、越可能"部分检索"；同一个 corpus 上把预算调到 10 时 p95 降
   到 ≈ 10 ms，但候选集合可能不完整（`scan_truncated=True`）。
+- **测试里的 `p95 < 1500 ms` / `p95 < 3000 ms` 是 CI 数量级护栏，不是性能
+  验收**：它们只拦"慢了一个数量级"的回归（实测值是上面的 45.7–303.3 ms，
+  护栏留了 5–10 倍余量），因为 CI 机器的绝对延迟与开发机不同，收紧成实测
+  阈值只会变成随机红灯。性能验收以上表的实测数字为准，回归时重跑
+  `tests/tm_fuzzy_performance_test.py -s` 对比。该文件单独跑约 45–125 s，
+  适合放在 full-regression 而不是 PR fast checks。
 - 超预算/超时时的降级就是 `fuzzy=False`（只给 exact/normalized）——与 issue
   的 "degrade to exact/normalized" 一致，任务不会失败。
 - **不上数据库**：0.9.0 之前不引入 SQLite/向量库；索引是进程内只读快照。
@@ -239,7 +284,7 @@ items = tm_candidates(tm, segment_source, target_lang,
 
 | 文件 | 覆盖 |
 | --- | --- |
-| `tests/tm_fuzzy_matching_test.py` | 黄金集（100 / 规范化 / ~85 / 阈值边界 ±1 字符 / 明显不匹配）、排序与确定性、来源字段、#107 上下文冲突、#108 旧条目不出现、回滚与阈值单调性、fail-closed 语言、索引复用与 `tm_index` 一致性、长段/短段/数字/人名、旧格式加载无损 |
+| `tests/tm_fuzzy_matching_test.py` | 黄金集（100 / 规范化 / ~85 / 阈值边界 ±1 字符 / 明显不匹配）、排序与确定性、来源字段、#107 上下文冲突、#108 旧条目不出现、回滚与阈值单调性、fail-closed 语言、索引复用与 `tm_index` 一致性、长段/短段/数字/人名、旧格式加载无损、**空结果截断状态**（eval/scan 两条路径）、**候选查询不回写 TM**（字节 + `mtime_ns` 断言） |
 | `tests/tm_fuzzy_tmx_import_test.py` | 导入 1,000 条 TMX（真实 `import_tmx`）后相似原文端到端返回带分数候选、`provenance=tmx_import`、现有 `tm_index`/`tm_lookup` 不受影响 |
 | `tests/tm_fuzzy_performance_test.py` | 50,000 条延迟分位（脚本兼冒烟）、样板段最坏情况、长度窗口与 Top-K 剪枝无损性、预算截断如实标注 |
 
@@ -257,8 +302,9 @@ venv/bin/python -m pytest tests/tm_fuzzy_performance_test.py -q -s   # 打印分
   TMX；跨域语料需要按 §5 的方法重新标定（这是默认值的保守原因）。
 - 性能数字来自 Apple M4 + Python 3.11；Windows/CI 机器会慢 2–3 倍，测试里
   的断言只拦数量级回归（p95 < 1,500 ms / 3,000 ms），不锁具体毫秒。
-- 工作预算截断时结果是"部分检索"（`scan_truncated=True`）：分数仍然精确，
-  但集合可能漏掉排名靠后的候选；这是有意的、被显式标注的取舍。
+- 工作预算截断时结果是"部分检索"（`scan_truncated=True`，空结果也能读到）：
+  分数仍然精确，但集合可能漏掉候选（`max_evals` 路径理论上也可能挤掉一条
+  真实高分的候选）；这是有意的、被显式标注的取舍。
 - `difflib.ratio` 是启发式（Ratcliff/Obershelp），不是严格编辑距离：极端
   构造的字符串（例如每隔几个字符就改动、且改动字符自身重复）可能给出比直觉
   更低的分。这在本 issue 允许的 "difflib/rapidfuzz 级别" 范围内，但黄金集里

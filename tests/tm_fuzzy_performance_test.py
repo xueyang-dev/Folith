@@ -197,24 +197,27 @@ def test_length_bucketing_is_lossless():
     low, high = window
     # 预算放大到不可能触发，验证的是"窗口/上界剪枝无损"这个性质本身。
     generous = {"max_scan": 10**9, "max_evals": 10**9}
-    windowed, truncated_window = tm_store._tm_fuzzy_scores(
+    windowed_scan = tm_store._tm_fuzzy_scores(
         index, normalized, threshold, window=window, **generous)
-    exhaustive, truncated_all = tm_store._tm_fuzzy_scores(
+    exhaustive_scan = tm_store._tm_fuzzy_scores(
         index, normalized, threshold, window=None, **generous)
-    assert truncated_window is False and truncated_all is False
+    assert windowed_scan.truncated is False and exhaustive_scan.truncated is False
+    windowed, exhaustive = windowed_scan.found, exhaustive_scan.found
     assert windowed == exhaustive, "窗口扫描与全量扫描必须给出同一批候选分数"
 
     # Top-K 上界剪枝同样不能改变前 K 名。
     reference = sorted(exhaustive, key=lambda item: (-item[0], item[1]))[:5]
-    pruned, _truncated = tm_store._tm_fuzzy_scores(
-        index, normalized, threshold, window=window, best_count=5, **generous)
+    pruned = tm_store._tm_fuzzy_scores(
+        index, normalized, threshold, window=window, best_count=5,
+        **generous).found
     assert sorted(pruned, key=lambda item: (-item[0], item[1]))[:5] == reference
 
     # 工作预算确实会生效，并且如实报告"部分检索"而不是静默截断。
-    budgeted, truncated = tm_store._tm_fuzzy_scores(
+    budgeted = tm_store._tm_fuzzy_scores(
         index, normalized, threshold, window=window, max_scan=50, max_evals=5)
-    assert truncated is True
-    assert len(budgeted) <= 5
+    assert budgeted.truncated is True
+    assert "eval_budget_exhausted" in budgeted.reasons
+    assert len(budgeted.found) <= 5
 
     # 而且窗口确实剪掉了大部分条目（否则"索引"只是装饰）。
     scanned = (bisect.bisect_right(index.sorted_lengths, high)

@@ -233,7 +233,12 @@ def test_limit_truncates_without_changing_the_order():
 
 
 def test_top_k_pruning_is_exactly_the_sorted_prefix():
-    """``limit`` 触发的是上界剪枝，不能改变前 N 名（含同分平局）。"""
+    """``limit`` 触发的是上界剪枝，不能改变前 N 名（含同分平局）。
+
+    这个等价性**以未触发工作预算为前提**（这里语料很小，必然未截断）：
+    一旦 ``scan_truncated`` 为真，上界排序不等于精确 ratio 排序，前 N 名
+    可能与全量结果不同（文档与 docstring 已限定）。
+    """
     tm = {}
     sources = [GOLDEN_EN, EN_NUMBER_OLD, EN_NAME_OLD, ZH_NUMBER_OLD,
                "The monitoring station documented the sediment budget against "
@@ -557,3 +562,147 @@ def test_pre_context_era_scoped_file_still_matches_exactly(temp_job_env):
     assert items[0]["score"] == 100 and items[0]["kind"] == "exact"
     assert items[0]["context_status"] == "unknown"
     assert path.read_text(encoding="utf-8") == before, "候选查询不得回写 TM 文件"
+
+
+# --------------------------------------------------------------------------
+# 完备性状态（#148 审查 G1）：被预算截断的**空结果**必须能被识别
+# --------------------------------------------------------------------------
+def _anagram_entries(base, count=40, seed=7):
+    """同字符集的乱序段：字符重集上界过线、精确 ratio 很低。
+
+    这是"预算真的起作用、但一条候选都不过阈值"的最省构造：阶段一有大量
+    上界过线者，阶段二把预算用完也找不到能过 75 分的候选。
+    """
+    import random
+
+    rng = random.Random(seed)
+    entries = []
+    for _ in range(count):
+        chars = list(base)
+        rng.shuffle(chars)
+        entries.append("".join(chars))
+    return entries
+
+
+def test_empty_truncated_result_still_reports_truncation(monkeypatch):
+    """预算耗尽 + 零候选时，`[]` 本身不等于"TM 里没有相似段"。"""
+    base = EN_NUMBER_OLD
+    tm = {}
+    for source in _anagram_entries(base):
+        _seed(tm, source, "译文。")
+
+    # 正常预算下：窗口扫完、确实没有候选，状态是 complete（空结果可信）。
+    complete = tm_candidates(tm, EN_NUMBER_NEW, TARGET_ZH)
+    assert complete == []
+    assert complete.scan_truncated is False
+    assert complete.reason == "complete"
+    assert complete.evaluated == len(tm), "窗口内每一条都算过精确分"
+
+    # 预算 = 1：同样的查询，只评估了一条 → 结果不完整。
+    monkeypatch.setenv(tm_store.TM_FUZZY_MAX_EVALS_ENV, "1")
+    truncated = tm_candidates(tm, EN_NUMBER_NEW, TARGET_ZH)
+    assert truncated == [], "这个场景里确实没有候选过线"
+    assert truncated.scan_truncated is True, \
+        "被截断的空结果不能伪装成『TM 里没有相似段』"
+    assert truncated.reason == "eval_budget_exhausted"
+    assert truncated.evaluated == 1
+    assert truncated.scanned > 1, "阶段一确实有大量上界过线者"
+    # 列表行为不变：空列表比较照旧，状态只在属性上。
+    assert list(truncated) == []
+
+
+def test_scan_budget_truncation_is_reported():
+    """长度窗口超过廉价扫描上限时（max_scan=6,000）也要置位。"""
+    base = ("Station {index} documented the sediment budget against the 2019 "
+            "baseline before the winter closure.")
+    tm = {}
+    for index in range(6_100):
+        _seed(tm, base.format(index=index), "译文。")
+    query = ("Station 100 documented the sediment budget against the 2024 "
+             "baseline before the winter closure.")
+
+    items = tm_candidates(tm, query, TARGET_ZH, limit=5)
+    assert items, "最近的样板段仍然要能返回"
+    assert items[0]["source"].startswith("Station 100 "), "Top-1 仍然正确"
+    assert items.scan_truncated is True
+    assert items.window_size > tm_store.TM_FUZZY_DEFAULT_MAX_SCAN
+    assert "scan_budget_exhausted" in items.reason
+    # 候选条目上也有便捷位（非空结果两条路径都标注）。
+    assert all(item["scan_truncated"] is True for item in items)
+
+
+def test_complete_result_reports_complete_status():
+    tm = {}
+    _seed(tm, GOLDEN_EN, "译文。")
+    items = tm_candidates(tm, _prefix_mutation(GOLDEN_EN, 14), TARGET_ZH)
+    assert items and items[0]["score"] == 85
+    assert items.scan_truncated is False
+    assert items.reason == "complete"
+    assert items.evaluated >= 1 and items.window_size >= 1
+
+
+def test_fail_closed_results_carry_a_reason():
+    """没有语言 / 空原文是正常的空结果，但原因要能读出来（#108 精神）。"""
+    tm = {}
+    _seed(tm, GOLDEN_EN, "译文。")
+    no_language = tm_candidates(tm, GOLDEN_EN, "")
+    assert no_language == [] and no_language.reason == "no_target_language"
+    assert no_language.scan_truncated is False
+
+    empty_source = tm_candidates(tm, "   ", TARGET_ZH)
+    assert empty_source == [] and empty_source.reason == "empty_source"
+    assert empty_source.scan_truncated is False
+
+
+def test_returned_candidates_are_a_list_subclass():
+    """列表行为完全不变（切片/比较/json 都能用），状态只加在属性上。"""
+    import json
+
+    tm = {}
+    for source in (GOLDEN_EN, EN_NUMBER_OLD):
+        _seed(tm, source, "译文。")
+    items = tm_candidates(tm, EN_NUMBER_NEW, TARGET_ZH, threshold=1)
+    assert isinstance(items, list)
+    assert isinstance(items, tm_store.TmCandidates)
+    assert items == list(items)
+    assert items[:2] == list(items)[:2]
+    assert len(json.loads(json.dumps(items))) == len(items)
+    assert "reason=" in repr(items)
+
+
+# --------------------------------------------------------------------------
+# 只读性（#148 审查 G5）：候选查询不得回写 TM 文件
+# --------------------------------------------------------------------------
+def test_candidate_queries_never_write_the_tm_file(temp_job_env, monkeypatch):
+    """字节与 mtime 完全不变——覆盖命中 / 不命中 / 预算截断三条路径。"""
+    sources = [GOLDEN_EN, EN_NUMBER_OLD, EN_NAME_OLD] + _anagram_entries(EN_NUMBER_OLD)
+    tm = core.load_tm(None)
+    for index, source in enumerate(sources):
+        _seed(tm, source, f"第{index}段译文。")
+    core.save_tm(tm)
+
+    path = core.tm_path(None)
+    assert path.is_file()
+    before_bytes = path.read_bytes()
+    before_stat = path.stat()
+    loaded = core.load_tm(None)
+
+    # 1) 命中（exact + 模糊候选）
+    hit = tm_candidates(loaded, EN_NUMBER_NEW, TARGET_ZH, threshold=1)
+    assert hit
+    # 2) 不命中
+    assert tm_candidates(loaded, UNMATCHED_EN, TARGET_ZH) == []
+    # 3) 预算截断（空结果 + truncated=True）
+    monkeypatch.setenv(tm_store.TM_FUZZY_MAX_EVALS_ENV, "1")
+    truncated = tm_candidates(loaded, EN_NUMBER_NEW, TARGET_ZH, threshold=1)
+    monkeypatch.delenv(tm_store.TM_FUZZY_MAX_EVALS_ENV)
+    assert truncated.scan_truncated is True
+
+    after_bytes = path.read_bytes()
+    after_stat = path.stat()
+    assert after_bytes == before_bytes, "候选查询改写了 TM 文件"
+    assert after_stat.st_mtime_ns == before_stat.st_mtime_ns, "候选查询 touch 了 TM 文件"
+    assert after_stat.st_size == before_stat.st_size
+    # 目录里也不允许冒出临时文件（save_tm 的 staging 文件泄漏会在此暴露）。
+    leftovers = list(path.parent.glob("*.tmp"))
+    assert leftovers == []

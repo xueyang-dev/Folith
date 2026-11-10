@@ -11,6 +11,7 @@ import heapq
 import math
 import os
 import unicodedata
+from collections import namedtuple
 from folith import project as _project
 from folith import translation_target as _translation_target
 from folith.textual import has_textual_content
@@ -270,6 +271,45 @@ def tm_candidate_index(tm, target_lang=None):
     return index
 
 
+class TmCandidates(list):
+    """候选列表 + 本次检索的完备性状态；**list 行为完全不变**。
+
+    为什么返回子类而不是纯 list：`scan_truncated` 是"集合可能不完整"的
+    机器可读标志，而它必须能在**空结果**上被读到。只把标记挂在候选条目上时，
+    "预算耗尽、一条都没过线"与"TM 里确实没有相似段"在返回值上完全不可区分，
+    调用方就会把一次被截断的检索当成"没有记忆"——正是 #148 要避免的静默截断。
+
+    属性（不影响 `len()` / 迭代 / 下标 / 切片 / 比较）：
+
+    * ``scan_truncated``：本次检索是否因工作预算而**部分检索**；
+    * ``reason``：``complete`` / ``eval_budget_exhausted`` /
+      ``scan_budget_exhausted`` / ``eval_budget_exhausted+scan_budget_exhausted``
+      / ``no_target_language`` / ``empty_source``（后两者是 fail-closed 的
+      正常空结果，不是截断）；
+    * ``evaluated``：实际做了多少次昂贵的 ``ratio()`` 评估；
+    * ``scanned``：进入阶段二候选池（廉价上界过线）的条数；
+    * ``window_size``：长度窗口内的条目总数（未按预算裁剪前）。
+
+    注意：`list(...)` / 切片 / JSON 序列化得到的是普通 list，状态会丢——
+    需要完备性判断的调用方应直接读**这个返回值**的属性。
+    """
+
+    __slots__ = ("scan_truncated", "reason", "evaluated", "scanned",
+                 "window_size")
+
+    def __init__(self, items=()):
+        super().__init__(items)
+        self.scan_truncated = False
+        self.reason = "complete"
+        self.evaluated = 0
+        self.scanned = 0
+        self.window_size = 0
+
+    def __repr__(self):
+        return (f"{type(self).__name__}({list.__repr__(self)}, "
+                f"reason={self.reason!r}, scan_truncated={self.scan_truncated!r})")
+
+
 def _tm_fuzzy_length_window(query_length, threshold):
     """由阈值反推候选长度的**无损**窗口。
 
@@ -289,6 +329,17 @@ def _tm_fuzzy_length_window(query_length, threshold):
     return max(0, low), high
 
 
+def _tm_window_bounds(index, window):
+    """长度窗口在「按长度排序」数组里的半开区间 ``[start, stop)``。"""
+    lengths = index.sorted_lengths
+    if window is None:
+        return 0, len(lengths)
+    low, high = window
+    start = bisect.bisect_left(lengths, low)
+    stop = len(lengths) if high is None else bisect.bisect_right(lengths, high)
+    return start, max(start, stop)
+
+
 def _tm_window_positions(index, window, query_length, max_scan):
     """按"长度窗口 + 长度最接近优先"产出候选位置（确定性顺序）。
 
@@ -298,12 +349,7 @@ def _tm_window_positions(index, window, query_length, max_scan):
     """
     order = index.order
     lengths = index.sorted_lengths
-    if window is None:
-        start, stop = 0, len(order)
-    else:
-        low, high = window
-        start = bisect.bisect_left(lengths, low)
-        stop = len(order) if high is None else bisect.bisect_right(lengths, high)
+    start, stop = _tm_window_bounds(index, window)
     total = stop - start
     if total <= 0:
         return
@@ -327,15 +373,21 @@ def _tm_window_positions(index, window, query_length, max_scan):
             yielded += 1
 
 
+#: `_tm_fuzzy_scores` 的结果：候选 + 完备性状态（内部使用，公开面是 TmCandidates）。
+_FuzzyScan = namedtuple(
+    "_FuzzyScan",
+    "found truncated reasons evaluated scanned window_size")
+
+
 def _tm_fuzzy_scores(index, normalized_query, threshold, *, window=None,
                      best_count=None, max_scan=None, max_evals=None):
-    """对索引里的候选算确定性相似度，返回 ``([(score, position), ...], truncated)``。
+    """对索引里的候选算确定性相似度，返回 `_FuzzyScan`。
 
     两阶段，所有剪枝都是**无损**的（不改变任何入选分数）：
 
     阶段一（廉价上界）：在长度窗口内逐个候选算 ``real_quick_ratio``（长度上界，
     常数时间）和 ``quick_ratio``（字符重集上界，O(len)），只留下上界最高的
-    ``max_evals`` 条；被挤掉的数量记进 ``truncated``。
+    ``max_evals`` 条；被挤掉的数量说明集合不再完整（``truncated``）。
 
     阶段二（昂贵精确分）：只对留下的候选算 ``ratio()``（O(len^2) 的匹配块
     构建）。``real_quick_ratio`` / ``quick_ratio`` 都是 ``ratio`` 的上界，
@@ -345,8 +397,15 @@ def _tm_fuzzy_scores(index, normalized_query, threshold, *, window=None,
     为什么要两阶段而不是边扫边算：样板段 TM 里字符重集上界几乎等于 1，前两层
     剪不掉东西，50,000 条穷举会把一次查询拖到数秒。此时"先按上界排序、再对
     最有可能的一批算精确分"既把最坏情况压进预算，也避免"扫描顺序决定质量"
-    ——顺序按上界降序（同分按位置升序），是确定性的。代价是集合可能不完整：
-    第二个返回值置真，调用方据此把候选标成"部分检索"，**不做静默截断**。
+    ——顺序按上界降序（同分按位置升序），是确定性的。
+
+    **两条截断路径都要如实上报**（这是 #148 审查的必修项）：
+
+    * ``max_evals`` 预算：上界过线的候选多于预算，挤掉的可能是真实候选；
+    * ``max_scan`` 预算：长度窗口本身超过廉价扫描上限，窗口尾部根本没看。
+
+    两者都会体现在 ``truncated`` 与 ``reasons`` 里；即使最终一条候选都没过
+    阈值，``truncated`` 仍然为真——由调用方（`tm_candidates`）挂到返回列表上。
 
     ``best_count``（调用方只要前 K 名）在阶段二把剪枝线抬到"当前第 K 名分数"：
     上界都够不到第 K 名的候选不必算精确分，不影响前 K 名。
@@ -360,12 +419,16 @@ def _tm_fuzzy_scores(index, normalized_query, threshold, *, window=None,
     if max_scan is None:
         max_scan = TM_FUZZY_DEFAULT_MAX_SCAN
     normalized = index.normalized
+    start, stop = _tm_window_bounds(index, window)
+    window_size = stop - start
+    truncated = window_size > max_scan
 
     # ---- 阶段一：廉价上界，保留上界最高的 max_evals 条 ----
     matcher = difflib.SequenceMatcher()
     matcher.set_seq2(normalized_query)
     candidates = []          # 小顶堆：(上界, 位置)
-    truncated = False
+    scanned = 0
+    dropped = False
     for pos in _tm_window_positions(index, window, len(normalized_query), max_scan):
         candidate = normalized[pos]
         if candidate == normalized_query:
@@ -377,17 +440,20 @@ def _tm_fuzzy_scores(index, normalized_query, threshold, *, window=None,
         bound = matcher.quick_ratio()
         if bound < cutoff:
             continue
+        scanned += 1
         if len(candidates) < max_evals:
             heapq.heappush(candidates, (bound, pos))
         elif bound > candidates[0][0]:
             heapq.heapreplace(candidates, (bound, pos))
-            truncated = True
+            dropped = True
         else:
-            truncated = True
+            dropped = True
+    truncated = truncated or dropped
 
     # ---- 阶段二：只对上界最高的那批算精确分（上界降序 = 最有可能的先算）----
     found = []
     best_scores = []         # 已算出的分数（升序），用于 Top-K 剪枝线
+    evaluated = 0
     for bound, pos in sorted(candidates, key=lambda item: (-item[0], item[1])):
         required = threshold
         if best_count is not None and len(best_scores) >= best_count:
@@ -397,6 +463,7 @@ def _tm_fuzzy_scores(index, normalized_query, threshold, *, window=None,
         if bound < max(cutoff, (required - 0.5) / 100.0):
             continue
         matcher.set_seq1(normalized[pos])
+        evaluated += 1
         score = int(round(matcher.ratio() * 100))
         if score > TM_FUZZY_MAX_SCORE:
             score = TM_FUZZY_MAX_SCORE
@@ -407,7 +474,16 @@ def _tm_fuzzy_scores(index, normalized_query, threshold, *, window=None,
             bisect.insort(best_scores, score)
             if len(best_scores) > best_count * 4:
                 del best_scores[:-best_count * 2]
-    return found, truncated
+
+    reasons = []
+    if window_size > max_scan:
+        reasons.append("scan_budget_exhausted")
+    if dropped:
+        reasons.append("eval_budget_exhausted")
+    return _FuzzyScan(found=found, truncated=truncated,
+                      reasons=tuple(reasons), evaluated=evaluated,
+                      scanned=scanned, window_size=window_size)
+
 
 def tm_candidates(tm, source, target_lang, *, previous_source=None,
                   next_source=None, threshold=None, limit=None, fuzzy=None,
@@ -436,15 +512,22 @@ def tm_candidates(tm, source, target_lang, *, previous_source=None,
         `tm_fuzzy_default_threshold()`。精确/规范化候选不受它影响（恒为 100）。
     ``limit``
         返回条数上限；``None`` 表示不截断（在全部候选上排序）。给出 ``limit``
-        时会启用 Top-K 上界剪枝：返回结果与"全量排序后取前 N 名"逐条相同，
-        但在样板段很多的 TM 上快一个数量级。负值按 0 处理。
+        时会启用 Top-K 上界剪枝。**当且仅当本次检索没有被工作预算截断
+        （``result.scan_truncated is False``）时**，返回结果与"全量排序后取
+        前 N 名"逐条相同；一旦截断，阶段一按"上界降序"淘汰，上界排序不等于
+        精确 ``ratio`` 排序，前 N 名可能不同。负值按 0 处理。
     ``fuzzy``
         是否返回模糊候选。``False`` 时只返回 exact/normalized，也就是 0.8.1 的
         可证明等价行为——这是回滚路径（单参数、无数据迁移）。``None`` 时取
         `tm_fuzzy_enabled_default()`（可被 ``FOLIOTHREAD_TM_FUZZY=0`` 关闭）。
     ``index``
         由 `tm_candidate_index` 预构建的索引，用于一次运行内多次查询；语言必须
-        与 ``target_lang`` 一致。
+        与 ``target_lang`` 一致（不一致直接抛 ``ValueError``，不跨语言猜）。
+
+        **索引是快照**：它不跟随 ``tm`` 的变化自动更新。``tm`` 里新增、删除、
+        改审校状态或改目标语言之后，必须重新 `tm_candidate_index` —— 复用旧
+        索引只会按旧快照返回候选（不会读出错数据，但会漏掉新条目）。一次运行
+        内 TM 不变时复用它是安全的，也是 50k 规模下的推荐用法。
 
     返回的每一项::
 
@@ -460,25 +543,35 @@ def tm_candidates(tm, source, target_lang, *, previous_source=None,
             "reviewed": True,
             "provenance": 记录自带来源（如 "tmx_import"），没有则空串,
             "target_lang": 该条目的目标语言原样写法,
-            "scan_truncated": 模糊检索是否因工作预算耗尽而"部分检索"（见下）,
+            "scan_truncated": 该条目所属检索是否"部分检索"（便捷位；空结果时
+                              只能从返回对象上读，见下）,
         }
 
     排序键：分数降序 → 等价程度（exact > normalized > fuzzy）→ 原文 → 键。
     全部是确定性比较，没有哈希顺序或时间抖动的参与。
 
+    返回类型是 `TmCandidates`（``list`` 的子类，列表行为完全不变），额外带
+    本次检索的完备性状态：``scan_truncated`` / ``reason`` / ``evaluated`` /
+    ``scanned`` / ``window_size``。**空结果也必须能读出状态**：
+
+    * ``tm_candidates(...) == []`` 且 ``result.scan_truncated is True``
+      → 这次检索被预算截断、一条都没找到，不等于"TM 里没有相似段"；
+    * ``result.scan_truncated is False`` → 窗口内是穷举的，集合完整。
+
     性能边界（实测数字见 docs/tm-fuzzy-matching-0.8.2.md）：长度窗口 / 上界
-    剪枝在预算内是**穷举**的，结果与全量扫描逐条相同；样板段极多的 TM 上
-    昂贵评估会超过预算（``FOLIOTHREAD_TM_FUZZY_MAX_EVALS``，默认 400），此时
-    按"长度最接近优先"截断并给候选打上 ``scan_truncated=True``——分数仍然
-    精确，但集合可能不完整，调用方必须如实展示这一点。
+    剪枝在预算内是**穷举**的；样板段极多的 TM 上昂贵评估会超过预算
+    （``FOLIOTHREAD_TM_FUZZY_MAX_EVALS``，默认 400），或长度窗口超过廉价扫描
+    上限（``TM_FUZZY_DEFAULT_MAX_SCAN``，6,000），此时 ``scan_truncated`` 为
+    真、``reason`` 说明是哪一路预算（可能两者都有）。分数仍然精确，但集合可能
+    不完整，调用方必须如实展示这一点（不要静默省略）。
     """
     language = normalize_language(target_lang)
     if not language:
-        return []
+        return _tm_candidates_result([], reason="no_target_language")
     raw_query = str(source or "").replace("\n", " ")
     normalized_query = tm_normalize(raw_query)
     if not normalized_query:
-        return []
+        return _tm_candidates_result([], reason="empty_source")
     resolved_threshold = tm_fuzzy_default_threshold() if threshold is None \
         else int(threshold)
     resolved_threshold = min(100, max(0, resolved_threshold))
@@ -492,9 +585,10 @@ def tm_candidates(tm, source, target_lang, *, previous_source=None,
             "候选索引与目标语言不一致：索引是 "
             f"{index.target_lang!r}，查询是 {language!r}（不能跨语言复用索引）")
     if resolved_limit == 0:
-        return []
+        return _tm_candidates_result([], reason="complete")
 
     items = []
+    scan = None
     # 1) 可证明等价：精确（原文逐字相同）与规范化等价（只差排版），都是 100。
     for pos in index.by_normalized.get(normalized_query, ()):
         source_text = index.sources[pos]
@@ -511,20 +605,36 @@ def tm_candidates(tm, source, target_lang, *, previous_source=None,
         if best_count != 0:
             window = _tm_fuzzy_length_window(len(normalized_query),
                                              resolved_threshold)
-            found, truncated = _tm_fuzzy_scores(
+            scan = _tm_fuzzy_scores(
                 index, normalized_query, resolved_threshold, window=window,
                 best_count=best_count)
-            for score, pos in found:
+            for score, pos in scan.found:
                 items.append(_tm_candidate_item(
                     index, pos, score, "fuzzy", previous_source, next_source,
-                    scan_truncated=truncated))
+                    scan_truncated=scan.truncated))
 
     items.sort(key=lambda item: (
         -item["score"], _TM_CANDIDATE_KIND_RANK[item["kind"]],
         item["source"], item["key"]))
     if resolved_limit is not None:
-        return items[:resolved_limit]
-    return items
+        items = items[:resolved_limit]
+    result = _tm_candidates_result(items)
+    if scan is not None:
+        result.scan_truncated = scan.truncated
+        result.reason = "+".join(scan.reasons) if scan.reasons else "complete"
+        result.evaluated = scan.evaluated
+        result.scanned = scan.scanned
+        result.window_size = scan.window_size
+    return result
+
+
+def _tm_candidates_result(items, *, reason="complete"):
+    """把候选装进带完备性状态的列表子类（状态字段的语义见 `TmCandidates`）。"""
+    result = TmCandidates(items)
+    result.reason = reason
+    result.scan_truncated = reason not in ("complete", "no_target_language",
+                                           "empty_source")
+    return result
 
 
 def _tm_candidate_item(index, pos, score, kind, previous_source, next_source,
