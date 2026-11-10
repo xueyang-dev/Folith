@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture for issue #150 / review M1: the first langSet has no <term>, so
+     the two *term-bearing* languages are en + zh-CN.  zh-CN is imported and
+     must NOT be reported as a lost "third language"; fr is the third
+     term-bearing language.  The de descrip belongs to a non-imported langSet
+     and must not pollute the entry-level loss inventory. -->
+<martif type="TBX" xml:lang="en">
+  <martifHeader>
+    <fileDesc><sourceDesc><p>Folith issue #150 M1 fixture</p></sourceDesc></fileDesc>
+  </martifHeader>
+  <text>
+    <body>
+      <termEntry id="e1">
+        <langSet xml:lang="de">
+          <descripGrp>
+            <descrip type="definition">German metadata with no term</descrip>
+          </descripGrp>
+        </langSet>
+        <langSet xml:lang="en">
+          <tig><term>Hello</term></tig>
+        </langSet>
+        <langSet xml:lang="zh-CN">
+          <tig><term>你好</term></tig>
+        </langSet>
+        <langSet xml:lang="fr">
+          <tig><term>Bonjour</term></tig>
+        </langSet>
+      </termEntry>
+    </body>
+  </text>
+</martif>

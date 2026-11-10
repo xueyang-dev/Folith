@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture for issue #150: two units match the caller's target language,
+     one declares zh-TW. Declared behaviour: matching units are imported, the
+     mismatched unit is rejected (never retagged), and the report warns. -->
+<tmx version="1.4">
+  <header creationtool="Trados" segtype="sentence" adminlang="en" srclang="en"
+          datatype="plaintext"/>
+  <body>
+    <tu tuid="p1">
+      <tuv xml:lang="en"><seg>Matching unit one</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>匹配单元一</seg></tuv>
+    </tu>
+    <tu tuid="p2">
+      <tuv xml:lang="en"><seg>Traditional only unit</seg></tuv>
+      <tuv xml:lang="zh-TW"><seg>僅繁體單元</seg></tuv>
+    </tu>
+    <tu tuid="p3">
+      <tuv xml:lang="en"><seg>Matching unit two</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>匹配单元二</seg></tuv>
+    </tu>
+  </body>
+</tmx>

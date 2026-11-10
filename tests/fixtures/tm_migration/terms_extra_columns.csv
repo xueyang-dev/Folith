@@ -1,0 +1,5 @@
+Source,Target,Status,Owner,Comments,Legacy ID
+Skopos theory,目的论,locked,alice,approved in 2019,TERM-001
+Fidelity,忠实性,provisional,bob,,TERM-002
+,empty source,locked,carol,orphan row,TERM-003
+Missing target,,locked,dave,dropped row,TERM-004
