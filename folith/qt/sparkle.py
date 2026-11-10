@@ -5,7 +5,7 @@ import ctypes
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, QTimer
 
 
 class SparkleUpdater:
@@ -16,7 +16,12 @@ class SparkleUpdater:
         self.library = ctypes.CDLL(str(contents / "Frameworks" / "FolithUpdater.dylib"))
         # Retain callback and CDLL for the complete application lifetime.
         # Leave the native delegate stack before entering Qt's close flow.
-        self.callback = ctypes.CFUNCTYPE(None)(lambda: QTimer.singleShot(0, restart))
+        # The context object makes Qt cancel the queued restart if this updater is
+        # torn down before the timer fires (no context -> callback after destruction).
+        self.context = QObject()
+        context = self.context
+        self.callback = ctypes.CFUNCTYPE(None)(
+            lambda: QTimer.singleShot(0, context, restart))
         self.library.folith_updater_start.argtypes = [ctypes.CFUNCTYPE(None)]
         self.library.folith_updater_start.restype = ctypes.c_int
         self.library.folith_updater_check.argtypes = []

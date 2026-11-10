@@ -1,6 +1,5 @@
 # Existing QTimer.singleShot(msec, callable) sites without a context
 # object (ratchet). Each fix batch removes its own lines.
-folith/qt/sparkle.py:19
 folith/qt/views.py:1544
 folith/qt/views.py:1922
 folith/qt/views.py:4255
