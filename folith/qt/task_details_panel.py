@@ -58,11 +58,7 @@ class TaskDetailsPanel(QWidget):
             '把本任务锁定的术语、确认的风格规则与人工决定提升到项目记忆，'
             '同项目的后续任务会用上它们。候选和未审校的内容不会被提升。'))
         self.promote_button.clicked.connect(self.promoteRequested.emit)
-        memory = QHBoxLayout()
-        memory.setContentsMargins(0, 0, 0, 0)
-        memory.addWidget(self.promote_button)
-        memory.addStretch(1)
-
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(theme_module.SPACE["md"])
@@ -73,7 +69,11 @@ class TaskDetailsPanel(QWidget):
         column.addWidget(self.groups_card)
         column.addWidget(self._divider())
         column.addWidget(self._build_usage_card())
+        memory = QHBoxLayout()
         column.addLayout(memory)
+        memory.setContentsMargins(0, 0, 0, 0)
+        memory.addWidget(self.promote_button)
+        memory.addStretch(1)
         column.addStretch(1)
 
     @staticmethod
@@ -89,11 +89,11 @@ class TaskDetailsPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme_module.SPACE["xs"] + 2)
         head = QHBoxLayout()
+        layout.addLayout(head)
         head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(style_module.SectionLabel(i18n.tr(title)), 1)
         if action is not None:
             head.addWidget(action)
-        layout.addLayout(head)
         return section, layout
 
     # ---- 全文理解 / 用量与复用（来自 adapter.run_facts） --------------------

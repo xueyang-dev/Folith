@@ -575,15 +575,6 @@ class ReviewPanel(QWidget):
         title_row.addWidget(self.source_button, 0, Qt.AlignmentFlag.AlignTop)
         title_row.addWidget(self.item_chip, 0, Qt.AlignmentFlag.AlignTop)
 
-        content_column = QVBoxLayout()
-        content_column.setContentsMargins(0, 0, 0, 0)
-        content_column.setSpacing(10)
-        content_column.addWidget(self.item_body, 0)
-        # 术语决定控件紧跟在文本之后：决定与它所影响的译文保持就近。
-        content_column.addWidget(self.conflict)
-        content_column.addWidget(self.source_confirm_box)
-        content_column.addWidget(self.source_note_edit)
-        content_column.addStretch(1)
         self.action_bar = QFrame()
         self.action_bar.setObjectName("qaActionBar")
         action_layout = QVBoxLayout(self.action_bar)
@@ -605,6 +596,7 @@ class ReviewPanel(QWidget):
         action_layout.addWidget(self.shortcut_hint)
 
         # ---- 区域 B：译文工作区（中间，视觉中心；右侧可并排原页）---------------
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         self.workspace_area = QFrame()
         self.workspace_area.setObjectName("qaWorkspace")
         workspace = QVBoxLayout(self.workspace_area)
@@ -612,11 +604,20 @@ class ReviewPanel(QWidget):
         workspace.setSpacing(0)
         workspace.addWidget(workspace_header)
         work_split = QHBoxLayout()
+        workspace.addLayout(work_split, 1)
         work_split.setContentsMargins(20, 16, 20, 16)
         work_split.setSpacing(14)
+        content_column = QVBoxLayout()
         work_split.addLayout(content_column, 2)
+        content_column.setContentsMargins(0, 0, 0, 0)
+        content_column.setSpacing(10)
+        content_column.addWidget(self.item_body, 0)
+        # 术语决定控件紧跟在文本之后：决定与它所影响的译文保持就近。
+        content_column.addWidget(self.conflict)
+        content_column.addWidget(self.source_confirm_box)
+        content_column.addWidget(self.source_note_edit)
+        content_column.addStretch(1)
         work_split.addWidget(self.pdf, 1)
-        workspace.addLayout(work_split, 1)
         workspace.addWidget(self.action_bar)
 
         # ---- 区域 C：证据检查器（右侧，独立只读面）------------------------------
@@ -638,20 +639,20 @@ class ReviewPanel(QWidget):
         self.evidence_area.setMinimumWidth(180)
         self.evidence_area.setMaximumWidth(320)
 
-        body = QHBoxLayout()
-        body.setSpacing(0)
-        body.addWidget(self.queue_area, 0)
-        body.addWidget(self.workspace_area, 2)
-        body.addWidget(self.evidence_area, 0)
-
         # 队列与详情装在一个容器里：审校队列整个是空的时，它整体让位给一个空状态
         # （设计审校 40 号 4.1：不再画五个 0 计数的筛选、一个空列表和一块空白详情）。
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         self.content = QWidget()
         content_layout = QVBoxLayout(self.content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
         content_layout.addWidget(self.toolbar)
+        body = QHBoxLayout()
         content_layout.addLayout(body, 1)
+        body.setSpacing(0)
+        body.addWidget(self.queue_area, 0)
+        body.addWidget(self.workspace_area, 2)
+        body.addWidget(self.evidence_area, 0)
         self.empty_state = style_module.EmptyState(icon="shield-check", page=True,
                                                    action=i18n.tr('审校全部段落'))
         self.empty_state.actionTriggered.connect(self.reviewAllRequested.emit)
