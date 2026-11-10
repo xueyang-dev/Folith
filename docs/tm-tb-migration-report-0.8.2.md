@@ -6,8 +6,7 @@ wizard (precheck → import → report → archive) is a separate follow-up; the
 report shape below is the contract that wizard will render.
 
 Baseline: `origin/main` at `8109b9c2`. All numbers in the tests were measured
-locally with `/Users/xueyang/Dev/FolioThread/venv/bin/python` (3.11.3,
-pytest 8.4.2).
+locally with the repository's `venv/bin/python` (3.11.3, pytest 8.4.2).
 
 ## What was wrong
 
@@ -223,7 +222,7 @@ twin. A sample generated from the fixture lives in
 
 ```bash
 cd .loop/worktrees/tm-migration
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest tests/tm_migration_report_test.py -q
+<repo>/venv/bin/python -m pytest tests/tm_migration_report_test.py -q
 ```
 
 Covered, item by item against the issue's acceptance criteria:

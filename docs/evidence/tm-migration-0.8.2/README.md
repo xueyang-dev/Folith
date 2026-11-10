@@ -25,5 +25,5 @@ modified fixture would):
 
 ```bash
 cd .loop/worktrees/tm-migration
-/Users/xueyang/Dev/FolioThread/venv/bin/python -m pytest tests/tm_migration_report_test.py -q
+<repo>/venv/bin/python -m pytest tests/tm_migration_report_test.py -q
 ```
