@@ -12,7 +12,10 @@ issue #150, generated from the fixtures in `tests/fixtures/tm_migration/` with
 
 The numbers match the item-by-item assertions in
 `tests/tm_migration_report_test.py`; the report structure matches
-`tests/fixtures/tm_migration/report_schema_v1.json`.
+`tests/fixtures/tm_migration/report_schema_v1.json`. The loss inventory now also
+carries the file-level categories (`tmx_header`, `tbx_root_metadata`) and the
+TBX entry-level categories (`tbx_entry_metadata`), which are reported with
+`affected: 1` = "this file".
 
 One deliberate difference from a runtime report: the `persistence` block was
 rewritten to the stable filenames above (a runtime report uses

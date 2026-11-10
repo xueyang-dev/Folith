@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import time
 import uuid
 from pathlib import Path
@@ -120,6 +121,12 @@ def test_tmx_classified_counts_and_loss_inventory_are_exact(output_dir):
     assert loss["tmx_tuv_attributes"]["fields"] == ["creationdate"]
     assert loss["tmx_extra_languages"]["affected"] == 1
     assert loss["tmx_extra_languages"]["fields"] == ["fr"]
+    # File-level header metadata is dropped once per imported file; it is not a
+    # per-unit loss, so it does not bump total_affected (documented as such).
+    assert loss["tmx_header"]["affected"] == 1
+    assert loss["tmx_header"]["fields"] == [
+        "adminlang", "creationdate", "creationtool", "creationtoolversion",
+        "datatype", "note", "o-tmf", "segtype", "srclang"]
     # te-3 (conflict) and te-4 (ineligible) carry metadata too, but their
     # metadata never reached the store, so it is not "lost" -- only dropped
     # along with the rejected unit.  The total counts imported units only.
@@ -135,6 +142,7 @@ def test_tmx_classified_counts_and_loss_inventory_are_exact(output_dir):
         "status": "match",
         "action": "none",
         "mismatch_units": 0,
+        "unverified_units": 0,
         "undeclared_target_units": 1,
         "message": report["language_pair"]["message"],
     }
@@ -231,6 +239,9 @@ def test_tmx_partial_language_mismatch_warns_and_rejects_only_mismatched(output_
 
     report = result["report"]
     assert result["added"] == 2
+    # M3: the legacy `skipped` field now includes language-mismatch rejections,
+    # so the adapter's "skipped" number can no longer hide them.
+    assert result["skipped"] == 1
     assert report["counts"]["skipped_language_mismatch"] == 1
     assert report["counts"]["total"] == 3
     assert report["status"] == "partial"
@@ -259,7 +270,12 @@ def test_tmx_unknown_expected_language_is_explicitly_warned(output_dir):
                           target_lang="Klingon")[0]["target"] == "匹配单元一"
 
 
-def test_tmx_return_shape_without_report_is_unchanged(output_dir):
+def test_tmx_return_shape_without_report_is_stable(output_dir):
+    """Default path keeps the shape/keys; selection semantics are documented.
+
+    This fixture declares a matching language, so it cannot see the language
+    policy; that policy has its own tests below (B1).
+    """
     result = core.import_tmx(_fixture("metadata_rich.tmx"), target_lang=TMX_TARGET)
     assert set(result) == {"added", "skipped"}
     assert result == {"added": 5, "skipped": 1}
@@ -348,7 +364,7 @@ def test_tmx_real_scale_import_performance_smoke(output_dir):
     assert result["report"]["counts"]["total"] == 1200
     # Loose upper bound: this guards against accidental quadratic parsing, not
     # against a slow machine.
-    assert elapsed < 20.0, f"1200 条 TMX 导入耗时 {elapsed:.2f}s，疑似退化"
+    assert elapsed < 5.0, f"1200 条 TMX 导入耗时 {elapsed:.2f}s，疑似 O(n^2) 退化"
 
 
 # ============================ TBX ============================
@@ -387,6 +403,12 @@ def test_tbx_classified_counts_and_loss_inventory_are_exact(output_dir):
     assert loss["tbx_multiple_terms"]["fields"] == ["zh-CN"]
     assert loss["tbx_descrip"]["affected"] == 1
     assert loss["tbx_descrip"]["fields"] == ["definition"]
+    assert loss["tbx_entry_metadata"]["affected"] == 1
+    assert loss["tbx_entry_metadata"]["fields"] == ["context", "xref"]
+    assert loss["tbx_root_metadata"]["affected"] == 1
+    assert loss["tbx_root_metadata"]["fields"] == [
+        "admin", "encodingDesc", "fileDesc", "martifHeader", "p", "sourceDesc",
+        "transac"]
     assert report["metadata_loss"]["total_affected"] == 2
 
     assert report["status"] == "partial"
@@ -500,3 +522,224 @@ def test_termbase_parse_failure_reports_and_returns_nothing(output_dir):
     assert report["status"] == "failed"
     assert report["counts"]["imported"] == 0
     assert Path(report["persistence"]["json"]).is_file()
+
+
+# ==================== B1: language-pair policy (review 332) ====================
+
+def _tmx_with_target_lang(xml_lang, source="Hello there", target="你好"):
+    return io.BytesIO(f'''<?xml version="1.0"?>
+<tmx version="1.4"><header srclang="en"/><body>
+<tu><tuv xml:lang="en"><seg>{source}</seg></tuv>
+<tuv xml:lang="{xml_lang}"><seg>{target}</seg></tuv></tu>
+</body></tmx>'''.encode("utf-8"))
+
+
+@pytest.mark.parametrize("declared", ["zh", "zh-CN", "ZH-cn"])
+def test_tmx_compatible_target_tags_are_imported(output_dir, declared):
+    result = core.import_tmx(_tmx_with_target_lang(declared),
+                             target_lang=TMX_TARGET, report=True)
+    assert result["added"] == 1
+    assert result["skipped"] == 0
+    pair = result["report"]["language_pair"]
+    assert pair["status"] == "match" and pair["action"] == "none"
+    assert core.tm_lookup(core.load_tm(), "Hello there",
+                          target_lang=TMX_TARGET)[0]["target"] == "你好"
+
+
+def test_tmx_display_name_and_wider_tag_are_mutually_recognised(output_dir):
+    result = core.import_tmx(_tmx_with_target_lang("en"),
+                             target_lang="English", report=True)
+    assert result["added"] == 1
+    assert result["report"]["language_pair"]["status"] == "match"
+
+
+def test_tmx_unprovable_tags_fall_back_to_caller_language_with_warning(output_dir):
+    """zh-Hans has no existing repo mapping: import like main, but warn.
+
+    `folith/source_languages.py` has no Hans/Hant/Script inference, so the
+    review's rule 3 applies: never block on an unprovable tag.
+    """
+    result = core.import_tmx(_tmx_with_target_lang("zh-Hans"),
+                             target_lang=TMX_TARGET, report=True)
+    assert result["added"] == 1
+    pair = result["report"]["language_pair"]
+    assert pair["status"] == "unverified"
+    assert pair["action"] == "warned"
+    assert pair["unverified_units"] == 1
+    warnings = {warning["code"]: warning for warning
+                in result["report"]["warnings"]}
+    assert warnings["language_pair_unverified"]["count"] == 1
+    assert core.tm_lookup(core.load_tm(), "Hello there",
+                          target_lang=TMX_TARGET)[0]["target"] == "你好"
+
+
+@pytest.mark.parametrize("declared", ["zh-TW", "en-US", "en"])
+def test_tmx_provably_different_target_is_rejected_with_reason(output_dir, declared):
+    with pytest.raises(ValueError) as excinfo:
+        core.import_tmx(_tmx_with_target_lang(declared),
+                        target_lang=TMX_TARGET, report=True)
+    message = str(excinfo.value)
+    assert "语言不符" in message, message
+    assert "1 条" in message, message
+    report = excinfo.value.report
+    assert report["counts"]["skipped_language_mismatch"] == 1
+    assert report["counts"]["imported"] == 0
+    assert report["language_pair"]["status"] == "mismatch"
+    assert core.load_tm() == {}
+
+
+def test_adapter_view_surfaces_language_mismatch_reason(output_dir, tmp_path):
+    """`report=False` is what the Qt adapter actually calls."""
+    pytest.importorskip("PySide6")
+    from folith.qt import adapter
+
+    state = core.new_job_state("doc.docx")
+    state["target_lang"] = TMX_TARGET
+    core.save_job_state("tmxlang000000000001", {**state})
+    core.save_job_state("tmxlang000000000002", {**state})
+
+    compatible = tmp_path / "compatible.tmx"
+    compatible.write_bytes(_tmx_with_target_lang("zh").getvalue())
+    result = adapter.attach_termbase("tmxlang000000000001", str(compatible))
+    assert result["kind"] == "tm" and result["count"] == 1
+
+    traditional = tmp_path / "traditional.tmx"
+    traditional.write_bytes(_tmx_with_target_lang("zh-TW").getvalue())
+    with pytest.raises(adapter.AdapterError) as excinfo:
+        adapter.attach_termbase("tmxlang000000000002", str(traditional))
+    assert "语言不符" in str(excinfo.value)
+
+
+def test_error_report_is_only_attached_when_requested(output_dir):
+    with pytest.raises(ValueError) as excinfo:
+        core.import_tmx(_tmx_with_target_lang("zh-TW"), target_lang=TMX_TARGET)
+    assert excinfo.value.report is None
+    assert "语言不符" in str(excinfo.value)
+
+
+# ==================== B2: report persistence is a side product ====================
+
+def _import_partial_with_report(**kwargs):
+    return core.import_tmx(_fixture("partial_language_mismatch.tmx"),
+                           target_lang=TMX_TARGET, report=True, **kwargs)
+
+
+def test_report_write_oserror_does_not_fail_a_successful_import(output_dir, monkeypatch):
+    def broken_write(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(migration_report, "write_report", broken_write)
+
+    result = _import_partial_with_report()
+    assert result["added"] == 2
+    assert len(core.load_tm()) == 2, "TM 已写入，报告失败不得回滚或抛错"
+    report = result["report"]
+    assert report["persistence"] == {"directory": "", "json": "", "markdown": ""}
+    assert report["status"] == "partial"
+    assert report["error"] == ""
+    codes = {warning["code"] for warning in report["warnings"]}
+    assert "report_not_written" in codes
+
+
+def test_termbase_report_write_failure_still_returns_entries(output_dir, monkeypatch):
+    def broken_write(*args, **kwargs):
+        raise OSError(13, "Permission denied")
+    monkeypatch.setattr(migration_report, "write_report", broken_write)
+
+    entries = core.parse_termbase_csv(_fixture("terms_extra_columns.csv"),
+                                      target_lang=TMX_TARGET, report=True)
+    assert len(entries) == 2
+    assert entries.report["persistence"]["json"] == ""
+    assert any(warning["code"] == "report_not_written"
+               for warning in entries.report["warnings"])
+
+
+def test_long_report_filename_is_truncated_instead_of_raising(output_dir):
+    stream = io.BytesIO((FIXTURES / "partial_language_mismatch.tmx").read_bytes())
+    stream.name = "x" * 250 + ".tmx"
+
+    result = core.import_tmx(stream, target_lang=TMX_TARGET, report=True)
+    assert result["added"] == 2
+    report_path = Path(result["report"]["persistence"]["json"])
+    assert report_path.is_file()
+    assert len(report_path.name) < 200
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 权限位；Windows 无对应用例")
+def test_unwritable_report_directory_does_not_fail_the_import(output_dir, tmp_path):
+    readonly = tmp_path / "readonly-reports"
+    readonly.mkdir()
+    os.chmod(readonly, 0o500)
+    try:
+        result = _import_partial_with_report(report_dir=readonly)
+    finally:
+        os.chmod(readonly, 0o700)
+    assert result["added"] == 2
+    assert len(core.load_tm()) == 2
+    report = result["report"]
+    assert report["persistence"]["json"] == ""
+    assert any(warning["code"] == "report_not_written"
+               for warning in report["warnings"])
+
+
+# ==================== M1: TBX loss inventory alignment ====================
+
+def test_tbx_loss_inventory_uses_actually_imported_languages(output_dir):
+    entries = glossary_checks.parse_termbase_tbx(
+        _fixture("tbx_langset_without_term.tbx"), target_lang=TMX_TARGET,
+        report=True)
+    assert entries == [{"source": "Hello", "target": "你好",
+                        "behavior": "translate", "status": "locked"}]
+    loss = _loss(entries.report)
+    # en + zh-CN are the imported pair; fr is the third *term-bearing* language.
+    assert loss["tbx_extra_languages"]["affected"] == 1
+    assert loss["tbx_extra_languages"]["fields"] == ["fr"]
+    assert "zh-CN" not in loss["tbx_extra_languages"]["fields"]
+    # The de langSet's descrip belongs to a non-imported language: not "lost".
+    assert loss["tbx_descrip"]["affected"] == 0
+    assert loss["tbx_descrip"]["fields"] == []
+    assert loss["tbx_multiple_terms"]["affected"] == 0
+    # The imported entry did lose one field (the third language fr); the point
+    # is that zh-CN is not misreported and the non-imported de metadata is not
+    # counted, so the only affected entry is the imported one.
+    assert entries.report["metadata_loss"]["total_affected"] == 1
+    assert entries.report["language_pair"]["status"] == "match"
+
+
+# ==================== M2: termbase path-like input ====================
+
+def test_termbase_parsers_accept_path_like_arguments(output_dir, tmp_path):
+    csv_path = tmp_path / "terms.csv"
+    csv_path.write_bytes((FIXTURES / "terms_extra_columns.csv").read_bytes())
+    assert len(core.parse_termbase_csv(str(csv_path))) == 2
+    entries = core.parse_termbase_csv(csv_path, target_lang=TMX_TARGET,
+                                      report=True)
+    assert len(entries) == 2 and entries.report["kind"] == "csv"
+
+    xlsx_path = tmp_path / "terms.xlsx"
+    pd.read_csv(FIXTURES / "terms_extra_columns.csv").to_excel(
+        xlsx_path, index=False)
+    assert len(core.parse_termbase(str(xlsx_path))) == 2
+    xlsx_entries = core.parse_termbase(xlsx_path, report=True)
+    assert xlsx_entries.report["kind"] == "xlsx"
+
+
+# ==================== m2: write-failure counts stay balanced ====================
+
+def test_write_failure_counts_stay_balanced_and_metadata_is_zeroed(
+        output_dir, monkeypatch):
+    def broken_save(*args, **kwargs):
+        raise OSError(28, "disk full")
+    monkeypatch.setattr(core, "save_tm", broken_save)
+
+    with pytest.raises(ValueError) as excinfo:
+        core.import_tmx(_fixture("partial_language_mismatch.tmx"),
+                        target_lang=TMX_TARGET, report=True)
+    report = excinfo.value.report
+    counts = report["counts"]
+    assert counts["imported"] == 0
+    assert counts["skipped_write_failed"] == 2
+    assert counts["total"] == sum(value for key, value in counts.items()
+                                  if key != "total")
+    assert report["metadata_loss"]["total_affected"] == 0
+    assert report["status"] == "failed"
+    assert not core.tm_path().is_file()

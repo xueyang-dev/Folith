@@ -14,7 +14,11 @@
     "recovery",
     "persistence"
   ],
-  "file": ["name", "bytes", "sha256"],
+  "file": [
+    "name",
+    "bytes",
+    "sha256"
+  ],
   "language_pair": [
     "expected_target",
     "expected_tag",
@@ -24,6 +28,7 @@
     "status",
     "action",
     "mismatch_units",
+    "unverified_units",
     "undeclared_target_units",
     "message"
   ],
@@ -38,25 +43,44 @@
     "skipped_missing_pair",
     "skipped_write_failed"
   ],
-  "metadata_loss": ["total_affected", "categories"],
-  "loss_entry": ["category", "label", "affected", "fields"],
+  "metadata_loss": [
+    "total_affected",
+    "categories"
+  ],
+  "loss_entry": [
+    "category",
+    "label",
+    "affected",
+    "fields"
+  ],
   "loss_categories": {
     "tmx": [
       "tmx_tu_attributes",
       "tmx_prop",
       "tmx_note",
       "tmx_tuv_attributes",
-      "tmx_extra_languages"
+      "tmx_extra_languages",
+      "tmx_header"
     ],
     "tbx": [
       "tbx_term_entry_attributes",
       "tbx_term_note",
       "tbx_extra_languages",
       "tbx_multiple_terms",
-      "tbx_descrip"
+      "tbx_descrip",
+      "tbx_entry_metadata",
+      "tbx_root_metadata"
     ],
-    "xlsx": ["termbase_extra_columns"],
-    "csv": ["termbase_extra_columns"]
+    "xlsx": [
+      "termbase_extra_columns"
+    ],
+    "csv": [
+      "termbase_extra_columns"
+    ]
   },
-  "persistence": ["directory", "json", "markdown"]
+  "persistence": [
+    "directory",
+    "json",
+    "markdown"
+  ]
 }

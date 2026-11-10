@@ -3,10 +3,10 @@
   "kind": "tmx",
   "file": {
     "name": "metadata_rich.tmx",
-    "bytes": 2451,
-    "sha256": "d5ca20283edf2da6f5c1070a4116e8d0dc6cac5ff98443440f25936143a7e958"
+    "bytes": 2501,
+    "sha256": "fe7f7e432e3027d66a0ae2010c9efb0af8eaf9b161e1f037b692c1ebe4be31bd"
   },
-  "generated_at": "2026-11-10T21:18:14+00:00",
+  "generated_at": "2026-11-10T21:58:23+00:00",
   "status": "partial",
   "language_pair": {
     "expected_target": "简体中文",
@@ -21,6 +21,7 @@
     "status": "match",
     "action": "none",
     "mismatch_units": 0,
+    "unverified_units": 0,
     "undeclared_target_units": 1,
     "message": "语言对一致：文件声明 zh-CN，任务目标 zh-CN。 / Declared and expected target languages match."
   },
@@ -79,6 +80,22 @@
         "affected": 1,
         "fields": [
           "fr"
+        ]
+      },
+      {
+        "category": "tmx_header",
+        "label": "TMX header 元数据（文件级；1=该文件）",
+        "affected": 1,
+        "fields": [
+          "adminlang",
+          "creationdate",
+          "creationtool",
+          "creationtoolversion",
+          "datatype",
+          "note",
+          "o-tmf",
+          "segtype",
+          "srclang"
         ]
       }
     ]

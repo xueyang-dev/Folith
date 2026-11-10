@@ -12,7 +12,9 @@
 <tmx version="1.4">
   <header creationtool="Trados" creationtoolversion="2024.1" segtype="sentence"
           adminlang="en" srclang="en" datatype="plaintext"
-          creationdate="20240101T000000Z" o-tmf="Trados"/>
+          creationdate="20240101T000000Z" o-tmf="Trados">
+    <note>source: Trados export</note>
+  </header>
   <body>
     <tu tuid="u1" creationdate="20240101T000000Z" changeid="c1" creationid="alice">
       <prop type="client">Acme</prop>

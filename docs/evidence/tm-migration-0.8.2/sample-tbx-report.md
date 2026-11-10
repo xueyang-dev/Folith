@@ -2,8 +2,8 @@
 
 - schema `folith-import-report-v1`
 - 格式 / Format: `tbx`
-- 文件 / File: `metadata_rich.tbx`（2276 bytes，sha256 `898e541d72859f86dc7ca2bc09e36916c46c22e9207cf2df657b3bda41861149`）
-- 生成时间 / Generated: `2026-11-10T21:18:14+00:00`
+- 文件 / File: `metadata_rich.tbx`（2489 bytes，sha256 `bf5f01305f6c00fd532d43980ed822aeea6f92c163c5a466a8282ce9c501bf71`）
+- 生成时间 / Generated: `2026-11-10T21:58:23+00:00`
 - 状态 / Status: `partial`
 
 ## 语言对 / Language pair
@@ -20,7 +20,7 @@
 | mismatch_units | 1 |
 | undeclared_target_units | 0 |
 
-文件同时声明了 zh-CN, zh-TW，其中与任务目标 zh-CN 不符的 1 个单元已拒绝导入（不会改标为目标语言）。 / Units whose declared target differs were rejected, never retagged.
+文件声明 zh-CN, zh-TW：与任务目标 zh-CN 可证明不同的 1 个单元已拒绝导入（不会改标为目标语言），其余 2 个单元按任务目标处理。 / Provably different units were rejected, never retagged.
 
 ## 分类计数 / Classified counts
 
@@ -45,12 +45,14 @@
 | tbx_extra_languages | 第三种及以后的语言 | 1 | fr |
 | tbx_multiple_terms | 同语言多词条 | 1 | zh-CN |
 | tbx_descrip | descrip（定义/领域等） | 1 | definition |
+| tbx_entry_metadata | termEntry 的 xref/ref/context 等（id 以外） | 1 | context, xref |
+| tbx_root_metadata | TBX 根层元数据（header/admin/transac 等；1=该文件） | 1 | admin, encodingDesc, fileDesc, martifHeader, p, sourceDesc, transac |
 
 受影响条目总数 / Total affected entries: 2
 
 ## 警告 / Warnings
 
-- `language_pair_mismatch` (1): 文件同时声明了 zh-CN, zh-TW，其中与任务目标 zh-CN 不符的 1 个单元已拒绝导入（不会改标为目标语言）。 / Units whose declared target differs were rejected, never retagged.
+- `language_pair_mismatch` (1): 文件声明 zh-CN, zh-TW：与任务目标 zh-CN 可证明不同的 1 个单元已拒绝导入（不会改标为目标语言），其余 2 个单元按任务目标处理。 / Provably different units were rejected, never retagged.
 - `language_unknown_units` (1): 语言无法确定（缺 xml:lang 且调用方未给目标语言），未入库。
 - `missing_language_pair_units` (1): 缺少双语（语言对）内容，未入库。
 - `metadata_dropped` (2): 部分单元元数据未保留（见元数据丢失清单）。

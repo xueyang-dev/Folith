@@ -6,9 +6,11 @@ name defined here.  Anything still owned by ``core`` is read late-bound through
 """
 
 import io
+import os
 import pandas as pd
 import re
 from defusedxml import ElementTree as ET
+from pathlib import Path
 from folith import models as _models
 from folith.engine import migration_report
 from folith.engine._link import core as _c
@@ -32,6 +34,9 @@ class ParsedEntries(list):
 
     ``parse_termbase*`` 的既有调用方拿到的是普通列表；开启报告后返回本类的
     实例，``len`` / 迭代 / 相等比较行为完全不变，报告通过 ``.report`` 读取。
+
+    注意：``.copy()`` 或切片返回的是普通 ``list``，**不带** ``.report``——
+    需要报告时直接读原对象的属性。
     """
 
     report = None
@@ -42,11 +47,40 @@ class ParsedEntries(list):
 
 
 def _read_payload(file_stream):
-    """读取上传内容一次；返回 bytes（报告要用它算大小与哈希）。"""
-    payload = file_stream.read()
+    """读取上传内容一次；返回 bytes（报告要用它算大小与哈希）。
+
+    既接受文件对象（``BytesIO`` / 上传流 / 打开的文件），也接受路径字符串或
+    ``Path``——``parse_termbase`` / ``parse_termbase_csv`` 在 #150 之前直接把它
+    交给 pandas，因此路径入参是既有公开行为，必须继续可用。
+    """
+    if hasattr(file_stream, "read"):
+        payload = file_stream.read()
+    elif isinstance(file_stream, (str, bytes, os.PathLike)):
+        payload = Path(file_stream).read_bytes()
+    else:
+        raise ValueError(
+            "导入需要文件对象或文件路径（file-like object or path）")
     if isinstance(payload, str):
         payload = payload.encode("utf-8")
     return bytes(payload or b"")
+
+
+def _safe_write_report(report, *, report_dir=None, project_id=None):
+    """Success path: a report that cannot be written is a warning, not a failure.
+
+    #150 defines the report as a side product of a successful import; a
+    read-only directory, a full disk or a too-long name must never turn a
+    written translation memory into an error the caller cannot interpret.
+    """
+    try:
+        migration_report.write_report(
+            report, directory=report_dir, project_id=project_id)
+    except OSError as exc:
+        report["warnings"].append({
+            "code": "report_not_written",
+            "message": f"报告未能落盘（导入已完成）：{exc}",
+            "count": 0,
+        })
 
 
 def _begin_report(kind, file_stream):
@@ -150,7 +184,7 @@ def _finish_termbase(base, df, entries, requested, *, target_lang, source_lang,
     _fill_termbase_report(base, df, entries, target_lang=target_lang,
                           source_lang=source_lang)
     migration_report.finalize(base)
-    migration_report.write_report(base, directory=report_dir)
+    _safe_write_report(base, report_dir=report_dir)
     return ParsedEntries(entries, report=base)
 
 
@@ -205,10 +239,13 @@ def parse_termbase_tbx(file_stream, *, target_lang=None, source_lang=None,
     导入条目默认 status=locked（导入即视为已固定译名）。
 
     ``target_lang`` 是调用方（项目/任务）要求的目标语言，只用于**校验**：
-    文件声明与之不符的 termEntry 直接拒绝，绝不改标成目标语言。
+    可证明不同的 termEntry 直接拒绝（绝不改标）；无法判定的按目标语言接收并
+    在报告里 warning；语言对判定与 TMX 共用
+    ``migration_report.language_compatibility``。
     ``report=True`` 时返回 :class:`ParsedEntries`（``list`` 子类，行为不变），
     ``.report`` 是结构化导入报告；多语言 / 同语言多词条 / termNote / descrip
-    的丢失清单都在报告里，不随解析结果丢失。
+    / entry/root 元数据的丢失清单都在报告里（只统计实际入库的语言与 entry 级
+    元数据），不随解析结果丢失。
     """
     requested = bool(report) or report_dir is not None
     base, payload = _begin_report("tbx", file_stream)
@@ -221,17 +258,17 @@ def parse_termbase_tbx(file_stream, *, target_lang=None, source_lang=None,
         raise ValueError(error) from e
 
     expected = str(target_lang or "").strip()
-    expected_tag = migration_report.language_token(expected)
     declared_source = str(root.get("srclang") or _xml_lang(root)
                           or source_lang or "").strip()
     counts = migration_report.empty_counts()
-    declared_targets, mismatch_units, undeclared_units = [], 0, 0
+    declared_targets = []
+    same_units = mismatch_units = unverified_units = undeclared_units = 0
     entries, loss_units = [], 0
     for term_entry in root.iter():
         if _local_name(term_entry.tag) != "termEntry":
             continue
         counts["total"] += 1
-        pairs, unlabelled = _tbx_language_pairs(term_entry)
+        pairs, unlabelled, used_lang_sets = _tbx_language_pairs(term_entry)
         if len(pairs) < 2:
             # 未标注语言的 langSet 是"语言未知"；只有一种语言是"缺语言对"。
             counts["skipped_language_unknown" if unlabelled
@@ -243,56 +280,69 @@ def parse_termbase_tbx(file_stream, *, target_lang=None, source_lang=None,
                 undeclared_units += 1
             else:
                 declared_targets.append(declared_target)
-                declared_tag = migration_report.language_token(declared_target)
-                if not declared_tag:
-                    undeclared_units += 1
-                elif expected_tag and \
-                        declared_tag.casefold() != expected_tag.casefold():
+                verdict = migration_report.language_compatibility(
+                    declared_target, expected)
+                if verdict == "different":
                     counts["skipped_language_mismatch"] += 1
                     mismatch_units += 1
                     continue
+                if verdict == "unknown":
+                    unverified_units += 1
+                else:
+                    same_units += 1
         elif declared_target:
             declared_targets.append(declared_target)
         entries.append({"source": pairs[0][1], "target": pairs[1][1],
                         "behavior": "translate", "status": "locked"})
         counts["imported"] += 1
         if requested:  # 元数据盘点只服务于报告。
-            loss = _tbx_metadata_loss(term_entry)
+            loss = _tbx_metadata_loss(term_entry, pairs, used_lang_sets)
             if loss:
                 loss_units += 1
                 for category, fields in loss.items():
                     migration_report.record_loss(base, category, affected=1,
                                                  fields=fields)
+    if requested and counts["imported"]:
+        migration_report.record_loss(
+            base, "tbx_root_metadata", affected=1,
+            fields=_tbx_root_metadata_fields(root))
     migration_report.set_counts(base, counts)
     migration_report.set_loss_total(base, loss_units)
     base["language_pair"] = migration_report.language_pair_report(
         expected_target=expected, declared_source=declared_source,
-        declared_targets=declared_targets, mismatch_units=mismatch_units,
+        declared_targets=declared_targets, same_units=same_units,
+        mismatch_units=mismatch_units, unverified_units=unverified_units,
         undeclared_units=undeclared_units)
 
     if not entries:
         error = "TBX 中未找到可导入的术语（需要至少两种语言的 langSet）"
+        detail = migration_report.zero_import_detail(base)
+        if detail:
+            error = f"{error}；{detail}"
         migration_report.finalize(base)
         if requested:
-            migration_report.write_report(base, directory=report_dir)
+            _safe_write_report(base, report_dir=report_dir)
         raise migration_report.ImportReportError(
             error, base if requested else None)
     if not requested:
         return entries
     migration_report.finalize(base)
-    migration_report.write_report(base, directory=report_dir)
+    _safe_write_report(base, report_dir=report_dir)
     return ParsedEntries(entries, report=base)
 
 
 def _tbx_language_pairs(term_entry):
-    """termEntry -> ([(lang, term), ...], 是否有未标注语言的 langSet)。
+    """termEntry -> ([(lang, term), ...], 有未标注 langSet, 参与配对的 langSet)。
 
     选择语义与拆分前完全一致：按文档顺序，每种语言取第一个非空 term，最多
-    两种语言；未标注 ``xml:lang`` 的 langSet 不参与配对。
+    两种语言；未标注 ``xml:lang`` 的 langSet 不参与配对。第三个返回值是**实际
+    参与配对/入库的 langSet 元素**，元数据丢失清单必须按它来算，否则一个没有
+    ``<term>`` 的 langSet 会让「第三种语言」清单错位（review M1）。
     """
     pairs = []
     unlabelled = False
     seen = set()
+    used_lang_sets = []
     for lang_set in term_entry.iter():
         if _local_name(lang_set.tag) != "langSet":
             continue
@@ -309,13 +359,25 @@ def _tbx_language_pairs(term_entry):
         if term and lang not in seen:
             seen.add(lang)
             pairs.append((lang, term))
+            used_lang_sets.append(lang_set)
         if len(pairs) >= 2:
             break
-    return pairs, unlabelled
+    return pairs, unlabelled, used_lang_sets
 
 
-def _tbx_metadata_loss(term_entry):
-    """已导入 termEntry 中被丢弃的元数据：类别 -> 字段集合。"""
+#: termEntry 里除 term/langSet/descrip 之外的元数据元素（M4）。
+_TBX_ENTRY_METADATA_TAGS = frozenset({
+    "admin", "context", "externalCrossReference", "ref", "xref",
+})
+
+
+def _tbx_metadata_loss(term_entry, pairs, used_lang_sets):
+    """已导入 termEntry 中被丢弃的元数据：类别 -> 字段集合。
+
+    只统计**实际参与导入的那两个 langSet** 以及 entry 级元数据；未被导入的
+    langSet（没有 term、或属于第三种语言）里的 termNote/descrip 不重复计入——
+    它们随语言一起被丢弃，已由 extra_languages/语言分类计数说明。
+    """
     fields = {category: set() for category, _label
               in migration_report.LOSS_CATEGORIES["tbx"]}
     # termEntry 的 id 是条目身份（导入后重新分配），不算元数据丢失。
@@ -323,7 +385,8 @@ def _tbx_metadata_loss(term_entry):
         name = _local_name(attribute)
         if name not in _TBX_IDENTITY_ATTRIBUTES:
             fields["tbx_term_entry_attributes"].add(name)
-    labelled = []
+    used_ids = {id(lang_set) for lang_set in used_lang_sets}
+    used_langs = [lang for lang, _term in pairs]
     for lang_set in term_entry.iter():
         if _local_name(lang_set.tag) != "langSet":
             continue
@@ -331,23 +394,46 @@ def _tbx_metadata_loss(term_entry):
         terms = [node for node in lang_set.iter()
                  if _local_name(node.tag) == "term"
                  and (node.text or "").strip()]
-        if lang:
-            labelled.append(lang)
-            if len(terms) > 1 or labelled.count(lang) > 1:
+        if not lang or not terms:
+            continue
+        if id(lang_set) in used_ids:
+            if len(terms) > 1:
                 fields["tbx_multiple_terms"].add(lang)
-    # termNote 在 langSet 里，descrip 在 termEntry 的 descripGrp 里：全树扫一遍。
-    for node in term_entry.iter():
-        tag = _local_name(node.tag)
-        if tag == "termNote":
-            fields["tbx_term_note"].add(
-                str(node.get("type") or "termNote").strip())
-        elif tag == "descrip":
-            fields["tbx_descrip"].add(
-                str(node.get("type") or "descrip").strip())
-    for lang in labelled[2:]:
-        fields["tbx_extra_languages"].add(lang)
+            for node in lang_set.iter():
+                if _local_name(node.tag) == "termNote":
+                    fields["tbx_term_note"].add(
+                        str(node.get("type") or "termNote").strip())
+        elif lang in used_langs:
+            # 同语言的第二个 langSet：词条被丢弃（同语言多词条）。
+            fields["tbx_multiple_terms"].add(lang)
+        else:
+            fields["tbx_extra_languages"].add(lang)
+    # entry 级元数据（descripGrp / xref / ref / context / admin…）。
+    for child in term_entry:
+        if _local_name(child.tag) == "langSet":
+            continue
+        for node in child.iter():
+            name = _local_name(node.tag)
+            if name == "descrip":
+                fields["tbx_descrip"].add(
+                    str(node.get("type") or "descrip").strip())
+            elif name in _TBX_ENTRY_METADATA_TAGS:
+                fields["tbx_entry_metadata"].add(name)
     return {category: sorted(values) for category, values in fields.items()
             if values}
+
+
+def _tbx_root_metadata_fields(root):
+    """``<martif>`` 下 ``<text>`` 以外的元素名（header/admin/transac…）。"""
+    fields = set()
+    for child in root:
+        if _local_name(child.tag) == "text":
+            continue
+        for node in child.iter():
+            name = _local_name(node.tag)
+            if name != "martif":
+                fields.add(name)
+    return sorted(fields)
 
 
 #: TMX 1.4b 的行内代码元素：内容是原格式的标记（`<b>`、`{1}` 之类），不是
@@ -416,6 +502,14 @@ def _tmx_metadata_loss(tu):
             if values}
 
 
+def _tmx_header_fields(header):
+    """``<header>`` 上被丢弃的属性与子元素名（文件级元数据，M4）。"""
+    fields = {_local_name(attribute) for attribute in header.attrib}
+    for child in header:
+        fields.add(_local_name(child.tag))
+    return sorted(fields)
+
+
 def import_tmx(file_stream, project_id=None, target_lang=None, *,
                report=False, report_dir=None):
     """导入 TMX 翻译记忆（Trados / memoQ 等导出的标准格式）。
@@ -430,15 +524,27 @@ def import_tmx(file_stream, project_id=None, target_lang=None, *,
     刻意**不**把 BCP-47 代码（`zh-CN`）翻译成本应用的显示名（`简体中文`）：
     猜测式映射会让导入"看起来成功、实际永不命中"，比显式失败更糟。
 
-    ``target_lang`` 同时是**语言对校验的期望值**：单元声明的目标语言与它
-    不符时，该单元被拒绝（计入 ``skipped_language_mismatch``），绝不改标成
-    `target_lang`。整份文件都不符时零条新增，沿用既有的 ``ValueError``。
+    ``target_lang`` 同时是**语言对校验的期望值**，判定走
+    ``migration_report.language_compatibility``（仓库既有 source-language 目录
+    + ``language_tag``）：
+
+    * 可证明同一种语言（``简体中文`` / ``zh`` / ``zh-CN`` / ``chinese``）-> 入库；
+    * 可证明不同（``zh-CN`` vs ``zh-TW``、``en`` vs ``zh``）-> 该单元拒绝
+      （计入 ``skipped_language_mismatch``），绝不改标成 `target_lang`；
+    * 无法判定（如 ``zh-Hans``——仓库没有 script/region 推断）-> 按 `target_lang`
+      入库并在报告里 warning，**不阻断**（与 #150 之前的行为一致）；
+    * 文件/单元没有声明目标语言 -> 同样按调用方语言入库，报告记为
+      ``undeclared``。
+
+    整份文件都可证明不同时零条新增，沿用既有的 ``ValueError``，消息会写明
+    "因语言不符拒绝 N 条（文件声明 X，目标 Y）"。
 
     ``report=True``（或给出 ``report_dir``）时返回
-    ``{"added": n, "skipped": m, "report": {...}}``；``skipped`` 保持历史语义
-    （冲突 + 行内内容无法处理），其余分类只在报告里。零新增/失败时
-    ``ValueError`` 带 ``.report``（``folith.engine.migration_report``），报告
-    JSON + Markdown 已按项目目录约定落盘。
+    ``{"added": n, "skipped": m, "report": {...}}``；``skipped`` 现在包含
+    冲突、行内内容无法处理**和语言不符拒绝**（既有键的语义补充，见文档）。
+    其余分类只在报告里。零新增/失败时 ``ValueError`` 带 ``.report``
+    （``folith.engine.migration_report``），报告 JSON + Markdown 已按项目目录
+    约定落盘；落盘失败只记 warning，不会让已成功的导入失败。
     """
     requested = bool(report) or report_dir is not None
     base, payload = _begin_report("tmx", file_stream)
@@ -458,9 +564,9 @@ def import_tmx(file_stream, project_id=None, target_lang=None, *,
 
     existing = _c.load_tm(project_id)
     expected = str(target_lang or "").strip()
-    expected_tag = migration_report.language_token(expected)
     counts = migration_report.empty_counts()
-    declared_targets, mismatch_units, undeclared_units = [], 0, 0
+    declared_targets = []
+    same_units = mismatch_units = unverified_units = undeclared_units = 0
     added = skipped = loss_units = 0
     for tu in root.iter():
         if _local_name(tu.tag) != "tu":
@@ -495,14 +601,20 @@ def import_tmx(file_stream, project_id=None, target_lang=None, *,
                 undeclared_units += 1
             else:
                 declared_targets.append(declared_target)
-                declared_tag = migration_report.language_token(declared_target)
-                if not declared_tag:
-                    undeclared_units += 1
-                elif expected_tag and \
-                        declared_tag.casefold() != expected_tag.casefold():
+                verdict = migration_report.language_compatibility(
+                    declared_target, expected)
+                if verdict == "different":
                     counts["skipped_language_mismatch"] += 1
                     mismatch_units += 1
+                    # M3: the legacy counter must not hide a rejection.
+                    skipped += 1
                     continue
+                if verdict == "unknown":
+                    # Unprovable tag: behave like the pre-#150 code (import
+                    # under the caller's target language) and warn in the report.
+                    unverified_units += 1
+                else:
+                    same_units += 1
         elif declared_target:
             declared_targets.append(declared_target)
         if not _c._tm_eligible(src, tgt):
@@ -529,21 +641,29 @@ def import_tmx(file_stream, project_id=None, target_lang=None, *,
                 for category, fields in loss.items():
                     migration_report.record_loss(base, category, affected=1,
                                                  fields=fields)
+    if requested and counts["imported"] and header is not None:
+        # 文件级 header 元数据只随文件丢一次，不计入「受影响条目」。
+        migration_report.record_loss(
+            base, "tmx_header", affected=1, fields=_tmx_header_fields(header))
 
     migration_report.set_counts(base, counts)
     migration_report.set_loss_total(base, loss_units)
     base["language_pair"] = migration_report.language_pair_report(
         expected_target=expected, declared_source=declared_source,
-        declared_targets=declared_targets, mismatch_units=mismatch_units,
+        declared_targets=declared_targets, same_units=same_units,
+        mismatch_units=mismatch_units, unverified_units=unverified_units,
         undeclared_units=undeclared_units)
 
     if not added:
         error = ("TMX 中未找到可导入的新翻译单元（源文需含字母/数字、目标语言需显式指定"
                  "或可从 xml:lang 确定，且不与现有记忆冲突）")
+        detail = migration_report.zero_import_detail(base)
+        if detail:
+            error = f"{error}；{detail}"
         migration_report.finalize(base)
         if requested:
-            migration_report.write_report(base, directory=report_dir,
-                                          project_id=project_id)
+            _safe_write_report(base, report_dir=report_dir,
+                               project_id=project_id)
         raise migration_report.ImportReportError(
             error, base if requested else None)
 
@@ -554,17 +674,14 @@ def import_tmx(file_stream, project_id=None, target_lang=None, *,
         migration_report.mark_write_failed(base, added)
         migration_report.finalize(base, error=error)
         if requested:
-            try:
-                migration_report.write_report(
-                    base, directory=report_dir, project_id=project_id)
-            except OSError:
-                pass
-        raise migration_report.ImportReportError(error, base) from e
+            _safe_write_report(base, report_dir=report_dir,
+                               project_id=project_id)
+        raise migration_report.ImportReportError(
+            error, base if requested else None) from e
     if not requested:
         return {"added": added, "skipped": skipped}
     migration_report.finalize(base)
-    migration_report.write_report(base, directory=report_dir,
-                                  project_id=project_id)
+    _safe_write_report(base, report_dir=report_dir, project_id=project_id)
     return {"added": added, "skipped": skipped, "report": base}
 
 

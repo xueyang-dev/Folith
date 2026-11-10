@@ -3,10 +3,10 @@
   "kind": "tbx",
   "file": {
     "name": "metadata_rich.tbx",
-    "bytes": 2276,
-    "sha256": "898e541d72859f86dc7ca2bc09e36916c46c22e9207cf2df657b3bda41861149"
+    "bytes": 2489,
+    "sha256": "bf5f01305f6c00fd532d43980ed822aeea6f92c163c5a466a8282ce9c501bf71"
   },
-  "generated_at": "2026-11-10T21:18:14+00:00",
+  "generated_at": "2026-11-10T21:58:23+00:00",
   "status": "partial",
   "language_pair": {
     "expected_target": "简体中文",
@@ -23,8 +23,9 @@
     "status": "partial_mismatch",
     "action": "warned",
     "mismatch_units": 1,
+    "unverified_units": 0,
     "undeclared_target_units": 0,
-    "message": "文件同时声明了 zh-CN, zh-TW，其中与任务目标 zh-CN 不符的 1 个单元已拒绝导入（不会改标为目标语言）。 / Units whose declared target differs were rejected, never retagged."
+    "message": "文件声明 zh-CN, zh-TW：与任务目标 zh-CN 可证明不同的 1 个单元已拒绝导入（不会改标为目标语言），其余 2 个单元按任务目标处理。 / Provably different units were rejected, never retagged."
   },
   "counts": {
     "total": 5,
@@ -77,13 +78,36 @@
         "fields": [
           "definition"
         ]
+      },
+      {
+        "category": "tbx_entry_metadata",
+        "label": "termEntry 的 xref/ref/context 等（id 以外）",
+        "affected": 1,
+        "fields": [
+          "context",
+          "xref"
+        ]
+      },
+      {
+        "category": "tbx_root_metadata",
+        "label": "TBX 根层元数据（header/admin/transac 等；1=该文件）",
+        "affected": 1,
+        "fields": [
+          "admin",
+          "encodingDesc",
+          "fileDesc",
+          "martifHeader",
+          "p",
+          "sourceDesc",
+          "transac"
+        ]
       }
     ]
   },
   "warnings": [
     {
       "code": "language_pair_mismatch",
-      "message": "文件同时声明了 zh-CN, zh-TW，其中与任务目标 zh-CN 不符的 1 个单元已拒绝导入（不会改标为目标语言）。 / Units whose declared target differs were rejected, never retagged.",
+      "message": "文件声明 zh-CN, zh-TW：与任务目标 zh-CN 可证明不同的 1 个单元已拒绝导入（不会改标为目标语言），其余 2 个单元按任务目标处理。 / Provably different units were rejected, never retagged.",
       "count": 1
     },
     {

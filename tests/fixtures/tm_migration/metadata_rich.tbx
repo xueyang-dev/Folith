@@ -12,6 +12,8 @@
     </fileDesc>
     <encodingDesc><p type="XCSURI">Folith default XCS</p></encodingDesc>
   </martifHeader>
+  <admin type="project">Folith fixture</admin>
+  <transac type="created">20240101T000000Z</transac>
   <text>
     <body>
       <termEntry id="te-1">
@@ -42,6 +44,8 @@
         <descripGrp>
           <descrip type="definition">Faithfulness to the source text.</descrip>
         </descripGrp>
+        <xref type="see">Skopos theory</xref>
+        <context>Used in the translation-theory chapter.</context>
       </termEntry>
       <termEntry id="te-3">
         <langSet xml:lang="en">

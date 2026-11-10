@@ -2,8 +2,8 @@
 
 - schema `folith-import-report-v1`
 - 格式 / Format: `tmx`
-- 文件 / File: `metadata_rich.tmx`（2451 bytes，sha256 `d5ca20283edf2da6f5c1070a4116e8d0dc6cac5ff98443440f25936143a7e958`）
-- 生成时间 / Generated: `2026-11-10T21:18:14+00:00`
+- 文件 / File: `metadata_rich.tmx`（2501 bytes，sha256 `fe7f7e432e3027d66a0ae2010c9efb0af8eaf9b161e1f037b692c1ebe4be31bd`）
+- 生成时间 / Generated: `2026-11-10T21:58:23+00:00`
 - 状态 / Status: `partial`
 
 ## 语言对 / Language pair
@@ -45,6 +45,7 @@
 | tmx_note | TU 的 note | 1 | explanation |
 | tmx_tuv_attributes | TUV 属性（xml:lang 以外） | 1 | creationdate |
 | tmx_extra_languages | 第三种及以后的语言 | 1 | fr |
+| tmx_header | TMX header 元数据（文件级；1=该文件） | 1 | adminlang, creationdate, creationtool, creationtoolversion, datatype, note, o-tmf, segtype, srclang |
 
 受影响条目总数 / Total affected entries: 3
 

@@ -74,6 +74,7 @@ LOSS_CATEGORIES: Dict[str, tuple[tuple[str, str], ...]] = {
         ("tmx_note", "TU 的 note"),
         ("tmx_tuv_attributes", "TUV 属性（xml:lang 以外）"),
         ("tmx_extra_languages", "第三种及以后的语言"),
+        ("tmx_header", "TMX header 元数据（文件级；1=该文件）"),
     ),
     "tbx": (
         ("tbx_term_entry_attributes", "termEntry 属性（id 以外）"),
@@ -81,6 +82,8 @@ LOSS_CATEGORIES: Dict[str, tuple[tuple[str, str], ...]] = {
         ("tbx_extra_languages", "第三种及以后的语言"),
         ("tbx_multiple_terms", "同语言多词条"),
         ("tbx_descrip", "descrip（定义/领域等）"),
+        ("tbx_entry_metadata", "termEntry 的 xref/ref/context 等（id 以外）"),
+        ("tbx_root_metadata", "TBX 根层元数据（header/admin/transac 等；1=该文件）"),
     ),
     "xlsx": (
         ("termbase_extra_columns", "术语库表头之外的列"),
@@ -118,9 +121,15 @@ def _now_iso() -> str:
 
 
 def stream_name(file_stream: Any, fallback: str = "") -> str:
-    """上传流/文件对象的名字；取不到就返回 fallback（不编造文件名）。"""
+    """上传流/文件对象/路径的名字；取不到就返回 fallback（不编造文件名）。"""
     name = getattr(file_stream, "name", "")
     text = str(name or "").strip()
+    if not text and (isinstance(file_stream, (str, bytes))
+                     or hasattr(file_stream, "__fspath__")):
+        try:
+            text = Path(file_stream).name
+        except (TypeError, ValueError):
+            text = ""
     if not text:
         text = str(fallback or "").strip()
     return Path(text).name if text else ""
@@ -186,6 +195,61 @@ def language_token(value: Any) -> str:
     return tag
 
 
+def _catalog_language(value: Any) -> str:
+    """Resolve a value through the existing source-language catalog, or ""."""
+    try:
+        from folith import source_languages
+        return source_languages.match(value) or ""
+    except Exception:  # pragma: no cover - defensive (direct library use)
+        return ""
+
+
+def _is_tag_prefix(short: str, long: str) -> bool:
+    return long.casefold().startswith(short.casefold() + "-")
+
+
+def language_compatibility(declared: Any, expected: Any) -> str:
+    """Classify two language declarations as ``same`` / ``different`` / ``unknown``.
+
+    Uses **only** the repository's existing mechanisms, in this order:
+
+    1. ``folith.source_languages.match`` — the same catalog the source-language
+       picker uses. Both sides resolving to the same saved language is a
+       provable match (``简体中文`` / ``zh`` / ``zh-CN`` / ``chinese``); two
+       different catalog languages are provably different (``zh-CN`` vs
+       ``zh-TW``, because the catalog maps the latter to ``繁体中文``).
+    2. ``folith.textual.language_tag`` on the BCP-47 form. Different primary
+       subtags are provably different (``en-US`` vs ``zh-CN``); a pure
+       wider/narrower tag pair (``en`` vs ``en-US``) is the same language.
+    3. Everything else is ``unknown``: the repo has no script/region inference
+       (``zh-Hans``/``zh-Hant`` cannot be proven against ``zh-CN``/``zh-TW``).
+       ``unknown`` means "do what the pre-#150 code did: import under the
+       caller's target language", never a silent retag and never a block.
+    """
+    declared_text = str(declared or "").strip()
+    expected_text = str(expected or "").strip()
+    if not declared_text or not expected_text:
+        return "unknown"
+    declared_catalog = _catalog_language(declared_text)
+    expected_catalog = _catalog_language(expected_text)
+    if declared_catalog and expected_catalog:
+        return "same" if declared_catalog == expected_catalog else "different"
+    declared_tag = language_token(declared_text)
+    expected_tag = language_token(expected_text)
+    if not declared_tag or not expected_tag:
+        return "unknown"
+    declared_parts = declared_tag.split("-")
+    expected_parts = expected_tag.split("-")
+    if declared_parts[0].casefold() != expected_parts[0].casefold():
+        return "different"
+    if declared_tag.casefold() == expected_tag.casefold():
+        return "same"
+    if _is_tag_prefix(declared_tag, expected_tag) \
+            or _is_tag_prefix(expected_tag, declared_tag):
+        return "same"
+    return "unknown"
+
+
 def empty_language_pair() -> Dict[str, Any]:
     return {
         "expected_target": "",
@@ -196,6 +260,7 @@ def empty_language_pair() -> Dict[str, Any]:
         "status": "not_checked",
         "action": "none",
         "mismatch_units": 0,
+        "unverified_units": 0,
         "undeclared_target_units": 0,
         "message": "",
     }
@@ -206,19 +271,21 @@ def language_pair_report(
     expected_target: str = "",
     declared_source: str = "",
     declared_targets: Iterable[str] = (),
+    same_units: int = 0,
     mismatch_units: int = 0,
+    unverified_units: int = 0,
     undeclared_units: int = 0,
 ) -> Dict[str, Any]:
     """构造语言对检查结果。
 
     比较口径（写进 docs，不在这里偷偷放宽）：
 
-    * 两侧都用 ``language_tag`` 归一后再**整串**比较（大小写不计）；
-    * 不比较主语言子标签、不把 ``zh`` 当成 ``zh-CN`` —— 保守的错配比静默
-      的换算安全；
-    * 文件没声明语言 -> ``undeclared``（警告，语言由调用方给出）；
-    * 调用方没给目标语言 -> ``not_checked``（完全没有可比较的期望）；
-    * 任一侧无法解析 -> ``unknown_expected`` / ``unknown_declared``（警告）。
+    判定走 :func:`language_compatibility`（仓库既有 catalog + ``language_tag``）：
+    可证明同一种语言 -> ``match``；可证明不同 -> 拒绝（``mismatch`` /
+    ``partial_mismatch``）；无法判定 -> ``unverified``，按调用方语言入库 + 警告，
+    不阻断。文件没声明语言 -> ``undeclared``；调用方没给目标语言 ->
+    ``not_checked``。**不做语言族/script 推断**（``zh-Hans`` 无法与 ``zh-CN``
+    互证，按 ``unverified`` 处理）。
     """
     expected = str(expected_target or "").strip()
     expected_tag = language_token(expected)
@@ -234,6 +301,7 @@ def language_pair_report(
         "declared_targets": raw_targets,
         "declared_target_tags": target_tags,
         "mismatch_units": int(mismatch_units or 0),
+        "unverified_units": int(unverified_units or 0),
         "undeclared_target_units": int(undeclared_units or 0),
     })
 
@@ -266,28 +334,48 @@ def language_pair_report(
             " / The declared target language is not resolvable.")
         return report
 
-    expected_key = expected_tag.casefold()
-    declared_keys = {tag.casefold() for tag in target_tags}
-    if expected_key in declared_keys and declared_keys == {expected_key}:
-        report["status"] = "match"
-        report["action"] = "none"
-        report["message"] = (
-            f"语言对一致：文件声明 {'、'.join(target_tags)}，任务目标 {expected_tag}。"
-            " / Declared and expected target languages match.")
-    elif expected_key in declared_keys:
+    different = int(mismatch_units or 0)
+    unknown = int(unverified_units or 0)
+    same = int(same_units or 0)
+    if not different and not unknown and not same:
+        # No per-unit verdicts were supplied: fall back to whole-tag comparison
+        # for callers that only know the aggregate tags.
+        expected_key = expected_tag.casefold()
+        declared_keys = {tag.casefold() for tag in target_tags}
+        same = int(expected_key in declared_keys)
+        different = int(bool(declared_keys) and not same)
+        unknown = int(bool(declared_keys) and not same)
+    target_text = ", ".join(target_tags) or ", ".join(raw_targets)
+    if different and (same or unknown):
         report["status"] = "partial_mismatch"
         report["action"] = "warned"
         report["message"] = (
-            f"文件同时声明了 {', '.join(target_tags)}，其中与任务目标 {expected_tag} "
-            f"不符的 {int(mismatch_units)} 个单元已拒绝导入（不会改标为目标语言）。"
-            " / Units whose declared target differs were rejected, never retagged.")
-    else:
+            f"文件声明 {target_text}：与任务目标 {expected_tag} 可证明不同的 "
+            f"{different} 个单元已拒绝导入（不会改标为目标语言），其余 "
+            f"{same + unknown} 个单元按任务目标处理。"
+            " / Provably different units were rejected, never retagged.")
+    elif different:
         report["status"] = "mismatch"
         report["action"] = "blocked"
         report["message"] = (
-            f"语言对不一致：文件声明 {', '.join(target_tags)}，任务目标 {expected_tag}；"
-            "整份文件不导入（不静默换算成目标语言）。"
+            f"语言对不一致：文件声明 {target_text}，任务目标 {expected_tag}；"
+            f"{different} 个单元全部拒绝，整份文件不导入（不静默换算成目标语言）。"
             " / Declared target languages do not match; nothing was imported.")
+    elif unknown:
+        report["status"] = "unverified"
+        report["action"] = "warned"
+        report["message"] = (
+            f"文件声明 {target_text}，无法用仓库既有语言目录/标签判定它与任务目标 "
+            f"{expected_tag} 是否同一种语言（未做语言族/script 推断）；"
+            f"{unknown} 个单元按任务目标语言入库并记录警告。"
+            " / Unprovable tag: imported under the caller's target language with "
+            "an explicit warning.")
+    else:
+        report["status"] = "match"
+        report["action"] = "none"
+        report["message"] = (
+            f"语言对一致：文件声明 {target_text}，任务目标 {expected_tag}。"
+            " / Declared and expected target languages match.")
     return report
 
 
@@ -355,6 +443,30 @@ def mark_write_failed(report: Dict[str, Any], units: int) -> None:
 
 # ---------------------------------------------------------------- 收尾与渲染
 
+def zero_import_detail(report: Mapping[str, Any]) -> str:
+    """Human-readable main reasons why nothing was imported (B1: no dead ends)."""
+    counts = report["counts"]
+    pair = report["language_pair"]
+    parts: List[str] = []
+    if int(counts.get("skipped_language_mismatch") or 0):
+        declared = "、".join(pair.get("declared_targets") or []) or "未声明"
+        expected = pair.get("expected_target") or "未指定"
+        parts.append(
+            f"因语言不符拒绝 {int(counts['skipped_language_mismatch'])} 条"
+            f"（文件声明 {declared}，任务目标 {expected}）")
+    if int(counts.get("skipped_conflict") or 0):
+        parts.append(f"因与现有记忆冲突跳过 {int(counts['skipped_conflict'])} 条")
+    if int(counts.get("skipped_ineligible") or 0):
+        parts.append(f"{int(counts['skipped_ineligible'])} 条源文/译文不合格")
+    if int(counts.get("skipped_unsupported_inline") or 0):
+        parts.append(f"{int(counts['skipped_unsupported_inline'])} 条含无法处理的行内内容")
+    if int(counts.get("skipped_language_unknown") or 0):
+        parts.append(f"{int(counts['skipped_language_unknown'])} 条语言未知")
+    if int(counts.get("skipped_missing_pair") or 0):
+        parts.append(f"{int(counts['skipped_missing_pair'])} 条缺语言对")
+    return "；".join(parts)
+
+
 def _recovery_text(report: Mapping[str, Any]) -> str:
     counts = report["counts"]
     imported = int(counts.get("imported") or 0)
@@ -383,12 +495,15 @@ def _language_warning(report: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     code = {
         "partial_mismatch": "language_pair_mismatch",
         "mismatch": "language_pair_mismatch",
+        "unverified": "language_pair_unverified",
         "undeclared": "language_pair_undeclared",
         "unknown_declared": "language_pair_unresolvable",
         "unknown_expected": "language_pair_unresolvable",
     }[status]
-    return {"code": code, "message": pair["message"],
-            "count": int(pair.get("mismatch_units") or 0)}
+    count = int(pair.get("mismatch_units") or 0)
+    if status == "unverified":
+        count = int(pair.get("unverified_units") or 0)
+    return {"code": code, "message": pair["message"], "count": count}
 
 
 _COUNT_WARNINGS = (
@@ -574,10 +689,15 @@ def report_directory(project_id: Optional[str] = None) -> Path:
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+MAX_REPORT_STEM_CHARS = 80
+
+
 def _safe_stem(report: Mapping[str, Any]) -> str:
     name = str(report["file"]["name"] or "").strip()
     stem = _SLUG_RE.sub("-", Path(name).stem) if name else ""
-    stem = stem.strip(".-_")
+    # Keep `stamp-kind-stem.ext` under the 255-byte limit on every filesystem;
+    # a 250-char upload name must not turn a successful import into an OSError.
+    stem = stem[:MAX_REPORT_STEM_CHARS].strip(".-_")
     return stem or "import"
 
 
@@ -608,9 +728,16 @@ def write_report(
         "json": str(json_path),
         "markdown": str(markdown_path),
     }
-    json_path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    try:
+        json_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    except OSError:
+        # The import already succeeded; a side-product write failure must be
+        # reported as "not written", never as paths that do not exist.
+        report["persistence"] = {"directory": "", "json": "", "markdown": ""}
+        raise
     return dict(report["persistence"])
 
 
@@ -637,9 +764,11 @@ __all__ = [
     "REPORT_SCHEMA", "REPORT_DIR_NAME", "KINDS", "COUNT_KEYS", "COUNT_LABELS",
     "LOSS_CATEGORIES", "STATUS_VALUES", "LANGUAGE_PAIR_STATUSES",
     "ImportReportError", "stream_name", "empty_counts", "new_report",
-    "language_token", "empty_language_pair", "language_pair_report",
+    "language_token", "language_compatibility", "empty_language_pair",
+    "language_pair_report",
     "set_counts", "increment", "record_loss", "set_loss_total", "loss_fields",
     "mark_write_failed",
-    "finalize", "render_markdown", "report_directory", "write_report",
+    "finalize", "zero_import_detail", "render_markdown", "report_directory",
+    "write_report",
     "attach_failure",
 ]
