@@ -3854,6 +3854,122 @@ class WorkbenchView(QWidget):
         self._render_details()
         self._render_stage()
 
+    # ================= 增量应用（A1 / #324 P2） =================
+    def apply_delta(self, job_id: str, rows, positions, *, counts=None,
+                    runtime: dict | None = None, domains=(),
+                    counters=None) -> bool:
+        """Apply one committed batch without rebuilding the grid.
+
+        ``rows``/``positions`` are the read model's changed rows (absolute row
+        positions).  Only those rows are replaced and repainted; the counters
+        come from the incremental index.  Returns ``False`` when the delta does
+        not line up with the rows on screen -- the caller must then fall back to
+        the whole-state path (never guess).
+
+        Deliberately **not** refreshed here: the whole-document projections
+        (review queue, delivery gate, terms, follow-up, academic pages).  They
+        keep their own slower cadence and are applied by
+        :meth:`apply_projection`; doing them per batch was the freeze this
+        change removes.
+        """
+        if job_id != self.job_id:
+            return False
+        positions = [int(position) for position in positions]
+        rows = list(rows)
+        if positions and not self._apply_row_delta(rows, positions):
+            return False
+        if positions:
+            if self._filters_active():
+                # A user filter is on: keeping the visible subset correct is a
+                # whole-table recompute.  It is the documented exception -- it
+                # only happens while the user has a filter enabled.
+                self._render_segments()
+            else:
+                self._queue_segment_paint(positions=positions)
+                self._sync_drafts_banner()
+                self._sync_word_count(counts)
+                changed = set(positions)
+                if self._current_index in changed and not self.has_unsaved_editor_text():
+                    self._render_segment_detail()
+                if changed & set(self.selected_indexes() or [self._current_index]):
+                    self._sync_selection_count()
+        elif counts is not None:
+            self._sync_word_count(counts)
+        if runtime is not None:
+            self._last_runtime = dict(runtime)
+            self._render_runtime()
+        domain_set = set(domains or ())
+        if "stage" in domain_set or counters:
+            self._render_stage()
+        self._render_activity()
+        return True
+
+    def _apply_row_delta(self, rows: list, positions: list[int]) -> bool:
+        """Replace already-visible rows in place; no membership re-scan."""
+        all_rows = self._all_rows
+        visible = self._rows
+        unfiltered = not self._filters_active()
+        replacements = []
+        for position, row in zip(positions, rows):
+            overlaid = self._with_pending_save(row)
+            if position < len(all_rows):
+                all_rows[position] = overlaid
+            elif position == len(all_rows):
+                all_rows.append(overlaid)
+            else:
+                return False            # a gap: the caller must resync
+            replacements.append(overlaid)
+        if unfiltered:
+            for position, overlaid in zip(positions, replacements):
+                if position < len(visible):
+                    visible[position] = overlaid
+                elif position == len(visible):
+                    visible.append(overlaid)
+                else:
+                    return False
+        return True
+
+    def apply_projection(self, job_id: str, state: dict, runtime: dict, snapshots,
+                         *, models: dict | None = None,
+                         refresh_delivery: bool = False) -> None:
+        """Refresh the slow, whole-document projections only.
+
+        The grid keeps the rows the incremental path already applied; setting a
+        fresh authoritative state object is what invalidates the panels' own
+        caches (``_render_*`` keys), exactly as before.
+        """
+        self.job_id = job_id
+        self._state = state
+        self.row_delegate.source_language = str(state.get("source_lang") or "")
+        self.row_delegate.target_language = str(state.get("target_lang") or "")
+        self._last_runtime = runtime or {}
+        self._snapshots = snapshots or []
+        self._models = dict(models or {})
+        self._delivery_owned_by_background = models is not None
+        self._render_excluded()
+        self._render_outline()
+        self._render_delivery(force=refresh_delivery)
+        self._render_runtime()
+        self._render_segment_detail()
+        self._render_review()
+        self._render_terms()
+        self._render_followup()
+        self._sync_academic_tabs()
+        self._render_report()
+        self._render_cases()
+        self._render_qa()
+        self._render_activity()
+        self._render_details()
+        self._render_stage()
+
+    def apply_runtime(self, runtime: dict | None) -> None:
+        """One cheap tick: progress/status only (used while no batch arrived)."""
+        if runtime is None:
+            return
+        self._last_runtime = dict(runtime)
+        self._render_runtime()
+        self._render_stage()
+
     # ================= 阶段与页面导航 =================
     def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().showEvent(event)
@@ -5572,13 +5688,34 @@ class WorkbenchView(QWidget):
         model.dataChanged.emit(model.index(first, 0),
                                model.index(last, model.columnCount() - 1))
 
-    def _queue_segment_paint(self, *, schedule_heights: bool = True) -> None:
+    def _queue_segment_paint(self, *, schedule_heights: bool = True,
+                             positions: list[int] | None = None) -> None:
         """先把屏幕内的行画上，其余的行在 4 ms 的片段里补。
 
         ``schedule_heights`` 为 False 时只画不排行高（调用方随后会整表排一次）。
         同一个行集合、同一组列宽下，只有内容变了的行才可能换行高；这些行在画完
         之后一起排队，不用整表重算。
+
+        ``positions`` 给出"只重画这些行"（A1 增量批）：一次批提交只碰它提交的段，
+        所以这里不能像整份重建那样扫全表。正在进行的整表补画不会被取消——它的
+        缓存比较会让已画过的行自动跳过。
         """
+        if positions is not None:
+            self._paint_schedules_heights = schedule_heights
+            self._repainted = []
+            valid = [position for position in positions
+                     if 0 <= position < len(self._rows)]
+            if not valid:
+                self._flush_painted_heights()
+                return
+            first, last = min(valid), max(valid)
+            with self._quiet_segment_model() as model:
+                for position in valid:
+                    if self._paint_row(position, self._rows[position]):
+                        self._repainted.append(position)
+            self._notify_painted_range(model, first, last + 1)
+            self._flush_painted_heights()
+            return
         # Keep the final model dimensions stable for Qt accessibility. Only cell
         # contents are filled in batches; selection always uses the full row set.
         self._paint_timer.stop()
@@ -5640,12 +5777,19 @@ class WorkbenchView(QWidget):
         positions, self._repainted = self._repainted, []
         self._schedule_row_heights(positions=positions)
 
-    def _sync_word_count(self) -> None:
-        """整份文档的字数与进度（按原文计）。状态没换就不重算。"""
+    def _sync_word_count(self, count=None) -> None:
+        """整份文档的字数与进度（按原文计）。状态没换就不重算。
+
+        ``count`` 是增量路径算好的 ``DocumentCount``（A1）：给出时直接采用，
+        不再对全部行做一次 ``document_count``。
+        """
         from folith import word_count
 
         key = (self.job_id, id(self._state), len(self._all_rows))
-        if key != self._word_count_key:
+        if count is not None:
+            self._word_count = count
+            self._word_count_key = key
+        elif key != self._word_count_key:
             self._word_count_key = key
             count = self._models.get("word_count")
             if count is None:
