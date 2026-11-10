@@ -24,7 +24,7 @@ DEFAULT_UNIT_CHARS = 12000
 #: than the shared request controller / gateway pacing is expected to absorb.
 DEFAULT_DIGEST_WORKERS = 8
 MAX_DIGEST_WORKERS = 8
-DIGEST_WORKERS_ENV = "FOLIOTHREAD_DIGEST_WORKERS"
+DIGEST_WORKERS_ENV = "FOLITH_DIGEST_WORKERS"
 MAX_SYNOPSIS_CHARS = 12000
 # The context packet is an input budget, separate from the source batch budget.
 # Keeping it bounded prevents a large synopsis/profile from silently multiplying
@@ -46,8 +46,8 @@ def digest_worker_count(value: Optional[int] = None, *,
     about making the conversation with the provider faster, not about letting
     a typo open an unbounded number of simultaneous requests.  Per-provider
     pacing/backoff still comes from the shared ``request_control`` controller
-    (``FOLIOTHREAD_LLM_REQUEST_INTERVAL`` / backoff settings), which every
-    worker here acquires before its call.
+    (its request-interval and backoff settings), which every worker here
+    acquires before its call.
     """
     raw = value
     if raw is None:
@@ -386,7 +386,7 @@ def generate_section_digests(
     """Generate independent unit digests; results retain source order.
 
     ``max_workers`` defaults to :data:`DEFAULT_DIGEST_WORKERS` and is capped at
-    :data:`MAX_DIGEST_WORKERS`; the env var ``FOLIOTHREAD_DIGEST_WORKERS``
+    :data:`MAX_DIGEST_WORKERS`; the env var ``FOLITH_DIGEST_WORKERS``
     overrides the default (never an explicit argument).  Results are collected
     by source index, so parallel completion order never changes the output.
     """

@@ -32,7 +32,7 @@ chunks of one level serially, although chunks **within a level are independent**
 - `DEFAULT_DIGEST_WORKERS` is now **8**.
 - `MAX_DIGEST_WORKERS = 8` is a hard ceiling: no configuration can open more
   simultaneous understanding requests than this.
-- `FOLIOTHREAD_DIGEST_WORKERS` overrides the default; an explicit
+- `FOLITH_DIGEST_WORKERS` overrides the default; an explicit
   `max_workers=` argument still wins. `digest_worker_count()` parses/clamps it
   (invalid values fall back to the default, `0`/negatives clamp to 1, values
   above the cap clamp to 8).
@@ -76,9 +76,10 @@ entirely. `_call()` now:
 - resolves the **same** per-`(provider, model)` controller the translation path
   uses (`core._llm_request_controller`, including the Local-Gateway
   endpoint+credential keying), via the call wrapper's `request_target`;
-- calls `controller.acquire(cancel_check)` before every request, so
-  `FOLIOTHREAD_LLM_REQUEST_INTERVAL` (minimum spacing between request starts)
-  is observed by understanding calls too;
+- calls `controller.acquire(cancel_check)` before every request, so the
+  shared request-interval setting (minimum spacing between request starts,
+  defined in `folith/request_control.py`) is observed by understanding calls
+  too;
 - on a 429 (`core.is_rate_limited`), calls `controller.note_rate_limited()` so
   every worker — translation or understanding — observes the same shared
   cooldown and jittered exponential backoff from `folith/request_control.py`;
@@ -119,10 +120,10 @@ mirrors how the translation pools bind `inherited_job_id`.
 | --- | --- | --- | --- |
 | `DEFAULT_DIGEST_WORKERS` | 8 | — | `folith/context.py` |
 | `MAX_DIGEST_WORKERS` (hard cap) | 8 | — | `folith/context.py` |
-| `FOLIOTHREAD_DIGEST_WORKERS` | — | clamped to 1…8 | env |
+| `FOLITH_DIGEST_WORKERS` | — | clamped to 1…8 | env |
 | `max_workers=` argument | `None` (→ env/default) | clamped to 1…8 | `generate_section_digests`, `generate_document_synopsis`, `build_document_understanding` |
-| `FOLIOTHREAD_LLM_REQUEST_INTERVAL` | 0 s | ≥0 | existing `request_control` |
-| `FOLIOTHREAD_LLM_RATE_LIMIT_BASE_BACKOFF` / `..._MAX_BACKOFF` / `..._JITTER` | 1 s / 60 s / 0.25 | existing | existing `request_control` |
+| request interval | 0 s | ≥0 | existing `request_control` (env name there) |
+| rate-limit base / max backoff / jitter | 1 s / 60 s / 0.25 | existing | existing `request_control` |
 
 No new dependency, no platform-specific branch; this is pure threading on the
 existing `ThreadPoolExecutor` pattern.
@@ -183,13 +184,13 @@ Procedure:
    ```bash
    <repo>/venv/bin/python -m pytest tests/understanding_concurrency_test.py -q   # 0 model calls
    # Run 1 (baseline checkout): normal understanding enabled, same book/config.
-   # Run 2 (this branch):        same book/config, optionally FOLIOTHREAD_DIGEST_WORKERS=8.
+   # Run 2 (this branch):        same book/config, optionally FOLITH_DIGEST_WORKERS=8.
    ```
 
 4. Expected qualitative result: digest stage roughly halves against 4 workers;
    synopsis stage shrinks by the number of reduce levels' chunk counts
    (roughly 3–4× on this book). If the gateway rate-limits, the shared cooldown
-   will widen wall time; re-run with `FOLIOTHREAD_DIGEST_WORKERS=4` to compare
+   will widen wall time; re-run with `FOLITH_DIGEST_WORKERS=4` to compare
    like for like and report the observed 429 count (controller stats are in
    `folith/request_control.py::request_controller_stats`).
 5. Verify the artifacts are identical in shape: `semantic_units.json`,
