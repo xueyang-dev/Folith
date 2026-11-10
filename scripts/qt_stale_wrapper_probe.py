@@ -72,7 +72,7 @@ ROOT = Path(os.environ.get("FOLITH_PROBE_ROOT") or
             Path(__file__).resolve().parents[1]).expanduser().resolve()
 
 # 这个 venv 里有一个 editable 安装把 ``folith`` 指向主仓库
-# (/Users/xueyang/Dev/FolioThread)。脚本方式运行时 sys.path[0] 是 scripts/，cwd
+# (<主工作树>)。脚本方式运行时 sys.path[0] 是 scripts/，cwd
 # 不在 sys.path 里，于是 ``import folith`` 会绕过当前 worktree。必须把 ROOT
 # 插到最前面，否则探测的是另一棵树（2026-11-09 的第一次探测就踩了这一点）。
 if str(ROOT) not in sys.path:

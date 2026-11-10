@@ -1,6 +1,6 @@
 # 0.8.1 冻结版随机段错误：根因、修复与验证报告
 
-- 分支：`integration/0.8.1-ui`（worktree `/Users/xueyang/Dev/folith-integration`），基线 HEAD `e561de7d`，
+- 分支：`integration/0.8.1-ui`（worktree `<集成工作树>`），基线 HEAD `e561de7d`，
   修复提交 `534b4c37`（本报告与它的回归测试一起提交）。
 - 机器：macOS 27.0.1 / arm64 / 10 核，PySide6 6.11.2（随包 Qt 6.11.2），Python 3.11.3。
 - 结论：**根因是 `folith/qt/pdf_panel.py` 的 `PdfPanel.__init__` 与 32149301 新增的 `_place_tools`
@@ -187,7 +187,7 @@ RESULT fix_pdf (534b4c37): 0 crashes in 30 runs
 
 - `scripts/build_qt_desktop.sh --clean` 在合作树构建，build record：`build_id git:e561de7d`、
   `worktree_dirty true`（= `e561de7d` + 未提交的 `534b4c37` 内容）；PyInstaller 的 `PYTHONPATH`
-  首个条目是 `/Users/xueyang/Dev/folith-integration`，构建日志引用合作树文件。
+  首个条目是 `<集成工作树>`，构建日志引用合作树文件。
 - 字节码 A/B（见 §2.4）确认新包里的 `PdfPanel.__init__` 不再调用 `_place_tools`。
 
 ## 6. 没验证的部分 / 限制
@@ -213,15 +213,15 @@ RESULT fix_pdf (534b4c37): 0 crashes in 30 runs
 
 ```bash
 # 基线（旧包）加压：3/8 轮出现 -11
-/tmp/frozen_rate.sh /Users/xueyang/Dev/folith-integration 8 base17d6e53e 2
+/tmp/frozen_rate.sh <集成工作树> 8 base17d6e53e 2
 
 # 构建修复后的冻结版（约 1 分钟，PyInstaller 缓存命中时）
-cd /Users/xueyang/Dev/folith-integration
-FOLITH_BUILD_PYTHON=/Users/xueyang/Dev/FolioThread/venv/bin/python \
+cd <集成工作树>
+FOLITH_BUILD_PYTHON=<项目虚拟环境>/bin/python \
   bash scripts/build_qt_desktop.sh --clean
 
 # 30 轮验收（每轮 3 个扫描用例 + 缺语言包用例；CPU 加压 2×核数忙循环）
-/tmp/frozen_rate.sh /Users/xueyang/Dev/folith-integration 30 fix_pdf 2
+/tmp/frozen_rate.sh <集成工作树> 30 fix_pdf 2
 
 # 包装器探针（合作树；pdf 场景应 0 泄漏）
 QT_QPA_PLATFORM=offscreen venv/bin/python scripts/qt_stale_wrapper_probe.py \

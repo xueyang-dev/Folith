@@ -1,6 +1,6 @@
 # 0.8.1 冻结版段错误：32149301 静态审计（过期 PySide 包装器）
 
-- 审计对象：`integration/0.8.1-ui`（worktree `/Users/xueyang/Dev/folith-integration`，审计目标 HEAD `e561de7d`；
+- 审计对象：`integration/0.8.1-ui`（worktree `<集成工作树>`，审计目标 HEAD `e561de7d`；
   Lead 的修复已提交为 `534b4c37`，§3 审阅的就是它）
 - 范围：`git diff 2d41a64e 32149301`，重点 `folith/qt/`；另按要求全仓扫 `addLayout` / `insertLayout` / `setLayout` /
   `removeWidget` / `removeItem` / `takeAt` / 控件搬移

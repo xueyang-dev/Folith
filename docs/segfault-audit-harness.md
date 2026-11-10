@@ -1,11 +1,11 @@
 # 0.8.1 过期 PySide 包装器：动态探测报告（harness）
 
 探测器：`scripts/qt_stale_wrapper_probe.py`（新增，未改 `folith/qt/` 任何代码）。
-目标树：`/Users/xueyang/Dev/folith-integration`（`integration/0.8.1-ui`）。
+目标树：`<集成工作树>`（`integration/0.8.1-ui`）。
 探测在 `e561de7d` 的工作树上进行，当时 `folith/qt/pdf_panel.py` 带着 lead 的未提交
 修复；之后该修复已提交为 **`534b4c37`**（"attach PdfPanel sub-layouts before
 filling them"）。因此本报告"修复前"的数据来自 `e561de7d` 的提交内容（与主仓库
-`/Users/xueyang/Dev/FolioThread` 的 `pdf_panel.py` 同一内容），"修复后"的数据来自
+`<主工作树>` 的 `pdf_panel.py` 同一内容），"修复后"的数据来自
 工作树里的修复版本 = `534b4c37`。本机：macOS arm64，PySide6 6.11.2 / Python 3.11.3，
 离屏 `QT_QPA_PLATFORM=offscreen`。
 
@@ -80,7 +80,7 @@ filling them"）。因此本报告"修复前"的数据来自 `e561de7d` 的提�
 ### 1.1 重要的两条使用约束（踩过的坑）
 
 - **目标树**：本 venv 有 editable 安装把 `folith` 指向主仓库
-  `/Users/xueyang/Dev/FolioThread`；`python scripts/xxx.py` 的 `sys.path[0]` 是
+  `<主工作树>`；`python scripts/xxx.py` 的 `sys.path[0]` 是
   `scripts/`，cwd 不在 `sys.path`，会 import 到错误的树。脚本现在导入时把
   `ROOT` 插到 `sys.path[0]`，并支持 `FOLITH_PROBE_ROOT=<tree>` 显式指定目标树。
   核对 JSON 里的 `git_head` 和 site 路径。
@@ -245,8 +245,8 @@ flush` 后：
 命令（合作树；`--no-audit` 关闭逐阶段审计，避免探测自身扰动）：
 
 ```bash
-cd /Users/xueyang/Dev/folith-integration
-QT_QPA_PLATFORM=offscreen /Users/xueyang/Dev/FolioThread/venv/bin/python \
+cd <集成工作树>
+QT_QPA_PLATFORM=offscreen <项目虚拟环境>/bin/python \
   scripts/qt_stale_wrapper_probe.py --scenario baseline --baseline-cases eng \
   --no-audit --json /tmp/probe_baseline_noaudit.json --workdir /tmp/baseline_wd3
 ```
@@ -327,8 +327,8 @@ qt_stale_wrapper_probe <file>`，每个用例前后统计包装器增量，sessi
 未跑（按要求把机器让给冻结版加压）。若要补：
 
 ```bash
-cd /Users/xueyang/Dev/folith-integration
-QT_QPA_PLATFORM=offscreen /Users/xueyang/Dev/FolioThread/venv/bin/python \
+cd <集成工作树>
+QT_QPA_PLATFORM=offscreen <项目虚拟环境>/bin/python \
   scripts/qt_stale_wrapper_probe.py --suite "tests/qt_delivery_workspace_test.py,tests/qt_client_window_test.py,tests/qt_delivery_ui_test.py" \
   --json /tmp/probe_suite_rest.json
 ```
@@ -339,8 +339,8 @@ QT_QPA_PLATFORM=offscreen /Users/xueyang/Dev/FolioThread/venv/bin/python \
 ## 7. 复现命令汇总
 
 ```bash
-cd /Users/xueyang/Dev/folith-integration
-P=/Users/xueyang/Dev/FolioThread/venv/bin/python
+cd <集成工作树>
+P=<项目虚拟环境>/bin/python
 
 # 全部内置负载（每负载一个子进程；崩了父进程记录信号）
 QT_QPA_PLATFORM=offscreen $P scripts/qt_stale_wrapper_probe.py --scenario all --repeat 2 --json /tmp/probe_all.json
