@@ -833,13 +833,24 @@ class HomeView(QWidget):
         self.stats_line.setTextFormat(Qt.TextFormat.RichText)
         self.stats_line.setVisible(False)
         self.stats_line.linkActivated.connect(self._status_filter_changed)
+        # ---- 主区组装：先把布局挂到画布上，再往里填（见 qt_layout_item_wrapper_test）----
+        main = components.GradientCanvas()
+        layout = QVBoxLayout(main)
+        layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                  theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        layout.setSpacing(theme_module.SPACE["lg"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        page_header = QHBoxLayout()
+        layout.addLayout(page_header)
+        page_header.setSpacing(theme_module.SPACE["lg"])
+        title_box = QVBoxLayout()
+        page_header.addLayout(title_box, 1)
+        title_box.setSpacing(theme_module.SPACE["xxs"])
         title_row = QHBoxLayout()
+        title_box.addLayout(title_row)
         title_row.setSpacing(theme_module.SPACE["lg"])
         title_row.addWidget(title, 0, Qt.AlignmentFlag.AlignBaseline)
         title_row.addWidget(self.stats_line, 1, Qt.AlignmentFlag.AlignBaseline)
-        title_box = QVBoxLayout()
-        title_box.setSpacing(theme_module.SPACE["xxs"])
-        title_box.addLayout(title_row)
         title_box.addWidget(self.subtitle)
 
         self.refresh_icon_button = style_module.icon_button("refresh", i18n.tr('刷新任务'))
@@ -890,14 +901,10 @@ class HomeView(QWidget):
         self.sort_box.currentIndexChanged.connect(self._apply_filter)
 
         header_actions = QHBoxLayout()
+        page_header.addLayout(header_actions, 0)
         header_actions.setSpacing(theme_module.SPACE["sm"])
         header_actions.addWidget(self.search_edit)
         header_actions.addWidget(self.refresh_icon_button)
-
-        page_header = QHBoxLayout()
-        page_header.setSpacing(theme_module.SPACE["lg"])
-        page_header.addLayout(title_box, 1)
-        page_header.addLayout(header_actions, 0)
 
         # ---- 首次运行提示（只有未配置模型时出现） --------------------------
         self.setup_banner = style_module.NoticeStrip(tone="warn")
@@ -1078,13 +1085,7 @@ class HomeView(QWidget):
         self.list_card.body_layout.addWidget(self.stack, 1)
         self.list_card.body_layout.addWidget(self.actions_frame)
 
-        # ---- 主区组装 ------------------------------------------------------
-        main = components.GradientCanvas()
-        layout = QVBoxLayout(main)
-        layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
-                                  theme_module.SPACE["xl"], theme_module.SPACE["lg"])
-        layout.setSpacing(theme_module.SPACE["lg"])
-        layout.addLayout(page_header)
+        # ---- 主区组装：main/layout/page_header 已在前段创建并挂好 ----
         layout.addWidget(self.setup_banner)
         layout.addWidget(self.stats)
         layout.addWidget(self.continue_card)

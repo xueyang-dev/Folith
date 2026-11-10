@@ -190,7 +190,9 @@ class SourceOutlineSection(QWidget):
 
         # 译前范围入口（#28）：任务开始前唯一的范围选择入口——排除在第一次
         # 模型调用之前生效。任务开始后这里随整个区块停用，入口回到工作台工具栏。
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         scope_row = QHBoxLayout()
+        body.addLayout(scope_row)
         scope_row.setSpacing(theme_module.SPACE["sm"])
         self.scope_button = QPushButton(i18n.tr('翻译范围…'))
         style_module.set_button(self.scope_button, "secondary")
@@ -225,7 +227,6 @@ class SourceOutlineSection(QWidget):
         scope_row.addWidget(recovery)
         self.recovery_button = recovery
         scope_row.addStretch(1)
-        body.addLayout(scope_row)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
