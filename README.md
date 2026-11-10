@@ -1,121 +1,71 @@
-# Folith · 译页
+<div align="center">
 
-<p align="center">
-  <img src="folith/resources/brand/folith-lockup.png" alt="Folith · 译页 — Agentic Translation Workspace — 智能体翻译工作台" width="840">
-</p>
+<img src="folith/resources/brand/folith-lockup.png" alt="Folith · 译页" width="640" />
 
-<p align="center">
-  <strong>面向长文档与专业本地化的翻译工作台</strong>
-</p>
+# Make every creation global.
 
-<p align="center">
-  <a href="https://github.com/xueyang-dev/Folith/releases/latest"><img src="https://img.shields.io/github/v/release/xueyang-dev/Folith?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=0052fe" alt="最新版本"></a>
-  <img src="https://img.shields.io/badge/Windows-x64-lightgrey.svg" alt="Windows x64">
-  <img src="https://img.shields.io/badge/macOS-15.8.1%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.8.1+ Apple Silicon">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
-</p>
+**Open-source, AI-native translation workspace for long documents.**
 
-<p align="center">
-  <strong>简体中文</strong> | <a href="README.en.md">English</a> | <a href="README.ru.md">Русский</a> | <a href="README.es.md">Español</a>
-</p>
+Understand the whole document. Translate with context. Review with control. Deliver with confidence.
 
-> 简体中文 README 是持续维护的版本；其他语言版本由它翻译而来，如有出入以中文为准。
+[**Download Folith**](https://github.com/xueyang-dev/Folith/releases/latest) · [Get started](#-quick-start) · [Watch the demo](https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8)
+
+[![Latest Release](https://img.shields.io/github/v/release/xueyang-dev/Folith?label=Release&color=0052fe)](https://github.com/xueyang-dev/Folith/releases/latest) ![Windows x64](https://img.shields.io/badge/Windows-x64-lightgrey) ![macOS 15.8.1+ Apple Silicon](https://img.shields.io/badge/macOS-15.8.1%2B%20Apple%20Silicon-lightgrey) <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License"></a>
+
+<strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a>
+
+</div>
 
 ---
 
-**Folith · 译页** 是一个面向书籍、白皮书、学术专著等长文档的桌面翻译工作台，开源、本地优先，支持 Windows 和 macOS。它把一份文档当作一项完整的工作来做：导入 PDF / DOCX / EPUB / TXT / Markdown（含扫描件）后，先通读全文、建立画像和术语表，再带着上下文分批翻译；独立审校逐段检查，由你逐条拍板；最后在交付门禁通过后，冻结成可追溯的交付包。
+**Why Folith?**
 
-一次请求翻一段很容易，难的是第九章和第二章用词一致、你改过的译文不被覆盖、每一处改动都有记录、交出去的文件能说清楚来源。Folith 就是为这件事做的。
+Long documents need more than sentence-by-sentence translation. A name introduced in chapter two should still be translated consistently in chapter nine — and your edits should stay yours.
+
+| Understand the whole | Stay consistent | Stay in control |
+| :--- | :--- | :--- |
+| Build document-wide context before translation. | Reuse terminology and translation memory within a project. | Review suggestions before applying changes and produce traceable deliverables. |
+
+Folith brings **document preparation, model-assisted translation, human review, and delivery** into a continuous desktop workflow. It starts with books, research works, and other long-form documents, with a broader vision for content localization.
+
+> English is the default landing page; the [Simplified Chinese README](README.zh-CN.md) remains the maintained editorial source. If they differ, the Chinese version takes precedence. The app defaults to Simplified Chinese; English interface labels below are from an experimental locale.
+
+**Folith · 译页** (Folith, "translated pages") is a desktop translation workbench for books, white papers, academic monographs and other long documents. It is open source, local-first, and runs on Windows and macOS. It treats a document as one complete job: import a PDF / DOCX / EPUB / TXT / Markdown file (scans included), read the whole text first and build a profile and glossary, then translate in batches with context. An independent reviewer checks every segment and you make each call. Once the delivery gate passes, everything is frozen into a traceable delivery package.
 
 ---
 
-## 🎬 一分钟了解 Folith
+## 🎬 Folith in one minute
 
 https://github.com/user-attachments/assets/28519895-b8d0-415a-86f9-6a85635901a8
 
-从导入、准备、翻译、人工审校到交付，一分钟走完一本书的流程。视频里的界面画面用合成的公版示例书（《卡拉马佐夫兄弟》）从 Folith 客户端离屏截取，不含真实用户文件；标注「示意」的画面是动画说明。
+One book, from import through preparation, translation and human review to delivery, in about a minute. The interface footage was captured offscreen from the Folith client using a synthetic public-domain sample book (*The Brothers Karamazov*) and contains no real user files; shots marked "Illustration" are animated explanations.
 
 ---
 
-## 📸 界面预览
+## 🚀 Installation
 
-### 任务库
-所有任务按项目分组，卡片直接显示原文首页缩略图、段数、语言和当前阶段；可以按状态筛选、全文搜索，中断的任务一键继续。
+All desktop packages are on the [latest release](https://github.com/xueyang-dev/Folith/releases/latest) page; `<version>` in the file names below is that release's version number. The same page publishes `SHA256SUMS.txt` for checking your download. This confirms the file is intact and unmodified; it is not a signature.
 
-<p align="center">
-  <img src="docs/assets/qt-01-tasks.png" alt="Folith 任务库" width="1000">
-</p>
+### macOS desktop client
 
-### 项目：术语库与翻译记忆
-术语库和翻译记忆按项目保存。确认的术语在新任务中自动使用；通过审校的句对进入本项目的翻译记忆，不会混进无关项目。支持 XLSX / TBX / TMX 导入导出。
+Download `Folith-Qt-<version>-macos-arm64.dmg`, open it and drag Folith into Applications.
 
-<p align="center">
-  <img src="docs/assets/qt-02-projects.png" alt="Folith 项目术语库" width="1000">
-</p>
+- Requirements: macOS 15.8.1 or later on Apple silicon (M-series). Intel Macs are not supported.
+- The package is unsigned and not notarized. The first time, right-click Folith in Applications → Open, and allow it once. **Do not** turn Gatekeeper off globally.
+- Tesseract (English, Simplified Chinese, Arabic) is bundled, so there is nothing else to install.
+- Verify (optional): run `shasum -a 256 Folith-Qt-<version>-macos-arm64.dmg` in Terminal and compare it with `SHA256SUMS.txt`.
+- After launching, add a model connection in Settings (see Quick start below).
 
-### 设置：模型连接
-在「设置 → 模型」里添加连接，并为翻译、审校、视觉分别选择用哪一条。
+### Windows x64 desktop client
 
-<p align="center">
-  <img src="docs/assets/qt-07-settings.png" alt="Folith 设置：模型连接" width="800">
-</p>
+- **Installer (recommended):** `Folith-Setup-<version>-windows-x64.exe`. Run it, choose a folder, and launch Folith from the Start menu. It installs for the current user only and does not require administrator rights. Uninstalling removes the app only; tasks, terms, memory and settings stay in `%LOCALAPPDATA%\Folith`.
+- **Portable:** `Folith-Qt-<version>-windows-x64.zip`. Right-click → Extract All, keep the extracted `Folith` folder together, and run `Folith\Folith.exe`. Do not run it from inside the ZIP preview.
 
-### 译前准备
-导入后先到准备页：选原文 / 目标语言和翻译模式，每种模式的预估调用次数、token 与耗时直接显示在卡片上，再决定是否开始。
+No Python, Git or developer tools are needed. Tesseract (English, Simplified Chinese, Arabic) is bundled; PaddleOCR and LibreOffice are not. Windows 11 x64 is the main target; Windows 10 x64 is an unverified compatibility target, and there is no ARM64 build.
 
-<p align="center">
-  <img src="docs/assets/qt-06-prepare.png" alt="Folith 译前准备" width="1000">
-</p>
+The Windows build is unsigned. SmartScreen may warn on first launch: check the SHA-256 checksum, then choose **More info → Run anyway**. Do not disable Windows security globally.
 
-### 翻译工作台
-原文与译文逐段对照，顶部步骤条显示「准备 → 翻译 → 审校 → 交付」进度。右侧是当前段落的操作：审校、点评、重译、按要求重译、提问、加入术语库、批注。PDF 任务可以展开原页，选中一段就在原页上定位并高亮。
-
-<p align="center">
-  <img src="docs/assets/qt-03-workbench.png" alt="Folith 翻译工作台" width="1000">
-</p>
-
-### 交付门禁
-还有未审校段落或必须处理的问题时，交付被拦下并说明原因；也可以先导出当前译文副本。
-
-<p align="center">
-  <img src="docs/assets/qt-04-delivery-gate.png" alt="Folith 交付门禁" width="1000">
-</p>
-
-### 冻结交付
-审校完成后冻结为不可变的交付版本，带交付清单；也可以从已完成的译文补生成 PDF、EPUB、TMX、TBX、JSONL，不必重新翻译。
-
-<p align="center">
-  <img src="docs/assets/qt-05-delivery-ready.png" alt="Folith 冻结交付" width="1000">
-</p>
-
-> 截图由 `scripts/qt_showcase_screenshots.py` 用合成的演示文档生成，不含真实用户文件。
-
----
-
-## 🚀 安装
-
-所有桌面安装包都在 [最新 Release](https://github.com/xueyang-dev/Folith/releases/latest) 页面，文件名里的 `<版本>` 是当时的版本号。同一页提供 `SHA256SUMS.txt`，可以用来校验下载的文件；这只能确认文件完整、没被替换，不等同于签名。
-
-### macOS 桌面客户端
-
-下载 `Folith-Qt-<版本>-macos-arm64.dmg`，打开后把 Folith 拖进「应用程序」。
-
-- 系统要求：macOS 15.8.1 或更高，Apple 芯片（M 系列）。不支持 Intel Mac。
-- 安装包未签名、未公证：第一次打开时，在「应用程序」里右键点 Folith → 打开，放行一次即可。**不要**全局关闭 Gatekeeper。
-- 已内置 Tesseract（英文、简体中文、阿拉伯文），不需要另装任何依赖。
-- 校验（可选）：在终端运行 `shasum -a 256 Folith-Qt-<版本>-macos-arm64.dmg`，与 `SHA256SUMS.txt` 对比。
-- 打开后在「设置」里添加模型连接，见下面的快速上手。
-
-### Windows x64 桌面客户端
-
-- **安装版（推荐）**：`Folith-Setup-<版本>-windows-x64.exe`。运行后选择安装目录，从开始菜单启动。只安装到当前用户，不需要管理员权限。卸载只移除应用；任务、术语、翻译记忆和设置保留在 `%LOCALAPPDATA%\Folith`。
-- **便携版**：`Folith-Qt-<版本>-windows-x64.zip`。右键「全部解压缩」，保持解压后的 `Folith` 文件夹完整，运行 `Folith\Folith.exe`。不要在压缩包预览里直接运行。
-
-不需要安装 Python、Git 或任何开发工具。已内置 Tesseract（英文、简体中文、阿拉伯文）；不包含 PaddleOCR 或 LibreOffice。主要目标平台是 Windows 11 x64；Windows 10 x64 为未验证的兼容目标，不提供 ARM64 版本。
-
-Windows 构建未签名。首次运行可能看到 SmartScreen 提示：核对 SHA-256 后，选择「更多信息 → 仍要运行」。不要全局关闭 Windows 安全防护。
-
-### 从源码运行（开发者）
+### Run from source (developers)
 
 ```bash
 git clone https://github.com/xueyang-dev/Folith.git
@@ -124,162 +74,220 @@ python -m pip install -e .
 python -m folith.qt
 ```
 
-需要 Python 3.10+，PySide6 已包含在依赖里。可选：另装 [Tesseract OCR](https://github.com/tesseract-ocr/tesseract)，用于给扫描页定位每一行的位置；没有 Tesseract 时，扫描页会完全交给视觉模型处理。
+Requires Python 3.10+; PySide6 is part of the dependencies. Optionally install [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) to locate the lines of scanned pages. Without it, scanned pages go entirely to the vision model.
 
-### Python 包（面向开发者）
+### Python package (for developers)
 
-PyPI 上有发行包 `foliothread`（代码模块名为 `folith`），但它**不是获取应用的推荐方式**：PyPI 上仍是带旧 Streamlit 界面的 0.6.0，没有随 GitHub Release 更新，那里的 `folith` 命令也不会启动桌面客户端。请使用上面的 macOS / Windows 安装包或源码运行。
-
----
-
-## ⚡ 快速上手
-
-1. **添加模型连接**：打开「设置」→「模型」，点「添加连接」，选择服务商、填入 API Key 和模型名，点「测试并保存」；测试通过后连接才会保存。
-2. **导入文档**：在任务库点「导入文档…」，选择 PDF / DOCX / EPUB / TXT / Markdown。
-3. **选择模式**：在准备页选「快速」「标准」或「精细」。每张卡片会显示这份文档大约需要的调用次数、输入 token 和耗时。
-4. **翻译并审校**：点「开始翻译」。翻译完成后在工作台逐段审校，处理右侧「检查与修复」里列出的问题。
-5. **冻结交付**：问题处理完、门禁通过后，点「冻结并保存交付…」，选择保存位置，得到译文、双语对照、术语表、翻译记忆和交付清单。
+The package `foliothread` exists on PyPI (the code module is `folith`), but it is **not the recommended way to get the app**. PyPI still carries the 0.6.0 package with the legacy Streamlit UI; it is not updated alongside GitHub releases, and `folith` there does not start the desktop client. Use the macOS / Windows packages above or run from source.
 
 ---
 
-## ✨ 核心特性
+## ⚡ Quick Start
 
-| 阶段 | 做什么 |
+1. **Add a model connection**: open Settings → Model, press Add connection, choose a provider, enter the API key and model name, then press Test and save; the connection is saved only after the test passes.
+2. **Import a document**: in the task library press Import document…, and pick a PDF / DOCX / EPUB / TXT / Markdown file.
+3. **Pick a mode**: on the prepare page choose Fast, Standard or Thorough. Each card shows the estimated number of calls, input tokens and time for this document.
+4. **Translate and review**: press Start translation. When it finishes, review segment by segment in the workbench and handle the items listed under Check & fix on the right.
+5. **Freeze the delivery**: once the issues are resolved and the gate passes, press Freeze and save delivery…, choose where to save, and get the translation, bilingual copy, glossary, translation memory and delivery manifest.
+
+---
+
+## 📸 Screenshots
+
+### Task library
+Tasks are grouped by project. Each card shows a thumbnail of the first source page, the segment count, the languages and the current stage. Filter by status, search the full text, and resume an interrupted task in one click.
+
+<p align="center">
+  <img src="docs/assets/qt-01-tasks.en.png" alt="Folith task library" width="1000">
+</p>
+
+### Projects: termbase and translation memory
+The termbase and translation memory are kept per project. Confirmed terms are used automatically in new tasks; sentence pairs that pass review enter the project's translation memory and never leak into unrelated projects. XLSX / TBX / TMX import and export are supported.
+
+<p align="center">
+  <img src="docs/assets/qt-02-projects.en.png" alt="Folith project termbase" width="1000">
+</p>
+
+### Settings: model connections
+Add connections under Settings → Model, and pick which one is used for translation, review and vision.
+
+<p align="center">
+  <img src="docs/assets/qt-07-settings.en.png" alt="Folith settings: model connections" width="800">
+</p>
+
+### Preparing a task
+After import, the prepare page lets you pick source and target language and a translation mode. Each mode card shows its estimated calls, tokens and time before you start.
+
+<p align="center">
+  <img src="docs/assets/qt-06-prepare.en.png" alt="Folith prepare page" width="1000">
+</p>
+
+### Translation workbench
+Source and translation side by side, segment by segment; the step bar at the top shows Prepare → Translation → Review → Delivery. The right-hand panel offers actions for the current segment: review, comment, re-translate, re-translate on instruction, ask a question, add to the termbase, annotate. For PDF tasks you can open the original page; selecting a segment locates and highlights it there.
+
+<p align="center">
+  <img src="docs/assets/qt-03-workbench.en.png" alt="Folith translation workbench" width="1000">
+</p>
+
+### Delivery gate
+While unreviewed segments or blocking issues remain, delivery is stopped and the reason is shown. You can still export a working copy of the current translation.
+
+<p align="center">
+  <img src="docs/assets/qt-04-delivery-gate.en.png" alt="Folith delivery gate" width="1000">
+</p>
+
+### Frozen delivery
+After review, the result is frozen into an immutable delivery version with a manifest. PDF, EPUB, TMX, TBX and JSONL can be generated afterwards from the finished translation without translating again.
+
+<p align="center">
+  <img src="docs/assets/qt-05-delivery-ready.en.png" alt="Folith frozen delivery" width="1000">
+</p>
+
+> Screenshots are generated by `scripts/qt_showcase_screenshots.py` from synthetic demo documents; they contain no real user files.
+
+---
+
+## ✨ Features
+
+| Stage | What happens |
 | :--- | :--- |
-| **准备** | 提取段落，排除页眉页脚等噪声；扫描页由视觉模型阅读，本机 Tesseract 只负责给出每一行的位置；生成文档画像、术语候选，并带入项目术语与翻译记忆 |
-| **翻译** | 按模式（快速 / 标准 / 精细）分批，每一批都带着前后文和锁定术语；进度随时落盘，可暂停、继续 |
-| **审校** | 独立的审校模型对照原文逐段检查，能看到相邻段的译文；人工编辑、按要求重译、对某一段提问；重译与审校建议先生成候选，由你采用或丢弃；改过的段落重新审校 |
-| **交付** | 门禁核验完整性与阻断问题；冻结为不可变版本；导出译文、双语、术语、记忆与交付清单 |
+| **Prepare** | Extract segments and drop noise such as headers and footers; scanned pages are read by the vision model, and local Tesseract only supplies the position of each line; build a document profile and term candidates, and bring in project terms and translation memory |
+| **Translate** | Batches by mode (Fast / Standard / Thorough), each carrying surrounding context and locked terms; progress is saved continuously and can be paused and resumed |
+| **Review** | A separate reviewer model checks each segment against the source and can see neighbouring translations; edit by hand, re-translate on instruction, ask about a segment; re-translations and review suggestions arrive as candidates that you accept or discard; edited segments are reviewed again |
+| **Deliver** | The gate verifies completeness and blocking issues; freeze an immutable version; export translation, bilingual copy, terms, memory and manifest |
 
 
 <p align="center">
-  <img src="docs/assets/folith-workflow-zh.svg" alt="Folith 工作流程：准备 → 翻译 → 审校 → 交付" width="1000">
+  <img src="docs/assets/folith-workflow-en.svg" alt="Folith workflow: Prepare → Translate → Review → Deliver" width="1000">
 </p>
 
-- **📚 长文档导入**：PDF / DOCX / EPUB（无 DRM）/ TXT / Markdown。
-- **🧠 全书上下文**：翻译前先做文档画像与术语抽取；跨页的代词、缩写和术语能对上。
-- **💎 项目级语言资产**：术语锁定后注入每一次请求；翻译记忆按项目复用已审校的句对，减少重复调用。
-- **🔍 独立审校与跨段检查**：审校由单独的模型完成，不是翻译模型给自己打分；按句分组成批，同一句不会被拆开。问题按类别和严重程度分级，只有阻断性问题会拦住交付。
-- **🛡️ 译文受保护**：重译和审校建议先作为候选显示，对比当前译文与差异，明确采用才替换；批量替换默认跳过人工编辑或人工确认过的译文。审校决定（确认问题、确认已解决、保留当前译文）与改写译文分开记录。
-- **🧾 可审计、可恢复**：人工修改如实记录，改过的段落在采信前重新审校；审校决定保存成功后才进入项目翻译记忆；任务状态随时落盘，中断后从最后完成的批次继续。
-- **📍 原页对照**：PDF 任务可在工作台左侧打开原页，选中一段即在原页定位并高亮，扫描件也能逐句核对。
-- **📦 可追溯的交付**：纯译文 DOCX、双语对照 DOCX、EPUB、PDF、术语表、TMX、JSONL，以及 `delivery_manifest.json` 交付清单；冻结后的版本不可修改。
-- **🎓 学术模式**（默认关闭）：把翻译过程、案例对比与反思导出为实践报告，适合翻译硕士（MTI）等评估场景。
+- **📚 Long-document import**: PDF / DOCX / EPUB (no DRM) / TXT / Markdown.
+- **🧠 Whole-book context**: a document profile and term extraction come first, so pronouns, abbreviations and terms line up across pages.
+- **💎 Project-level language assets**: locked terms are injected into every request; translation memory reuses reviewed sentence pairs per project, cutting repeated calls.
+- **🔍 Independent review and cross-segment checks**: review is done by a separate model, not the translator grading itself; segments are batched by sentence so one sentence is never split. Issues are graded by category and severity, and only blocking ones stop delivery.
+- **🛡️ Protected translations**: re-translations and review suggestions are shown as candidates next to the current text and a diff, and replace it only when you accept; batch replacement skips manually edited or manually confirmed translations by default. Review decisions (issue confirmed, confirmed fixed, keep current translation) are recorded separately from text edits.
+- **🧾 Auditable and resumable**: manual edits are recorded faithfully and re-reviewed before being accepted; a review decision enters the project translation memory only after it has been saved; task state is saved continuously, so an interrupted task resumes from the last completed batch.
+- **📍 Original-page view**: for PDF tasks the workbench can show the original page; selecting a segment locates and highlights it, so scans can be checked line by line.
+- **📦 Traceable delivery**: translation-only DOCX, bilingual DOCX, EPUB, PDF, glossary, TMX, JSONL and a `delivery_manifest.json`; a frozen version cannot be modified.
+- **🎓 Academic mode** (off by default): exports the translation process, case comparisons and reflections as a practice report, for settings such as MTI (translation master's) assessment.
 
-「智能体」在这里的具体含义是：独立的审校角色、按你的指示重译某一段、就某一段向模型提问。它不会自作主张地改你的文档，所有改动都由你确认并留有记录。
+"Agentic" here means specifically: an independent reviewer role, re-translating a segment on your instruction, and asking the model about a segment. It does not change your document on its own; every change is confirmed by you and recorded.
 
 ---
 
-## 🌍 语言、格式与规模
+## 🌍 Languages, formats and scale
 
-| | 支持 |
+| | Supported |
 | :--- | :--- |
-| **导入** | PDF（含扫描件）/ DOCX / EPUB（无 DRM）/ TXT / Markdown；单个文件上限 512 MB，超过请拆分后再导入 |
-| **交付文件** | 纯译文 DOCX、双语对照 DOCX、EPUB（来源为 PDF 或 DOCX）、PDF（保留原版式的 PDF 只适用于 PDF 来源）、原格式译文 DOCX（只适用于 DOCX 来源，默认关闭）、术语表、TMX、TBX、JSONL、`delivery_manifest.json` 交付清单 |
-| **语言资产** | 术语表与翻译记忆：XLSX、TBX、TMX 导入导出；JSONL |
-| **原文语言** | 自动识别，或手动选择 21 种之一：English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español、Italiano、Português、Русский、Nederlands、Polski、Українська、Tiếng Việt、Türkçe、العربية、فارسی、עברית、اردو、ئۇيغۇرچە |
-| **目标语言** | 21 种：简体中文、繁体中文、English、日本語、한국어、Deutsch、Français、Español、Русский、Português、Italiano、Nederlands、Polski、Українська、Tiếng Việt、Türkçe、العربية、فارسی、עברית、اردو、ئۇيغۇرچە |
+| **Import** | PDF (including scans) / DOCX / EPUB (no DRM) / TXT / Markdown; up to 512 MB per file, split larger documents before importing |
+| **Delivery files** | Translation-only DOCX, bilingual DOCX, EPUB (from PDF or DOCX sources), PDF (the layout-preserving PDF applies to PDF sources only), glossary, TMX, TBX, JSONL, the `delivery_manifest.json` manifest |
+| **Language assets** | Glossary and translation memory: XLSX, TBX, TMX import and export; JSONL |
+| **Source language** | Auto-detect, or pick one of 21: English, 简体中文, 繁体中文, 日本語, 한국어, Deutsch, Français, Español, Italiano, Português, Русский, Nederlands, Polski, Українська, Tiếng Việt, Türkçe, العربية, فارسی, עברית, اردو, ئۇيغۇرچە |
+| **Target language** | 21: 简体中文, 繁体中文, English, 日本語, 한국어, Deutsch, Français, Español, Русский, Português, Italiano, Nederlands, Polski, Українська, Tiếng Việt, Türkçe, العربية, فارسی, עברית, اردو, ئۇيغۇرچە |
 
-源语言也用于扫描页的版面定位（随包的 Tesseract 只含英文、简体中文、阿拉伯文语言包，其余语言包缺失时显式报错拦截，不隐蔽降级为英文）。支持详情与验收边界见 [翻译语言支持与验收规范](docs/translation-languages.md)。没有公布速度或规模基准，不承诺某个页数下的耗时或费用：翻译质量与耗时取决于文档和你选的模型。准备页会按三种模式给出调用次数、输入 token 与耗时的估算，以此为准；语言对之间的质量差异请先用一小段样章自行验证。
+The source language also guides line positioning on scanned pages (the bundled Tesseract only ships English, Simplified Chinese and Arabic language data; missing packs fail explicitly rather than falling back silently to English). See [Translation language support and validation specification](docs/translation-languages.md) for details. No speed or scale benchmarks are published, and there is no promise about time or cost at any page count: quality and time depend on the document and the model you choose. For each document the prepare page estimates calls, input tokens and time for the three modes; rely on that, and for a given language pair try a short sample chapter first.
 
-> **语言验收范围：**上述为可选语言目录。新增语言对尚未完成真实模型的翻译、独立审校和阅读器质量验收；#10 保持打开，组件测试不代表质量签核。
-
----
-
-## ⚙️ 模型与服务商
-
-- **内置预设**：OpenAI、Gemini、DeepSeek、OpenRouter、SiliconFlow（硅基流动）、Moonshot / Kimi、Zhipu / GLM、Qwen / DashScope、OpenCode Go。
-- **自定义网关**：任何兼容 OpenAI API 的网关或本地模型服务（vLLM / Ollama）。
-- **多条连接**：翻译、审校、视觉可以各用一条已保存的连接；视觉连接只在任务含扫描页时才校验。
-- **模型目录**：OpenAI 兼容服务商与 Gemini 可以自动获取可用模型；实际能否调用以「测试并保存」为准。
-- **思考强度**：支持推理模型（如 DeepSeek-R1、OpenAI o 系列），可调节或关闭思考。
+> **Language validation scope:** These are selectable catalog entries. Added language pairs have not completed real-model translation, independent review, or reader-quality acceptance; #10 remains open. Component tests are not quality sign-off.
 
 ---
 
-## 🔒 隐私与数据
+## ⚙️ Models and providers
 
-- **发给谁**：文档文本、扫描页图片会发送给**你自己配置的**模型服务商，由对方处理，适用对方的隐私条款。请先确认文档允许这样处理。
-- **不上传其他内容**：应用本身没有遥测、统计或账号系统。除了模型服务商，唯一的网络请求是你点「检查更新」时读取 GitHub 上的最新版本信息，不会自动下载或安装。
-- **数据在本机**：任务、术语、翻译记忆和设置保存在本机数据目录——macOS：`~/Library/Application Support/Folith/data`；Windows：`%LOCALAPPDATA%\Folith\data`。
-- **API Key 怎么存**：保存在数据目录里的本地 JSON 配置文件中（权限 0600，仅当前用户可读），**不在系统钥匙串里**，也没有额外加密。请不要把数据目录同步到公共位置或分享给他人。
-
----
-
-## 💰 费用
-
-Folith 本身免费开源。翻译产生的模型调用费用由你和模型服务商结算，使用的是你自己的 API Key。准备页会按「快速 / 标准 / 精细」三种模式分别估算这份文档大约需要的调用次数、输入 token 与耗时，开始前可以对比；估算只是参考，实际用量取决于文档和所选模型。
+- **Built-in presets**: OpenAI, Gemini, DeepSeek, OpenRouter, SiliconFlow, Moonshot / Kimi, Zhipu / GLM, Qwen / DashScope, OpenCode Go.
+- **Custom gateways**: any OpenAI-compatible gateway or local model server (vLLM / Ollama).
+- **Several connections**: translation, review and vision can each use a different saved connection; the vision connection is only validated when a task contains scanned pages.
+- **Model catalog**: OpenAI-compatible providers and Gemini can fetch the list of available models; whether a model actually works is decided by Test and save.
+- **Reasoning effort**: supports reasoning models (such as DeepSeek-R1 and OpenAI o-series); thinking can be tuned or turned off.
 
 ---
 
-## ⚠️ 已知限制
+## 🔒 Privacy and data
 
-- macOS 安装包仅支持 Apple 芯片和 macOS 15.8.1 或更高；未签名、未公证。
-- Windows 安装包未签名；Windows 10 x64、ARM64 Windows 和干净虚拟机上的兼容性尚未验证。
-- 最终安装包的部分人工验收项（系统文件面板、中文输入法、睡眠 / 唤醒、首次放行、真实模型服务等）可能在发布后才完成，每个版本已验证和待验证的范围以对应的[发布说明](docs/release-notes-0.8.0.md)为准。
-- 不支持有 DRM 的 EPUB。
-- 表格和文本框里的图片不会保留到译文 DOCX；双语对照 DOCX 不含图片。
-- 默认导出的是新生成的文件，不会写回原 DOCX 的版式；DOCX 来源可在交付选项中另开「原格式译文」（`original_format.docx`），在原文件上写回译文并保留样式、表格、脚注与页眉页脚，默认关闭，尚未做原生 macOS / Windows 人工验收。
-- 简体中文以外的界面语言属于实验功能。
-- 扫描页由视觉模型识别，可能出错，请对照原页检查。
+- **Who receives what**: document text and scanned page images are sent to the model provider(s) **you configure**, and are handled under their privacy terms. Make sure you are allowed to process the document that way.
+- **Nothing else is uploaded**: the app itself has no telemetry, analytics or accounts. Apart from model providers, the only network request is reading the latest version info from GitHub when you press Check for Updates; nothing is downloaded or installed automatically.
+- **Data stays on your machine**: tasks, terms, translation memory and settings live in the local data directory — macOS: `~/Library/Application Support/Folith/data`; Windows: `%LOCALAPPDATA%\Folith\data`.
+- **How API keys are stored**: in a local JSON config file inside the data directory (permissions 0600, readable only by the current user). They are **not** in the system keychain and are not otherwise encrypted. Do not sync the data directory to shared locations or share it with others.
 
 ---
 
-## 🌐 界面语言
+## 💰 Cost
 
-界面默认简体中文。English、Español、Русский、العربية、Français、Deutsch 为实验功能，界面文案已齐全，阿拉伯语已完成全界面镜像与 RTL 导出验收（详见 [阿拉伯语验收文档](docs/arabic-acceptance-2026-10-26.md)）；除中文外的母语独立审阅仍在推进中。详见 [外观与多语言边界](docs/i18n/README.md)。
-
----
-
-## ❓ 常见问题
-
-**第一次打开被系统拦住？** 应用未签名、未公证。在「应用程序」里右键点 Folith，选「打开」，在弹窗中再点一次「打开」。只需一次。不要全局关闭 Gatekeeper。
-
-**「测试并保存」失败？** 检查 API Key、模型名和接口地址是否正确。如果你开着系统代理或 VPN，代理可能返回 502 之类的错误，可以先关闭代理再试，或把服务商域名加入直连。自定义网关请确认兼容 OpenAI API。
-
-**扫描页识别错了？** 识别由视觉模型完成，可能出错。先在工作台用原页对照核对；可以换一个更强的视觉模型，在「设置」里单独配置视觉连接后重新扫描。
-
-**任务中断了怎么办？** 进度会随时落盘。在任务库里打开该任务，点「继续翻译」，会从最后完成的批次接着做，成功的批次不会重跑。
-
-**怎么更新、卸载、清除数据？** 点「检查更新」会提示是否有新版本，新版本需自行到 [Release 页](https://github.com/xueyang-dev/Folith/releases/latest)下载。删除前请先导出需要保留的译文与 TMX / TBX。
-
-- macOS：把 `Folith.app` 拖进废纸篓只卸载应用，任务和设置保留。要完全清除，退出应用后删除 `~/Library/Application Support/Folith`、`~/Library/Logs/Folith` 和 `~/Library/Preferences/com.folith.QtDesktop.plist`。
-- Windows：在「设置 → 应用」里卸载安装版，或直接删除便携版文件夹，都只移除应用。要完全清除，退出应用后删除 `%LOCALAPPDATA%\Folith`。
-
-### 反馈
-
-- 问题与建议：[GitHub Issues](https://github.com/xueyang-dev/Folith/issues)
-- 邮件：xydev@outlook.sa（也可以在应用「设置」里找到入口）
+Folith itself is free and open source. The model calls made while translating are billed by your provider to you, using your own API key. The prepare page estimates calls, input tokens and time for each of Fast / Standard / Thorough so you can compare before starting. The estimate is a guide; actual usage depends on the document and the model.
 
 ---
 
-## 🗺️ 路线图
+## ⚠️ Known limitations
 
-**已经具备**：Qt 原生桌面客户端（Windows x64 安装版 / 便携版、macOS Apple 芯片）；PDF（含扫描件）/ DOCX / EPUB / TXT / Markdown 导入；扫描页以视觉模型为主；项目内的术语与翻译记忆；多条模型连接；跨段审校；候选采用与人工译文保护；原页定位；交付门禁与冻结交付。每个版本的具体变化见[变更日志](CHANGELOG.md)。
-
-**下一步**：
-
-- [ ] 代码签名与公证
-- [ ] 在更多 Windows 版本和干净虚拟机上验收
-- [ ] DOCX 原格式写回（保留原始排版与样式）
-- [ ] 翻译记忆模糊匹配
-- [ ] 文档跨版本增量翻译
-
----
-
-## 📖 文档
-
-- [最新发布说明与验收记录](docs/release-notes-0.8.0.md)
-- [发布计划](docs/release-plan.md)
-- [项目与长期记忆](docs/project-memory.md)
-- [译文 EPUB / DOCX 导出](docs/epub-export.md)
-- [OCR 与视觉阅读](docs/ocr-subsystem.md)
-- [架构与能力边界](docs/architecture-boundaries.md)
-- [智能 QA 分诊设计（v0.8.1 规划，英文）](docs/qa-triage-v0.8.1.md)
-- [变更日志](CHANGELOG.md)
-- [参与贡献](CONTRIBUTING.md)
+- Smart QA triage is experimental and off by default.
+- The macOS package supports Apple silicon and macOS 15.8.1 or later only; it is unsigned and not notarized.
+- The Windows package is unsigned; compatibility with Windows 10 x64, ARM64 Windows and clean virtual machines has not been verified.
+- Some manual acceptance items for the final packages (native file panels, Chinese input method, sleep / wake, first-launch approval, a real model service and so on) may only be completed after publication; what each release has and has not verified is recorded in the [release notes](docs/release-notes-0.8.0.md) (in Chinese) for the release in question.
+- EPUB files with DRM are not supported.
+- Images inside tables and text boxes are not kept in the translated DOCX; the bilingual DOCX contains no images.
+- By default output is newly generated files, not written back into the original DOCX layout. For DOCX sources you can switch on "Original-format translation" in the delivery options (`original_format.docx`): it writes the translation into the original file, keeping styles, tables, footnotes, headers and footers. Off by default; no native macOS / Windows manual acceptance yet.
+- Interface languages other than Simplified Chinese are experimental.
+- Scanned pages are recognized by the vision model and can contain errors; check against the original page.
 
 ---
 
-## 📄 许可证
+## 🌐 Interface languages
 
-本项目基于 [MIT License](LICENSE) 开源。
+The interface is Simplified Chinese by default. English, Español, Русский, العربية, Français, and Deutsch are experimental: the strings are complete, and Arabic full-interface mirroring and RTL exports have passed acceptance (see [Arabic acceptance report](docs/arabic-acceptance-2026-10-26.md)); independent native-speaker reviews for non-Chinese languages remain ongoing. See [Appearance and multilingual boundaries](docs/i18n/README.md).
+
+---
+
+## ❓ FAQ
+
+**macOS blocks the first launch?** The app is unsigned and not notarized. In Applications, right-click Folith, choose Open, then click Open in the dialog. This is needed only once. Do not turn Gatekeeper off globally.
+
+**Test and save fails?** Check the API key, model name and endpoint. If a system proxy or VPN is on, it may return errors such as 502; try turning it off or exempting the provider's domain. For a custom gateway, make sure it is OpenAI-API compatible.
+
+**A scanned page was recognized wrongly?** Recognition is done by the vision model and can be wrong. Compare with the original page in the workbench; you can switch to a stronger vision model by configuring a separate vision connection in Settings, then rescan.
+
+**A task was interrupted?** Progress is saved continuously. Open the task in the library and press Continue translating; it resumes from the last completed batch, and batches that succeeded are not rerun.
+
+**How do I update, uninstall or delete my data?** Check for Updates tells you whether a newer version exists; download it yourself from the [Releases page](https://github.com/xueyang-dev/Folith/releases/latest). Export any translations and TMX / TBX you want to keep first.
+
+- macOS: dragging `Folith.app` to the Trash removes only the app; tasks and settings stay. To remove everything, quit the app and delete `~/Library/Application Support/Folith`, `~/Library/Logs/Folith` and `~/Library/Preferences/com.folith.QtDesktop.plist`.
+- Windows: uninstalling the installer version from Settings → Apps, or deleting the portable folder, removes only the app. To remove everything, quit the app and delete `%LOCALAPPDATA%\Folith`.
+
+### Feedback
+
+- Bugs and suggestions: [GitHub Issues](https://github.com/xueyang-dev/Folith/issues)
+- Email: xydev@outlook.sa (also reachable from Settings in the app)
+
+---
+
+## 🗺️ Roadmap
+
+**Available today**: a native Qt desktop client (Windows x64 installer / portable, macOS on Apple silicon); PDF (including scans) / DOCX / EPUB / TXT / Markdown import; the vision model as the primary reader of scanned pages; per-project terms and translation memory; multiple model connections; cross-segment review; candidate previews that protect human translations; original-page navigation; the delivery gate and frozen deliveries. See the [Changelog](CHANGELOG.md) for what changed in each release.
+
+**Next**:
+
+- [ ] Code signing and notarization
+- [ ] Acceptance on more Windows versions and a clean VM
+- [ ] DOCX write-back preserving original layout and styles
+- [ ] Fuzzy translation-memory matching
+- [ ] Incremental translation across document versions
+
+---
+
+## 📖 Documentation
+
+(Most documents are in Chinese.)
+
+- [Latest release notes and acceptance record](docs/release-notes-0.8.0.md)
+- [Release plan](docs/release-plan.md)
+- [Projects and long-term memory](docs/project-memory.md)
+- [Translated EPUB / DOCX export](docs/epub-export.md)
+- [OCR and vision reading](docs/ocr-subsystem.md)
+- [Architecture and capability boundaries](docs/architecture-boundaries.md)
+- [Intelligent QA triage design (v0.8.1 planning, English)](docs/qa-triage-v0.8.1.md)
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md) (Chinese)
+
+---
+
+## 📄 License
+
+Released under the [MIT License](LICENSE).

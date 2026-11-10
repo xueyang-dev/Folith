@@ -16,10 +16,10 @@
 </p>
 
 <p align="center">
-  <a href="README.md">简体中文</a> | <a href="README.en.md">English</a> | <a href="README.ru.md">Русский</a> | <strong>Español</strong>
+  <a href="README.zh-CN.md">简体中文</a> | <a href="README.md">English</a> | <a href="README.ru.md">Русский</a> | <strong>Español</strong>
 </p>
 
-> La versión que se mantiene es el [README en chino simplificado](README.md). Esta página es una traducción; si difieren, prevalece la china. La interfaz de la aplicación está en chino simplificado por defecto, así que los nombres de los controles se dan como aparecen en la interfaz en español (una configuración regional experimental).
+> La versión que se mantiene es el [README en chino simplificado](README.zh-CN.md). Esta página es una traducción; si difieren, prevalece la china. La interfaz de la aplicación está en chino simplificado por defecto, así que los nombres de los controles se dan como aparecen en la interfaz en español (una configuración regional experimental).
 
 ---
 

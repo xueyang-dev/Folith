@@ -5,12 +5,12 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MAIN = "README.md"
-TRANSLATIONS = ("README.en.md", "README.ru.md", "README.es.md")
-SWITCHER = ("README.en.md", "README.ru.md", "README.es.md")
+MAIN = "README.zh-CN.md"
+TRANSLATIONS = ("README.md", "README.ru.md", "README.es.md")
+SWITCHER = ("README.md", "README.ru.md", "README.es.md")
 
 #: 译本 README 的界面语言 → 截图文件名的语言后缀。中文是基准语言，文件名没有后缀。
-LANGUAGE_SUFFIX = {"README.en.md": ".en", "README.ru.md": ".ru", "README.es.md": ".es"}
+LANGUAGE_SUFFIX = {"README.md": ".en", "README.ru.md": ".ru", "README.es.md": ".es"}
 
 
 def _read(name: str) -> str:
@@ -50,7 +50,7 @@ def test_translations_match_the_chinese_structure():
     for name in TRANSLATIONS:
         text = _read(name)
         assert len(_h2(text)) == len(_h2(main)), f"{name}: section count differs from {MAIN}"
-        assert text.count("<img ") == main.count("<img "), f"{name}: image count differs"
+        assert len(_images(text)) == len(_images(main)), f"{name}: local image count differs"
         assert {_strip_suffix(p) for p in _screenshots(text)} == \
             _screenshots(main), f"{name}: screenshots differ"
         assert _local_links(text) == _local_links(main), f"{name}: doc links differ"
