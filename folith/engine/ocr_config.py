@@ -35,6 +35,64 @@ OCR_CHECKPOINT_VERSION = 1
 OCR_DPI_BASELINE = 220
 
 
+#: 视觉读页并发（每条连接）。#220 C1 的实测：思考开启时「读一页」在约 110 s 后
+#: 被网关回 502，而客户端超时是 180 s——**网关比客户端先放弃**，多路请求同时
+#: 排在网关后面时更容易一起撞上限（首批 5 页里 4 页失败、任务 5 分钟没进展）。
+#: 因此默认值按连接类型分档：官方端点 3 路；自定义 relay / 网关 2 路。
+#: 显式参数与 FOLIOTHREAD_VLM_PAGE_WORKERS 仍然优先（语义不变），上限 8 路。
+VISION_PAGE_WORKERS_DEFAULT = 3
+VISION_PAGE_WORKERS_RELAY_DEFAULT = 2
+VISION_PAGE_WORKERS_MAX = 8
+
+#: 「网关超时早于客户端超时」的诊断提示。放在配置层而不是某条 UI 路径里：
+#: 它是连接属性，不是某一页的偶发错误（原有超时值不变，见 #220 C1）。
+VISION_GATEWAY_TIMEOUT_HINT = (
+    "视觉读页的网关超时早于客户端超时：思考开启时读一页约 110 s 就返回 HTTP 502，"
+    "而客户端超时是 180 s。遇到 502 不要先加大客户端超时——自定义 relay / 网关建议"
+    "把视觉并发降到 2 路，或关闭思考后重试；官方端点可用默认 3 路。")
+
+
+def _vision_endpoint(value: str) -> str:
+    return str(value or "").strip().rstrip("/").casefold()
+
+
+def vision_connection_is_relay(provider="", base_url="", providers=None):
+    """连接是否经由自定义 relay / 网关（而非服务商官方端点）。
+
+    判定只看已登记的服务商与 base_url：未登记的服务商按 relay 处理（那是用户
+    自己填的端点）；已登记服务商但 base_url 被改到别处，同样算 relay。
+    """
+    table = providers if providers is not None else (_c.PROVIDERS or {})
+    name = str(provider or "").strip()
+    entry = table.get(name)
+    if not isinstance(entry, dict):
+        return True
+    official = _vision_endpoint(entry.get("base_url") or "")
+    current = _vision_endpoint(base_url or "")
+    if not current or not official:
+        # 没有自定义 base_url 就是服务商的官方端点。
+        return False
+    return current != official
+
+
+def vision_page_workers(provider="", base_url="", *, workers=None, environ=None):
+    """视觉读页并发：显式参数 > 环境变量 > 按连接类型的默认值。
+
+    ``workers`` / ``FOLIOTHREAD_VLM_PAGE_WORKERS`` 的语义与以前一致（1..8 夹紧），
+    只有「都没给」时的默认值按官方端点 / relay 分档（#220 C1）。
+    """
+    env = os.environ if environ is None else environ
+    for candidate in (workers, (env or {}).get("FOLIOTHREAD_VLM_PAGE_WORKERS")):
+        try:
+            value = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        return max(1, min(VISION_PAGE_WORKERS_MAX, value))
+    if vision_connection_is_relay(provider, base_url):
+        return VISION_PAGE_WORKERS_RELAY_DEFAULT
+    return VISION_PAGE_WORKERS_DEFAULT
+
+
 _OCR_PAGE_NUMBER_RE = re.compile(
     r"^\s*(?:page\s+)?\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?\s*$",
     re.IGNORECASE,
