@@ -7,8 +7,16 @@
 诚实性原则（本模块的硬约束）：
 
 - 术语的「使用次数」= ``occurrences`` 的长度，不是猜测的引用计数；
-- 翻译记忆条目只有 ``target`` / ``reviewed`` / ``updated_at`` 三个字段，
-  因此**不提供**来源文档、出现次数或 fuzzy match 百分比——后端没有这些数据；
+- 翻译记忆条目本身仍然只有 ``target`` / ``reviewed`` / ``updated_at`` 等落盘
+  字段，没有来源文档、出现次数，也没有"相似度"字段；
+- 模糊匹配的分数**不是条目字段**：它由读侧（``folith.engine.tm_store.
+  tm_candidates``）按需即时计算，是派生数据、不落盘、不改变 TM 真值。因此
+  本模块渲染 TM 行模型时**不提供**分数，也不替调用方缓存或改写它；
+- TM 检索（精确 / 规范化 / 模糊候选，连同 ``context_status`` 与
+  ``provenance``）属于 `folith.engine.tm_store`；本模块只投影已落盘状态，
+  不做任何检索，也不复制检索规则；
+- 检索语义沿用 #107/#108：上下文指纹冲突的候选必须标出来（不得自动复用），
+  语言无法证明的 legacy-unscoped 条目保留在文件里但不参与候选；
 - 候选的「出现位置」优先用 ``occurrences``（真实段落命中），缺失时退回
   ``observed_segments``（观察到的段落），并明确区分「出现次数未知」；
 - 作用域会区分 ``project`` / ``global`` / ``document`` / ``section:<id>`` /
