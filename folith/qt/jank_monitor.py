@@ -289,6 +289,9 @@ class JankMonitor:
             "interval_ms": round(interval_ms, 1),
             "blocked_ms": round(max(0.0, interval_ms - self.pulse_interval_ms), 1),
             "severity": "severe" if interval_ms >= self.severe_ms else "slow",
+            # The thread the stack belongs to: on the desktop it is the Python
+            # main thread, because that is where Qt runs the GUI.
+            "thread_ident": self._gui_ident,
             "stack_captured": bool(stack),
             "stack": list(stack),
         }
