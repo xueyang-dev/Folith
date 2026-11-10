@@ -132,5 +132,167 @@ def selection_count(rows: Sequence[Any]) -> Dict[str, int]:
             "target_chars": target_chars}
 
 
-__all__: List[str] = ["Bucket", "DocumentCount", "count_text", "document_count",
-                      "selection_count"]
+
+
+# ---------------------------------------------------------------------------
+# incremental whole-document counting (issue #324, A1)
+# ---------------------------------------------------------------------------
+class DocumentCountIndex:
+    """``document_count`` kept current one row at a time.
+
+    Why: :func:`document_count` walks the whole book (116 ms for 10 000 rows on
+    the development machine) and the workbench used to call it on every
+    committed batch.  A batch changes a handful of rows, so replacing a row's
+    contribution is O(changed rows) instead of O(book).
+
+    Authority: this is a *cache* of :func:`document_count`.  In every state
+    ``as_document_count()`` equals a full recount of the same rows; the tests
+    assert exactly that.  Nothing here writes document state.
+
+    Structural operations that change the source text, the exclusion flag or
+    the row count must call :meth:`reset`; :meth:`update` raises ``ValueError``
+    instead of silently reporting stale counts.
+    """
+
+    def __init__(self, rows: Iterable[Any] | None = None) -> None:
+        self._rows: List[Dict[str, Any]] = []
+        self._seen: Dict[str, int] = {}
+        self._result = DocumentCount()
+        if rows is not None:
+            self.reset(rows)
+
+    # -- building ---------------------------------------------------------
+    def reset(self, rows: Iterable[Any]) -> None:
+        self._rows = []
+        self._seen = {}
+        self._result = DocumentCount()
+        for row in rows:
+            self.append(row)
+
+    def append(self, row: Any) -> None:
+        """Add one row at the end (the pipeline appends committed batches)."""
+        contribution = self._contribution(row)
+        self._rows.append(contribution)
+        result = self._result
+        source = _counts(contribution)
+        if contribution["excluded"]:
+            _bucket_add(result.excluded, source)
+            return
+        _bucket_add(result.total, source)
+        if contribution["has_target"]:
+            _bucket_add(result.translated, source)
+            result.target_words += contribution["target_words"]
+            result.target_chars += contribution["target_chars"]
+        else:
+            _bucket_add(result.untranslated, source)
+        if contribution["reviewed"]:
+            _bucket_add(result.reviewed, source)
+        if contribution["human_edited"]:
+            _bucket_add(result.human_edited, source)
+        key = contribution["source_key"]
+        if key:
+            if key in self._seen:
+                _bucket_add(result.repetitions, source)
+            self._seen[key] = self._seen.get(key, 0) + 1
+
+    # -- updating ---------------------------------------------------------
+    def update(self, position: int, row: Any) -> None:
+        """Replace one row whose *source* is unchanged (target/flags may differ).
+
+        Source, repetition and exclusion buckets stay put by construction: the
+        source key and the row order are unchanged, and an exclusion change is
+        a structural edit that must rebuild the index.
+        """
+        old = self._rows[position]
+        new = self._contribution(row)
+        if (new["source_key"] != old["source_key"]
+                or new["source_words"] != old["source_words"]
+                or new["source_chars"] != old["source_chars"]):
+            raise ValueError("source text changed; rebuild the DocumentCountIndex")
+        if new["excluded"] != old["excluded"]:
+            raise ValueError("exclusion changed; rebuild the DocumentCountIndex")
+        result = self._result
+        source = _counts(new)
+        if old["has_target"]:
+            _bucket_sub(result.translated, source)
+            result.target_words -= old["target_words"]
+            result.target_chars -= old["target_chars"]
+        else:
+            _bucket_sub(result.untranslated, source)
+        if new["has_target"]:
+            _bucket_add(result.translated, source)
+            result.target_words += new["target_words"]
+            result.target_chars += new["target_chars"]
+        else:
+            _bucket_add(result.untranslated, source)
+        if old["reviewed"]:
+            _bucket_sub(result.reviewed, source)
+        if new["reviewed"]:
+            _bucket_add(result.reviewed, source)
+        if old["human_edited"]:
+            _bucket_sub(result.human_edited, source)
+        if new["human_edited"]:
+            _bucket_add(result.human_edited, source)
+        self._rows[position] = new
+
+    @staticmethod
+    def _contribution(row: Any) -> Dict[str, Any]:
+        source_text = str(getattr(row, "source", "") or "")
+        source = count_text(source_text)
+        target_text = str(getattr(row, "target", "") or "")
+        has_target = bool(target_text.strip())
+        target = count_text(target_text) if has_target else {"words": 0, "chars": 0}
+        return {
+            "source_key": _key(source_text),
+            "source_words": source["words"],
+            "source_chars": source["chars"],
+            "has_target": has_target,
+            "target_words": target["words"],
+            "target_chars": target["chars"],
+            "reviewed": bool(getattr(row, "reviewed", False)),
+            "human_edited": bool(getattr(row, "human_edited", False)),
+            "excluded": bool(getattr(row, "excluded", False)),
+        }
+
+    def row_count(self) -> int:
+        return len(self._rows)
+
+    # -- reading ----------------------------------------------------------
+    def as_document_count(self) -> DocumentCount:
+        result = self._result
+        return DocumentCount(
+            total=_copy_bucket(result.total),
+            translated=_copy_bucket(result.translated),
+            untranslated=_copy_bucket(result.untranslated),
+            reviewed=_copy_bucket(result.reviewed),
+            human_edited=_copy_bucket(result.human_edited),
+            repetitions=_copy_bucket(result.repetitions),
+            excluded=_copy_bucket(result.excluded),
+            target_words=result.target_words,
+            target_chars=result.target_chars,
+        )
+
+
+def _counts(contribution: Dict[str, Any]) -> Dict[str, int]:
+    return {"words": contribution["source_words"],
+            "chars": contribution["source_chars"]}
+
+
+def _bucket_add(bucket: Bucket, counts: Dict[str, int]) -> None:
+    bucket.segments += 1
+    bucket.words += counts["words"]
+    bucket.chars += counts["chars"]
+
+
+def _bucket_sub(bucket: Bucket, counts: Dict[str, int]) -> None:
+    bucket.segments -= 1
+    bucket.words -= counts["words"]
+    bucket.chars -= counts["chars"]
+
+
+def _copy_bucket(bucket: Bucket) -> Bucket:
+    return Bucket(segments=bucket.segments, words=bucket.words, chars=bucket.chars)
+
+
+__all__: List[str] = ["Bucket", "DocumentCount", "DocumentCountIndex",
+                      "count_text", "document_count", "selection_count"]
