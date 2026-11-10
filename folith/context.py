@@ -8,15 +8,23 @@ be persisted beside a job and reused after a restart.
 from __future__ import annotations
 
 import json
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from .workflow_errors import raise_if_fatal
 
 
 DEFAULT_UNIT_CHARS = 12000
-DEFAULT_DIGEST_WORKERS = 4
+#: #319 plan A: understanding is a map/reduce fan-out of independent model
+#: calls, so the pool defaults to 8 lanes.  ``MAX_DIGEST_WORKERS`` is a hard
+#: ceiling: a misconfigured environment cannot open more simultaneous requests
+#: than the shared request controller / gateway pacing is expected to absorb.
+DEFAULT_DIGEST_WORKERS = 8
+MAX_DIGEST_WORKERS = 8
+DIGEST_WORKERS_ENV = "FOLIOTHREAD_DIGEST_WORKERS"
 MAX_SYNOPSIS_CHARS = 12000
 # The context packet is an input budget, separate from the source batch budget.
 # Keeping it bounded prevents a large synopsis/profile from silently multiplying
@@ -28,6 +36,100 @@ TARGET_CONTEXT_LEVELS = (
     "tm_approved",
     "generated",
 )
+
+
+def digest_worker_count(value: Optional[int] = None, *,
+                        pending: Optional[int] = None) -> int:
+    """Understanding pool size: explicit value > env var > default, capped.
+
+    The cap is deliberately a constant, not another environment knob: #319 is
+    about making the conversation with the provider faster, not about letting
+    a typo open an unbounded number of simultaneous requests.  Per-provider
+    pacing/backoff still comes from the shared ``request_control`` controller
+    (``FOLIOTHREAD_LLM_REQUEST_INTERVAL`` / backoff settings), which every
+    worker here acquires before its call.
+    """
+    raw = value
+    if raw is None:
+        raw = os.environ.get(DIGEST_WORKERS_ENV, "")
+    try:
+        workers = int(raw)
+    except (TypeError, ValueError):
+        workers = DEFAULT_DIGEST_WORKERS
+    workers = max(1, min(workers, MAX_DIGEST_WORKERS))
+    if pending is not None:
+        workers = max(1, min(workers, int(pending)))
+    return workers
+
+
+def _inherited_job_id() -> Optional[str]:
+    """The runtime job of the calling (pipeline) thread, if any.
+
+    Pool threads start without the pipeline's thread-local job id (core binds
+    it per worker); capturing it here lets a cancel request interrupt a worker
+    that is still waiting at the shared request gate, not only an in-flight
+    HTTP call.
+    """
+    try:
+        import core
+        return core._runtime_job_id()
+    except Exception:  # pragma: no cover - direct library/test use
+        return None
+
+
+@contextmanager
+def _worker_job_context(job_id: Optional[str]):
+    if not job_id:
+        yield
+        return
+    try:
+        import core
+        previous = getattr(core._RUNTIME_CTX, "job_id", None)
+        core._RUNTIME_CTX.job_id = job_id
+    except Exception:  # pragma: no cover - defensive
+        yield
+        return
+    try:
+        yield
+    finally:
+        core._RUNTIME_CTX.job_id = previous
+
+
+def _cancel_check() -> Optional[Callable[[], bool]]:
+    try:
+        import core
+        return core._llm_cancel_check()
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+
+def _request_gate(provider: str, api_key: str, model: str, call_llm: Callable):
+    """Shared provider request controller, or None when core is unavailable.
+
+    Reusing ``core._llm_request_controller`` means understanding calls observe
+    the same per-provider request interval and 429 cooldown as translation
+    calls, instead of adding a second, uncoordinated pacing scheme.
+    """
+    try:
+        import core
+        target = getattr(call_llm, "request_target", None) or {}
+        return core._llm_request_controller(
+            provider, model, target.get("api_key", api_key),
+            base_url=target.get("base_url") or None)
+    except Exception:  # pragma: no cover - direct library/test use
+        return None
+
+
+def _note_rate_limited(gate, error: BaseException) -> None:
+    """Push the shared cooldown on a 429; never add a retry of our own."""
+    if gate is None:
+        return
+    try:
+        import core
+        if core.is_rate_limited(error):
+            gate.note_rate_limited()
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 def _provider_failure_detail(error, fallback):
@@ -106,13 +208,33 @@ def _parse_object(text: Any) -> Optional[Dict[str, Any]]:
 
 
 def _call(call_llm: Callable, provider: str, api_key: str, model: str,
-          system_prompt: str, user_prompt: str) -> Any:
+          system_prompt: str, user_prompt: str,
+          cancel_check: Optional[Callable[[], bool]] = None) -> Any:
+    """One provider request, paced by the shared controller.
+
+    There is intentionally **no retry loop here**: before #319 the digest and
+    synopsis path made exactly one attempt per unit (the provider SDK's own
+    transport retries are unchanged), and parallelising the calls must not
+    multiply attempts.  A 429 only pushes the shared cooldown so the other
+    workers slow down instead of stampeding.
+    """
+    gate = _request_gate(provider, api_key, model, call_llm)
+    if gate is not None:
+        gate.acquire(cancel_check)
     try:
-        return call_llm(provider, api_key, model, system_prompt, user_prompt,
-                        temperature=0.1)
-    except TypeError:
-        # Small test/dry-run providers sometimes expose the five-argument form.
-        return call_llm(provider, api_key, model, system_prompt, user_prompt)
+        try:
+            result = call_llm(provider, api_key, model, system_prompt,
+                              user_prompt, temperature=0.1)
+        except TypeError:
+            # Small test/dry-run providers sometimes expose the five-argument form.
+            result = call_llm(provider, api_key, model, system_prompt,
+                              user_prompt)
+    except Exception as exc:
+        _note_rate_limited(gate, exc)
+        raise
+    if gate is not None:
+        gate.note_success()
+    return result
 
 
 def _chunk_range(paragraphs: Sequence[str], start: int, end: int,
@@ -257,11 +379,17 @@ def generate_section_digests(
     model: str,
     target_lang: str = "",
     call_llm: Optional[Callable] = None,
-    max_workers: int = DEFAULT_DIGEST_WORKERS,
+    max_workers: Optional[int] = None,
     existing_digests: Optional[Sequence[Dict[str, Any]]] = None,
     on_progress: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Generate independent unit digests; results retain source order."""
+    """Generate independent unit digests; results retain source order.
+
+    ``max_workers`` defaults to :data:`DEFAULT_DIGEST_WORKERS` and is capped at
+    :data:`MAX_DIGEST_WORKERS`; the env var ``FOLIOTHREAD_DIGEST_WORKERS``
+    overrides the default (never an explicit argument).  Results are collected
+    by source index, so parallel completion order never changes the output.
+    """
     if not units:
         return [], ["语义摘要跳过：没有可用语义单元"]
     if call_llm is None:
@@ -269,30 +397,34 @@ def generate_section_digests(
         call_llm = core.call_llm
     system_prompt = _digest_system_prompt()
 
+    job_id = _inherited_job_id()
+
     def work(unit: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]:
         user_prompt = (
             f"目标语言：{target_lang}\n"
             f"语义单元：{unit['unit_id']}（段落 {unit['start_segment']}-"
             f"{unit['end_segment']}）\n原文：\n{unit['source']}"
         )
-        try:
-            # 用途标注（#167）：摘要跑在各自的池线程上，必须在 worker 内设置，
-            # 线程本地的用途才会覆盖到这里的模型调用。
-            import core
-            with core.llm_call_purpose(
-                    f"全文语义理解（{unit['unit_id']}）"):
-                raw = _parse_object(_call(call_llm, provider, api_key, model,
-                                          system_prompt, user_prompt))
-            if raw is None:
-                return _fallback_digest(unit), f"{unit['unit_id']}：返回不是结构化 JSON"
-            return _normalize_digest(unit, raw), None
-        except Exception as exc:  # provider failures must not corrupt the job
-            raise_if_fatal(exc)
-            if "任务已请求取消" in str(exc) or "请求取消" in str(exc):
-                raise RuntimeError("任务已请求取消") from exc
-            detail = _provider_failure_detail(
-                exc, str(exc)[:160] or "模型请求失败")
-            return _fallback_digest(unit), f"{unit['unit_id']}：语义摘要失败（{detail}）"
+        with _worker_job_context(job_id):
+            try:
+                # 用途标注（#167）：摘要跑在各自的池线程上，必须在 worker 内设置，
+                # 线程本地的用途才会覆盖到这里的模型调用。
+                import core
+                with core.llm_call_purpose(
+                        f"全文语义理解（{unit['unit_id']}）"):
+                    raw = _parse_object(_call(
+                        call_llm, provider, api_key, model,
+                        system_prompt, user_prompt, _cancel_check()))
+                if raw is None:
+                    return _fallback_digest(unit), f"{unit['unit_id']}：返回不是结构化 JSON"
+                return _normalize_digest(unit, raw), None
+            except Exception as exc:  # provider failures must not corrupt the job
+                raise_if_fatal(exc)
+                if "任务已请求取消" in str(exc) or "请求取消" in str(exc):
+                    raise RuntimeError("任务已请求取消") from exc
+                detail = _provider_failure_detail(
+                    exc, str(exc)[:160] or "模型请求失败")
+                return _fallback_digest(unit), f"{unit['unit_id']}：语义摘要失败（{detail}）"
 
     existing_by_id = {
         str(item.get("unit_id")): dict(item)
@@ -313,8 +445,9 @@ def generate_section_digests(
     pending = [(index, unit) for index, unit in enumerate(units)
                if results[index] is None]
     if pending:
-        workers = max(1, min(int(max_workers or 1), len(pending)))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        workers = digest_worker_count(max_workers, pending=len(pending))
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="ft-digest") as pool:
             futures = {pool.submit(work, unit): index for index, unit in pending}
             for future in as_completed(futures):
                 index = futures[future]
@@ -410,25 +543,88 @@ def _reduce_synopsis(
     target_lang: str,
     call_llm: Callable,
     max_chars: int,
+    max_workers: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """Map each level in parallel, then reduce levels in dependency order.
+
+    Chunks *within* a level are independent, so they run concurrently; level
+    N+1 consumes level N's results and therefore waits for the whole level.
+    Results are written back by chunk index and the next level's inputs are
+    built in that same order, so the synopsis (and every prompt sent to the
+    provider) is identical to the pre-#319 serial loop -- concurrency changes
+    only *when* calls happen, never *what* is called or merged.
+    """
     chunk_limit = min(MAX_SYNOPSIS_CHARS, max(1000, int(max_chars or 12000)))
-    chunks = _text_chunks(items, chunk_limit)
-    if not chunks:
-        return {"summary": "", "status": "unavailable"}
-    reduced: List[Dict[str, Any]] = []
-    for chunk in chunks:
-        raw = _parse_object(_call(
-            call_llm, provider, api_key, model, _synopsis_system_prompt(),
-            f"目标语言：{target_lang}\n语义摘要块：\n{chunk}"))
-        if raw is None:
-            raise ValueError("模型未返回结构化 JSON")
-        reduced.append(_normalize_synopsis(raw))
-    if len(reduced) == 1:
-        return reduced[0]
-    return _reduce_synopsis(
-        [_synopsis_text(item, index) for index, item in enumerate(reduced)],
-        provider, api_key, model, target_lang, call_llm,
-        min(MAX_SYNOPSIS_CHARS, chunk_limit * 2))
+    job_id = _inherited_job_id()
+    current = list(items)
+    while True:
+        chunks = _text_chunks(current, chunk_limit)
+        if not chunks:
+            return {"summary": "", "status": "unavailable"}
+        reduced = _reduce_synopsis_chunks(
+            chunks, provider, api_key, model, target_lang, call_llm,
+            max_workers, job_id)
+        if len(reduced) == 1:
+            return reduced[0]
+        current = [_synopsis_text(item, index)
+                   for index, item in enumerate(reduced)]
+        chunk_limit = min(MAX_SYNOPSIS_CHARS, chunk_limit * 2)
+
+
+def _reduce_synopsis_chunks(
+    chunks: Sequence[str],
+    provider: str,
+    api_key: str,
+    model: str,
+    target_lang: str,
+    call_llm: Callable,
+    max_workers: Optional[int],
+    job_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    """One map level: call every chunk, return normalized results in order.
+
+    The first failing chunk (by index, matching the serial loop) raises once
+    the level has drained.  Provider/format failures are raised, not silently
+    replaced, so ``generate_document_synopsis`` keeps its single deterministic
+    fallback path and its single attempt per chunk.
+    """
+    def work(index: int, chunk: str) -> None:
+        with _worker_job_context(job_id):
+            try:
+                raw = _parse_object(_call(
+                    call_llm, provider, api_key, model, _synopsis_system_prompt(),
+                    f"目标语言：{target_lang}\n语义摘要块：\n{chunk}",
+                    _cancel_check()))
+            except Exception as exc:  # noqa: BLE001 - reported after the level drains
+                raise_if_fatal(exc)
+                if "任务已请求取消" in str(exc) or "请求取消" in str(exc):
+                    raise RuntimeError("任务已请求取消") from exc
+                errors[index] = exc
+                return
+            if raw is None:
+                errors[index] = ValueError("模型未返回结构化 JSON")
+                return
+            results[index] = _normalize_synopsis(raw)
+
+    results: List[Optional[Dict[str, Any]]] = [None] * len(chunks)
+    errors: List[Optional[BaseException]] = [None] * len(chunks)
+    if len(chunks) == 1:
+        work(0, chunks[0])
+    else:
+        workers = digest_worker_count(max_workers, pending=len(chunks))
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="ft-synopsis") as pool:
+            futures = [pool.submit(work, index, chunk)
+                       for index, chunk in enumerate(chunks)]
+            # Wait in chunk order: a cancellation/fatal error short-circuits,
+            # while ordinary per-chunk errors are collected for a deterministic
+            # first-failure report below.
+            for future in futures:
+                future.result()
+    for error in errors:
+        if error is not None:
+            raise error
+    return [item for item in results if item is not None]
 
 
 def generate_document_synopsis(
@@ -439,8 +635,13 @@ def generate_document_synopsis(
     target_lang: str = "",
     call_llm: Optional[Callable] = None,
     max_chunk_chars: int = 12000,
+    max_workers: Optional[int] = None,
 ) -> Tuple[Dict[str, Any], List[str]]:
-    """Map unit digests into a hierarchical document-level synopsis."""
+    """Map unit digests into a hierarchical document-level synopsis.
+
+    ``max_workers`` bounds each reduce level's parallel calls (same cap as the
+    digest pool; see :func:`digest_worker_count`).  Levels stay sequential.
+    """
     if not digests:
         return {"summary": "", "status": "unavailable"}, ["全文概要跳过：没有语义摘要"]
     if call_llm is None:
@@ -449,7 +650,8 @@ def generate_document_synopsis(
     try:
         return _reduce_synopsis(
             [_digest_text(digest) for digest in digests],
-            provider, api_key, model, target_lang, call_llm, max_chunk_chars), []
+            provider, api_key, model, target_lang, call_llm, max_chunk_chars,
+            max_workers), []
     except Exception as exc:
         raise_if_fatal(exc)
         if "任务已请求取消" in str(exc) or "请求取消" in str(exc):
@@ -479,7 +681,7 @@ def build_document_understanding(
     target_lang: str = "",
     call_llm: Optional[Callable] = None,
     max_chars: int = DEFAULT_UNIT_CHARS,
-    max_workers: int = DEFAULT_DIGEST_WORKERS,
+    max_workers: Optional[int] = None,
     checkpoint_dir: Optional[Path] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any], List[str]]:
     """Build understanding artifacts with durable per-unit digest checkpoints."""
@@ -545,7 +747,8 @@ def build_document_understanding(
         synopsis, synopsis_warnings = stored_synopsis, []
     else:
         synopsis, synopsis_warnings = generate_document_synopsis(
-            digests, provider, api_key, model, target_lang, call_llm)
+            digests, provider, api_key, model, target_lang, call_llm,
+            max_workers=max_workers)
     if checkpoint_dir:
         write_understanding_artifacts(Path(checkpoint_dir), units, digests, synopsis)
     return units, digests, synopsis, warnings + synopsis_warnings
