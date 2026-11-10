@@ -350,3 +350,34 @@ def test_per_batch_gui_cost_does_not_grow_with_the_book(client, capsys):
               f"p50={value['p50']:.2f} p95={value['p95']:.2f} max={value['max']:.2f} | "
               f"whole rebuild once={rebuild[segments]:.0f}")
     assert timings[10000]["p50"] < timings[1000]["p50"] * 3 + 5.0, timings
+
+def test_one_poll_converges_without_a_settle_window(client):
+    """The old contract: after a state change, ONE poll converges.
+
+    Both paths are exercised -- a journal delta (fast path) and a snapshot write
+    (whole-state path).  The test drives the Qt event loop only; it never waits
+    for a fixed window, so it fails deterministically if the poll does not
+    converge by itself (the window re-polls once when the state moved while a
+    background read was in flight).
+    """
+    window, adapter, core, app = (client["window"], client["adapter"],
+                                  client["core"], client["app"])
+    job_id = _open(client)
+    state = core.load_job_state(job_id)
+
+    # 1) One committed batch: one poll, then the event loop.
+    _append_record(core, job_id, seq=1, offset=700,
+                   pairs=_changed_pairs(state, [700]))
+    window._poll_workbench()
+    assert _pump(app, 60, lambda: window.workbench.segment_row_text(700, 2)
+                 == "新提交700")
+    assert not window._state_load_in_flight
+
+    # 2) A snapshot write landing while the window is live: still one poll.
+    state = core.load_job_state(job_id)
+    state["pairs"][700]["target"] = "落盘译文700"
+    core.save_job_state(job_id, state)
+    window._poll_workbench()
+    assert _pump(app, 60, lambda: window.workbench.segment_row_text(700, 2)
+                 == "落盘译文700")
+    assert not window._state_load_in_flight

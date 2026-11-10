@@ -241,6 +241,8 @@ class MainWindow(QMainWindow):
         self._delta_projection_in_flight = False
         #: A poll was requested while a slow projection held the read slot.
         self._pending_poll = False
+        #: A self-healing re-poll is already scheduled.
+        self._repoll_pending = False
         #: A job the feed cannot be used for any more (unknown schema/mutation).
         self._delta_legacy_job = ""
         #: Start writing queued edits once the GUI has been idle this long.  The
@@ -2065,11 +2067,12 @@ class MainWindow(QMainWindow):
         if not job_id:
             return
         if self._state_load_in_flight:
-            if self._delta_projection_in_flight:
-                # Only the slow projection is running; remember that a poll was
-                # requested so it runs as soon as the projection settles.  A
-                # state/feed read in flight is left to finish on its own.
-                self._pending_poll = True
+            # A read (feed suffix, whole state or slow projection) is running.
+            # Remember the request so it is re-issued the moment that read
+            # settles: a poll that arrives while one is in flight must not be
+            # silently dropped, otherwise "one poll after a change converges"
+            # stops being true (the observed flake in the 2026-11-11 A/B).
+            self._pending_poll = True
             return
         if self._delta_ready(job_id):
             self._poll_workbench_delta(job_id)
@@ -2165,6 +2168,7 @@ class MainWindow(QMainWindow):
                 return
             result, runtime, drafts = payload
             self._apply_feed_result(job_id, result, runtime, drafts)
+            self._flush_pending_poll()
 
         def failed(_message: str, _detail: str) -> None:
             self._state_load_in_flight = False
@@ -2226,6 +2230,40 @@ class MainWindow(QMainWindow):
             self._resync_from_full(job_id)
             return
 
+    def _flush_pending_poll(self) -> None:
+        """Re-issue a poll that arrived while a read was in flight."""
+        if not self._pending_poll or self._state_load_in_flight:
+            return
+        self._pending_poll = False
+        self._poll_workbench()
+
+    def _repoll_if_changed(self, job_id: str, signature: str) -> None:
+        """Re-poll once when the state advanced while a read was in flight.
+
+        "One poll after a change converges" is the workbench contract the old
+        synchronous path had.  With background reads a second writer can land
+        between the read and its `done` callback; instead of leaving the window
+        stale until the next 1 s tick, schedule one follow-up poll.  This is
+        event/state driven, not a sleep-based settle window.
+        """
+        if self._repoll_pending:
+            return
+        try:
+            current = adapter.state_signature(job_id)
+        except Exception:  # noqa: BLE001 - a failed stat must not break the UI
+            return
+        if current == signature:
+            return
+        self._repoll_pending = True
+
+        def again() -> None:
+            self._repoll_pending = False
+            if (job_id == self._current_job_id and not self._state_load_in_flight
+                    and not self._opening_job_id and not self._closing_accepted):
+                self._poll_workbench()
+
+        self._later(0, again)
+
     def _resync_from_full(self, job_id: str) -> None:
         """Drop the incremental state and reload the authoritative one."""
         self._drop_delta_state()
@@ -2266,7 +2304,9 @@ class MainWindow(QMainWindow):
                 job_id, state, count_occurrences=count_occurrences)
             models["delivery"] = self._delivery_cache.refresh(
                 job_id, self.config, state)
-            return state, models
+            # Signature observed *with* the state, so a write that lands while
+            # the projection is being prepared is detected on `done`.
+            return state, models, adapter.state_signature(job_id)
 
         def done(payload) -> None:
             self._delta_projection_in_flight = False
@@ -2274,9 +2314,9 @@ class MainWindow(QMainWindow):
             if (job_id != self._current_job_id or self._opening_job_id
                     or self._closing_accepted or payload is None):
                 return
-            state, models = payload
+            state, models, signature = payload
             self._cached_state = state
-            self._cached_signature = adapter.state_signature(job_id)
+            self._cached_signature = signature
             self._cached_models = (state, models)
             self._cached_models_key = self._workbench_models_key(
                 job_id, self._cached_signature)
@@ -2288,9 +2328,8 @@ class MainWindow(QMainWindow):
                 refresh_delivery=refresh_delivery)
             self._sync_menu_state()
             self._delta_projection_at = time.monotonic()
-            if self._pending_poll:
-                self._pending_poll = False
-                self._poll_workbench()
+            self._repoll_if_changed(job_id, signature)
+            self._flush_pending_poll()
 
         def failed(_message: str, _detail: str) -> None:
             self._delta_projection_in_flight = False
@@ -2363,6 +2402,8 @@ class MainWindow(QMainWindow):
             self._cached_models = (state, models)
             self._cached_models_key = models_key
             self.refresh_workbench(preloaded=True, models=models)
+            self._repoll_if_changed(job_id, signature)
+            self._flush_pending_poll()
 
         def failed(_message: str, _detail: str) -> None:
             self._state_load_in_flight = False

@@ -3806,6 +3806,7 @@ class WorkbenchView(QWidget):
         """
         self.job_id = job_id
         self._state = state
+        self._blocking_cached = None
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._last_runtime = runtime or {}
@@ -3878,6 +3879,8 @@ class WorkbenchView(QWidget):
         rows = list(rows)
         if positions and not self._apply_row_delta(rows, positions):
             return False
+        if counters or (set(domains or ()) & {"review", "followup", "delivery"}):
+            self._blocking_cached = None
         if positions:
             if self._filters_active():
                 # A user filter is on: keeping the visible subset correct is a
@@ -3940,6 +3943,7 @@ class WorkbenchView(QWidget):
         """
         self.job_id = job_id
         self._state = state
+        self._blocking_cached = None
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._last_runtime = runtime or {}
@@ -4884,6 +4888,22 @@ class WorkbenchView(QWidget):
                           ("qa", i18n.tr('合规与 QA'))))
         self.stage_bar.set_more_pages(pages)
 
+    def blocking_count(self) -> int:
+        """Number of unresolved blocking findings, cached between deltas.
+
+        ``blocking_items()`` walks the whole findings list (O(document)).  The
+        stage bar only needs its length, and a delta that does not touch
+        review/follow-up/delivery cannot change that length -- so this is the
+        one whole-document scan the per-batch path used to pay (1k 0.75 ms vs
+        10k 2.08 ms in the A1 measurements).  Invalidated by whole-state apply
+        and by a delta that reports those domains.
+        """
+        cached = getattr(self, "_blocking_cached", None)
+        if cached is None:
+            cached = len(self.blocking_items())
+            self._blocking_cached = cached
+        return cached
+
     def blocking_items(self) -> list[dict]:
         """尚未解决的**阻断级**检查项——交付门禁、审校步骤、页头与交付页共用的那一份。
 
@@ -4899,12 +4919,12 @@ class WorkbenchView(QWidget):
 
     def _render_stage(self) -> None:
         """用审校投影、交付预检与运行视图重算阶段步骤条与"下一步"。"""
-        blocking = self.blocking_items()
+        blocking = self.blocking_count()
         view = stage_model.stage_view(
             started=self._task_started(), runtime=self._last_runtime,
             state=self._state, review=self.review_panel.view(),
             delivery=self._delivery_preview, terms_blocked=self._terms_blocked,
-            blocking=len(blocking))
+            blocking=blocking)
         self.stage_bar.set_stages(view)
         # 术语、检查与修复、任务详情与"更多"里的页面只对已经开始的任务有意义：
         # 准备阶段没有术语表、没有记录。
@@ -5816,7 +5836,13 @@ class WorkbenchView(QWidget):
         indexes = set(self.selected_indexes())
         if len(indexes) <= 1 and self._current_index >= 0:
             indexes = {self._current_index}
-        rows = [row for row in self._all_rows if row.index in indexes]
+        # Row.index is its position in _all_rows (both the pairs and the paras
+        # branch build it that way), so a selection lookup is O(selected), not a
+        # whole-book scan.  The scan showed up as the residual per-batch growth
+        # (1k 0.76 ms -> 10k 2.0 ms) whenever the committed batch touched the
+        # current row.
+        rows = [self._all_rows[position] for position in sorted(indexes)
+                if 0 <= position < len(self._all_rows)]
         if not rows:
             self.word_selection_label.setText("")
             return

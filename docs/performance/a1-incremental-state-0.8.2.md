@@ -243,22 +243,24 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 
 | 规模 | 每批 `apply_delta`（行更新+重画+计数）p50 / p95 / max | 整份重建一次（旧路径） |
 |---:|---|---:|
-| 1,000 段 | **0.75 / 0.97 / 3.72 ms** | 546 ms |
-| 10,000 段 | **2.08 / 8.45 / 12.83 ms** | 5,057 ms |
+| 1,000 段 | **0.77 / 1.06 / 4.06 ms** | 445 ms |
+| 10,000 段 | **1.67 / 10.52 / 14.14 ms** | 4,859 ms |
+
+（同一测量在 P3 首项之前是 1k `0.75/0.97/3.72`、10k `2.08/8.45/12.83`，重建 546/5,057 ms。P3 首项做了两处：`blocking_count` 缓存（`unresolved_blocking` 原本每批扫 findings）与选中段计数改为按位置直取（原本整表扫描，批次碰到当前段时触发）。10k p50 2.08→1.67 ms，但仍有 2.2× 残差；p95 受机器负载影响反而更高（同机 load 80+）。**剩下的增长不在 Python 扫描**，下一步应在 Qt 绘制/行高路径上做 profile 再判断，不能继续猜。）
 
 读法：书长 10× 时整份重建近似线性（9.3×），单批增量亚线性（2.8×）且绝对值 1–13 ms。**2.8× 说明还有残余 O(n)**：`apply_delta` 里仍调用的 `_render_stage` → `blocking_items()` 会遍历 pairs；`_render_activity` 也会做一次 stat。这条留到 P3（阶段条改为吃 delta 的计数器）后应变成常数级。验收口径（每批 GUI 耗时与书长无关）在"数量级"上成立，但严格"常数"还差这一处。
 
-### 13.2 测试稳定性状态（如实）
+### 13.2 测试稳定性状态（修后）
 
-`tests/qt_workbench_poll_test.py`、`qt_workbench_projection_test.py`、`qt_workbench_delta_test.py` 各连跑 3 次（本机同时有 A3 冻结版加压任务）：
+三个文件各连跑 3 次（本机 load 35–78，A3 加压结束后）：
 
-| 文件 | 3 次结果 |
-|---|---|
-| `qt_workbench_poll_test.py` | 7 passed；5 passed/2 failed；5 passed/2 failed |
-| `qt_workbench_projection_test.py` | 5 passed/1 failed（3 次相同：`test_idle_delivery_preview_refreshes_on_its_worker_cadence`） |
-| `qt_workbench_delta_test.py` | 6 passed/1 failed（3 次相同：cost 测试的 journal 串场，已修） |
+| 文件 | 第 1 次 | 第 2 次 | 第 3 次 |
+|---|---|---|---|
+| `qt_workbench_poll_test.py` | 7 passed (2:29) | 7 passed (2:30) | 7 passed (2:35) |
+| `qt_workbench_projection_test.py` | 6 passed (2:01) | 6 passed (2:00) | 6 passed (2:06) |
+| `qt_workbench_delta_test.py` | 8 passed (3:11) | 8 passed (3:08) | 8 passed (2:47) |
 
-之后已修：慢投影占用读槽时统一置 `_state_load_in_flight`（等待语义与旧轮询一致）、投影完成后的 pending poll 接力、cost 测试清理同一 job 的旧 journal。修后单独复跑：delivery 用例通过、cost 用例通过并给出上表数字；但 `qt_workbench_poll_test.py` 中三个依赖"一次 poll 即收敛"的用例在连跑中仍有 1–2 次失败（`_cached_state` 未更新 / `review_queue` 未被调用），**根因尚未定位**，怀疑与机器负载下 5 s 等待窗口有关，但未经证明。**因此 P2 仍判"需一轮"**。
+改动前同一命令在 load 82–95 下的 A/B 见 §13.4：A（main）3/3 绿、B（P2）每轮 1–2 红，确认是 P2 回归而非环境 flake；修复后目标 3 用例在仍处高负载时即 3/3 绿，确定性用例 5/5 绿。
 
 ### 13.3 P3 未做（本轮）
 
@@ -266,3 +268,22 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 - `SnapshotChanged(worker_active)` 目前一律整份重建（P2 简化，保留旧行为）。
 - 慢投影按域调度：已按 5 s/脏域节奏，但未做"每域独立在飞/独立失效"。
 - 阶段条 `_render_stage` 的 O(n)（见 13.1）。
+
+### 13.4 A/B 判定（2026-11-11，本机 load 82–95）
+
+同一时刻交替跑 `tests/qt_workbench_poll_test.py` 的 3 个时序敏感用例（各 3 次，A=`origin/main` `8109b9c2`，B=本分支）：
+
+| 轮次 | A（main） | B（P2，修前） |
+|---|---|---|
+| 1（load 82–85） | 3 passed / 54.5 s | 2 failed, 1 passed / 54.9 s |
+| 2（load 89–86） | 3 passed / 53.8 s | 1 failed, 2 passed / 52.9 s |
+| 3（load 91–95） | 3 passed / 54.7 s | 1 failed, 2 passed / 53.8 s |
+
+**判定：不是环境 flake，是 P2 引入的收敛回归。** 根因（用临时调试探针定位，已移除）：轮询请求在**任何读在飞时**被静默丢弃——原代码只在"整份读在飞"时早退，而 P2 的 delta 读把在飞窗口扩大到每次 tick；测试保存状态后那一次 `_poll_workbench()` 正好落在这个窗口里，于是再没有人拉取新状态。瀑布序列：`open` 内联首拉 → 1 s 定时器 tick 发起异步 delta 读（Idle）→ 测试保存 → 测试的 poll 被丢弃 → 异步 Idle 完成后状态仍是旧的。
+
+**修法（事件驱动，非 sleep）**：
+1. `_poll_workbench` 在 `_state_load_in_flight` 为真时记 `_pending_poll=True`（不再是"投影在飞才记"）；
+2. 每类读的 `done`/`failed` 收尾调用 `_flush_pending_poll()`，若有挂起请求立即重发；
+3. 读完成后再 stat 一次签名，若期间状态又变了（`_repoll_if_changed`）也补一次 poll（有 `_repoll_pending` 去重）。
+
+修后：目标 3 用例连跑 3 次 **3/3 全绿**；新增确定性用例 `test_one_poll_converges_without_a_settle_window`（journal delta 与快照写入各"一次 poll 收敛"，只驱动事件循环、不设固定等待）连跑 **5/5 全绿**。
