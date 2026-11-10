@@ -265,6 +265,30 @@ def _probe_gpu() -> Dict[str, Any]:
     return {"gpu_available": False}
 
 
+# ---------------------------------------------------------------------------
+# GUI stall source registry (#323)
+#
+# The main-thread stall sampler lives in the Qt layer
+# (``folith.qt.jank_monitor``) and must not be imported from here: the trace
+# engine also runs headless, where Qt is not installed.  The Qt layer registers
+# itself at start-up; a RunContext snapshots every registered source when a run
+# begins and asks for that window when the run finishes.  A source only has to
+# provide ``checkpoint()`` and ``summary_since(marker)``.
+_GUI_STALL_SOURCES: List[Any] = []
+_GUI_STALL_LOCK = threading.RLock()
+
+
+def register_gui_stall_source(source: Any) -> None:
+    with _GUI_STALL_LOCK:
+        if source not in _GUI_STALL_SOURCES:
+            _GUI_STALL_SOURCES.append(source)
+
+
+def unregister_gui_stall_source(source: Any) -> None:
+    with _GUI_STALL_LOCK, contextlib.suppress(ValueError):
+        _GUI_STALL_SOURCES.remove(source)
+
+
 class ResourceSampler:
     """Low-overhead background resource sampler (1~2 seconds interval)."""
 
@@ -557,6 +581,9 @@ class RunContext:
         self.summary_path = self.run_dir / "summary.json"
         self.stages_path = self.run_dir / "stages.json"
         self.report_path = self.run_dir / "performance.md"
+        # GUI-thread stall window for this run (#323).  Written next to
+        # summary.json and also embedded there, never in a parallel record.
+        self.jank_path = self.run_dir / "gui_jank.json"
         self.legacy_perf_path = self.output_dir / "performance.json"
         self.history_path = self.perf_root / "history.json"
 
@@ -632,12 +659,25 @@ class RunContext:
         # Concurrency observation
         self.concurrency_stats: Dict[str, Dict[str, int]] = {}
 
+        # GUI stall sources snapshotted when this run began (#323) and the
+        # run-window view materialised when it finishes.
+        self._gui_stall_tokens: List[Tuple[Any, Any]] = []
+        self.gui_jank: Dict[str, Any] = {}
+
         # Start sampler if tracing is enabled
         if self.level != TraceLevel.OFF:
             self.run_dir.mkdir(parents=True, exist_ok=True)
             self._events_file = self.events_path.open("a", encoding="utf-8")
             self._requests_file = self.requests_path.open("a", encoding="utf-8")
             self._sampler.start()
+            with _GUI_STALL_LOCK:
+                sources = list(_GUI_STALL_SOURCES)
+            for source in sources:
+                try:
+                    self._gui_stall_tokens.append((source, source.checkpoint()))
+                except Exception:
+                    # A measurement must never make a task unrunnable.
+                    continue
 
     def set_dataset_info(self, **kwargs: Any) -> None:
         with self._lock:
@@ -1032,6 +1072,7 @@ class RunContext:
 
             # Generate summaries & reports
             summary = self.generate_summary(resource_summary)
+            summary["gui_jank"] = self._gui_jank_window()
             stages_doc = self.generate_stages_doc()
             perf_md = self.generate_performance_report_md(summary, stages_doc, resource_summary)
 
@@ -1042,6 +1083,10 @@ class RunContext:
                     self.summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
                     self.stages_path.write_text(json.dumps(stages_doc, ensure_ascii=False, indent=2), encoding="utf-8")
                     self.report_path.write_text(perf_md, encoding="utf-8")
+                    if self.gui_jank:
+                        self.jank_path.write_text(
+                            json.dumps(self.gui_jank, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
 
                     # Also update history.json
                     self._update_history(summary)
@@ -1362,6 +1407,24 @@ class RunContext:
             "retry_observation": retry_observation,
         }
         return summary
+
+    def _gui_jank_window(self) -> Dict[str, Any]:
+        """Run-scoped GUI stall view from every registered source (#323).
+
+        The sampler is process-wide; this narrows it to the run by diffing the
+        counters against the checkpoint taken in ``__init__``.  Sources that
+        raise are skipped: a diagnostic must never fail a run.
+        """
+        merged: Dict[str, Any] = {}
+        for source, token in list(self._gui_stall_tokens):
+            try:
+                window = source.summary_since(token)
+            except Exception:
+                continue
+            if isinstance(window, dict):
+                merged.update(window)
+        self.gui_jank = merged
+        return merged
 
     def generate_stages_doc(self) -> Dict[str, Any]:
         return {
