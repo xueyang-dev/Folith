@@ -8,7 +8,7 @@
   旧条目不出现在候选里；
 * 旧格式 ``translation_memory.json`` 无损加载，现有 exact/normalized 行为不变；
 * 中→英、英→中两个语对，长段 / 短段 / 数字 / 人名差异样本；
-* 回滚：``fuzzy=False``（或 ``FOLIOTHREAD_TM_FUZZY=0``）后与现状一致。
+* 回滚：``fuzzy=False``（或 ``FOLITH_TM_FUZZY=0``）后与现状一致。
 
 分数容差：difflib 的 ``ratio()`` 是确定性算法，但不同 Python 补丁版本之间
 理论上可能有浮点差异，因此黄金集断言用 ``SCORE_TOLERANCE``（±1）。

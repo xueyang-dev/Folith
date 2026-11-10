@@ -133,9 +133,9 @@ def _tm_hit(record, language, key):
 # 允许四舍五入到 100——否则调用方无法区分"同一句话"和"99.7% 像的另一句话"。
 
 #: 部署级开关，关闭后所有未显式传参的调用回到 exact/normalized（rollback 路径）。
-TM_FUZZY_ENV = "FOLIOTHREAD_TM_FUZZY"
+TM_FUZZY_ENV = "FOLITH_TM_FUZZY"
 #: 部署级默认阈值（里程碑默认值的覆盖项，便于性能或精确率回退）。
-TM_FUZZY_THRESHOLD_ENV = "FOLIOTHREAD_TM_FUZZY_THRESHOLD"
+TM_FUZZY_THRESHOLD_ENV = "FOLITH_TM_FUZZY_THRESHOLD"
 #: 默认阈值：75%。这是**量出来的**，不是猜的——标定方法与数字见
 #: docs/tm-fuzzy-matching-0.8.2.md「默认阈值」一节：同域不相关段落的最佳分数
 #: 全部低于 50（噪声上界），"改一个数字"的分数下界 88（EN）/92（ZH），
@@ -156,7 +156,7 @@ _TM_FUZZY_OFF_VALUES = {"0", "false", "no", "off", "disabled"}
 #: docs/tm-fuzzy-matching-0.8.2.md（§6：保留 50k 普通 TM p95 约 115 ms、
 #: 样板段 p95 约 164 ms）。超预算时只保留"字符重集上界最高"的 400 条进
 #: 精确计分，候选里会带 ``scan_truncated=True``（部分检索，绝不静默截断）。
-TM_FUZZY_MAX_EVALS_ENV = "FOLIOTHREAD_TM_FUZZY_MAX_EVALS"
+TM_FUZZY_MAX_EVALS_ENV = "FOLITH_TM_FUZZY_MAX_EVALS"
 TM_FUZZY_DEFAULT_MAX_EVALS = 400
 #: 每次查询最多扫描多少条候选（廉价层：长度窗口 + real_quick_ratio +
 #: quick_ratio）。它只限制最坏情况的常数，不参与分数判定。
@@ -173,12 +173,12 @@ def _tm_env_flag(raw):
 
 
 def tm_fuzzy_enabled_default():
-    """模糊候选是否默认开启；由 ``FOLIOTHREAD_TM_FUZZY`` 覆盖。
+    """模糊候选是否默认开启；由 ``FOLITH_TM_FUZZY`` 覆盖。
 
     默认**开启**：这是一个新增的只读候选接口，不改变任何自动复用路径，
     调用方显式要候选就是为了拿模糊候选。要恢复 0.8.1 的状态有两条路：
     调用方传 ``fuzzy=False``（单参数、无数据迁移），或部署级设置
-    ``FOLIOTHREAD_TM_FUZZY=0``。
+    ``FOLITH_TM_FUZZY=0``。
     """
     enabled = _tm_env_flag(os.environ.get(TM_FUZZY_ENV))
     return True if enabled is None else enabled
@@ -519,7 +519,7 @@ def tm_candidates(tm, source, target_lang, *, previous_source=None,
     ``fuzzy``
         是否返回模糊候选。``False`` 时只返回 exact/normalized，也就是 0.8.1 的
         可证明等价行为——这是回滚路径（单参数、无数据迁移）。``None`` 时取
-        `tm_fuzzy_enabled_default()`（可被 ``FOLIOTHREAD_TM_FUZZY=0`` 关闭）。
+        `tm_fuzzy_enabled_default()`（可被 ``FOLITH_TM_FUZZY=0`` 关闭）。
     ``index``
         由 `tm_candidate_index` 预构建的索引，用于一次运行内多次查询；语言必须
         与 ``target_lang`` 一致（不一致直接抛 ``ValueError``，不跨语言猜）。
@@ -560,7 +560,7 @@ def tm_candidates(tm, source, target_lang, *, previous_source=None,
 
     性能边界（实测数字见 docs/tm-fuzzy-matching-0.8.2.md）：长度窗口 / 上界
     剪枝在预算内是**穷举**的；样板段极多的 TM 上昂贵评估会超过预算
-    （``FOLIOTHREAD_TM_FUZZY_MAX_EVALS``，默认 400），或长度窗口超过廉价扫描
+    （``FOLITH_TM_FUZZY_MAX_EVALS``，默认 400），或长度窗口超过廉价扫描
     上限（``TM_FUZZY_DEFAULT_MAX_SCAN``，6,000），此时 ``scan_truncated`` 为
     真、``reason`` 说明是哪一路预算（可能两者都有）。分数仍然精确，但集合可能
     不完整，调用方必须如实展示这一点（不要静默省略）。

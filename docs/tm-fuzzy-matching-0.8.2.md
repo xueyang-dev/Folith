@@ -17,7 +17,7 @@ Issue：[#148 \[TM\] Fuzzy matching: scoring, provenance and candidate ranking](
   p95 **114.5 ms**、索引构建 **361 ms**（见 §6）；样板段最坏情况 p95
   **163.9 ms**（预算截断时如实标注 `scan_truncated`）。
 - 回滚是单参数、无数据迁移：`fuzzy=False`，或部署级
-  `FOLIOTHREAD_TM_FUZZY=0`。
+  `FOLITH_TM_FUZZY=0`。
 - 截断是**可判定的**：返回的是带 `scan_truncated` / `reason` 的 `list` 子类，
   空结果也能区分"预算耗尽没找到"与"TM 里确实没有"。
 
@@ -185,7 +185,7 @@ list，状态只在**返回值本身**上。
   ZH 侧 p5=87）；
 - 与专业 CAT 的模糊区间下界（75）一致，UI 与译文回忆的心智模型不变。
 
-可配置性与回退：`threshold=` 按查询覆盖；`FOLIOTHREAD_TM_FUZZY_THRESHOLD`
+可配置性与回退：`threshold=` 按查询覆盖；`FOLITH_TM_FUZZY_THRESHOLD`
 部署级覆盖。语料实测显示 60–70 也能保持零噪声（同语料内），但那是牺牲
 跨语料安全性换召回，因此**不是默认值**；调用方如果要召回短段/大改写的段落，
 应该显式降低阈值并在 UI 上把低分候选标成"需大改"。
@@ -238,7 +238,7 @@ list，状态只在**返回值本身**上。
 - 接受上界（本功能的用途是"工作台里按需取候选"，不是翻译管线里的逐段
   查询）：**p95 ≤ 350 ms**。实测普通 TM 114.5 ms、保守长句代理 303.3 ms、
   样板段 163.9 ms；最坏情况有余量、普通情况有约 3 倍余量。
-- 预算是性能旋钮而不是正确性旋钮：`FOLIOTHREAD_TM_FUZZY_MAX_EVALS`（默认
+- 预算是性能旋钮而不是正确性旋钮：`FOLITH_TM_FUZZY_MAX_EVALS`（默认
   400）越小越快、越可能"部分检索"；同一个 corpus 上把预算调到 10 时 p95 降
   到 ≈ 10 ms，但候选集合可能不完整（`scan_truncated=True`）。
 - **测试里的 `p95 < 1500 ms` / `p95 < 3000 ms` 是 CI 数量级护栏，不是性能
@@ -261,7 +261,7 @@ list，状态只在**返回值本身**上。
   一行；`tests/tm_*` 全部保持绿色。
 - **回滚**（无数据迁移）：
   - 单次调用：`tm_candidates(..., fuzzy=False)` → 只返回 exact/normalized；
-  - 部署级：`FOLIOTHREAD_TM_FUZZY=0` → 所有未显式传参的调用回到
+  - 部署级：`FOLITH_TM_FUZZY=0` → 所有未显式传参的调用回到
     exact/normalized（0.8.1 状态）。
 - **写入路径不变**：模糊候选不写 TM、不触发审校晋升；#109 "审校决策成功才
   入库"的契约不受影响。
