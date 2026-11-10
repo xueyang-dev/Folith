@@ -43,6 +43,13 @@ jobs:
         with:
           python-version: "3.10"
       - run: python -m compileall -q core.py qt_client.py folith scripts tests
+      # Stale PySide wrapper guards (#326): new fill-before-attach layout sites and new
+      # QTimer.singleShot calls without a context object fail; existing sites are listed
+      # in docs/qt-layout-order-baseline.txt / docs/qt-singleshot-baseline.txt (ratchet).
+      - name: Qt stale-wrapper static checks
+        run: |
+          python scripts/check_qt_layout_order.py
+          python scripts/check_qt_singleshot.py
 
   docs:
     name: documentation tests
