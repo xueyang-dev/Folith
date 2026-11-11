@@ -2457,7 +2457,7 @@ class WorkbenchView(QWidget):
         self._painted_look: tuple = ()
         self._delivery_state: dict | None = None  # state object the preview was built from
         self._grid_source: tuple | None = None  # (rows, state, job_id, look) last rendered
-        self._state: dict = {}
+        self._state_value: dict = {}
         # 译前准备视图（adapter.task_setup_view）。``None`` 表示"没有准备面"，
         # 此时一律按"已开始"处理，旧的调用路径（测试、恢复）不受影响。
         self._setup_view: dict | None = None
@@ -3744,7 +3744,7 @@ class WorkbenchView(QWidget):
         self.show_page("translate")
         self.job_id = job_id
         self.config = config
-        self._state = state
+        self._replace_state(state)
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._snapshots = snapshots
@@ -3798,6 +3798,35 @@ class WorkbenchView(QWidget):
             self._set_left_panel("outline", True)
 
     # -- projection-domain revisions -------------------------------------
+    @property
+    def _state(self) -> dict:
+        """The authoritative state this view renders (see the setter)."""
+        return self._state_value
+
+    @_state.setter
+    def _state(self, state: dict) -> None:
+        # Assigning the whole state means "everything the view derived from it
+        # is now invalid" -- exactly what the old id(state) cache keys expressed
+        # implicitly.  Doing it in the setter keeps that contract for every
+        # caller (including tests and future code), so a domain version can
+        # never silently go stale because someone assigned _state directly.
+        self._state_value = state
+        revisions = getattr(self, "_domain_revs", None)
+        if revisions is not None:
+            for name in revisions:
+                revisions[name] += 1
+
+    def _replace_state(self, state: dict) -> None:
+        """Replace the whole state; every derived cache becomes invalid.
+
+        Besides the domain revisions (bumped by the ``_state`` setter) this
+        clears the whole-document blocking count, which is not a projection
+        domain and would otherwise survive a task switch (``load``) with the
+        previous document's findings.
+        """
+        self._state = state
+        self._blocking_cached = None
+
     def _domain_version(self, name: str) -> int:
         """Monotonic revision of one projection domain."""
         return self._domain_revs.get(name, 0)
@@ -3825,9 +3854,7 @@ class WorkbenchView(QWidget):
         itself, exactly as before.
         """
         self.job_id = job_id
-        self._state = state
-        self._blocking_cached = None
-        self._bump_domains(_DOMAIN_NAMES)
+        self._replace_state(state)
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._last_runtime = runtime or {}
@@ -3964,9 +3991,7 @@ class WorkbenchView(QWidget):
         caches (``_render_*`` keys), exactly as before.
         """
         self.job_id = job_id
-        self._state = state
-        self._blocking_cached = None
-        self._bump_domains(_DOMAIN_NAMES)
+        self._replace_state(state)
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._last_runtime = runtime or {}

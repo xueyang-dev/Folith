@@ -10,7 +10,14 @@ key would silently keep showing the previous value: no crash, no log, just stale
 data.  Cache keys must use the explicit domain revisions
 (``self._domain_version("<domain>")``, bumped from ``DeltaBatch.domains``).
 
-The check is AST based, so a mention in a comment or docstring does not fail it.
+Two rules, both AST based (a mention in a comment or docstring does not fail):
+
+1. ``id(self._state)`` / ``id(state)`` must not be used as a cache key.
+2. ``self._state = ...`` must go through :meth:`WorkbenchView._replace_state`
+   (the state setter invalidates every projection domain).  A direct assignment
+   anywhere else skips that invalidation and silently leaves panels stale --
+   the exact bug that made a replaced state look unchanged after P3.
+
 An inline ``# domain-cache: allow <reason>`` on the reported line suppresses one
 site (reviewed like the other static gates).
 
@@ -39,6 +46,43 @@ def _is_state_reference(node: ast.AST) -> bool:
     return isinstance(node, ast.Name) and node.id == "state"
 
 
+def _is_state_attribute(node: ast.AST) -> bool:
+    """``self._state``."""
+    return (isinstance(node, ast.Attribute) and node.attr == "_state"
+            and isinstance(node.value, ast.Name) and node.value.id == "self")
+
+
+def _scan(tree: ast.AST) -> list[tuple[int, str]]:
+    """(lineno, message) for both rules, tracking the enclosing function."""
+    violations: list[tuple[int, str]] = []
+
+    def visit(node: ast.AST, function: str) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = node.name
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id == "id" and len(node.args) == 1 \
+                and _is_state_reference(node.args[0]):
+            violations.append((node.lineno,
+                               "state-identity cache key (use _domain_version)"))
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            targets = []
+        if function != "_replace_state":
+            for target in targets:
+                if _is_state_attribute(target):
+                    violations.append((node.lineno,
+                                       "direct self._state assignment "
+                                       "(use _replace_state)"))
+        for child in ast.iter_child_nodes(node):
+            visit(child, function)
+
+    visit(tree, "")
+    return violations
+
+
 def find_violations(path: Path) -> list[str]:
     try:
         source = path.read_text(encoding="utf-8")
@@ -47,17 +91,11 @@ def find_violations(path: Path) -> list[str]:
     tree = ast.parse(source, filename=str(path))
     lines = source.splitlines()
     violations: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "id"):
-            continue
-        if len(node.args) != 1 or not _is_state_reference(node.args[0]):
-            continue
-        line = lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else ""
+    for lineno, message in _scan(tree):
+        line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
         if ALLOW_MARKER in line:
             continue
-        violations.append(f"{path}:{node.lineno}: {line.strip()}")
+        violations.append(f"{path}:{lineno}: {message}: {line.strip()}")
     return violations
 
 

@@ -238,3 +238,48 @@ def test_static_check_flags_state_identity_and_accepts_the_tree(tmp_path):
     good = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
     assert good.returncode == 0, good
     assert "OK:" in good.stdout
+
+
+def test_replacing_the_state_invalidates_every_domain(client, monkeypatch):
+    """Whole-state replacement must behave like the old id(state) key.
+
+    Any assignment to ``_state`` (also one made directly, as tests and future
+    code may do) invalidates every projection domain, so the next render really
+    recomputes instead of showing the previous value.
+    """
+    window, adapter = client["window"], client["adapter"]
+    job_id = _open(client)
+    workbench = window.workbench
+    calls = {"followup": 0, "review": 0}
+    original_followup, original_review = adapter.followup_view, adapter.review_queue
+    monkeypatch.setattr(adapter, "followup_view",
+                        lambda *a, **k: (calls.__setitem__("followup",
+                                                          calls["followup"] + 1),
+                                         original_followup(*a, **k))[1])
+    monkeypatch.setattr(adapter, "review_queue",
+                        lambda *a, **k: (calls.__setitem__("review",
+                                                          calls["review"] + 1),
+                                         original_review(*a, **k))[1])
+    workbench._models = {}
+    workbench._followup_key = (job_id, workbench._domain_version("followup"))
+    workbench._review_key = (job_id, workbench._domain_version("review"))
+    workbench._render_followup()
+    workbench._render_review()
+    assert calls == {"followup": 0, "review": 0}, calls
+
+    before = workbench.domain_versions()
+    workbench._replace_state(dict(workbench._state))
+    after = workbench.domain_versions()
+    assert all(after[name] > before[name] for name in before), (before, after)
+
+    workbench._models = {}
+    workbench._render_followup()
+    workbench._render_review()
+    assert calls == {"followup": 1, "review": 1}, calls
+
+    # A direct assignment (the form the motion test and older code use) takes
+    # the same path through the property setter.
+    before = workbench.domain_versions()
+    workbench._state = dict(workbench._state)
+    after = workbench.domain_versions()
+    assert all(after[name] > before[name] for name in before), (before, after)
