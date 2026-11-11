@@ -1,0 +1,86 @@
+{
+  "schema": "folith-import-report-v1",
+  "top_level": [
+    "schema",
+    "kind",
+    "file",
+    "generated_at",
+    "status",
+    "language_pair",
+    "counts",
+    "metadata_loss",
+    "warnings",
+    "error",
+    "recovery",
+    "persistence"
+  ],
+  "file": [
+    "name",
+    "bytes",
+    "sha256"
+  ],
+  "language_pair": [
+    "expected_target",
+    "expected_tag",
+    "declared_source",
+    "declared_targets",
+    "declared_target_tags",
+    "status",
+    "action",
+    "mismatch_units",
+    "unverified_units",
+    "undeclared_target_units",
+    "message"
+  ],
+  "counts": [
+    "total",
+    "imported",
+    "skipped_conflict",
+    "skipped_ineligible",
+    "skipped_unsupported_inline",
+    "skipped_language_unknown",
+    "skipped_language_mismatch",
+    "skipped_missing_pair",
+    "skipped_write_failed"
+  ],
+  "metadata_loss": [
+    "total_affected",
+    "categories"
+  ],
+  "loss_entry": [
+    "category",
+    "label",
+    "affected",
+    "fields"
+  ],
+  "loss_categories": {
+    "tmx": [
+      "tmx_tu_attributes",
+      "tmx_prop",
+      "tmx_note",
+      "tmx_tuv_attributes",
+      "tmx_extra_languages",
+      "tmx_header"
+    ],
+    "tbx": [
+      "tbx_term_entry_attributes",
+      "tbx_term_note",
+      "tbx_extra_languages",
+      "tbx_multiple_terms",
+      "tbx_descrip",
+      "tbx_entry_metadata",
+      "tbx_root_metadata"
+    ],
+    "xlsx": [
+      "termbase_extra_columns"
+    ],
+    "csv": [
+      "termbase_extra_columns"
+    ]
+  },
+  "persistence": [
+    "directory",
+    "json",
+    "markdown"
+  ]
+}
