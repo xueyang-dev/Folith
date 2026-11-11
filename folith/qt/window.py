@@ -2224,6 +2224,11 @@ class MainWindow(QMainWindow):
                 # current and the journal cursor keeps moving.  Rebuilding the
                 # whole state here would freeze the workbench once per snapshot
                 # cadence for no new information.
+                #
+                # A write that never reaches the journal (stage switch, glossary
+                # freeze) is not lost by returning: the slow projection reloads
+                # the authoritative state on its own cadence, so it lands within
+                # DELTA_PROJECTION_SECONDS.  See _maybe_slow_projection().
                 return
             self._log("workbench snapshot resync (no live worker)")
             self._resync_from_full(job_id)
@@ -2345,6 +2350,11 @@ class MainWindow(QMainWindow):
         def failed(_message: str, _detail: str) -> None:
             self._delta_projection_in_flight = False
             self._state_load_in_flight = False
+            # A poll that arrived while this projection was in flight must still
+            # run: the other two read paths (poll-state, poll-delta) re-issue it
+            # here as well.  Without it a failed projection swallowed that tick
+            # and the workbench waited out the next 1 s timer for nothing.
+            self._flush_pending_poll()
 
         self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-projections")

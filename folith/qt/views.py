@@ -2457,7 +2457,10 @@ class WorkbenchView(QWidget):
         self._painted_look: tuple = ()
         self._delivery_state: dict | None = None  # state object the preview was built from
         self._grid_source: tuple | None = None  # (rows, state, job_id, look) last rendered
-        self._state_value: dict = {}
+        #: 本视图渲染的权威状态。**普通属性**：赋值本身没有副作用；换状态一律走
+        #: ``_replace_state()``（它才让全部域版本前进，静态检查拦直接赋值）。
+        #: 这里是初始化：还没有任何派生缓存，所以不需要（也没有东西可以）失效。
+        self._state: dict = {}  # domain-cache: allow initial value, nothing cached yet
         # 译前准备视图（adapter.task_setup_view）。``None`` 表示"没有准备面"，
         # 此时一律按"已开始"处理，旧的调用路径（测试、恢复）不受影响。
         self._setup_view: dict | None = None
@@ -2502,8 +2505,8 @@ class WorkbenchView(QWidget):
         self._report_key: tuple = ()
         #: Explicit projection-domain revisions (issue #324 P3).  Cache keys use
         #: these instead of ``id(state)``: a delta bumps only the domains it
-        #: touched, a whole-state apply bumps all of them.  A stale object
-        #: identity can no longer silently keep an old panel.
+        #: touched, a whole-state *replacement* bumps all of them.  A stale
+        #: object identity can no longer silently keep an old panel.
         self._domain_revs: dict[str, int] = {name: 0 for name in _DOMAIN_NAMES}
         #: 任务打开时读入的大纲负载（sidecar + 解析状态）；之后只在结构变化时重算映射。
         self._outline_payload: dict = {}
@@ -3798,33 +3801,36 @@ class WorkbenchView(QWidget):
             self._set_left_panel("outline", True)
 
     # -- projection-domain revisions -------------------------------------
-    @property
-    def _state(self) -> dict:
-        """The authoritative state this view renders (see the setter)."""
-        return self._state_value
+    def _replace_state(self, state: dict) -> None:
+        """Replace the whole state; every derived cache becomes invalid.
 
-    @_state.setter
-    def _state(self, state: dict) -> None:
-        # Assigning the whole state means "everything the view derived from it
-        # is now invalid" -- exactly what the old id(state) cache keys expressed
-        # implicitly.  Doing it in the setter keeps that contract for every
-        # caller (including tests and future code), so a domain version can
-        # never silently go stale because someone assigned _state directly.
-        self._state_value = state
+        This is the **only** way to change ``_state`` (``_state`` itself is a
+        plain attribute: assigning it has no side effect, and
+        ``scripts/check_workbench_domain_cache.py`` rejects a direct
+        ``self._state = ...`` outside this method).  Keeping the invalidation
+        explicit instead of hidden in a property setter means the cost is
+        visible at every call site -- which is exactly where the regression
+        lived: the whole-state path also runs when *nothing* changed (the 1 s
+        poll right after a save, the fallback for a task without a journal),
+        and it hands back the very same state object.  Bumping every domain
+        there made all panels rebuild the whole document for no new data.
+
+        So: only a *different* state object invalidates the projections.  The
+        incremental path never gets here (it bumps only the domains in
+        ``DeltaBatch.domains``); a whole-state reload produces a new object and
+        invalidates everything, exactly like the old ``id(state)`` key did.
+
+        Besides the domain revisions this clears the whole-document blocking
+        count, which is not a projection domain and would otherwise survive a
+        task switch (``load``) with the previous document's findings.
+        """
+        if state is self._state:
+            return                      # same object: nothing derived changed
+        self._state = state
         revisions = getattr(self, "_domain_revs", None)
         if revisions is not None:
             for name in revisions:
                 revisions[name] += 1
-
-    def _replace_state(self, state: dict) -> None:
-        """Replace the whole state; every derived cache becomes invalid.
-
-        Besides the domain revisions (bumped by the ``_state`` setter) this
-        clears the whole-document blocking count, which is not a projection
-        domain and would otherwise survive a task switch (``load``) with the
-        previous document's findings.
-        """
-        self._state = state
         self._blocking_cached = None
 
     def _domain_version(self, name: str) -> int:

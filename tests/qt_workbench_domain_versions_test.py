@@ -6,8 +6,16 @@ would show old data silently.  The migration contract:
 
 * a projection recomputes only when its own domain revision moved;
 * a delta that does not touch a slow domain never starts a projection worker;
+* a whole-state apply that receives the *same* state object invalidates nothing:
+  five refreshes of an unchanged state must leave every domain where it was;
+* ``_state`` is a plain attribute -- replacing it goes through
+  ``_replace_state()``, and assigning it has no side effect (one mechanism, not
+  a property setter plus the static check);
 * while the pipeline owns the task, a snapshot write (its own compaction) does
-  not rebuild the whole state; with no live worker it still does.
+  not rebuild the whole state; with no live worker it still does, and a
+  non-journal write (phase switch, glossary freeze) still lands through the slow
+  projection on its own cadence;
+* a projection that fails re-issues the poll that arrived while it was in flight.
 
 The static check that keeps ``id(self._state)`` out of the view is exercised
 here in both directions.
@@ -52,6 +60,22 @@ def _open(client) -> str:
     job_id = _book_job(client)
     open_job_and_wait(window, job_id)
     window.timer.stop()
+    return job_id
+
+
+def _open_started(client) -> str:
+    """Open a task that already ran phase 1, so the stage bar is live.
+
+    ``_book_job`` creates paragraphs but no checkpoint, and a task that never ran
+    shows the prepare stage with every later step locked -- there is no stage
+    transition to observe.  ``p1_done`` is the pipeline's own checkpoint key.
+    """
+    job_id = _book_job(client)
+    state = client["core"].load_job_state(job_id)
+    state["p1_done"] = True
+    client["core"].save_job_state(job_id, state)
+    open_job_and_wait(client["window"], job_id)
+    client["window"].timer.stop()
     return job_id
 
 
@@ -182,6 +206,55 @@ def test_delivery_domain_alone_starts_the_projection(client, monkeypatch):
     assert previews["count"] >= 1, previews
 
 
+def test_unchanged_refresh_keeps_domain_versions_and_skips_projections(client, monkeypatch):
+    """Five refreshes of an unchanged state must not recompute one projection.
+
+    ``refresh_workbench()`` without a new signature (the 1 s tick when nothing
+    moved, the whole-state fallback for a task without a journal, and the
+    refresh after a save) passes the very same cached state object to
+    ``WorkbenchView.apply()``.  Nothing the panels derived from it can be stale,
+    so no domain may move and no panel may rebuild -- this is the post-run
+    regression #344 introduced: 12 domains +5 and ``followup_view`` recomputed
+    five times for five empty ticks.
+    """
+    window, adapter = client["window"], client["adapter"]
+    _open(client)
+    workbench = window.workbench
+    recomputes = {"view": 0, "panel": 0}
+    original_view, original_apply = adapter.followup_view, workbench.followup_panel.apply
+
+    def counted_view(*args, **kwargs):
+        recomputes["view"] += 1
+        return original_view(*args, **kwargs)
+
+    def counted_apply(*args, **kwargs):
+        recomputes["panel"] += 1
+        return original_apply(*args, **kwargs)
+
+    applies = {"count": 0}
+    original_apply_whole = workbench.apply
+
+    def counted_whole_apply(*args, **kwargs):
+        applies["count"] += 1
+        return original_apply_whole(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "followup_view", counted_view)
+    monkeypatch.setattr(workbench.followup_panel, "apply", counted_apply)
+    monkeypatch.setattr(workbench, "apply", counted_whole_apply)
+    before = workbench.domain_versions()
+    state = workbench._state
+    for _ in range(5):
+        window.refresh_workbench()
+        client["app"].processEvents()
+        # No state write happened, so the refresh must reuse the same object.
+        assert workbench._state is state
+    # The whole-state path really ran five times (a no-op refresh would prove
+    # nothing), and it invalidated nothing.
+    assert applies["count"] == 5, applies
+    assert workbench.domain_versions() == before, (before, workbench.domain_versions())
+    assert recomputes == {"view": 0, "panel": 0}, recomputes
+
+
 # ---------------------------------------------------------------------------
 # snapshot policy: only a snapshot without a live worker rebuilds
 # ---------------------------------------------------------------------------
@@ -221,6 +294,109 @@ def test_snapshot_without_a_worker_rebuilds_the_state(client, monkeypatch):
     assert window._cached_state["pairs"][10]["target"] == "外部写入的译文"
 
 
+def test_snapshot_with_a_live_worker_reaches_the_ui_within_one_projection_cycle(
+        client, monkeypatch):
+    """A non-journal pipeline write must not wait for the worker to finish.
+
+    ``SnapshotChanged(worker_active=True)`` deliberately skips the whole-state
+    rebuild: the snapshot is the pipeline's own compaction of records already
+    applied.  Writes that never reach the journal -- a phase switch
+    (``p2_done``), a glossary freeze -- are carried by the slow projection on its
+    own cadence instead.  If returning early lost them, the workbench would show
+    the previous stage for the whole run.
+    """
+    from folith.qt import window as window_module
+
+    window, adapter, core = client["window"], client["adapter"], client["core"]
+    job_id = _open_started(client)
+    workbench = window.workbench
+    cadence = window_module.DELTA_PROJECTION_SECONDS
+    full_calls = {"count": 0}
+    original_full = window._poll_workbench_full
+    monkeypatch.setattr(window, "_poll_workbench_full",
+                        lambda: (full_calls.__setitem__("count", full_calls["count"] + 1),
+                                 original_full())[1])
+    monkeypatch.setattr(adapter, "job_is_alive", lambda _job: True)
+
+    def translate_step_state() -> str:
+        return str(workbench.stage_bar.steps["translate"].state())
+
+    assert workbench._state.get("p2_done") is not True
+    assert translate_step_state() == "current", translate_step_state()
+    assert workbench.stage_bar.steps["translate"].hint() == "150/300 段"
+
+    state = core.load_job_state(job_id)
+    state["p2_done"] = True             # pipeline checkpoint: no journal record
+    core.save_job_state(job_id, state)
+
+    # The tick that notices the snapshot change keeps the delta path and does
+    # not rebuild the state: the view still holds the previous object.
+    window._poll_workbench()
+    assert _settle(client, lambda: not window._state_load_in_flight)
+    assert workbench._state.get("p2_done") is not True
+    assert translate_step_state() == "current", translate_step_state()
+    assert full_calls["count"] == 0, full_calls
+    assert window._delta_feed is not None
+
+    # Drive the 1 s tick by hand (the timer is stopped in this suite); the
+    # projection cadence itself is real wall clock.
+    started = time.monotonic()
+    deadline = started + cadence + 10.0
+    next_tick = 0.0
+    while time.monotonic() < deadline and workbench._state.get("p2_done") is not True:
+        client["app"].processEvents()
+        if time.monotonic() >= next_tick:
+            next_tick = time.monotonic() + 1.0
+            window._poll_workbench()
+        time.sleep(0.02)
+    client["app"].processEvents()
+    elapsed = time.monotonic() - started
+    assert workbench._state.get("p2_done") is True, (
+        f"the non-journal change never reached the view ({elapsed:.1f}s)")
+    assert translate_step_state() == "done", translate_step_state()
+    assert workbench.stage_bar.steps["translate"].hint() == "300 段"
+    assert elapsed <= cadence + 5.0, elapsed
+    # It arrived through the slow projection, not by giving up on the delta path.
+    assert full_calls["count"] == 0, full_calls
+
+
+def test_a_failed_projection_reissues_the_pending_poll(client, monkeypatch):
+    """A tick that arrived during a projection must not be dropped on failure.
+
+    The other two read paths (``poll-state``, ``poll-delta``) re-issue the poll
+    from their ``on_error`` callback; ``poll-projections`` used to only clear its
+    flags, so a failed projection swallowed that tick and the workbench waited
+    for the next 1 s timer.
+    """
+    window, adapter = client["window"], client["adapter"]
+    job_id = _open(client)
+    polls = {"count": 0}
+    original_poll = window._poll_workbench
+    monkeypatch.setattr(window, "_poll_workbench",
+                        lambda: (polls.__setitem__("count", polls["count"] + 1),
+                                 original_poll())[1])
+
+    real_load = adapter.load_state
+    failures = {"count": 0}
+
+    def unreadable_once(job):
+        failures["count"] += 1
+        if failures["count"] == 1:
+            raise OSError("projection read failed")
+        return real_load(job)
+
+    monkeypatch.setattr(adapter, "load_state", unreadable_once)
+    _pin_slow_cadence(window)
+    window._delivery_cache._at = 0.0
+    window._pending_poll = True          # a tick arrived while the read was in flight
+    window._maybe_slow_projection(job_id, ("review",))
+    assert window._delta_projection_in_flight is True
+    assert _settle(client, lambda: not window._delta_projection_in_flight)
+    assert failures["count"] >= 1, failures
+    assert polls["count"] >= 1, polls
+    assert window._pending_poll is False
+
+
 # ---------------------------------------------------------------------------
 # the static gate itself
 # ---------------------------------------------------------------------------
@@ -240,12 +416,11 @@ def test_static_check_flags_state_identity_and_accepts_the_tree(tmp_path):
     assert "OK:" in good.stdout
 
 
-def test_replacing_the_state_invalidates_every_domain(client, monkeypatch):
+def test_replace_state_invalidates_every_domain(client, monkeypatch):
     """Whole-state replacement must behave like the old id(state) key.
 
-    Any assignment to ``_state`` (also one made directly, as tests and future
-    code may do) invalidates every projection domain, so the next render really
-    recomputes instead of showing the previous value.
+    Replacing the state is what invalidates every projection domain, so the next
+    render really recomputes instead of showing the previous value.
     """
     window, adapter = client["window"], client["adapter"]
     job_id = _open(client)
@@ -277,9 +452,21 @@ def test_replacing_the_state_invalidates_every_domain(client, monkeypatch):
     workbench._render_review()
     assert calls == {"followup": 1, "review": 1}, calls
 
-    # A direct assignment (the form the motion test and older code use) takes
-    # the same path through the property setter.
+
+def test_state_is_a_plain_attribute_so_assignment_has_no_side_effect(client):
+    """``_state`` must not be a property: replacing the state is explicit.
+
+    The old property setter bumped every domain on assignment, i.e. two
+    mechanisms (the setter and the static check) guarded one contract.  The
+    setter also fired on the *same* object, which is why every unchanged refresh
+    rebuilt every panel.  Now assigning ``_state`` is inert; ``_replace_state``
+    is the only door, and ``scripts/check_workbench_domain_cache.py`` rejects a
+    bare ``self._state = ...`` anywhere else in the view.
+    """
+    window = client["window"]
+    _open(client)
+    workbench = window.workbench
+    assert "_state" not in vars(type(workbench)), "the state must not be a property"
     before = workbench.domain_versions()
     workbench._state = dict(workbench._state)
-    after = workbench.domain_versions()
-    assert all(after[name] > before[name] for name in before), (before, after)
+    assert workbench.domain_versions() == before
