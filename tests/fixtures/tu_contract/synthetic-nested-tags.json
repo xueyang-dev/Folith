@@ -1,0 +1,266 @@
+{
+  "name": "synthetic-nested-tags",
+  "description": "嵌套成对标签（b 含 i）与自闭合占位符；编号占位符与原始负载分离。",
+  "provenance": {
+    "origin": "synthetic",
+    "created": "2026-10-26",
+    "generator": "tests/fixtures/tu_contract/generate_fixtures.py",
+    "issue": 143,
+    "license": "与本仓库同许可",
+    "notes": "仓库内合成的最小结构样本，不含真实项目内容，无需外部授权。"
+  },
+  "source_tree": {
+    "name": "xliff",
+    "attrs": {
+      "version": "1.2"
+    },
+    "text": null,
+    "children": [
+      {
+        "name": "file",
+        "attrs": {
+          "source-language": "en",
+          "target-language": "zh-CN",
+          "datatype": "plaintext"
+        },
+        "text": null,
+        "children": [
+          {
+            "name": "body",
+            "attrs": {},
+            "text": null,
+            "children": [
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "10"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "The 1meeting2 starts at 5.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "会议15开始于2。",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "11"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "A 1bold 3inner4 text2.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "A 1粗体 3内层4 文本2。",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "units": [
+    {
+      "external_id": "10",
+      "source_text": "The 1meeting2 starts at 5.",
+      "target_text": "会议15开始于2。",
+      "status": "translated",
+      "tags": [
+        {
+          "tag_id": "1",
+          "kind": "open",
+          "payload": "<bpt id=\"1\">&lt;b&gt;</bpt>",
+          "code_name": "b"
+        },
+        {
+          "tag_id": "2",
+          "kind": "close",
+          "payload": "<ept id=\"2\">&lt;/b&gt;</ept>",
+          "code_name": "b"
+        },
+        {
+          "tag_id": "5",
+          "kind": "self_closing",
+          "payload": "<ph id=\"5\">&lt;br/&gt;</ph>",
+          "code_name": ""
+        }
+      ]
+    },
+    {
+      "external_id": "11",
+      "source_text": "A 1bold 3inner4 text2.",
+      "target_text": "A 1粗体 3内层4 文本2。",
+      "status": "translated",
+      "tags": [
+        {
+          "tag_id": "1",
+          "kind": "open",
+          "payload": "<bpt id=\"1\">&lt;b&gt;</bpt>",
+          "code_name": "b"
+        },
+        {
+          "tag_id": "2",
+          "kind": "close",
+          "payload": "<ept id=\"2\">&lt;/b&gt;</ept>",
+          "code_name": "b"
+        },
+        {
+          "tag_id": "3",
+          "kind": "open",
+          "payload": "<bpt id=\"3\">&lt;i&gt;</bpt>",
+          "code_name": "i"
+        },
+        {
+          "tag_id": "4",
+          "kind": "close",
+          "payload": "<ept id=\"4\">&lt;/i&gt;</ept>",
+          "code_name": "i"
+        }
+      ]
+    }
+  ],
+  "exported_tree": {
+    "name": "xliff",
+    "attrs": {
+      "version": "1.2"
+    },
+    "text": null,
+    "children": [
+      {
+        "name": "file",
+        "attrs": {
+          "source-language": "en",
+          "target-language": "zh-CN",
+          "datatype": "plaintext"
+        },
+        "text": null,
+        "children": [
+          {
+            "name": "body",
+            "attrs": {},
+            "text": null,
+            "children": [
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "10"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "The 1meeting2 starts at 5.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "会议15开始于2。",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "11"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "A 1bold 3inner4 text2.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "A 1粗体 3内层4 文本2。",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

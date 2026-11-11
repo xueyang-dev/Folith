@@ -16,6 +16,7 @@ import tempfile
 from PySide6.QtCore import QTimer, qVersion
 
 from folith.desktop.ui_watchdog import TIMEOUT_SECONDS, _write_report, _now
+from folith.qt.jank_monitor import JankMonitor, jank_monitor_enabled
 
 
 class UiHealthMonitor:
@@ -25,6 +26,8 @@ class UiHealthMonitor:
         self.identity = {key: (identity or {}).get(key, "")
                          for key in ("app_version", "build_id")}
         self.process = None
+        self.jank = None
+        self._trace_api = None
         self.timer = QTimer(app)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.pulse)
@@ -32,6 +35,10 @@ class UiHealthMonitor:
         self._stacks = self._crashes = None
 
     def start(self):
+        # The stall sampler is independent of the out-of-process watchdog, so it
+        # starts first: a watchdog that cannot launch must not also remove the
+        # only 100 ms-level responsiveness measurement we have.
+        self._start_jank()
         root = self.paths.log_dir / "ui-health"
         root.mkdir(parents=True, exist_ok=True)
         self.directory = Path(tempfile.mkdtemp(prefix="session-", dir=root))
@@ -58,6 +65,47 @@ class UiHealthMonitor:
         self.pulse()
         self.timer.start()
 
+    def _start_jank(self):
+        """Start the GUI stall sampler and publish it to the trace engine.
+
+        It owns its own ``QTimer`` (25 ms) instead of riding the 1 s heartbeat:
+        a 1 s pulse quantises every measurement to 1 s and cannot resolve the
+        100 ms threshold at all.  The heartbeat still carries the counters, so
+        an incident report says what the last-known stall state was.
+
+        Idempotent: a repeated ``start()`` (tests rebuild the monitor) must not
+        leave a second sampler running — it would double-count every stall and
+        leak its watcher thread.
+        """
+        if self.jank is not None:
+            return self.jank
+        monitor = JankMonitor(enabled=jank_monitor_enabled())
+        try:
+            monitor.start()
+        except Exception:  # a measurement must never prevent the app from starting
+            monitor.stop()
+            return None
+        self.jank = monitor
+        try:
+            from folith import trace as trace_api
+
+            trace_api.register_gui_stall_source(monitor)
+            self._trace_api = trace_api
+        except Exception:
+            self._trace_api = None
+        return monitor
+
+    def _stop_jank(self):
+        monitor, self.jank = self.jank, None
+        api, self._trace_api = self._trace_api, None
+        if monitor is None:
+            return
+        if api is not None:
+            with contextlib.suppress(Exception):
+                api.unregister_gui_stall_source(monitor)
+        with contextlib.suppress(Exception):
+            monitor.stop()
+
     def pulse(self):
         if self.process is None:
             return
@@ -74,6 +122,7 @@ class UiHealthMonitor:
             "qt_version": qVersion(), "python_version": sys.version.split()[0],
             "platform": self.app.platformName(),
             "serial_raster": os.environ.get("QT_NO_GUI_THREADPOOL") == "1",
+            "gui_jank": self.jank.snapshot() if self.jank is not None else None,
             **self.identity,
         }
         if sys.platform == "win32":
@@ -103,6 +152,7 @@ class UiHealthMonitor:
 
     def stop(self):
         self.timer.stop()
+        self._stop_jank()
         process, self.process = self.process, None
         if process is not None:
             if process.stdin is not None:

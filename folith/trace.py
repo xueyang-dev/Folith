@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
 from folith import request_control
+from folith.performance import ActiveTimeTracker, DEFAULT_HEARTBEAT_INTERVAL_S
 
 
 try:
@@ -91,6 +92,33 @@ class TraceLevel(str, Enum):
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _epoch(iso_value: Any) -> Optional[float]:
+    """Unix seconds for an ISO timestamp, or None when it cannot be read."""
+    text = str(iso_value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _active_heartbeat_interval() -> float:
+    """Heartbeat period for the active-time tracker (#320).
+
+    The default is short enough that a suspend is detected quickly and long
+    enough to be free on an idle run.  The environment override exists so a
+    long baseline run can trade resolution for a cheaper heartbeat; it is
+    clamped so a typo cannot disable interruption detection.
+    """
+    raw = os.environ.get("FOLITH_ACTIVE_HEARTBEAT_S", "")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_HEARTBEAT_INTERVAL_S
+    return min(60.0, max(0.5, value))
 
 
 def _safe_float(val: Any, decimals: int = 4) -> float:
@@ -236,6 +264,80 @@ def compute_percentiles(values: List[float]) -> Dict[str, float]:
     }
 
 
+def _is_active_time_definition(row: Any) -> bool:
+    """Whether *row* was written under the #320 active-seconds definition."""
+    if not isinstance(row, dict):
+        return False
+    if row.get("definition") == "active_seconds":
+        return True
+    # A run summary from this version always embeds the active_time block.
+    # Older history entries (wall-clock wall_time_s) carry neither marker.
+    return isinstance(row.get("active_time"), dict)
+
+
+def sum_active_time(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Task total of active work time across resumed run segments (#320).
+
+    A resumed task opens a new run.  The gap between runs (app closed, machine
+    shut down) belongs to no segment, so the task total is the sum of the
+    segments' active seconds; ``wall_span_s`` is the naive first-start →
+    last-finish difference kept only to show what the old definition claimed.
+
+    Entries written before #320 are wall-clock durations and are **not** added
+    to the active total: they are counted in ``legacy_entries`` so a reader can
+    see that part of the history used the old definition.
+
+    ``history.json`` keeps only the last 50 runs.  Each entry also stores the
+    running task total (``task_active_seconds``), and the newest one wins, so a
+    task resumed more than 50 times does not silently lose its first segments.
+    ``source`` says which rule produced the number.
+    """
+    rows = [row for row in list(entries or []) if isinstance(row, dict)]
+    counted = [row for row in rows if _is_active_time_definition(row)]
+    active = interrupted = 0.0
+    interruptions = segments = 0
+    for row in counted:
+        block = row.get("active_time") if isinstance(row.get("active_time"), dict) else row
+        active += float(block.get("active_seconds") or 0.0)
+        interrupted += float(block.get("interrupted_seconds") or 0.0)
+        interruptions += int(block.get("interruption_count") or 0)
+        segments += 1
+    source = "segments_sum"
+    cumulative = next((row for row in reversed(counted)
+                       if row.get("task_active_seconds") is not None), None)
+    if cumulative is not None:
+        active = float(cumulative.get("task_active_seconds") or 0.0)
+        interrupted = float(cumulative.get("task_interrupted_seconds") or 0.0)
+        interruptions = int(cumulative.get("task_interruption_count") or 0)
+        segments = int(cumulative.get("task_segments") or segments)
+        source = "history_cumulative"
+    starts = [str(row["started_at"]) for row in counted if row.get("started_at")]
+    finishes = [str(row["finished_at"]) for row in counted if row.get("finished_at")]
+    wall_span: Optional[float] = None
+    first = _epoch(starts[0]) if starts else None
+    last = _epoch(finishes[-1]) if finishes else None
+    if first is not None and last is not None and last >= first:
+        wall_span = round(last - first, 3)
+    trimmed = cumulative is not None and segments > len(counted)
+    return {
+        "segments": segments,
+        "active_seconds": round(active, 3),
+        "interrupted_seconds": round(interrupted, 3),
+        "interruption_count": interruptions,
+        "source": source,
+        "definition": "active_seconds",
+        "legacy_entries": len(rows) - len(counted),
+        "wall_span_s": wall_span,
+        "wall_span_covers": "retained_segments_only" if trimmed else "retained_segments",
+        "excluded_between_segments_s": (round(max(0.0, wall_span - active), 3)
+                                        if wall_span is not None else None),
+        "note": ("task total comes from the newest history entry's running total; "
+                 "history.json is trimmed to the last 50 runs"
+                 if trimmed else
+                 "task total is the sum of the segments supplied"),
+    }
+
+
 def _probe_gpu() -> Dict[str, Any]:
     """Gracefully probe GPU metrics without introducing heavy required dependencies."""
     try:
@@ -263,6 +365,30 @@ def _probe_gpu() -> Dict[str, Any]:
     except Exception:
         pass
     return {"gpu_available": False}
+
+
+# ---------------------------------------------------------------------------
+# GUI stall source registry (#323)
+#
+# The main-thread stall sampler lives in the Qt layer
+# (``folith.qt.jank_monitor``) and must not be imported from here: the trace
+# engine also runs headless, where Qt is not installed.  The Qt layer registers
+# itself at start-up; a RunContext snapshots every registered source when a run
+# begins and asks for that window when the run finishes.  A source only has to
+# provide ``checkpoint()`` and ``summary_since(marker)``.
+_GUI_STALL_SOURCES: List[Any] = []
+_GUI_STALL_LOCK = threading.RLock()
+
+
+def register_gui_stall_source(source: Any) -> None:
+    with _GUI_STALL_LOCK:
+        if source not in _GUI_STALL_SOURCES:
+            _GUI_STALL_SOURCES.append(source)
+
+
+def unregister_gui_stall_source(source: Any) -> None:
+    with _GUI_STALL_LOCK, contextlib.suppress(ValueError):
+        _GUI_STALL_SOURCES.remove(source)
 
 
 class ResourceSampler:
@@ -522,6 +648,7 @@ class RunContext:
         target_lang: str = "",
         output_dir: Optional[Path] = None,
         level: Optional[TraceLevel] = None,
+        active_tracker: Optional[Any] = None,
     ):
         self.job_id = str(job_id)
         self.run_id = str(run_id or generate_run_id())
@@ -540,10 +667,19 @@ class RunContext:
 
         # Timestamps
         self.started_at = _now_iso()
+        self.started_epoch = time.time()
         self.started_monotonic = time.perf_counter()
         self.started_cpu_time = time.process_time()
         self.finished_at: Optional[str] = None
+        self.finished_epoch: Optional[float] = None
+        # Monotonic reference only: it is platform-dependent while the machine
+        # sleeps, so it never defines the reported duration (#320).
         self.total_wall_time_s: float = 0.0
+        # #320: wall-clock heartbeat; active time excludes suspend, hibernation,
+        # frozen-process and shutdown gaps on every platform.
+        self._active_time: Any = (active_tracker if active_tracker is not None
+                                  else ActiveTimeTracker(_active_heartbeat_interval()))
+        self._active_time_snapshot: Optional[Dict[str, Any]] = None
         self.total_cpu_time_s: float = 0.0
         self.status = "running"
         self.failure_reason: Optional[str] = None
@@ -557,6 +693,9 @@ class RunContext:
         self.summary_path = self.run_dir / "summary.json"
         self.stages_path = self.run_dir / "stages.json"
         self.report_path = self.run_dir / "performance.md"
+        # GUI-thread stall window for this run (#323).  Written next to
+        # summary.json and also embedded there, never in a parallel record.
+        self.jank_path = self.run_dir / "gui_jank.json"
         self.legacy_perf_path = self.output_dir / "performance.json"
         self.history_path = self.perf_root / "history.json"
 
@@ -632,12 +771,26 @@ class RunContext:
         # Concurrency observation
         self.concurrency_stats: Dict[str, Dict[str, int]] = {}
 
+        # GUI stall sources snapshotted when this run began (#323) and the
+        # run-window view materialised when it finishes.
+        self._gui_stall_tokens: List[Tuple[Any, Any]] = []
+        self.gui_jank: Dict[str, Any] = {}
+
         # Start sampler if tracing is enabled
         if self.level != TraceLevel.OFF:
             self.run_dir.mkdir(parents=True, exist_ok=True)
             self._events_file = self.events_path.open("a", encoding="utf-8")
             self._requests_file = self.requests_path.open("a", encoding="utf-8")
             self._sampler.start()
+            self._active_time.start_sampling()
+            with _GUI_STALL_LOCK:
+                sources = list(_GUI_STALL_SOURCES)
+            for source in sources:
+                try:
+                    self._gui_stall_tokens.append((source, source.checkpoint()))
+                except Exception:
+                    # A measurement must never make a task unrunnable.
+                    continue
 
     def set_dataset_info(self, **kwargs: Any) -> None:
         with self._lock:
@@ -1003,8 +1156,11 @@ class RunContext:
             self.status = status
             self.failure_reason = failure_reason
             self.finished_at = _now_iso()
+            self.finished_epoch = time.time()
             self.total_wall_time_s = round(time.perf_counter() - self.started_monotonic, 4)
             self.total_cpu_time_s = round(time.process_time() - self.started_cpu_time, 4)
+            # Freeze the heartbeat before anything derives a duration from it.
+            self._active_time_snapshot = self._active_time.stop_sampling()
 
             # Stop sampler
             resource_summary = self._sampler.stop()
@@ -1032,6 +1188,7 @@ class RunContext:
 
             # Generate summaries & reports
             summary = self.generate_summary(resource_summary)
+            summary["gui_jank"] = self._gui_jank_window()
             stages_doc = self.generate_stages_doc()
             perf_md = self.generate_performance_report_md(summary, stages_doc, resource_summary)
 
@@ -1042,6 +1199,10 @@ class RunContext:
                     self.summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
                     self.stages_path.write_text(json.dumps(stages_doc, ensure_ascii=False, indent=2), encoding="utf-8")
                     self.report_path.write_text(perf_md, encoding="utf-8")
+                    if self.gui_jank:
+                        self.jank_path.write_text(
+                            json.dumps(self.gui_jank, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
 
                     # Also update history.json
                     self._update_history(summary)
@@ -1052,6 +1213,59 @@ class RunContext:
                     pass
 
             return summary
+
+    # -- active work time (#320) -------------------------------------------
+    # One definition for the report and every UI surface: wall-clock time the
+    # task actually worked, with suspend / hibernation / frozen-process /
+    # shutdown gaps excluded.  Anything that shows "任务耗时" must read these,
+    # never ``finished_at - started_at``.
+
+    def active_seconds(self) -> float:
+        """Seconds actually worked in this run; frozen once the run finished.
+
+        Returns the *committed* heartbeat value — the same number written to
+        ``summary.json`` — and never interpolates to "now".  Two calls at the
+        same instant therefore return the same number, which is what lets a
+        caller compare a UI reading with the report without timing drift.
+        While the run is live the value advances one heartbeat at a time.
+        """
+        with self._lock:
+            if self._active_time_snapshot is not None:
+                return float(self._active_time_snapshot.get("active_seconds") or 0.0)
+            return float(self._active_time.snapshot().get("active_seconds") or 0.0)
+
+    def interrupted_spans(self) -> List[Dict[str, Any]]:
+        """Interruption spans detected in this run, oldest first."""
+        with self._lock:
+            if self._active_time_snapshot is not None:
+                return [dict(span) for span in self._active_time_snapshot.get("spans", [])]
+            return [dict(span) for span in self._active_time.snapshot().get("spans", [])]
+
+    def active_time_summary(self) -> Dict[str, Any]:
+        """The active-time block embedded in ``summary.json`` and the report.
+
+        ``wall_clock_elapsed_s`` is the naive start→finish difference kept for
+        comparison; it is *not* the duration to display.
+        """
+        with self._lock:
+            block = (dict(self._active_time_snapshot) if self._active_time_snapshot is not None
+                     else dict(self._active_time.snapshot()))
+            block["running"] = self.finished_at is None
+        # The heartbeat window is the window active + interrupted seconds are
+        # summed over, so use it when it exists; the run's own timestamps are the
+        # fallback for a tracker that never sampled (trace level OFF).
+        elapsed = float(block.get("elapsed_wall_clock_s") or 0.0)
+        if elapsed <= 0.0:
+            elapsed = (self.finished_epoch if self.finished_epoch is not None
+                       else time.time()) - self.started_epoch
+        elapsed = round(max(0.0, elapsed), 3)
+        interrupted = float(block.get("interrupted_seconds") or 0.0)
+        block["wall_clock_elapsed_s"] = elapsed
+        block["interrupted_pct_of_elapsed"] = (round(interrupted * 100.0 / elapsed, 2)
+                                               if elapsed > 0 else 0.0)
+        block["definition"] = ("active_seconds = sum of heartbeat gaps <= interruption_factor x "
+                               "heartbeat_interval; longer gaps are listed in spans and excluded")
+        return block
 
     def _exclusive_stage_times(self) -> Dict[str, float]:
         """Seconds each stage spent as the *only* stage in flight (#220 E2).
@@ -1153,22 +1367,42 @@ class RunContext:
 
     def generate_summary(self, resource_summary: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         res_summary = resource_summary or {}
-        # Effective wall time (finished or currently running)
-        current_wall = self.total_wall_time_s
+        # #320: the reported duration is active work time, not the start→finish
+        # wall difference.  A run whose tracker never started (trace level OFF,
+        # or a unit test that sets total_wall_time_s directly) keeps the old
+        # monotonic reference.
+        active_block = self.active_time_summary()
+        active_seconds = float(active_block.get("active_seconds") or 0.0)
+        current_wall = active_seconds if active_seconds > 0.0 else self.total_wall_time_s
+        monotonic_elapsed = self.total_wall_time_s
+        if monotonic_elapsed <= 0.0:
+            monotonic_elapsed = max(0.001, time.perf_counter() - self.started_monotonic)
         if current_wall <= 0.0:
-            current_wall = max(0.001, time.perf_counter() - self.started_monotonic)
+            current_wall = monotonic_elapsed
 
-        # Unaccounted time: wall time minus top-level stage sum
+        # Unaccounted time: active work time minus top-level stage sum.  When no
+        # stage times were recorded a percentage would be meaningless — the old
+        # "100% unaccounted" line said nothing except that instrumentation was
+        # missing (and read like the run did no work).
         top_level_sum = sum(
             self.stages[s]["wall_time_s"]
             for s in self.top_level_stages
             if s in self.stages
         )
-        unaccounted_s = max(0.0, current_wall - top_level_sum)
-        if current_wall > 0.05:
-            unaccounted_pct = min(100.0, max(0.0, round((unaccounted_s / current_wall) * 100.0, 1)))
-        else:
+        unaccounted_note = ""
+        if top_level_sum <= 0.0:
+            unaccounted_s = 0.0
             unaccounted_pct = 0.0
+            unaccounted_note = ("no top-level stage times were recorded for this run, "
+                                "so a gap percentage is not meaningful")
+        else:
+            unaccounted_s = max(0.0, current_wall - top_level_sum)
+            if current_wall > 0.05:
+                unaccounted_pct = min(100.0, max(0.0, round((unaccounted_s / current_wall) * 100.0, 1)))
+            else:
+                unaccounted_pct = 0.0
+            if unaccounted_s <= 0.0:
+                unaccounted_note = "recorded stage time already covers the active work time"
 
         # Segment & batch latency distributions
         batch_durations = [b["duration_ms"] / 1000.0 for b in self.batch_records]
@@ -1294,11 +1528,20 @@ class RunContext:
             "trace_level": self.level.value if hasattr(self.level, "value") else str(self.level),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            # Active work time (#320).  Same definition for the report and UI.
             "wall_time_s": round(current_wall, 4),
+            "elapsed_wall_clock_s": active_block.get("wall_clock_elapsed_s", 0.0),
+            "interrupted_time_s": round(float(active_block.get("interrupted_seconds") or 0.0), 3),
+            "interrupted_pct_of_elapsed": active_block.get("interrupted_pct_of_elapsed", 0.0),
+            "active_time": active_block,
+            # Kept for diagnostics only: this clock may or may not pause while
+            # the machine sleeps, which is exactly why it is not the duration.
+            "monotonic_elapsed_s": round(monotonic_elapsed, 4),
             "process_cpu_time_s": self.total_cpu_time_s if self.total_cpu_time_s > 0 else round(time.process_time() - self.started_cpu_time, 4),
             "cpu_wall_ratio": round(self.total_cpu_time_s / max(0.001, current_wall), 2),
             "unaccounted_time_s": round(unaccounted_s, 2),
             "unaccounted_pct": unaccounted_pct,
+            "unaccounted_note": unaccounted_note,
             "dataset": dict(self.dataset_meta),
             "stages": stage_breakdown,
             "latency_percentiles": {
@@ -1363,6 +1606,53 @@ class RunContext:
         }
         return summary
 
+    def _gui_jank_window(self) -> Dict[str, Any]:
+        """Run-scoped GUI stall block from every registered source (#323).
+
+        The sampler is process-wide; this narrows it to the run by diffing the
+        counters against the checkpoint taken in ``__init__``.  Sources that
+        raise are skipped: a diagnostic must never fail a run.
+
+        One monitor per process is the normal case and its window is returned
+        flat.  If more than one is ever registered, each keeps its own record
+        under ``sources`` — updating one shared dict would let the last source
+        silently overwrite the others.
+
+        ``measured`` is always present: a run that never had a sampler must not
+        read like a run with zero stalls.
+        """
+        windows: List[Dict[str, Any]] = []
+        for source, token in list(self._gui_stall_tokens):
+            try:
+                window = source.summary_since(token)
+            except Exception:
+                continue
+            if not isinstance(window, dict):
+                continue
+            window = dict(window)
+            window["source"] = f"{type(source).__module__}.{type(source).__qualname__}"
+            if window.get("enabled") is False:
+                window["measured"] = False
+                window["reason"] = "stall sampler disabled (FOLITH_JANK_MONITOR=0)"
+            else:
+                window["measured"] = True
+            windows.append(window)
+        if not windows:
+            result: Dict[str, Any] = {
+                "measured": False,
+                "reason": ("no GUI stall source was registered for this run "
+                           "(headless run, or the UI health monitor never started)"),
+            }
+        elif len(windows) == 1:
+            result = windows[0]
+        else:
+            result = {
+                "measured": any(window.get("measured") for window in windows),
+                "sources": windows,
+            }
+        self.gui_jank = result
+        return result
+
     def generate_stages_doc(self) -> Dict[str, Any]:
         return {
             "run_id": self.run_id,
@@ -1426,7 +1716,7 @@ class RunContext:
         for s_name, s_info in stages.items():
             pct = s_info.get("pct_of_total", 0.0)
             if pct >= 50.0:
-                bottlenecks.append(f"- **Dominant Stage**: Stage `{s_name}` consumed **{s_info.get('wall_time_s')}s** ({pct}% of total runtime).")
+                bottlenecks.append(f"- **Dominant Stage**: Stage `{s_name}` consumed **{s_info.get('wall_time_s')}s** ({pct}% of active work time).")
 
         # CPU bound vs IO bound
         cpu_wall = summary.get("cpu_wall_ratio", 0.0)
@@ -1446,7 +1736,7 @@ class RunContext:
         unacc = summary.get("unaccounted_time_s", 0.0)
         unacc_pct = summary.get("unaccounted_pct", 0.0)
         if unacc_pct >= 15.0 and unacc >= 5.0:
-            bottlenecks.append(f"- **Unaccounted Idle Gap**: **{unacc}s** ({unacc_pct}%) of runtime is outside recorded pipeline stages (potential queueing, UI reruns, or lock waits).")
+            bottlenecks.append(f"- **Unaccounted Idle Gap**: **{unacc}s** ({unacc_pct}%) of active work time is outside recorded pipeline stages (potential queueing, UI reruns, or lock waits).")
 
         # Model retries
         if err.get("retries", 0) > 0:
@@ -1502,6 +1792,24 @@ class RunContext:
             "in flight, so those slices never overlap and sum to at most 100%."
         )
 
+        active_block = summary.get("active_time") or {}
+        interrupted_rows = [
+            f"| {span.get('started_at')} | {span.get('duration_s')} s | {span.get('reason')} |"
+            for span in (active_block.get("spans") or [])[-5:]
+        ]
+        interrupted_table = (
+            "| Interruption start (UTC) | Duration | Reason |\n|---|---|---|\n"
+            + "\n".join(interrupted_rows)
+            if interrupted_rows
+            else "_No interruptions were detected in this run._"
+        )
+        interrupted_count = active_block.get("interruption_count", 0)
+        interrupted_seconds = summary.get("interrupted_time_s", 0.0)
+        interrupted_pct = summary.get("interrupted_pct_of_elapsed", 0.0)
+        heartbeat_s = active_block.get("heartbeat_interval_s")
+        heartbeat_factor = active_block.get("interruption_factor")
+        unaccounted_note = summary.get("unaccounted_note", "")
+
         md = f"""# Run Performance Report
 
 ## Run Overview
@@ -1511,7 +1819,10 @@ class RunContext:
 - **Trace Mode**: `{summary.get('trace_level')}`
 - **Started At**: {summary.get('started_at')}
 - **Finished At**: {summary.get('finished_at')}
-- **Wall Clock Duration**: **{summary.get('wall_time_s')} s**
+- **Active Work Time**: **{summary.get('wall_time_s')} s** (excludes interruptions — the duration to report or display)
+- **Elapsed Wall Clock**: **{summary.get('elapsed_wall_clock_s')} s** (start→finish, includes interruptions)
+- **Interrupted (excluded)**: **{interrupted_seconds} s** in {interrupted_count} span(s) — see below
+- **Monotonic Clock Duration (diagnostic only)**: {summary.get('monotonic_elapsed_s')} s (this clock may pause while the machine sleeps; it is never the reported duration)
 - **Process CPU Time**: **{summary.get('process_cpu_time_s')} s** (Ratio: {summary.get('cpu_wall_ratio')})
 
 ## Dataset Characteristics
@@ -1563,9 +1874,18 @@ class RunContext:
 ## Retry Observability (Text Path)
 {retry_observation_text}
 
+## Interrupted Time (excluded)
+- **Interruptions**: **{interrupted_count}** — total **{interrupted_seconds} s** ({interrupted_pct}% of the elapsed wall clock)
+- A gap between two heartbeats longer than **{heartbeat_factor} × {heartbeat_s} s** is treated as an interruption (machine suspend/hibernation, a frozen process, or the gap before a resume) and contributes zero active work time. A *detected* interruption understates a real suspend by at most one heartbeat period; pauses shorter than the threshold cannot be distinguished from work (a 10 s sleep is counted as active time), and real work longer than the threshold is dropped (an 18 s stop-the-world GC pause is counted as an interruption). The final stretch before the run ends follows the same rule.
+- Gaps between separate runs of the same task (app closed, machine shut down) are excluded too: each resumed run starts a new segment, and the task total is the sum of the segments' active seconds.
+- Network outages are **not** included in this definition yet — see the active-time contract document for the agreed condition and why it is not implemented.
+
+{interrupted_table}
+
 ## Unaccounted Time
-- **Unaccounted Gap**: **{summary.get('unaccounted_time_s', 0.0)} s** ({summary.get('unaccounted_pct', 0.0)}% of total runtime)
-- Represents gap between top-level stage instrumentation and total wall clock.
+- **Unaccounted gap inside active work time**: **{summary.get('unaccounted_time_s', 0.0)} s** ({summary.get('unaccounted_pct', 0.0)}% of active work time)
+- {unaccounted_note or "Represents the gap between top-level stage instrumentation and active work time."}
+- Interrupted time is reported separately above and is never part of active work time.
 
 ## Potential Bottlenecks
 {bottlenecks_text}
@@ -1583,12 +1903,55 @@ class RunContext:
                         history = []
                 except Exception:
                     history = []
+            # Older entries in this file predate #320 and their wall_time_s is
+            # a wall-clock duration.  Every new entry carries ``definition`` so
+            # a reader can never add the two definitions together.
+            prior_active = 0.0
+            prior_interrupted = 0.0
+            prior_interruptions = 0
+            prior_segments = 0
+            cumulative_found = False
+            for prior in reversed(history):
+                if not isinstance(prior, dict) or prior.get("definition") != "active_seconds":
+                    continue
+                if prior.get("task_active_seconds") is not None:
+                    prior_active = float(prior.get("task_active_seconds") or 0.0)
+                    prior_interrupted = float(prior.get("task_interrupted_seconds") or 0.0)
+                    prior_interruptions = int(prior.get("task_interruption_count") or 0)
+                    prior_segments = int(prior.get("task_segments") or 0)
+                    cumulative_found = True
+                    break
+            if not cumulative_found:
+                for prior in history:
+                    if not isinstance(prior, dict) or prior.get("definition") != "active_seconds":
+                        continue
+                    prior_active += float(prior.get("active_seconds") or 0.0)
+                    prior_interrupted += float(prior.get("interrupted_seconds") or 0.0)
+                    prior_interruptions += int(prior.get("interruption_count") or 0)
+                    prior_segments += 1
+            run_active = float(summary.get("wall_time_s") or 0.0)
+            run_interrupted = float(summary.get("interrupted_time_s") or 0.0)
+            run_interruptions = int((summary.get("active_time") or {}).get("interruption_count") or 0)
             entry = {
                 "run_id": summary.get("run_id"),
                 "task_id": summary.get("task_id"),
                 "started_at": summary.get("started_at"),
                 "finished_at": summary.get("finished_at"),
                 "wall_time_s": summary.get("wall_time_s"),
+                # #320: active-seconds and interruption totals travel with the
+                # history entry so a task total can be summed across resumed
+                # segments without re-deriving the definition.
+                "definition": "active_seconds",
+                "active_seconds": summary.get("wall_time_s"),
+                "interrupted_seconds": summary.get("interrupted_time_s"),
+                "interruption_count": run_interruptions,
+                "elapsed_wall_clock_s": summary.get("elapsed_wall_clock_s"),
+                # Running task total: survives the 50-entry trim below, so a
+                # long resumed task cannot silently lose its first segments.
+                "task_active_seconds": round(prior_active + run_active, 3),
+                "task_interrupted_seconds": round(prior_interrupted + run_interrupted, 3),
+                "task_interruption_count": prior_interruptions + run_interruptions,
+                "task_segments": prior_segments + 1,
                 "status": summary.get("status"),
                 "segment_count": summary.get("dataset", {}).get("segment_count", 0),
                 "peak_ram_mb": summary.get("resources", {}).get("process_rss_peak_mb", 0.0),
@@ -1641,7 +2004,13 @@ class RunContext:
                 "run_id": self.run_id,
                 "started_at": self.started_at,
                 "finished_at": self.finished_at,
-                "wall_time_s": self.total_wall_time_s,
+                # #320: one definition everywhere, including the legacy viewer.
+                "wall_time_s": summary.get("wall_time_s"),
+                "active_seconds": summary.get("wall_time_s"),
+                "elapsed_wall_clock_s": summary.get("elapsed_wall_clock_s"),
+                "interrupted_seconds": summary.get("interrupted_time_s"),
+                "interruption_count": (summary.get("active_time") or {}).get("interruption_count", 0),
+                "monotonic_elapsed_s": self.total_wall_time_s,
                 "stages": legacy_stages,
             }
             self.legacy_perf_path.write_text(json.dumps(legacy, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1703,6 +2072,16 @@ class TraceManager:
                 if run:
                     return run
         return _RUN_CONTEXT_VAR.get()
+
+    def active_seconds(self, job_id: Optional[str] = None) -> Optional[float]:
+        """Active work seconds of the run currently tracked (#320)."""
+        run = self.get_active_run(job_id)
+        return run.active_seconds() if run is not None else None
+
+    def active_time(self, job_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The full active-time block (definition, interruptions, elapsed)."""
+        run = self.get_active_run(job_id)
+        return run.active_time_summary() if run is not None else None
 
     def finish_run(self, job_id: Optional[str] = None, status: str = "success", failure_reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
         run = self.get_active_run(job_id)

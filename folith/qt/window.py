@@ -36,6 +36,7 @@ from folith.desktop import paths as desktop_paths
 from folith.desktop import single_instance
 
 from . import i18n, platform_ui, preferences
+from . import import_wizard
 from . import adapter
 from . import bootstrap
 from . import dialogs
@@ -566,12 +567,17 @@ class MainWindow(QMainWindow):
         legacy_action = QAction(i18n.tr('接入旧数据目录…'), self)
         legacy_action.triggered.connect(self.import_legacy)
 
+        # #150：导入校验向导（TMX/TBX/XLSX/CSV 一个入口）。与「导入文档」互不
+        # 影响：那一条建任务，这一条只把资产导入项目并给出校验报告。
+        wizard_action = QAction(i18n.tr('导入资产并校验…'), self)
+        wizard_action.triggered.connect(self.open_import_wizard)
+
         quit_action = QAction(i18n.tr('退出 Folith'), self)
         quit_action.setShortcut(platform_ui.shortcut("quit"))
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         quit_action.triggered.connect(self.close)
 
-        for action in (import_action, home_action, legacy_action):
+        for action in (import_action, home_action, legacy_action, wizard_action):
             file_menu.addAction(action)
         file_menu.addSeparator()
         file_menu.addAction(close_action)
@@ -1932,6 +1938,20 @@ class MainWindow(QMainWindow):
 
         self.runner.submit(adapter.quick_style_profile, job_id, self.config,
                            on_done=done, on_error=failed, label="style-profile")
+
+    def open_import_wizard(self) -> None:
+        """#150：打开导入校验向导（TMX/TBX/XLSX/CSV），导入后刷新项目页。
+
+        与 ``add_termbase`` 互不影响：那条把术语挂到当前任务，这条把资产导入
+        项目记忆/术语库并展示校验报告。这里只刷新项目列表（后台读取），不碰
+        工作台的增量刷新路径。
+        """
+        dialog = import_wizard.ImportWizardDialog(self)
+        try:
+            dialog.exec()
+        finally:
+            if dialog.controller.report:
+                self.refresh_projects()
 
     def add_termbase(self, path: str = "") -> None:
         """译前准备里添加术语库（xlsx/csv/tbx）或翻译记忆（tmx）。"""

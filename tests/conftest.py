@@ -24,6 +24,28 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Optional-dependency gate (#220 F2): a bare system ``python3`` has neither
+# PySide6 (Qt UI tests) nor typst (PDF-delivery tests), and modules importing them
+# at module level aborted collection for the whole run.  Exactly those modules are
+# ignored, with one visible line; imports inside a test function still run and
+# every other import error still fails.  Under ``venv`` nothing is ignored.
+_TESTS_DIR = ROOT / "tests"
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+from optional_deps import ignored_test_modules  # noqa: E402  (same directory)
+
+# pytest resolves these names relative to this conftest's directory.
+collect_ignore = ignored_test_modules(_TESTS_DIR)
+_OPTIONAL_SKIP_NOTE = ""
+if collect_ignore:
+    _OPTIONAL_SKIP_NOTE = (
+        f"tests: 跳过 {len(collect_ignore)} 个缺少可选依赖（PySide6 / typst）的测试模块；"
+        f"完整运行请用 venv/bin/python（见 docs/issue-220-remaining-0.8.2.md）")
+
+
+def pytest_report_header(config):
+    return _OPTIONAL_SKIP_NOTE or None
+
 from folith.desktop import paths as _desktop_paths  # noqa: E402  (no core import)
 
 _DATA_ENVS = ("FOLITH_OUTPUT_DIR", "FOLIOTHREAD_OUTPUT_DIR", _desktop_paths.DATA_DIR_ENV)
