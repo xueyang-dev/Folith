@@ -39,6 +39,7 @@ inject a blocking call and assert the captured stack names that call.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import threading
@@ -155,6 +156,16 @@ class JankMonitor:
         self._lock = threading.RLock()
         self._samples: Deque[Tuple[float, float]] = deque(maxlen=max(1, int(sample_limit)))
         self._stall_samples: Deque[Tuple[float, float]] = deque(maxlen=max(1, int(sample_limit)))
+        # #327: stalls caused by the measurement harness itself (predicate
+        # polling, scripted-fallback pumping) are counted apart and never mixed
+        # into the product numbers.
+        self._instrumentation_slow_count = 0
+        self._instrumentation_severe_count = 0
+        self._instrumentation_total_ms = 0.0
+        self._instrumentation_stall_samples: Deque[Tuple[float, float]] = deque(
+            maxlen=max(1, int(sample_limit)))
+        self._instrumentation_depth = 0
+        self._instrumentation_until: Optional[float] = None
         self._recent: Deque[Dict[str, Any]] = deque(maxlen=max(1, int(recent_limit)))
         self._aggregates: "OrderedDict[Tuple[str, ...], Dict[str, Any]]" = OrderedDict()
         self._last_pulse: Optional[float] = None
@@ -261,6 +272,32 @@ class JankMonitor:
         """Label subsequent stall events with the scenario step that was running."""
         self._phase = str(phase or "")
 
+    def set_instrumentation(self, active: bool) -> None:
+        """Mark harness work that is not part of what the product is measured on.
+
+        A stall is attributed to the instrumentation when an instrumentation
+        window overlapped the interval it covers: the window's end is recorded
+        when it closes, and any stall whose interval started before that end is
+        mine, not the product's.  Instrumentation stalls are counted in
+        ``instrumentation_slow_count`` and excluded from ``slow_count``,
+        percentiles, ``longest`` and ``top_stacks``.
+        """
+        with self._lock:
+            if active:
+                self._instrumentation_depth += 1
+                return
+            self._instrumentation_depth = max(0, self._instrumentation_depth - 1)
+            self._instrumentation_until = self._clock()
+
+    @contextlib.contextmanager
+    def instrumentation(self):
+        """``with jank.instrumentation():`` around harness-only work."""
+        self.set_instrumentation(True)
+        try:
+            yield
+        finally:
+            self.set_instrumentation(False)
+
     def mark_pulse(self, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """Record one event-loop pulse; return the jank event when one was taken.
 
@@ -288,10 +325,15 @@ class JankMonitor:
                 # Captured while the timer callback itself was on top: that is
                 # the sampler, not the thing that blocked the GUI.
                 stack = ()
-            return self._record_locked(moment, interval_ms, stack)
+            # Strictly after the interval start: a window that closed exactly at
+            # the previous pulse does not cover this interval.
+            instrumented = (self._instrumentation_until is not None
+                            and self._instrumentation_until > last)
+            return self._record_locked(moment, interval_ms, stack,
+                                       instrumentation=instrumented)
 
     def _record_locked(self, mono: float, interval_ms: float,
-                       stack: Tuple[str, ...]) -> Dict[str, Any]:
+                       stack: Tuple[str, ...], *, instrumentation: bool = False) -> Dict[str, Any]:
         event: Dict[str, Any] = {
             "at": _iso(self._wall_clock()),
             "monotonic": round(mono, 3),
@@ -306,6 +348,17 @@ class JankMonitor:
         }
         if self._phase:
             event["phase"] = self._phase
+        event["instrumentation"] = bool(instrumentation)
+        if instrumentation:
+            # Part of the measurement tool, not the product's responsiveness.
+            self._instrumentation_slow_count += 1
+            if interval_ms >= self.severe_ms:
+                self._instrumentation_severe_count += 1
+            self._instrumentation_total_ms = round(
+                self._instrumentation_total_ms + interval_ms, 1)
+            self._instrumentation_stall_samples.append((mono, interval_ms))
+            self._recent.append(event)
+            return event
         self._slow_count += 1
         if interval_ms >= self.severe_ms:
             self._severe_count += 1
@@ -393,6 +446,7 @@ class JankMonitor:
                 "enabled": self._enabled,
                 "slow": self._slow_count,
                 "severe": self._severe_count,
+                "instrumentation_slow": self._instrumentation_slow_count,
                 "longest_ms": round(self._longest["interval_ms"], 1) if self._longest else 0.0,
                 "top_function": top_function,
             }
@@ -420,6 +474,13 @@ class JankMonitor:
                 "severe_per_minute": _rate(self._severe_count, observed),
                 "interval_ms": compute_percentiles(intervals),
                 "stall_ms": compute_percentiles(stalls),
+                # #327: the harness's own stalls are reported apart and are
+                # never part of slow_count/stall_ms/longest/top_stacks.
+                "instrumentation_slow_count": self._instrumentation_slow_count,
+                "instrumentation_severe_count": self._instrumentation_severe_count,
+                "instrumentation_total_ms": self._instrumentation_total_ms,
+                "instrumentation_stall_ms": compute_percentiles(
+                    [value for _, value in self._instrumentation_stall_samples]),
                 "longest": dict(self._longest) if self._longest else None,
                 "top_stacks": [
                     {
@@ -444,6 +505,7 @@ class JankMonitor:
                     "recent_events": self._recent.maxlen,
                     "interval_samples": self._samples.maxlen,
                     "stall_samples": self._stall_samples.maxlen,
+                    "instrumentation_samples": self._instrumentation_stall_samples.maxlen,
                 },
             }
 
@@ -455,6 +517,9 @@ class JankMonitor:
                 "pulse_count": self._pulse_count,
                 "slow_count": self._slow_count,
                 "severe_count": self._severe_count,
+                "instrumentation_slow_count": self._instrumentation_slow_count,
+                "instrumentation_severe_count": self._instrumentation_severe_count,
+                "instrumentation_total_ms": self._instrumentation_total_ms,
                 "aggregates": {
                     key: (entry["count"], entry["total_ms"])
                     for key, entry in self._aggregates.items()
@@ -476,6 +541,14 @@ class JankMonitor:
             pulses = self._pulse_count - int(checkpoint.get("pulse_count") or 0)
             slow = self._slow_count - int(checkpoint.get("slow_count") or 0)
             severe = self._severe_count - int(checkpoint.get("severe_count") or 0)
+            instrumented_slow = (self._instrumentation_slow_count
+                                 - int(checkpoint.get("instrumentation_slow_count") or 0))
+            instrumented_severe = (self._instrumentation_severe_count
+                                   - int(checkpoint.get("instrumentation_severe_count") or 0))
+            instrumented_total = round(self._instrumentation_total_ms
+                                       - float(checkpoint.get("instrumentation_total_ms") or 0.0), 1)
+            instrumented_stalls = [value for mono, value in self._instrumentation_stall_samples
+                                   if mono >= start]
             stalls = [value for mono, value in self._stall_samples if mono >= start]
             events = [dict(event) for event in self._recent
                       if float(event.get("monotonic") or 0.0) >= start]
@@ -511,6 +584,11 @@ class JankMonitor:
                 "slow_per_minute": _rate(slow, observed),
                 "severe_per_minute": _rate(severe, observed),
                 "stall_ms": compute_percentiles(stalls),
+                # #327: measurement-harness stalls, separated from product ones.
+                "instrumentation_slow_count": instrumented_slow,
+                "instrumentation_severe_count": instrumented_severe,
+                "instrumentation_total_ms": instrumented_total,
+                "instrumentation_stall_ms": compute_percentiles(instrumented_stalls),
                 "longest": longest,
                 "top_stacks": rows[: self.top_n],
                 "notes": [
@@ -518,5 +596,7 @@ class JankMonitor:
                     "top_stacks[].max_ms is null when that stack also stalled before the window",
                     "longest names the largest stall still present in the retained event list",
                     "stall_ms percentiles cover retained stall samples inside the window",
+                    "slow_count/severe_count/stall_ms/longest/top_stacks exclude instrumentation stalls; "
+                    "instrumentation_* fields count the harness's own stalls",
                 ],
             }

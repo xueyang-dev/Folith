@@ -469,7 +469,8 @@ assert monitor.jank is first, "a repeated start() replaced the sampler"
 assert [s for s in trace._GUI_STALL_SOURCES if isinstance(s, type(first))] == [first]
 monitor.pulse()  # the heartbeat must carry the stall counters
 snapshot = monitor.jank.snapshot()
-assert set(snapshot) == {"enabled", "slow", "severe", "longest_ms", "top_function"}, snapshot
+assert set(snapshot) == {"enabled", "slow", "severe", "instrumentation_slow",
+                             "longest_ms", "top_function"}, snapshot
 assert snapshot["enabled"] is True
 monitor.stop()
 assert monitor.jank is None
@@ -537,3 +538,71 @@ print("selftest jank ok", block["slow_count"], flush=True)
                             capture_output=True, text=True, timeout=180)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "selftest jank ok" in result.stdout
+
+
+# ------------------------------------------------- instrumentation (#327)
+def test_instrumentation_stalls_are_counted_apart_from_product_stalls():
+    """Harness-caused stalls must not enter the product numbers."""
+    clock = [0.0]
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0)
+    monitor.mark_pulse()
+    monitor._pending_stack = ("views.py:1 in _fill_cards",)
+    with monitor.instrumentation():
+        clock[0] += 0.3          # the harness work blocks the GUI thread
+    event = monitor.mark_pulse()  # the next pulse observes that interval
+    assert event is not None and event["instrumentation"] is True
+    summary = monitor.summary()
+    assert summary["slow_count"] == 0          # not part of the product metric
+    assert summary["severe_count"] == 0
+    assert summary["instrumentation_slow_count"] == 1
+    assert summary["instrumentation_total_ms"] == pytest.approx(300.0, abs=0.1)
+    assert summary["stall_ms"]["count"] == 0   # product percentiles exclude it
+    assert summary["instrumentation_stall_ms"]["count"] == 1
+    assert summary["longest"] is None          # product longest excludes it
+    assert summary["top_stacks"] == []         # product hotspots exclude it
+    assert monitor.snapshot()["instrumentation_slow"] == 1
+
+    # A product stall afterwards is counted normally again.
+    monitor._pending_stack = ("views.py:2 in set_rows",)
+    clock[0] += 0.2
+    event = monitor.mark_pulse()
+    assert event is not None and event["instrumentation"] is False
+    summary = monitor.summary()
+    assert summary["slow_count"] == 1
+    assert summary["longest"]["stack"] == ["views.py:2 in set_rows"]
+    assert summary["top_stacks"][0]["stack"] == ["views.py:2 in set_rows"]
+
+
+def test_instrumentation_window_does_not_mark_a_later_stall():
+    clock = [0.0]
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0)
+    monitor.mark_pulse()
+    clock[0] += 0.05
+    with monitor.instrumentation():
+        pass                       # a short predicate; no stall during it
+    clock[0] += 0.01
+    monitor.mark_pulse()           # interval 60 ms: below threshold, nothing recorded
+    clock[0] += 0.10
+    event = monitor.mark_pulse()   # interval 100 ms, starts after the window closed
+    assert event is not None
+    assert event["instrumentation"] is False
+    assert monitor.summary()["slow_count"] == 1
+
+
+def test_run_window_splits_product_and_instrumentation():
+    clock = [0.0]
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0)
+    monitor.mark_pulse()
+    marker = monitor.checkpoint()
+    clock[0] += 0.2
+    monitor.mark_pulse()                     # product stall
+    with monitor.instrumentation():
+        clock[0] += 0.4                      # harness work blocks the GUI thread
+    monitor.mark_pulse()                     # the next pulse observes it
+    window = monitor.summary_since(marker)
+    assert window["slow_count"] == 1
+    assert window["instrumentation_slow_count"] == 1
+    assert window["instrumentation_total_ms"] == pytest.approx(400.0, abs=0.1)
+    assert window["stall_ms"]["count"] == 1
+    assert window["instrumentation_stall_ms"]["count"] == 1
+    assert "instrumentation stalls" in " ".join(window["notes"])
