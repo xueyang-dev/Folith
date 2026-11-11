@@ -415,12 +415,13 @@ class MoveToProjectSheet(QDialog):
         row = QHBoxLayout(holder)
         row.setContentsMargins(4, 6, 4, 6)
         row.setSpacing(10)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         text = QVBoxLayout()
+        row.addLayout(text, 1)
         text.setSpacing(0)
         text.addWidget(title)
         text.addWidget(hint)
         row.addWidget(check, 0, Qt.AlignmentFlag.AlignTop)
-        row.addLayout(text, 1)
         return holder
 
     def _suggest_name(self) -> str:
@@ -571,6 +572,7 @@ class MoveToProjectSheet(QDialog):
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(6)
         head = QHBoxLayout()
+        box.addLayout(head)
         head.addWidget(_label(report["name"], "name"), 1)
         direction = adapter_direction(report)
         if report.get("direction_mismatch"):
@@ -578,7 +580,6 @@ class MoveToProjectSheet(QDialog):
             head.addWidget(chip)
         else:
             head.addWidget(_label(_dir(direction), "meta"))
-        box.addLayout(head)
         if report["status"] == "skip":
             box.addWidget(self._bullet("warn", i18n.tr_dynamic(report["reason"])))
             return card
@@ -603,10 +604,10 @@ class MoveToProjectSheet(QDialog):
                 style_module.set_button(button, "secondary", small=True)
                 button.clicked.connect(lambda _c=False, pid=suggestion["project_id"]: self._pick(pid))
                 row = QHBoxLayout()
+                inner.addLayout(row)
                 row.addWidget(_label(i18n.tr('方向相同的项目：'), "meta"))
                 row.addWidget(button)
                 row.addStretch(1)
-                inner.addLayout(row)
             box.addWidget(_amber(note))
             return card
         added = len(report["terms_added"]) + len(report["terms_updated"])

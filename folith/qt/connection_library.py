@@ -124,13 +124,14 @@ class ConnectionLibrary(QWidget):
         column = QVBoxLayout(holder)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(theme_module.SPACE["xxs"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         line = QHBoxLayout()
+        column.addLayout(line)
         line.setContentsMargins(0, 0, 0, 0)
         line.setSpacing(theme_module.SPACE["md"])
         for control in controls:
             line.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
         line.addStretch(1)
-        column.addLayout(line)
         warning = components.StatusLabel("", "attention", wrap=True)
         warning.dot.hide()
         warning.setVisible(False)
@@ -196,6 +197,7 @@ class ConnectionLibrary(QWidget):
         # 每个模型后面跟输入类型（文本 / 文本 + 视觉 / 未知，#48）：服务商目录声明过的
         # 标来源；没声明的显式「未知」，可点「测试视觉」花一次小图请求实测。
         models_head = QHBoxLayout()
+        body.addLayout(models_head)
         models_label = QLabel(i18n.tr('模型'))
         style.set_text_role(models_label, "section")
         models_head.addWidget(models_label, 1)
@@ -209,13 +211,13 @@ class ConnectionLibrary(QWidget):
         self.vision_probe_button.setEnabled(False)
         self.vision_probe_button.clicked.connect(self._test_vision)
         models_head.addWidget(self.vision_probe_button)
-        body.addLayout(models_head)
         self.model_list = QListWidget()
         self.model_list.setObjectName("modelCatalog")
         self.model_list.setMinimumHeight(132)
         self.model_list.currentItemChanged.connect(self._pick_model)
         body.addWidget(self.model_list)
         manual = QHBoxLayout()
+        body.addLayout(manual)
         self.models = QLineEdit()
         self.models.setPlaceholderText(i18n.tr('手动添加模型（多个用逗号分隔）'))
         self.models.returnPressed.connect(self.add_model)
@@ -224,7 +226,6 @@ class ConnectionLibrary(QWidget):
         add.clicked.connect(self.add_model)
         manual.addWidget(self.models, 1)
         manual.addWidget(add)
-        body.addLayout(manual)
         body.addWidget(dialog.reasoning_row)
         body.addWidget(dialog.thinking_row)
         body.addWidget(dialog.thinking_hint)
@@ -244,6 +245,7 @@ class ConnectionLibrary(QWidget):
         body.addWidget(dialog.test_label)
 
         footer = QHBoxLayout()
+        body.addLayout(footer)
         footer.addStretch(1)
         cancel = QPushButton(i18n.tr('取消'))
         cancel.clicked.connect(self.close_editor)
@@ -257,7 +259,6 @@ class ConnectionLibrary(QWidget):
         footer.addWidget(cancel)
         footer.addWidget(self.force_save_button)
         footer.addWidget(self.save_button)
-        body.addLayout(footer)
 
     # ---- 模型输入类型（#48）--------------------------------------------------------
     #: kind → 列表里跟在模型名后面的短语。未知是显式状态，不是省略。
@@ -514,8 +515,11 @@ class ConnectionLibrary(QWidget):
         row.addWidget(components.StatusDot(theme_module.STATUS_TONES[tone]), 0,
                       Qt.AlignmentFlag.AlignVCenter)
         column = QVBoxLayout()
+        row.addLayout(column, 1)
         column.setSpacing(0)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         title = QHBoxLayout()
+        column.addLayout(title)
         title.setSpacing(theme_module.SPACE["sm"])
         name = QLabel(p["name"])
         style.set_text_role(name, "name")
@@ -523,7 +527,6 @@ class ConnectionLibrary(QWidget):
         if p.get("custom"):
             title.addWidget(style.Chip(i18n.tr('自定义'), "muted"))
         title.addStretch(1)
-        column.addLayout(title)
         models = list(dict.fromkeys([p["model"], *p.get("models", [])]))
         provider = i18n.tr('OpenAI 兼容') if p.get("custom") else i18n.tr_dynamic(p["provider"])
         detail = f"{provider} · {p['model']}"
@@ -532,7 +535,6 @@ class ConnectionLibrary(QWidget):
         meta = style.ElideLabel(detail, mode=Qt.TextElideMode.ElideRight)
         style.set_text_role(meta, "meta")
         column.addWidget(meta)
-        row.addLayout(column, 1)
         state = components.StatusLabel(i18n.tr(self.STATE_TEXT.get(status["state"], "")), tone)
         state.dot.hide()
         state.setToolTip(i18n.tr_dynamic(status["message"]))

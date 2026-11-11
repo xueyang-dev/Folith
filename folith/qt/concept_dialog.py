@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import html
+import weakref
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QTextBrowser, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+
+from shiboken6 import Shiboken
 
 from . import i18n, style
 
@@ -75,48 +78,49 @@ class ConceptDecisionDialog(QDialog):
         self.close_buttons.button(QDialogButtonBox.StandardButton.Close).setText(i18n.tr('关闭'))
         self.close_buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         heading = QHBoxLayout()
+        layout.addLayout(heading)
         heading.addWidget(self.card_box, 1)
         heading.addWidget(self.refresh)
-        layout.addLayout(heading)
         layout.addWidget(self.hint)
         body = QHBoxLayout()
+        layout.addLayout(body, 1)
         side_widget = QWidget()
         side_widget.setMaximumWidth(440)
         side = QVBoxLayout(side_widget)
         side.setContentsMargins(0, 0, 0, 0)
         side.addWidget(self.evidence)
         form = QFormLayout()
+        side.addLayout(form)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.addRow(i18n.tr('首选译名'), self.preferred)
         form.addRow('', self.keep)
         form.addRow(i18n.tr('处理说明'), self.note)
-        side.addLayout(form)
         side.addWidget(self.exceptions)
         exception_row = QHBoxLayout()
+        side.addLayout(exception_row)
         exception_row.addWidget(self.add_exception)
         exception_row.addWidget(self.remove_exception)
         exception_row.addStretch()
-        side.addLayout(exception_row)
         split_row = QHBoxLayout()
+        side.addLayout(split_row)
         for widget in (self.split_a, self.split_b):
             split_row.addWidget(widget)
-        side.addLayout(split_row)
         side.addWidget(self.split_button)
         decision_actions = QHBoxLayout()
+        side.addLayout(decision_actions)
         decision_actions.addWidget(self.save)
         decision_actions.addWidget(self.preview)
-        side.addLayout(decision_actions)
         side.addStretch()
         body.addWidget(side_widget, 1)
         preview_side = QVBoxLayout()
+        body.addLayout(preview_side, 2)
         preview_side.addWidget(self.rows, 1)
         actions = QHBoxLayout()
+        preview_side.addLayout(actions)
         for widget in (self.select_all, self.select_none, self.apply):
             actions.addWidget(widget)
-        preview_side.addLayout(actions)
-        body.addLayout(preview_side, 2)
-        layout.addLayout(body, 1)
         layout.addWidget(self.status)
         layout.addWidget(self.close_buttons)
         self.card_box.currentIndexChanged.connect(self._load_card)
@@ -335,15 +339,58 @@ def open_concept_workflow(window):
             window.runner.submit(fn, job_id, *args, on_done=success, on_error=failure,
                                  label=i18n.tr('概念决策'))
 
-        dialog.saveRequested.connect(lambda card, fields: run(
-            adapter.save_concept_decision, card, fields, done=dialog.set_view))
-        dialog.refreshRequested.connect(lambda: run(adapter.concept_workflow_view, done=dialog.set_view))
-        dialog.previewRequested.connect(lambda card: run(adapter.preview_concept_revision, card, done=dialog.set_preview))
+        # A lambda that closes over the dialog keeps it alive in a reference cycle,
+        # and the async runner callbacks can fire after `deleteLater()`; both leave
+        # stale PySide wrappers (SIGSEGV).  Resolve the dialog through a weakref and
+        # check the C++ object is still alive before touching it.
+        dialog_ref = weakref.ref(dialog)
 
-        def applied(result):
+        def live():
+            candidate = dialog_ref()
+            if candidate is None or not Shiboken.isValid(candidate):
+                return None
+            return candidate
+
+        def run(fn, *args, done):
+            d = live()
+            if d is None:
+                return
+            d.set_busy(True)
+
+            def success(result):
+                current = live()
+                if current is None:
+                    return
+                current.set_busy(False)
+                done(current, result)
+                window.refresh_workbench(force=True)
+
+            def failure(error, _detail):
+                current = live()
+                if current is None:
+                    return
+                current.set_busy(False)
+                current._snapshot = None
+                current.rows.clear()
+                current.status.setText(i18n.tr_dynamic(error))
+                current._sync()
+
+            window.runner.submit(fn, job_id, *args, on_done=success, on_error=failure,
+                                 label=i18n.tr('概念决策'))
+
+        dialog.saveRequested.connect(lambda card, fields: run(
+            adapter.save_concept_decision, card, fields,
+            done=lambda d, result: d.set_view(result)))
+        dialog.refreshRequested.connect(lambda: run(
+            adapter.concept_workflow_view, done=lambda d, result: d.set_view(result)))
+        dialog.previewRequested.connect(lambda card: run(
+            adapter.preview_concept_revision, card,
+            done=lambda d, result: d.set_preview(result)))
+
+        def applied(current, result):
             rows = []
-            for i in range(dialog.rows.topLevelItemCount()):
-                item = dialog.rows.topLevelItem(i)
+            for i in range(current.rows.topLevelItemCount()):
+                item = current.rows.topLevelItem(i)
                 index = item.data(0, Qt.ItemDataRole.UserRole)
                 match = next((r for r in result['results']
                               if (r.get('candidate') or {}).get('segment_index') == index), None)
@@ -353,11 +400,12 @@ def open_concept_workflow(window):
                 elif index is not None:
                     item.setText(0, i18n.tr('未应用'))
                 rows.append([item.text(col) for col in range(5)])
-            dialog.set_view(result['view'])
+            current.set_view(result['view'])
             for row in rows:
-                dialog.rows.addTopLevelItem(QTreeWidgetItem(row))
-            dialog.status.setText(i18n.tr('已修改 {v0} 段；这些段需要重新审校。', v0=result['changed']))
-            dialog._sync()
+                current.rows.addTopLevelItem(QTreeWidgetItem(row))
+            current.status.setText(i18n.tr('已修改 {v0} 段；这些段需要重新审校。',
+                                            v0=result['changed']))
+            current._sync()
             window.workbench.reload_current_segment()
 
         dialog.applyRequested.connect(lambda snapshot, selected: run(
@@ -367,7 +415,8 @@ def open_concept_workflow(window):
             if window._confirm(i18n.tr('拆为不同概念'),
                                i18n.tr('确认这两个原文形式属于不同概念？'),
                                yes=i18n.tr('确认'), no=i18n.tr('取消')):
-                run(adapter.split_concept, card, a, b, done=dialog.set_view)
+                run(adapter.split_concept, card, a, b,
+                    done=lambda d, result: d.set_view(result))
 
         dialog.splitRequested.connect(split)
         dialog.exec()

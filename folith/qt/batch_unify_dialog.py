@@ -23,7 +23,11 @@ SIGSEGV 避坑：本文件不使用 fill-then-addLayout 模式（先 addLayout �
 """
 from __future__ import annotations
 
+import weakref
+
 from typing import Optional
+
+from shiboken6 import Shiboken
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -633,13 +637,29 @@ def open_batch_unify_dialog(window) -> None:
         entities = list(view.get("entities") or [])
         dialog = BatchUnifyDialog(entities, state, seg_counts, parent=window)
 
+        # Weakref + validity check: neither the signal lambda nor the async runner
+        # callbacks may keep the dialog (or touch it after deleteLater()).
+        dialog_ref = weakref.ref(dialog)
+
+        def live():
+            candidate = dialog_ref()
+            if candidate is None or not Shiboken.isValid(candidate):
+                return None
+            return candidate
+
         def run_applies(repairs: list[dict]) -> None:
-            dialog.set_busy(True)
-            dialog.set_status(i18n.tr("正在统一…"))
+            if live() is None:
+                return
+            current = live()
+            current.set_busy(True)
+            current.set_status(i18n.tr("正在统一…"))
             # 记录每项的结果：{source, target, ok, error}
             results: list[dict] = []
 
             def apply_next(remaining: list[dict]) -> None:
+                active = live()
+                if active is None:
+                    return
                 if not remaining:
                     # 全部完成：生成逐项报告
                     ok_items = [r for r in results if r["ok"]]
@@ -654,9 +674,9 @@ def open_batch_unify_dialog(window) -> None:
                     else:
                         status = i18n.tr(
                             "已统一 {v0} 项，失败 {v1} 项。", v0=len(ok_items), v1=0)
-                    dialog.set_busy(False)
-                    dialog.set_status(status)
-                    dialog._sync()
+                    active.set_busy(False)
+                    active.set_status(status)
+                    active._sync()
                     if ok_items:
                         window.refresh_workbench(force=True)
                     return
@@ -668,8 +688,10 @@ def open_batch_unify_dialog(window) -> None:
                     results.append({"source": _repair["source"],
                                     "target": _repair["target"],
                                     "ok": True, "error": ""})
-                    # 应用成功：立即从树中移除该行，防止二次点击报假错
-                    dialog.mark_applied(_repair["source"])
+                    target = live()
+                    if target is not None:
+                        # 应用成功：立即从树中移除该行，防止二次点击报假错
+                        target.mark_applied(_repair["source"])
                     apply_next(rest)
 
                 def on_fail(error: str, _detail: str, _repair=repair) -> None:

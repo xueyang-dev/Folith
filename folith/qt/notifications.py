@@ -1,6 +1,8 @@
 """Window-local notifications: no modal grab and no editor focus change."""
 from __future__ import annotations
 
+import weakref
+
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import (QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
                                QPushButton, QVBoxLayout)
@@ -116,7 +118,18 @@ class Toast(QFrame):
         layout = QVBoxLayout(dialog)
         layout.addWidget(text)
         close = QPushButton(i18n.tr('关闭'), dialog)
-        close.clicked.connect(dialog.close)
+        # A bound method of the dialog on a child button's signal forms a reference
+        # cycle (dialog -> button -> connection -> dialog.close).  That keeps the
+        # Python wrappers alive after WA_DeleteOnClose deleted the C++ objects, which
+        # is the stale-wrapper SIGSEGV class.  Close through a weakref instead.
+        dialog_ref = weakref.ref(dialog)
+
+        def close_dialog() -> None:
+            target = dialog_ref()
+            if target is not None:
+                target.close()
+
+        close.clicked.connect(close_dialog)
         layout.addWidget(close)
         dialog.show()
         self.hide()
