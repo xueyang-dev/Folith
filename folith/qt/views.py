@@ -256,7 +256,8 @@ def library_run_view(row) -> tuple[str, str]:
     tone, line = run_status_view(
         {"status": status, "runtime": getattr(row, "runtime", {})},
         note=note, running=row.active,
-        completed=0, total=0, unit="")
+        completed=0, total=0, unit="",
+        job_id=str(getattr(row, "job_id", "") or ""))
     return tone, line or i18n.tr_dynamic(row.status_label)
 
 
@@ -2004,13 +2005,110 @@ def _parse_iso(value) -> float | None:
         return None
 
 
+def _as_seconds(value) -> float | None:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def _trace_active_seconds(job_id: str) -> float | None:
+    """Active work seconds from the run tracker, when this build has #320.
+
+    #320 exposes ``folith.trace.trace.active_seconds(job_id)`` for the run this
+    process is still tracking.  Extracted so tests can drive the branch without a
+    real run, and so builds before #320 degrade to ``None`` instead of raising.
+    """
+    try:
+        from folith import trace as trace_module
+    except Exception:  # pragma: no cover - trace is a core module; stay defensive
+        return None
+    manager = getattr(trace_module, "trace", None)
+    accessor = getattr(manager, "active_seconds", None)
+    if not callable(accessor):
+        return None
+    try:
+        return _as_seconds(accessor(job_id))
+    except Exception:
+        return None
+
+
+def _history_active_seconds(job_id: str, raw: dict) -> float | None:
+    """``active_seconds`` of the finished run from the task's history.json (#320).
+
+    The run record is written per task under ``<job>/.performance/history.json``.
+    Match the finished run by ``run_id`` when the runtime record carries one, else by
+    its finish time; an older segment of the same task must never stand in for the
+    run being shown.
+    """
+    if not job_id:
+        return None
+    try:
+        history_path = adapter.core.job_dir(job_id) / ".performance" / "history.json"
+    except Exception:
+        return None
+    try:
+        import json
+        entries = json.loads(history_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(entries, list):
+        return None
+    candidates = [entry for entry in entries
+                  if isinstance(entry, dict) and str(entry.get("task_id") or "") == job_id]
+    if not candidates:
+        return None
+
+    run_id = str(raw.get("run_id") or "")
+    if run_id:
+        for entry in reversed(candidates):
+            if str(entry.get("run_id") or "") == run_id:
+                return _as_seconds(entry.get("active_seconds"))
+
+    finished = _parse_iso(raw.get("finished_at"))
+    if finished is not None:
+        for entry in reversed(candidates):
+            entry_finished = _parse_iso(entry.get("finished_at"))
+            if entry_finished is not None and abs(entry_finished - finished) <= 2.0:
+                return _as_seconds(entry.get("active_seconds"))
+        # This run's history entry is not flushed yet; showing an older segment's
+        # active time would be wrong, so let the caller keep the wall-clock wording.
+        return None
+    return _as_seconds(candidates[-1].get("active_seconds"))
+
+
+def _active_run_minutes(job_id: str, raw: dict) -> int | None:
+    """Minutes actually worked for the finished run, or ``None`` when not recorded.
+
+    #320's heartbeat-based active time wins over the ``started_at`` → ``finished_at``
+    difference, which counts a laptop sleeping or the process being frozen.  When
+    neither the live accessor nor the history entry has the number (this tree before
+    #320, or records from before it), the caller keeps the old wall-clock wording
+    rather than showing nothing or zero.
+    """
+    if not job_id:
+        return None
+    seconds = _trace_active_seconds(job_id)
+    if seconds is None:
+        seconds = _history_active_seconds(job_id, raw)
+    if seconds is None:
+        return None
+    return max(1, int(round(seconds / 60)))
+
+
 def run_status_view(runtime: dict, *, note: str, running: bool, completed: int,
-                    total: int, unit: str, now: float | None = None) -> tuple[str, str]:
+                    total: int, unit: str, now: float | None = None,
+                    job_id: str = "") -> tuple[str, str]:
     """(tone, line) for the run status group: colour and the words that say the same.
 
     Tones: running / waiting (model call in flight) / retrying / stalled / failed /
     paused / done / idle.  "Stalled" uses the core's own ``stalled`` status, or no
     progress for ``_STALL_AFTER_S`` seconds while running.
+
+    ``job_id`` is optional: with it, a finished run's active work time (#320) is
+    preferred over the ``started_at`` → ``finished_at`` difference; when no active
+    record exists the old wall-clock wording is kept unchanged.
     """
     now = time.time() if now is None else now
     status = str(runtime.get("status") or "")
@@ -2025,6 +2123,11 @@ def run_status_view(runtime: dict, *, note: str, running: bool, completed: int,
     waiting_since = _parse_iso(raw.get("model_wait_started_at"))
     if status == "completed":
         started = _parse_iso(raw.get("started_at"))
+        # #320: prefer the heartbeat-based active work time.  It excludes laptop
+        # sleep / a frozen process, which the wall-clock difference counts.
+        active_minutes = _active_run_minutes(job_id, raw)
+        if active_minutes is not None:
+            return "done", i18n.tr('已完成 · {v0} 分钟', v0=max(1, active_minutes))
         finished = _parse_iso(raw.get("finished_at")) or now
         minutes = int(round((finished - started) / 60)) if started else 0
         return "done", (i18n.tr('已完成 · {v0} 分钟', v0=max(1, minutes)) if started
@@ -5844,7 +5947,8 @@ class WorkbenchView(QWidget):
             self.progress.setValue(0)
         tone, line = run_status_view(runtime, note=note, running=running,
                                      completed=completed, total=total,
-                                     unit=str(stage_progress.get("unit") or ""))
+                                     unit=str(stage_progress.get("unit") or ""),
+                                     job_id=str(getattr(self, "job_id", "") or ""))
         # F2：这一次运行跑完了，不等于这个任务做完了。只要交付门禁还挂着未解决的
         # 阻断项，页头就不能说「已完成」——它与交付页、审校步骤条必须同一个数。
         blocking = self.blocking_items()
