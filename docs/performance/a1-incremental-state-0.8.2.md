@@ -263,12 +263,12 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 
 改动前同一命令在 load 82–95 下的 A/B 见 §13.4：A（main）3/3 绿、B（P2）每轮 1–2 红，确认是 P2 回归而非环境 flake；修复后目标 3 用例在仍处高负载时即 3/3 绿，确定性用例 5/5 绿。
 
-### 13.3 P3 未做（本轮）
+### 13.3 P3 状态
 
-- 12 处 `id(self._state)` → 域版本号（最危险，未动；静态检查脚本也未落）。
-- `SnapshotChanged(worker_active)` 目前一律整份重建（P2 简化，保留旧行为）。
-- 慢投影按域调度：已按 5 s/脏域节奏，但未做"每域独立在飞/独立失效"。
-- 阶段条 `_render_stage` 的 O(n)（见 13.1）。
+- 12 处 `id(self._state)` → 域版本号：**已完成**（见 §13.7）。
+- `SnapshotChanged(worker_active)`：**已改**为"worker 活跃继续 delta，只有无 worker 才整份重建"（§13.7）。
+- 慢投影按域调度：已按 5 s/脏域节奏，但**每域独立在飞/独立失效仍未做**（当前共享一个读槽）。
+- 阶段条 `_render_stage` 的 O(n)：已在 P2 收尾时拔掉（`blocking_count` 缓存 + 选中段直取）。
 
 ### 13.4 A/B 判定（2026-11-11，本机 load 82–95）
 
@@ -325,3 +325,34 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 - 同会话 `pytest tests/qt_workbench_poll_test.py tests/qt_workbench_delta_test.py` × 3：**15 passed / 15 passed / 15 passed**（86 s / 87 s / 88 s）。
 - 该测试单独 × 5：**5 passed**（6.2 / 4.7 / 5.3 / 5.4 / 5.1 s）。
 - `FOLITH_PERF_MEASURE=1` 一轮：1k p50 **0.73 ms**（p95 0.96，max 2.98），10k p50 **1.11 ms**（p95 2.00，max 4.39）；整份重建 26 ms / 1,230 ms。
+
+### 13.7 P3：显式域版本号 + snapshot 策略（2026-11-11）
+
+**为什么**：增量路径让 `self._state` 不再是"每次刷新换一个对象"，以 `id(self._state)` 为缓存键会让面板在对象不变时静默保留旧数据。改为 12 个显式域版本（`workbench_rows.DOMAINS`）：
+
+| 位置（`folith/qt/views.py`） | 缓存 | 域 |
+|---|---|---|
+| `:4225` `_document_term_counts` | 术语全文出现次数 | `terms` |
+| `:5008` `_render_report` | 报告页 | `academic` |
+| `:5023` `_render_cases` | 案例页 | `academic` |
+| `:5037` `_render_qa` | QA 页 | `academic` |
+| `:5062` `_render_followup` | 收尾页 | `followup` |
+| `:5103` `_render_details` | 任务详情浮窗 | `details` |
+| `:5135` `_render_terms` | 术语面板 | `terms` |
+| `:5368` `_render_review` | 审校队列 | `review` |
+| `:5832` `_sync_word_count` | 字数/进度 | `counts` |
+| `:6177` `_render_delivery`（节流键） | 交付面板 | `delivery` |
+| `:3856` `apply()` 备注缓存 | 段落批注 | `details` |
+| `:7204` `_notes_loaded_at_state` | 段落批注 | `details` |
+
+**规则**：`DeltaBatch.domains` → `apply_delta()` 只 `+1` 命中域；整份 `apply()` 与 `apply_projection()` 全部 `+1`（与旧的"新 state 对象"语义等价）；`apply_runtime()` 只动 `runtime/stage`。delta 不脏的域，面板不重算，窗口也不起投影 worker。
+
+**静态检查**：`scripts/check_workbench_domain_cache.py`（AST，忽略注释/文档串；`# domain-cache: allow <reason>` 可单点豁免）已接入 `.github/workflows/pr-checks.yml` 的 "Qt stale-wrapper static checks" 同一 step。正负向验证：现有 `views.py` → `OK: no state-identity cache keys`（exit 0）；临时文件含 `key = id(self._state)` → exit 1，并打印 `bad_view.py:2`。
+
+**snapshot 策略**：`DeltaSnapshotChanged(worker_active=True)` 不再整份重建——流水线持有 `.worker.lock` 时外部写不进来，它的快照只是已应用记录的压实；`worker_active=False` 才走整份重建。
+
+**测试**：`tests/qt_workbench_domain_versions_test.py` 8 passed，覆盖：
+- review / terms / academic 三个域"脏标记不置位 → 面板不调 adapter；置位 → 调一次"；
+- 窗口级：`domains=("rows","counts")` 时 `adapter.load_state` 调用 0 次、无投影在飞；`domains=("review",)` 时投影 worker 起一次；`domains=("delivery",)` 时交付预检被调用；
+- snapshot：worker 活跃 + state.json 变化 → `_poll_workbench_full` 0 次、delta 路径保留；无 worker + 变化 → 整份重建且 `_cached_state` 更新；
+- 静态检查正负向（退出码与输出）。

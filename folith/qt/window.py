@@ -2193,6 +2193,13 @@ class MainWindow(QMainWindow):
                 self._log(f"workbench delta resync ({exc.reason})")
                 self._resync_from_full(job_id)
                 return
+            except Exception as exc:  # noqa: BLE001 - one bad delta must not freeze the view
+                # A delta that the read model cannot apply is a correctness
+                # problem, not a reason to keep showing stale rows: fall back to
+                # the authoritative state and keep the reason in the log.
+                self._log(f"workbench delta failed ({type(exc).__name__}: {exc})")
+                self._resync_from_full(job_id)
+                return
             self._delta_applied_seq = int(result.seq)
             counts = adapter.document_counts(self._delta_model)
             changed = self.workbench.apply_delta(
@@ -2209,12 +2216,15 @@ class MainWindow(QMainWindow):
                 runtime=runtime, force_terminal=True)
             return
         if isinstance(result, adapter.DeltaSnapshotChanged):
-            # A snapshot write can carry facts no journal record describes (a
-            # human edit from another surface, a structural change, or the
-            # pipeline's own compaction).  P2 deliberately reloads on either,
-            # which keeps every snapshot-powered behaviour of the old path; the
-            # per-domain optimisation belongs to P3.
-            self._log(f"workbench snapshot resync (worker_active={result.worker_active})")
+            if result.worker_active:
+                # The pipeline still owns the task: its snapshot is its own
+                # compaction of records we have already applied (an external
+                # save is refused while `.worker.lock` is held), so the rows are
+                # current and the journal cursor keeps moving.  Rebuilding the
+                # whole state here would freeze the workbench once per snapshot
+                # cadence for no new information.
+                return
+            self._log("workbench snapshot resync (no live worker)")
             self._resync_from_full(job_id)
             return
         if isinstance(result, adapter.DeltaResyncRequired):

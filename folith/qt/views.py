@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from . import i18n, platform_ui
 from . import adapter
+from folith.workbench_rows import DOMAINS as _DOMAIN_NAMES
 from . import components
 from . import motion
 from . import icons
@@ -2499,6 +2500,11 @@ class WorkbenchView(QWidget):
         self._qa_key: tuple = ()
         self._cases_key: tuple = ()
         self._report_key: tuple = ()
+        #: Explicit projection-domain revisions (issue #324 P3).  Cache keys use
+        #: these instead of ``id(state)``: a delta bumps only the domains it
+        #: touched, a whole-state apply bumps all of them.  A stale object
+        #: identity can no longer silently keep an old panel.
+        self._domain_revs: dict[str, int] = {name: 0 for name in _DOMAIN_NAMES}
         #: 任务打开时读入的大纲负载（sidecar + 解析状态）；之后只在结构变化时重算映射。
         self._outline_payload: dict = {}
         self._outline_mapping: dict = {}
@@ -3791,6 +3797,20 @@ class WorkbenchView(QWidget):
                 and self._outline_available():
             self._set_left_panel("outline", True)
 
+    # -- projection-domain revisions -------------------------------------
+    def _domain_version(self, name: str) -> int:
+        """Monotonic revision of one projection domain."""
+        return self._domain_revs.get(name, 0)
+
+    def _bump_domains(self, names) -> None:
+        for name in names or ():
+            if name in self._domain_revs:
+                self._domain_revs[name] += 1
+
+    def domain_versions(self) -> dict[str, int]:
+        """Snapshot of every domain revision (diagnostics and tests)."""
+        return dict(self._domain_revs)
+
     def apply(self, job_id: str, state: dict, rows: list[adapter.SegmentRow],
               runtime: dict, snapshots: list[dict],
               *, refresh_delivery: bool = False, prepared: dict | None = None,
@@ -3807,6 +3827,7 @@ class WorkbenchView(QWidget):
         self.job_id = job_id
         self._state = state
         self._blocking_cached = None
+        self._bump_domains(_DOMAIN_NAMES)
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._last_runtime = runtime or {}
@@ -3832,7 +3853,7 @@ class WorkbenchView(QWidget):
                     or not self._notes_loaded_at_state(state):
                 self._notes = adapter.segment_notes(job_id) if job_id else {}
                 self._notes_job = job_id
-                self._notes_state = id(state)
+                self._notes_state = self._domain_version("details")
             self._render_segments()
             self._grid_source = (rows, state, job_id, grid_key)
         # 翻译范围入口跟着工作列表走：只要段落已提取（译前或运行中）就可以
@@ -3879,6 +3900,7 @@ class WorkbenchView(QWidget):
         rows = list(rows)
         if positions and not self._apply_row_delta(rows, positions):
             return False
+        self._bump_domains(set(domains or ()))
         if counters or (set(domains or ()) & {"review", "followup", "delivery"}):
             self._blocking_cached = None
         if positions:
@@ -3944,6 +3966,7 @@ class WorkbenchView(QWidget):
         self.job_id = job_id
         self._state = state
         self._blocking_cached = None
+        self._bump_domains(_DOMAIN_NAMES)
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._last_runtime = runtime or {}
@@ -3970,6 +3993,7 @@ class WorkbenchView(QWidget):
         """One cheap tick: progress/status only (used while no batch arrived)."""
         if runtime is None:
             return
+        self._bump_domains(("runtime", "stage"))
         self._last_runtime = dict(runtime)
         self._render_runtime()
         self._render_stage()
@@ -4198,9 +4222,9 @@ class WorkbenchView(QWidget):
         """每条术语在全文原文里出现在几段（按任务状态缓存）。"""
         from . import term_highlight
 
-        key = id(self._state)
-        if self._term_counts.get("__state__") != key:
-            self._term_counts = {"__state__": key}
+        key = self._domain_version("terms")
+        if self._term_counts.get("__domain__") != key:
+            self._term_counts = {"__domain__": key}
         counts = {}
         for term in terms:
             source = str(term.get("source") or "")
@@ -4981,7 +5005,7 @@ class WorkbenchView(QWidget):
         # 报告页要读取运行视图与多份学术产物：随状态对象变化时才重算，
         # 并且只在它的页签可见时算（避免没有打开学术模式的人为它付出代价）。
         status = str((self._last_runtime or {}).get("status") or "")
-        key = (self.job_id, id(self._state), status)
+        key = (self.job_id, self._domain_version("academic"), status)
         if key == self._report_key:
             return
         self._report_key = key
@@ -4996,7 +5020,7 @@ class WorkbenchView(QWidget):
     def _render_cases(self) -> None:
         if not self.job_id or not self.academic_visible():
             return
-        key = (self.job_id, id(self._state))
+        key = (self.job_id, self._domain_version("academic"))
         if key == self._cases_key:
             return
         self._cases_key = key
@@ -5010,7 +5034,7 @@ class WorkbenchView(QWidget):
     def _render_qa(self) -> None:
         if not self.job_id or not self.academic_visible():
             return
-        key = (self.job_id, id(self._state))
+        key = (self.job_id, self._domain_version("academic"))
         if key == self._qa_key:
             return
         self._qa_key = key
@@ -5034,8 +5058,8 @@ class WorkbenchView(QWidget):
             pass
 
     def _render_followup(self) -> None:
-        """收尾页随任务状态对象重算（它要读检查点与实体登记，不放在每秒轮询里）。"""
-        key = (self.job_id, id(self._state))
+        """收尾页只在 follow-up 域脏时重算（检查点/实体登记，不进每秒轮询）。"""
+        key = (self.job_id, self._domain_version("followup"))
         if key == self._followup_key:
             return
         self._followup_key = key
@@ -5076,7 +5100,7 @@ class WorkbenchView(QWidget):
             return
         if not self.details_popover.isVisible():
             return
-        key = (self.job_id, id(self._state))
+        key = (self.job_id, self._domain_version("details"))
         if key == self._details_key:
             return
         self._details_key = key
@@ -5108,7 +5132,7 @@ class WorkbenchView(QWidget):
         self.activity_panel.set_rows(rows[-50:], signature=signature)
 
     def _render_terms(self, *, force: bool = False) -> None:
-        key = (self.job_id, id(self._state))
+        key = (self.job_id, self._domain_version("terms"))
         if key == self._terms_key and not force:
             return
         # The full table counts every term's occurrences across the document
@@ -5340,8 +5364,8 @@ class WorkbenchView(QWidget):
         self._render_terms(force=True)
 
     def _render_review(self) -> None:
-        """审校页只在状态真的换了对象时重算（队列要过一遍原文质量门禁）。"""
-        key = (self.job_id, id(self._state))
+        """审校页只在 review 域脏时重算（队列要过一遍原文质量门禁）。"""
+        key = (self.job_id, self._domain_version("review"))
         if key == self._review_key:
             return
         self._review_key = key
@@ -5805,7 +5829,7 @@ class WorkbenchView(QWidget):
         """
         from folith import word_count
 
-        key = (self.job_id, id(self._state), len(self._all_rows))
+        key = (self.job_id, self._domain_version("counts"), len(self._all_rows))
         if count is not None:
             self._word_count = count
             self._word_count_key = key
@@ -6150,7 +6174,7 @@ class WorkbenchView(QWidget):
         now = time.monotonic()
         prepared = getattr(self, "_prepared_delivery", None)
         self._prepared_delivery = None
-        key = (self.job_id, len(self._snapshots),
+        key = (self.job_id, self._domain_version("delivery"), len(self._snapshots),
                str(self._state.get("delivery_status") or ""))
         unchanged = self._delivery_rendered and key == self._delivery_key
         same_job = bool(self._delivery_rendered and self._delivery_key
@@ -7177,7 +7201,7 @@ class WorkbenchView(QWidget):
         self.findReplaceRequested.emit()
 
     def _notes_loaded_at_state(self, state: dict) -> bool:
-        return getattr(self, "_notes_state", None) == id(state)
+        return getattr(self, "_notes_state", None) == self._domain_version("details")
 
     def _save_note(self, text: str) -> None:
         if not self.job_id or not self._loaded_uid:
