@@ -93,11 +93,6 @@ def test_destroyed_workbench_leaves_no_layout_item_wrappers(app):
     assert valid_item_ids() <= before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="batch 2: projects_view._tasks_card fills `head` before `box.addLayout(head)` "
-           "(folith/qt/projects_view.py:643); it seeds one QWidgetItem wrapper per rebuild",
-)
 def test_project_overview_rebuild_creates_no_item_wrappers(app):
     view = ProjectsView()
     view._detail = {"project": {"description": "说明", "target_lang": "简体中文"}}
