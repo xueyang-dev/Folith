@@ -50,6 +50,12 @@ The loop is now a level-by-level map/reduce:
    same order (`_synopsis_text(item, index)`);
 4. repeat with `chunk_limit * 2` (unchanged) until one synopsis remains.
 
+The reduce is **bounded**: the pre-#319 recursion surfaced a non-converging
+merge as `RecursionError`; the loop raises an explicit `RuntimeError` when a
+capped chunk limit no longer shrinks the level (or after
+`MAX_SYNOPSIS_LAYERS = 32` levels), so a pathological provider cannot turn the
+understanding stage into a hot infinite loop.
+
 Consequences:
 
 - **Byte-identical output.** The prompts are a function of chunk composition
@@ -63,8 +69,12 @@ Consequences:
   **lowest-index** failing chunk is raised, exactly the chunk the serial loop
   would have failed on. The existing single deterministic-fallback path in
   `generate_document_synopsis` is unchanged.
-- **One attempt per chunk.** No retry loop was added. (The provider SDK's own
-  transport retries are untouched.) Parallelism does not multiply attempts.
+- **Fail-fast level map.** No retry loop was added (the provider SDK's own
+  transport retries are untouched). When one chunk fails, no further chunk is
+  started: pending tasks are cancelled (`shutdown(wait=False,
+  cancel_futures=True)`) and the first failing chunk by index is raised, so the
+  serial "one call before failing" property holds (at most `workers` calls can
+  be observed because those were already in flight).
 - Levels never overlap: a level-2 call is never in flight while a level-1 call
   is still running (asserted with a probe).
 
@@ -88,6 +98,12 @@ entirely. `_call()` now:
 - does **not** add a retry: a rate-limited understanding request falls back to
   the deterministic digest/synopsis exactly as before, and the serial attempt
   count is unchanged.
+
+**This is an intentional behaviour change: rate limiting is shared per
+provider.** The understanding stage no longer bypasses `request_control`, so a
+429 seen by a translation request also makes understanding requests wait (and
+vice versa) — that is the point of one provider-scoped cooldown. It is not a
+regression; do not "fix" it by giving understanding its own pacing.
 
 Workers bind the pipeline thread's runtime job id (`core._RUNTIME_CTX.job_id`)
 for the duration of their task, so a cancel request also interrupts a worker

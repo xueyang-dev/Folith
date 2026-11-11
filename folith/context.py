@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
@@ -535,6 +536,9 @@ def _text_chunks(items: Sequence[str], max_chars: int) -> List[str]:
     return chunks
 
 
+MAX_SYNOPSIS_LAYERS = 32
+
+
 def _reduce_synopsis(
     items: Sequence[str],
     provider: str,
@@ -553,14 +557,34 @@ def _reduce_synopsis(
     built in that same order, so the synopsis (and every prompt sent to the
     provider) is identical to the pre-#319 serial loop -- concurrency changes
     only *when* calls happen, never *what* is called or merged.
+
+    The reduce is **bounded**: the pre-#319 recursion made a non-converging
+    merge visible as ``RecursionError``; this loop raises an explicit
+    ``RuntimeError`` once a capped chunk limit no longer shrinks the level, or
+    after ``MAX_SYNOPSIS_LAYERS`` levels.  A pathological provider cannot turn
+    the understanding stage into a hot infinite loop.
     """
     chunk_limit = min(MAX_SYNOPSIS_CHARS, max(1000, int(max_chars or 12000)))
     job_id = _inherited_job_id()
     current = list(items)
+    layers = 0
+    previous_chunks: Optional[int] = None
     while True:
         chunks = _text_chunks(current, chunk_limit)
         if not chunks:
             return {"summary": "", "status": "unavailable"}
+        layers += 1
+        if previous_chunks is not None \
+                and len(chunks) >= previous_chunks \
+                and chunk_limit >= MAX_SYNOPSIS_CHARS:
+            raise RuntimeError(
+                f"全文概要合并未收敛：第 {layers} 层仍有 {len(chunks)} 个块"
+                f"（上一层 {previous_chunks} 个，chunk_limit={chunk_limit}）")
+        if layers > MAX_SYNOPSIS_LAYERS:
+            raise RuntimeError(
+                f"全文概要合并超过 {MAX_SYNOPSIS_LAYERS} 层仍未收敛"
+                f"（当前 {len(chunks)} 个块）")
+        previous_chunks = len(chunks)
         reduced = _reduce_synopsis_chunks(
             chunks, provider, api_key, model, target_lang, call_llm,
             max_workers, job_id)
@@ -583,12 +607,21 @@ def _reduce_synopsis_chunks(
 ) -> List[Dict[str, Any]]:
     """One map level: call every chunk, return normalized results in order.
 
-    The first failing chunk (by index, matching the serial loop) raises once
-    the level has drained.  Provider/format failures are raised, not silently
-    replaced, so ``generate_document_synopsis`` keeps its single deterministic
-    fallback path and its single attempt per chunk.
+    Fail-fast: once a chunk fails, no further chunk is started (pending tasks
+    are cancelled) and the first failing chunk -- lowest index, matching the
+    serial loop -- is raised after the level drains.  The serial path made
+    exactly one provider call before failing on the first chunk; parallelising
+    the level must not turn one 429 into eight wasted requests.  Chunks that
+    were already in flight cannot be interrupted (the provider call itself is
+    cancel-aware), so at most ``workers`` calls can be observed.
     """
+    results: List[Optional[Dict[str, Any]]] = [None] * len(chunks)
+    errors: List[Optional[BaseException]] = [None] * len(chunks)
+    abort = threading.Event()
+
     def work(index: int, chunk: str) -> None:
+        if abort.is_set():
+            return
         with _worker_job_context(job_id):
             try:
                 raw = _parse_object(_call(
@@ -596,31 +629,44 @@ def _reduce_synopsis_chunks(
                     f"目标语言：{target_lang}\n语义摘要块：\n{chunk}",
                     _cancel_check()))
             except Exception as exc:  # noqa: BLE001 - reported after the level drains
+                abort.set()
                 raise_if_fatal(exc)
                 if "任务已请求取消" in str(exc) or "请求取消" in str(exc):
                     raise RuntimeError("任务已请求取消") from exc
                 errors[index] = exc
                 return
             if raw is None:
+                abort.set()
                 errors[index] = ValueError("模型未返回结构化 JSON")
                 return
             results[index] = _normalize_synopsis(raw)
 
-    results: List[Optional[Dict[str, Any]]] = [None] * len(chunks)
-    errors: List[Optional[BaseException]] = [None] * len(chunks)
     if len(chunks) == 1:
         work(0, chunks[0])
     else:
         workers = digest_worker_count(max_workers, pending=len(chunks))
-        with ThreadPoolExecutor(max_workers=workers,
-                                thread_name_prefix="ft-synopsis") as pool:
+        pool = ThreadPoolExecutor(max_workers=workers,
+                                  thread_name_prefix="ft-synopsis")
+        futures: List[Any] = []
+        try:
             futures = [pool.submit(work, index, chunk)
                        for index, chunk in enumerate(chunks)]
-            # Wait in chunk order: a cancellation/fatal error short-circuits,
-            # while ordinary per-chunk errors are collected for a deterministic
-            # first-failure report below.
-            for future in futures:
+            for future in as_completed(futures):
                 future.result()
+                if abort.is_set():
+                    break
+        except BaseException:
+            abort.set()
+            raise
+        finally:
+            if abort.is_set():
+                for future in futures:
+                    future.cancel()
+                # Do not wait for tasks that were never started; in-flight
+                # provider calls are already cancel-aware on their own thread.
+                pool.shutdown(wait=False, cancel_futures=True)
+            else:
+                pool.shutdown(wait=True)
     for error in errors:
         if error is not None:
             raise error

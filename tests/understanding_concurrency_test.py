@@ -364,3 +364,71 @@ def test_resume_from_checkpoint_skips_completed_units_in_parallel_path(tmp_path)
     assert resumed_digests == digests
     assert resumed_synopsis == synopsis
     assert not warnings
+
+
+# ==================== review fixes: bounded reduce + fail-fast chunks ====================
+
+def test_synopsis_reduce_rejects_non_converging_chunks(monkeypatch):
+    """A pathological reduce must fail loudly, never spin forever (review major 1)."""
+    monkeypatch.setattr(
+        context, "_text_chunks",
+        lambda items, limit: ["chunk-a", "chunk-b"])
+    mock = MockProvider()
+    outcome: dict = {}
+
+    def run():
+        try:
+            context._reduce_synopsis(
+                ["x"], "p", "k", "m", "简体中文", mock, 1000, max_workers=2)
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(10.0)
+    assert not worker.is_alive(), "全文概要合并没有在有限层内收敛/抛错（疑似挂死）"
+    error = outcome.get("error")
+    assert isinstance(error, RuntimeError), outcome
+    assert "收敛" in str(error) or "层" in str(error)
+
+
+def test_synopsis_first_chunk_failure_calls_provider_once():
+    """Serial semantics: first chunk failure = exactly one provider call."""
+    mock = MockProvider(fail_markers=("unit-0000",))
+    digests = _long_digests(8)
+    with pytest.raises(ValueError, match="mock provider failure"):
+        context._reduce_synopsis(
+            [context._digest_text(digest) for digest in digests],
+            "p", "k", "m", "简体中文", mock, 1000, max_workers=1)
+    assert mock.call_count() == 1, \
+        f"首块失败后不得再调用后续块，实测 {mock.call_count()} 次"
+
+
+def test_synopsis_failure_stops_scheduling_beyond_started_workers():
+    """workers=2 -> at most the already-started chunks may reach the provider."""
+    mock = MockProvider(fail_markers=("unit-0000",))
+    with pytest.raises(ValueError, match="mock provider failure"):
+        context._reduce_synopsis(
+            [context._digest_text(digest) for digest in _long_digests(8)],
+            "p", "k", "m", "简体中文", mock, 1000, max_workers=2)
+    assert 1 <= mock.call_count() <= 2, \
+        f"失败后仍有 {mock.call_count()} 次调用（未启动任务应被取消）"
+
+
+def test_synopsis_multiple_failing_chunks_reports_only_first():
+    mock = MockProvider(fail_markers=("unit-0000", "unit-0002"))
+    with pytest.raises(ValueError, match="unit-0000"):
+        context._reduce_synopsis(
+            [context._digest_text(digest) for digest in _long_digests(8)],
+            "p", "k", "m", "简体中文", mock, 1000, max_workers=1)
+    assert mock.call_count() == 1
+
+
+def test_document_synopsis_falls_back_after_first_chunk_failure():
+    mock = MockProvider(fail_markers=("unit-0000",))
+    synopsis, warnings = context.generate_document_synopsis(
+        _long_digests(8), "p", "k", "m", "简体中文", call_llm=mock,
+        max_chunk_chars=1000, max_workers=1)
+    assert synopsis["status"] == "deterministic_fallback"
+    assert warnings, "回退必须有 warning"
+    assert mock.call_count() == 1
