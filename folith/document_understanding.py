@@ -19,6 +19,7 @@ import fitz
 from folith.document_ir import (BLOCK_TYPES, DocumentUnderstandingProvider, PageEnvelope, PageUnderstanding,
                                 SemanticBlock, SourceSpan, new_document, normalized_bbox)
 from folith import page_events
+from folith.engine import ocr_config as _ocr_config
 from folith.ocr_online import OnlineOCRBackend, default_vision_reasoning
 from folith.spatial_index import SpatialTextIndex, align_blocks
 
@@ -525,8 +526,11 @@ def native_pdf_document(filename, data, paragraphs, *, paragraph_records=None, l
 
 #: 同时向视觉模型发出的读页请求数。逐页串行时一本 300 页的书要等半小时才能开始
 #: 翻译；请求之间互不依赖，节流与 429 退避由共享的 request_control 负责。
-VLM_PAGE_WORKERS_DEFAULT = 5
-VLM_PAGE_WORKERS_MAX = 8
+#: 默认值按连接类型分档（官方端点 / relay），见 folith.engine.ocr_config 的
+#: VISION_PAGE_WORKERS_* 与 #220 C1：网关会在客户端超时之前回 502，并发越低越稳。
+VLM_PAGE_WORKERS_DEFAULT = _ocr_config.VISION_PAGE_WORKERS_DEFAULT
+VLM_PAGE_WORKERS_RELAY_DEFAULT = _ocr_config.VISION_PAGE_WORKERS_RELAY_DEFAULT
+VLM_PAGE_WORKERS_MAX = _ocr_config.VISION_PAGE_WORKERS_MAX
 #: 句末标点（含 CJK 与阿拉伯文）。段落以它们之外的字符结束、又恰好落在页尾，
 #: 说明这一段被翻页截断了。
 _PARAGRAPH_TERMINALS = set('.!?…:;。！？；：؟۔')
@@ -537,15 +541,14 @@ _CONTINUABLE_TYPES = frozenset({'paragraph'})
 _UNTRANSLATED_TYPES = frozenset({'header', 'footer', 'page_number', 'figure'})
 
 
-def page_worker_count(workers=None):
-    """读页并发数：显式参数 > 环境变量 FOLIOTHREAD_VLM_PAGE_WORKERS > 默认值。"""
-    for candidate in (workers, os.environ.get('FOLIOTHREAD_VLM_PAGE_WORKERS')):
-        try:
-            value = int(candidate)
-        except (TypeError, ValueError):
-            continue
-        return max(1, min(VLM_PAGE_WORKERS_MAX, value))
-    return VLM_PAGE_WORKERS_DEFAULT
+def page_worker_count(workers=None, provider="", base_url=""):
+    """读页并发数：显式参数 > 环境变量 FOLIOTHREAD_VLM_PAGE_WORKERS > 按连接分档的默认值。
+
+    连接信息只影响「都没给」时的默认值：官方端点 3 路，自定义 relay / 网关 2 路
+    （#220 C1：网关先于客户端超时，并发越高越容易同时撞上它）。
+    """
+    return _ocr_config.vision_page_workers(
+        provider, base_url, workers=workers, environ=os.environ)
 
 
 #: 能续段的末段至少要这么长：书名页的 ``CANONGATE``、题词署名 ``Sylvia Plath``
@@ -720,7 +723,12 @@ def iter_page_understanding(filename, data, provider: DocumentUnderstandingProvi
         # prompt/DPI must never reuse another page's semantic result.
         identity = {'source_sha256':hashlib.sha256(data).hexdigest(),
                     'provider':provider.cache_identity, 'dpi':dpi}
-    worker_count = page_worker_count(workers)
+    _connection = (provider.cache_identity
+                   if isinstance(getattr(provider, 'cache_identity', None), dict) else {})
+    worker_count = page_worker_count(
+        workers,
+        provider=str(_connection.get('provider') or ''),
+        base_url=str(_connection.get('base_url') or ''))
     local = threading.local()
 
     def identity_matches(cached):
