@@ -60,6 +60,11 @@ HOME_REFRESH_SECONDS = 5
 POLL_MS = 1000
 EDIT_SAVE_IDLE_MS = 400
 
+#: Whole-document projections (review queue, delivery gate, terms, follow-up)
+#: keep their own slower cadence on the incremental path: they are O(document),
+#: the per-batch delta is O(batch).  Delivery already has its own 5 s floor.
+DELTA_PROJECTION_SECONDS = 5.0
+
 
 class _PhaseLog:
     """Per-phase wall-clock timings written to the app log (cheap, always on).
@@ -225,6 +230,22 @@ class MainWindow(QMainWindow):
         self._edit_queue: list[tuple[str, int, str]] = []
         self._edit_in_flight = False
         self._state_load_in_flight = False
+        #: Incremental polling state (A1 / #324).  ``_delta_feed`` reads the
+        #: task journal suffix, ``_delta_model`` holds the rows it produced;
+        #: both are dropped whenever the whole-state path has to run.
+        self._delta_feed = None
+        self._delta_model = None
+        self._delta_job_id = ""
+        self._delta_applied_seq = 0
+        self._delta_first_poll = False
+        self._delta_projection_at = 0.0
+        self._delta_projection_in_flight = False
+        #: A poll was requested while a slow projection held the read slot.
+        self._pending_poll = False
+        #: A self-healing re-poll is already scheduled.
+        self._repoll_pending = False
+        #: A job the feed cannot be used for any more (unknown schema/mutation).
+        self._delta_legacy_job = ""
         #: Start writing queued edits once the GUI has been idle this long.  The
         #: writer competes with the GUI thread for the GIL; starting it while the
         #: workbench repaints after ⌘↩ made the move to the next segment take
@@ -2050,7 +2071,303 @@ class MainWindow(QMainWindow):
         return (job_id, signature, runtime_signature, adapter.drafts_signature(job_id),
                 adapter.activity_signature(job_id), self.workbench.terms_open())
 
+    # ================= workbench polling: incremental vs whole-state =================
     def _poll_workbench(self) -> None:
+        """Timer path: apply only the batches committed since the last poll.
+
+        The pipeline appends one record per committed batch to
+        ``state_journal.jsonl`` (A1, #324).  Reading that record and updating
+        the rows it names costs O(batch); reading and rebuilding the whole
+        state cost O(book) and is now reserved for the cases that genuinely
+        need it: opening a task, a structural edit, a sequence gap, an external
+        snapshot, or a permanent feed fallback.  ``FOLITH_WORKBENCH_DELTA=0``
+        puts the window back on the whole-state path exactly as before.
+        """
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if self._state_load_in_flight:
+            # A read (feed suffix, whole state or slow projection) is running.
+            # Remember the request so it is re-issued the moment that read
+            # settles: a poll that arrives while one is in flight must not be
+            # silently dropped, otherwise "one poll after a change converges"
+            # stops being true (the observed flake in the 2026-11-11 A/B).
+            self._pending_poll = True
+            return
+        if self._delta_ready(job_id):
+            self._poll_workbench_delta(job_id)
+            return
+        self._poll_workbench_full()
+
+    # -- incremental path -------------------------------------------------
+    def _delta_ready(self, job_id: str) -> bool:
+        """Whether this job can be polled incrementally right now."""
+        if not adapter.delta_enabled():
+            return False
+        if self._delta_legacy_job == job_id:
+            return False
+        if self._delta_feed is not None and self._delta_job_id == job_id:
+            return True
+        return self._open_delta_state(job_id)
+
+    def _open_delta_state(self, job_id: str) -> bool:
+        """Create the feed/read model from the state the window already holds."""
+        state = self._cached_state
+        if not state:
+            return False
+        try:
+            feed = adapter.new_delta_feed(job_id)
+            model = adapter.new_workbench_model()
+            drafts = adapter.load_drafts(job_id)
+            adapter.reset_workbench_model(model, state, drafts)
+            cursor = int(state.get("journal_cursor") or 0)
+            feed.start(cursor_seq=cursor)
+        except Exception as exc:  # noqa: BLE001 - the legacy path must keep working
+            self._log(f"workbench delta disabled for {job_id}: {type(exc).__name__}: {exc}")
+            self._delta_legacy_job = job_id
+            return False
+        self._delta_feed = feed
+        self._delta_model = model
+        self._delta_job_id = job_id
+        self._delta_applied_seq = cursor
+        self._delta_first_poll = True
+        self._delta_projection_at = time.monotonic()
+        return True
+
+    def _drop_delta_state(self) -> None:
+        """Forget the incremental state; the next tick rebuilds from a full load."""
+        self._delta_feed = None
+        self._delta_model = None
+        self._delta_job_id = ""
+        self._delta_applied_seq = 0
+        self._delta_first_poll = False
+        self._delta_projection_in_flight = False
+
+    def _poll_workbench_delta(self, job_id: str) -> None:
+        """Read the journal suffix on a worker, apply the delta on the GUI."""
+        feed = self._delta_feed
+        model = self._delta_model
+        if feed is None or model is None:
+            self._poll_workbench_full()
+            return
+        if self._delta_first_poll:
+            # The state was just loaded and the feed starts at its journal
+            # cursor, so this read is a stat plus (normally) nothing.  Doing it
+            # inline closes the window where a task opened and the next action
+            # raced a background poll that had not run yet.
+            self._delta_first_poll = False
+            cached_state = self._cached_state
+            try:
+                result = feed.poll(previous_pair=model.previous_pair,
+                                   worker_active=adapter.job_is_alive(job_id))
+                runtime = adapter.runtime_view(job_id, cached_state)
+                drafts = (adapter.load_drafts(job_id)
+                          if isinstance(result, adapter.DeltaBatch) else None)
+            except Exception as exc:  # noqa: BLE001 - fall back, never break the UI
+                self._log(f"workbench delta first poll failed: {type(exc).__name__}: {exc}")
+                self._resync_from_full(job_id)
+                return
+            self._apply_feed_result(job_id, result, runtime, drafts)
+            return
+        self._state_load_in_flight = True
+        worker_active = adapter.job_is_alive(job_id)
+        cached_state = self._cached_state
+
+        def read():
+            result = feed.poll(previous_pair=model.previous_pair,
+                               worker_active=worker_active)
+            runtime = adapter.runtime_view(job_id, cached_state)
+            drafts = (adapter.load_drafts(job_id)
+                      if isinstance(result, adapter.DeltaBatch) else None)
+            return result, runtime, drafts
+
+        def done(payload) -> None:
+            self._state_load_in_flight = False
+            if (job_id != self._current_job_id or self._opening_job_id
+                    or self._closing_accepted or self._delta_feed is not feed):
+                return
+            result, runtime, drafts = payload
+            self._apply_feed_result(job_id, result, runtime, drafts)
+            self._flush_pending_poll()
+
+        def failed(_message: str, _detail: str) -> None:
+            self._state_load_in_flight = False
+            self._flush_pending_poll()
+
+        self.runner.submit(read, on_done=done, on_error=failed,
+                           label="poll-delta")
+
+    def _apply_feed_result(self, job_id: str, result, runtime: dict,
+                           drafts: dict | None) -> None:
+        """React to one fed result: delta, idle tick, or whole-state fallback."""
+        if isinstance(result, adapter.DeltaIdle):
+            self.workbench.apply_runtime(runtime)
+            self._sync_menu_state()
+            self._maybe_slow_projection(job_id, ())
+            return
+        if isinstance(result, adapter.DeltaBatch):
+            if int(result.seq) <= self._delta_applied_seq:
+                return                      # stale read: never go backwards
+            try:
+                applied = adapter.apply_workbench_delta(self._delta_model, result, drafts)
+            except adapter.WorkbenchNeedResync as exc:
+                self._log(f"workbench delta resync ({exc.reason})")
+                self._resync_from_full(job_id)
+                return
+            except Exception as exc:  # noqa: BLE001 - one bad delta must not freeze the view
+                # A delta the read model cannot apply is a correctness problem,
+                # not a reason to keep showing stale rows: fall back to the
+                # authoritative state and keep the reason in the log.
+                self._log(f"workbench delta failed ({type(exc).__name__}: {exc})")
+                self._resync_from_full(job_id)
+                return
+            self._delta_applied_seq = int(result.seq)
+            counts = adapter.document_counts(self._delta_model)
+            changed = self.workbench.apply_delta(
+                job_id, applied.rows, list(applied.positions), counts=counts,
+                runtime=runtime, domains=applied.domains or result.domains,
+                counters=result.counters)
+            if not changed:
+                self._resync_from_full(job_id)
+                return
+            self._sync_menu_state()
+            self._sync_minimum_size()
+            self._maybe_slow_projection(
+                job_id, applied.domains or result.domains,
+                runtime=runtime, force_terminal=True)
+            return
+        if isinstance(result, adapter.DeltaSnapshotChanged):
+            # A snapshot write can carry facts no journal record describes (a
+            # human edit from another surface, a structural change, or the
+            # pipeline's own compaction).  P2 deliberately reloads on either,
+            # which keeps every snapshot-powered behaviour of the old path; the
+            # per-domain optimisation belongs to P3.
+            self._log(f"workbench snapshot resync (worker_active={result.worker_active})")
+            self._resync_from_full(job_id)
+            return
+        if isinstance(result, adapter.DeltaResyncRequired):
+            if result.permanent:
+                self._delta_legacy_job = job_id
+                self._log(f"workbench delta permanently disabled: {result.reason}")
+            else:
+                self._log(f"workbench delta resync: {result.reason}")
+            self._resync_from_full(job_id)
+            return
+        if isinstance(result, adapter.DeltaLegacyMode):
+            self._delta_legacy_job = job_id
+            self._resync_from_full(job_id)
+            return
+
+    def _flush_pending_poll(self) -> None:
+        """Re-issue a poll that arrived while a read was in flight."""
+        if not self._pending_poll or self._state_load_in_flight:
+            return
+        self._pending_poll = False
+        self._poll_workbench()
+
+    def _repoll_if_changed(self, job_id: str, signature: str) -> None:
+        """Re-poll once when the state advanced while a read was in flight.
+
+        "One poll after a change converges" is the workbench contract the old
+        synchronous path had.  With background reads a second writer can land
+        between the read and its `done` callback; instead of leaving the window
+        stale until the next 1 s tick, schedule one follow-up poll.  This is
+        event/state driven, not a sleep-based settle window.
+        """
+        if self._repoll_pending:
+            return
+        try:
+            current = adapter.state_signature(job_id)
+        except Exception:  # noqa: BLE001 - a failed stat must not break the UI
+            return
+        if current == signature:
+            return
+        self._repoll_pending = True
+
+        def again() -> None:
+            self._repoll_pending = False
+            if (job_id == self._current_job_id and not self._state_load_in_flight
+                    and not self._opening_job_id and not self._closing_accepted):
+                self._poll_workbench()
+
+        self._later(0, again)
+
+    def _resync_from_full(self, job_id: str) -> None:
+        """Drop the incremental state and reload the authoritative one."""
+        self._drop_delta_state()
+        if job_id == self._current_job_id:
+            self._poll_workbench_full()
+
+    # -- slow, whole-document projections ---------------------------------
+    def _maybe_slow_projection(self, job_id: str, domains, *, runtime=None,
+                               force_terminal: bool = False) -> None:
+        """Refresh the O(document) panels on their own cadence (not per batch)."""
+        if self._delta_projection_in_flight:
+            return
+        status = str((runtime or self.workbench._last_runtime or {}).get("status") or "")
+        terminal = status in ("completed", "failed", "cancelled", "interrupted",
+                              "stalled", "idle_incomplete")
+        terminal_change = bool(force_terminal and terminal
+                               and status != self._last_runtime_status)
+        slow = {"review", "delivery", "followup", "terms", "academic",
+                "details", "activity"}
+        due = (bool(slow & set(domains or ())) or terminal_change
+               or self._delivery_cache.due(job_id)
+               or time.monotonic() - self._delta_projection_at >= DELTA_PROJECTION_SECONDS)
+        if not due:
+            return
+        self._delta_projection_in_flight = True
+        # The old poll made "a projection is being prepared" observable through
+        # _state_load_in_flight; keep that contract so callers (and tests) that
+        # wait for a settled workbench wait for the projections too.
+        self._state_load_in_flight = True
+        count_occurrences = self.workbench.terms_open()
+        refresh_delivery = terminal_change
+
+        def read():
+            state = adapter.load_state(job_id)
+            if not state:
+                return None
+            models = adapter.workbench_models(
+                job_id, state, count_occurrences=count_occurrences)
+            models["delivery"] = self._delivery_cache.refresh(
+                job_id, self.config, state)
+            # Signature observed *with* the state, so a write that lands while
+            # the projection is being prepared is detected on `done`.
+            return state, models, adapter.state_signature(job_id)
+
+        def done(payload) -> None:
+            self._delta_projection_in_flight = False
+            self._state_load_in_flight = False
+            if (job_id != self._current_job_id or self._opening_job_id
+                    or self._closing_accepted or payload is None):
+                return
+            state, models, signature = payload
+            self._cached_state = state
+            self._cached_signature = signature
+            self._cached_models = (state, models)
+            self._cached_models_key = self._workbench_models_key(
+                job_id, self._cached_signature)
+            runtime_view = models.get("runtime") or adapter.runtime_view(job_id, state)
+            snapshots = models.get("snapshots") or []
+            self._last_runtime_status = str(runtime_view.get("status") or "")
+            self.workbench.apply_projection(
+                job_id, state, runtime_view, snapshots, models=models,
+                refresh_delivery=refresh_delivery)
+            self._sync_menu_state()
+            self._delta_projection_at = time.monotonic()
+            self._repoll_if_changed(job_id, signature)
+            self._flush_pending_poll()
+
+        def failed(_message: str, _detail: str) -> None:
+            self._delta_projection_in_flight = False
+            self._state_load_in_flight = False
+
+        self.runner.submit(read, on_done=done, on_error=failed,
+                           label="poll-projections")
+
+    # -- legacy path ------------------------------------------------------
+    def _poll_workbench_full(self) -> None:
         """Timer path: read a changed state off the GUI thread, then refresh.
 
         Every batch the pipeline writes changes the state; parsing and copying it
@@ -2113,9 +2430,12 @@ class MainWindow(QMainWindow):
             self._cached_models = (state, models)
             self._cached_models_key = models_key
             self.refresh_workbench(preloaded=True, models=models)
+            self._repoll_if_changed(job_id, signature)
+            self._flush_pending_poll()
 
         def failed(_message: str, _detail: str) -> None:
             self._state_load_in_flight = False
+            self._flush_pending_poll()
 
         self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-state")
@@ -2146,6 +2466,10 @@ class MainWindow(QMainWindow):
         signature = adapter.state_signature(job_id)
         changed = preloaded or signature != self._cached_signature
         if (changed or force) and not preloaded:
+            # An explicit refresh reads the authoritative state; the incremental
+            # cursor must restart from that snapshot, otherwise the next delta
+            # would be applied on top of rows the refresh already replaced.
+            self._drop_delta_state()
             with timing.phase("load_state"):
                 state = adapter.load_state(job_id)
             if not state:

@@ -35,7 +35,9 @@ from folith.desktop import file_actions
 from folith.desktop import legacy_import
 from folith.desktop import paths as desktop_paths
 from folith import snapshots as _snapshots
+from folith import state_feed as _state_feed
 from folith import translation_evidence
+from folith import workbench_rows as _workbench_rows
 from folith import retrospective as _retrospective
 from folith import source_languages as _source_languages
 # Architecture Phase 1/3: the shared, frontend-neutral application layer.  Qt only
@@ -742,32 +744,11 @@ def drafts_signature(job_id: str) -> str:
 # ================= the editing workbench =================
 
 
-@dataclass
-class SegmentRow:
-    index: int
-    segment_uid: str
-    source: str
-    target: str
-    status: str
-    reviewed: bool
-    human_edited: bool
-    excluded: bool
-    has_draft: bool
-    draft_text: str = ""
-    #: 草稿是针对**旧**译文写的（`baseline` 与当前提交文本不一致）。
-    #: 这种草稿仍然保留并显示给用户（那是他没提交的工作），但必须显式提示：
-    #: 期间译文已经被改过（例如定点重译），直接提交会覆盖较新的文本。
-    stale_draft: bool = False
-
-    @property
-    def source_preview(self) -> str:
-        text = " ".join((self.source or "").split())
-        return text[:80] + ("…" if len(text) > 80 else "")
-
-    @property
-    def target_preview(self) -> str:
-        text = " ".join((self.target or "").split())
-        return text[:80] + ("…" if len(text) > 80 else "")
+#: One workbench row.  The shared, Qt-free model owns the data structure and
+#: the incremental update algorithm (issue #324); this module owns the
+#: localized status text, which is injected below.  The old class had exactly
+#: these fields, so every existing caller keeps working.
+SegmentRow = _workbench_rows.WorkbenchRow
 
 
 def _pair_status(pair: dict) -> str:
@@ -2734,6 +2715,75 @@ def workbench_models(job_id: str, state: dict, *,
         except Exception:  # noqa: BLE001 - one failed projection must not hide the rest
             continue
     return models
+
+
+# ================= 增量读模型（A1 / #324 P2） =================
+#
+# The pipeline appends one committed batch to ``state_journal.jsonl``; the
+# incremental path reads that record (``folith.state_feed``) and updates only
+# the rows it names.  It deliberately does **not** read ``state.json``: the
+# read-side projection must stay O(batch), and every doubt (sequence gap,
+# corrupt record, external snapshot) falls back to the whole-state path below.
+#
+# These wrappers exist so the Qt window talks to one module only; nothing here
+# writes job state.
+
+#: Result types of :func:`new_delta_feed` (re-exported for the window/tests).
+DeltaBatch = _state_feed.DeltaBatch
+DeltaSegment = _state_feed.SegmentChange
+DeltaIdle = _state_feed.Idle
+DeltaSnapshotChanged = _state_feed.SnapshotChanged
+DeltaResyncRequired = _state_feed.ResyncRequired
+DeltaLegacyMode = _state_feed.LegacyMode
+#: Raised when a delta no longer lines up with the rows on screen.
+WorkbenchNeedResync = _workbench_rows.NeedResync
+
+
+def delta_enabled() -> bool:
+    """Whether the incremental polling path is enabled (env rollback switch)."""
+    return _state_feed.delta_enabled()
+
+
+def load_drafts(job_id: str) -> dict:
+    """Uncommitted editor drafts (small file; not part of the task state)."""
+    return core.load_translation_drafts(job_id) or {}
+
+
+def new_workbench_model() -> _workbench_rows.WorkbenchReadModel:
+    """A read model whose row statuses use the workbench's localized labels."""
+    return _workbench_rows.WorkbenchReadModel(status_of=_pair_status)
+
+
+def new_delta_feed(job_id: str, *, environ: dict | None = None) -> _state_feed.StateFeed:
+    """A feed over the task's journal, snapshot and runtime files.
+
+    Paths come from the core's own layout (same files the persistence layer
+    uses); the feed never writes them.
+    """
+    return _state_feed.StateFeed(
+        journal_path=core._state_journal.journal_path(job_id),
+        state_path=core._job_repo.get_job_state_path(job_id),
+        job_id=job_id,
+        runtime_path=core.runtime_state_path(job_id),
+        environ=environ,
+    )
+
+
+def reset_workbench_model(model: _workbench_rows.WorkbenchReadModel, state: dict,
+                          drafts: dict | None = None) -> None:
+    """Whole-state rebuild of the read model (open task / resync)."""
+    model.reset_from(state, drafts)
+
+
+def apply_workbench_delta(model: _workbench_rows.WorkbenchReadModel, delta,
+                          drafts: dict | None = None):
+    """Apply one typed delta; returns ``AppliedDelta`` or raises ``NeedResync``."""
+    return model.apply(delta, drafts)
+
+
+def document_counts(model: _workbench_rows.WorkbenchReadModel):
+    """The incremental whole-document count for the current rows."""
+    return model.counts.as_document_count()
 
 
 def source_path(job_id: str) -> Path | None:

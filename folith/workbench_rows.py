@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from folith import word_count as _word_count
 
@@ -48,6 +48,11 @@ STATUS_CODES = (STATUS_EXCLUDED, STATUS_HUMAN_EDITED, STATUS_REVIEWED,
 #: A reset bumps all of them; a delta bumps only the ones it touched.
 DOMAINS = ("rows", "counts", "stage", "runtime", "review", "delivery",
            "followup", "terms", "academic", "details", "activity", "excluded")
+
+
+#: Maps one pair to its presentation status (the model defaults to the neutral
+#: code; the Qt adapter passes its translated label).
+StatusOf = Callable[[Mapping[str, Any]], str]
 
 
 class NeedResync(RuntimeError):
@@ -141,7 +146,8 @@ def _draft_for(index: int, uid: str, drafts: Mapping[str, Any] | None) -> Mappin
 
 
 def row_from_pair(index: int, pair: Mapping[str, Any],
-                  draft: Mapping[str, Any] | None = None) -> WorkbenchRow:
+                  draft: Mapping[str, Any] | None = None,
+                  *, status_of: "StatusOf | None" = None) -> WorkbenchRow:
     uid = str(pair.get("segment_uid") or "") or str(index)
     target = str(pair.get("target") or "")
     baseline = str((draft or {}).get("baseline") or "")
@@ -150,7 +156,7 @@ def row_from_pair(index: int, pair: Mapping[str, Any],
         segment_uid=uid,
         source=str(pair.get("source") or ""),
         target=target,
-        status=pair_status_code(pair),
+        status=(status_of or pair_status_code)(pair),
         reviewed=bool(pair.get("reviewed")),
         human_edited=bool(pair.get("human_edited")),
         excluded=bool(pair.get("excluded")),
@@ -178,8 +184,13 @@ def row_from_paragraph(index: int, item: Any,
 
 
 def rows_from_state(state: Mapping[str, Any],
-                    drafts: Mapping[str, Any] | None = None) -> list[WorkbenchRow]:
-    """Rebuild every row from the authoritative state (open / resync path)."""
+                    drafts: Mapping[str, Any] | None = None,
+                    *, status_of: "StatusOf | None" = None) -> list[WorkbenchRow]:
+    """Rebuild every row from the authoritative state (open / resync path).
+
+    ``status_of`` lets the presentation layer localize the status text while
+    keeping the same row type (the Qt adapter passes its translated labels).
+    """
     pairs = state.get("pairs") or []
     rows: list[WorkbenchRow] = []
     if pairs:
@@ -187,7 +198,8 @@ def rows_from_state(state: Mapping[str, Any],
             if not isinstance(pair, dict):
                 continue
             uid = str(pair.get("segment_uid") or "") or str(index)
-            rows.append(row_from_pair(index, pair, _draft_for(index, uid, drafts)))
+            rows.append(row_from_pair(index, pair, _draft_for(index, uid, drafts),
+                                      status_of=status_of))
         return rows
     # Before translation the workbench shows the source segments, so the user
     # can read (and prepare) the document while the worker runs.
@@ -216,7 +228,8 @@ class WorkbenchReadModel:
     ``load_state`` on a worker at their own cadence.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, status_of: "StatusOf | None" = None) -> None:
+        self._status_of = status_of or pair_status_code
         self.rows: list[WorkbenchRow] = []
         self.counts = _word_count.DocumentCountIndex()
         self.counters: dict[str, Any] = {}
@@ -231,7 +244,7 @@ class WorkbenchReadModel:
         self._pairs = [pair if isinstance(pair, dict) else {}
                        for pair in (state.get("pairs") or [])]
         self._drafts = drafts
-        self.rows = rows_from_state(state, drafts)
+        self.rows = rows_from_state(state, drafts, status_of=self._status_of)
         self.counts = _word_count.DocumentCountIndex(self.rows)
         self.counters = {}
         for name in DOMAINS:
@@ -267,7 +280,7 @@ class WorkbenchReadModel:
                 if uid and existing.segment_uid and uid != existing.segment_uid:
                     raise NeedResync("uid_mismatch",
                                      f"index {index}: model has {existing.segment_uid}, delta has {uid}")
-                row = row_from_pair(index, pair, draft)
+                row = row_from_pair(index, pair, draft, status_of=self._status_of)
                 # The rows may have been built from ``paras`` (a job whose first
                 # translation batch is arriving now) while ``_pairs`` is still
                 # empty; the journal record is the first absolute pair value, so
@@ -284,7 +297,7 @@ class WorkbenchReadModel:
                 changed_rows.append(row)
                 counts_changed = True
             elif index == len(self.rows):
-                row = row_from_pair(index, pair, draft)
+                row = row_from_pair(index, pair, draft, status_of=self._status_of)
                 self.rows.append(row)
                 self._pairs.append(pair)
                 self.counts.append(row)
