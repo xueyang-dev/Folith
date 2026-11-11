@@ -268,9 +268,13 @@ class WorkbenchReadModel:
                     raise NeedResync("uid_mismatch",
                                      f"index {index}: model has {existing.segment_uid}, delta has {uid}")
                 row = row_from_pair(index, pair, draft)
+                # The rows may have been built from ``paras`` (a job whose first
+                # translation batch is arriving now) while ``_pairs`` is still
+                # empty; the journal record is the first absolute pair value, so
+                # the parallel list must grow with it.
+                if index >= len(self._pairs):
+                    self._pairs.extend([{}] * (index + 1 - len(self._pairs)))
                 if row == existing:
-                    if index >= len(self._pairs):
-                        self._pairs.extend([{}] * (index + 1 - len(self._pairs)))
                     self._pairs[index] = pair
                     continue
                 self.rows[index] = row
