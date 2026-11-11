@@ -25,21 +25,46 @@ TARGETS = (
 )
 
 
+def _is_property_accessor(node: ast.AST) -> bool:
+    """``@<name>.setter`` / ``@<name>.deleter`` (or ``getter``) on ``def <name>``.
+
+    A property is *built* from several functions that intentionally share one
+    name: the getter (``@property``) plus its ``setter``/``deleter``.  Those are
+    not the "second definition silently wins" bug this check exists for.
+    """
+    for decorator in getattr(node, "decorator_list", ()):
+        if not isinstance(decorator, ast.Attribute):
+            continue
+        if decorator.attr not in {"setter", "deleter", "getter"}:
+            continue
+        if isinstance(decorator.value, ast.Name) and decorator.value.id == node.name:
+            return True
+    return False
+
+
 def duplicates_in(path: Path) -> list[str]:
     """返回该模块里重复定义的 `名字（行号…）` 列表（含类内方法）。"""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     problems: list[str] = []
 
     def scan(body: list, where: str = "") -> None:
-        seen: dict[str, list[int]] = {}
+        seen: dict[str, list[tuple[int, bool]]] = {}
         for node in body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                seen.setdefault(node.name, []).append(node.lineno)
+                seen.setdefault(node.name, []).append(
+                    (node.lineno, _is_property_accessor(node)))
             elif isinstance(node, ast.ClassDef):
                 scan(node.body, f"{where}{node.name}.")
-        for name, lines in seen.items():
-            if len(lines) > 1:
-                problems.append(f"{where}{name}（行 {lines}）")
+        for name, entries in seen.items():
+            if len(entries) < 2:
+                continue
+            accessors = [is_accessor for _line, is_accessor in entries]
+            # One getter plus any number of setter/deleter parts is a property
+            # definition, not a duplicate.  Anything else (two plain defs, two
+            # getters, two real duplicates) still wins silently and is reported.
+            if all(accessors[1:]) and accessors.count(False) == 1:
+                continue
+            problems.append(f"{where}{name}（行 {[line for line, _ in entries]}）")
 
     scan(tree.body)
     return problems
