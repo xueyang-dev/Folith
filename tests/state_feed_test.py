@@ -367,7 +367,11 @@ def test_in_place_rewrite_with_identical_size_and_time_is_still_detected(tmp_pat
     job.journal.write_bytes(b"")
     job.append(_record(2, 1, [_pair("u1", "World", "世界")]))
     after = job.journal.stat()
-    assert (after.st_size, after.st_ino) == (before.st_size, before.st_ino)
+    assert after.st_size == before.st_size
+    # Inode identity is only an extra hint, and is 0/unstable on some Windows
+    # filesystems -- never require it in a cross-platform test.
+    if before.st_ino and after.st_ino:
+        assert after.st_ino == before.st_ino
     os.utime(job.journal, ns=(before.st_atime_ns, before.st_mtime_ns))
     restored = job.journal.stat()
     assert restored.st_mtime_ns == before.st_mtime_ns
