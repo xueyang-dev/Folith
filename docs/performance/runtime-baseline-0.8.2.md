@@ -269,15 +269,16 @@ instant replies, macOS cocoa QPA.  This is a **short diagnostic measurement**:
 across the **seven** completed runs with identical parameters the stall p99
 spans 1198.4–1967.3 ms — **1.64×** — and the longest stall spans
 2451.3–3254.3 ms.  That run-to-run noise is wider than the 1.55× max-stall
-spread of the two v1 real-endpoint runs quoted further down (p99 there:
-1.44×), and it is far wider than any effect three 60 s rounds could attribute:
-with a 1.64× spread between identical runs, this setup cannot resolve an effect
-of that size, let alone a smaller one.  (Inside the three tabulated runs the
-tail happens to differ by only 1.1–1.4×; that narrower figure holds **only for
-those three** and is not the series' noise bound.)  So only very large effects
-would be resolvable, and the mock load measures GIL saturation rather than user
-experience (0.8.2 plan §6.3).  It is kept because it is reproducible and shows
-where the tail comes from — **not** because it can serve as a gate comparison.
+spread of the v1 real-machine pair (`real #1` / `real #2` on the mock gateway,
+1000 paragraphs) quoted further down (p99 there: 1.44×), and it is far wider
+than any effect three 60 s rounds could attribute: with a 1.64× spread between
+identical runs, this setup cannot resolve an effect of that size, let alone a
+smaller one.  (Inside the three tabulated runs the tail happens to differ by
+only 1.1–1.4×; that narrower figure holds **only for those three** and is not
+the series' noise bound.)  So only very large effects would be resolvable, and
+the mock load measures GIL saturation rather than user experience (0.8.2 plan
+§6.3).  It is kept because it is reproducible and shows where the tail comes
+from — **not** because it can serve as a gate comparison.
 
 Measurement: `measurement: v2` — the scenario runs inside the application's own
 event loop (`app.exec()`, every step a `QTimer` callback) instead of the v1
