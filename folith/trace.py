@@ -264,44 +264,77 @@ def compute_percentiles(values: List[float]) -> Dict[str, float]:
     }
 
 
+def _is_active_time_definition(row: Any) -> bool:
+    """Whether *row* was written under the #320 active-seconds definition."""
+    if not isinstance(row, dict):
+        return False
+    if row.get("definition") == "active_seconds":
+        return True
+    # A run summary from this version always embeds the active_time block.
+    # Older history entries (wall-clock wall_time_s) carry neither marker.
+    return isinstance(row.get("active_time"), dict)
+
+
 def sum_active_time(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Task total of active work time across resumed run segments (#320).
 
     A resumed task opens a new run.  The gap between runs (app closed, machine
-    shut down) belongs to no segment, so summing per-run active seconds gives
-    the time actually worked; ``wall_span_s`` is the naive first-start →
-    last-finish difference and is kept only to show what the old definition
-    would have claimed.
+    shut down) belongs to no segment, so the task total is the sum of the
+    segments' active seconds; ``wall_span_s`` is the naive first-start →
+    last-finish difference kept only to show what the old definition claimed.
+
+    Entries written before #320 are wall-clock durations and are **not** added
+    to the active total: they are counted in ``legacy_entries`` so a reader can
+    see that part of the history used the old definition.
+
+    ``history.json`` keeps only the last 50 runs.  Each entry also stores the
+    running task total (``task_active_seconds``), and the newest one wins, so a
+    task resumed more than 50 times does not silently lose its first segments.
+    ``source`` says which rule produced the number.
     """
-    rows = list(entries or [])
+    rows = [row for row in list(entries or []) if isinstance(row, dict)]
+    counted = [row for row in rows if _is_active_time_definition(row)]
     active = interrupted = 0.0
-    interruptions = 0
-    starts: List[str] = []
-    finishes: List[str] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
+    interruptions = segments = 0
+    for row in counted:
         block = row.get("active_time") if isinstance(row.get("active_time"), dict) else row
-        active += float(block.get("active_seconds") or block.get("wall_time_s") or 0.0)
+        active += float(block.get("active_seconds") or 0.0)
         interrupted += float(block.get("interrupted_seconds") or 0.0)
         interruptions += int(block.get("interruption_count") or 0)
-        if row.get("started_at"):
-            starts.append(str(row["started_at"]))
-        if row.get("finished_at"):
-            finishes.append(str(row["finished_at"]))
+        segments += 1
+    source = "segments_sum"
+    cumulative = next((row for row in reversed(counted)
+                       if row.get("task_active_seconds") is not None), None)
+    if cumulative is not None:
+        active = float(cumulative.get("task_active_seconds") or 0.0)
+        interrupted = float(cumulative.get("task_interrupted_seconds") or 0.0)
+        interruptions = int(cumulative.get("task_interruption_count") or 0)
+        segments = int(cumulative.get("task_segments") or segments)
+        source = "history_cumulative"
+    starts = [str(row["started_at"]) for row in counted if row.get("started_at")]
+    finishes = [str(row["finished_at"]) for row in counted if row.get("finished_at")]
     wall_span: Optional[float] = None
-    first, last = _epoch(starts[0]) if starts else None, _epoch(finishes[-1]) if finishes else None
+    first = _epoch(starts[0]) if starts else None
+    last = _epoch(finishes[-1]) if finishes else None
     if first is not None and last is not None and last >= first:
         wall_span = round(last - first, 3)
+    trimmed = cumulative is not None and segments > len(counted)
     return {
-        "segments": len([row for row in rows if isinstance(row, dict)]),
+        "segments": segments,
         "active_seconds": round(active, 3),
         "interrupted_seconds": round(interrupted, 3),
         "interruption_count": interruptions,
+        "source": source,
+        "definition": "active_seconds",
+        "legacy_entries": len(rows) - len(counted),
         "wall_span_s": wall_span,
+        "wall_span_covers": "retained_segments_only" if trimmed else "retained_segments",
         "excluded_between_segments_s": (round(max(0.0, wall_span - active), 3)
                                         if wall_span is not None else None),
-        "definition": ("sum of per-run active seconds; gaps between runs are never counted"),
+        "note": ("task total comes from the newest history entry's running total; "
+                 "history.json is trimmed to the last 50 runs"
+                 if trimmed else
+                 "task total is the sum of the segments supplied"),
     }
 
 
@@ -1843,7 +1876,7 @@ class RunContext:
 
 ## Interrupted Time (excluded)
 - **Interruptions**: **{interrupted_count}** — total **{interrupted_seconds} s** ({interrupted_pct}% of the elapsed wall clock)
-- A gap between two heartbeats longer than **{heartbeat_factor} × {heartbeat_s} s** is treated as an interruption (machine suspend/hibernation, a frozen process, or the gap before a resume) and contributes zero active work time. At most one heartbeat period per interruption may be lost to that rule, so active time can only understate work.
+- A gap between two heartbeats longer than **{heartbeat_factor} × {heartbeat_s} s** is treated as an interruption (machine suspend/hibernation, a frozen process, or the gap before a resume) and contributes zero active work time. A *detected* interruption understates a real suspend by at most one heartbeat period; pauses shorter than the threshold cannot be distinguished from work (a 10 s sleep is counted as active time), and real work longer than the threshold is dropped (an 18 s stop-the-world GC pause is counted as an interruption). The final stretch before the run ends follows the same rule.
 - Gaps between separate runs of the same task (app closed, machine shut down) are excluded too: each resumed run starts a new segment, and the task total is the sum of the segments' active seconds.
 - Network outages are **not** included in this definition yet — see the active-time contract document for the agreed condition and why it is not implemented.
 
@@ -1870,6 +1903,35 @@ class RunContext:
                         history = []
                 except Exception:
                     history = []
+            # Older entries in this file predate #320 and their wall_time_s is
+            # a wall-clock duration.  Every new entry carries ``definition`` so
+            # a reader can never add the two definitions together.
+            prior_active = 0.0
+            prior_interrupted = 0.0
+            prior_interruptions = 0
+            prior_segments = 0
+            cumulative_found = False
+            for prior in reversed(history):
+                if not isinstance(prior, dict) or prior.get("definition") != "active_seconds":
+                    continue
+                if prior.get("task_active_seconds") is not None:
+                    prior_active = float(prior.get("task_active_seconds") or 0.0)
+                    prior_interrupted = float(prior.get("task_interrupted_seconds") or 0.0)
+                    prior_interruptions = int(prior.get("task_interruption_count") or 0)
+                    prior_segments = int(prior.get("task_segments") or 0)
+                    cumulative_found = True
+                    break
+            if not cumulative_found:
+                for prior in history:
+                    if not isinstance(prior, dict) or prior.get("definition") != "active_seconds":
+                        continue
+                    prior_active += float(prior.get("active_seconds") or 0.0)
+                    prior_interrupted += float(prior.get("interrupted_seconds") or 0.0)
+                    prior_interruptions += int(prior.get("interruption_count") or 0)
+                    prior_segments += 1
+            run_active = float(summary.get("wall_time_s") or 0.0)
+            run_interrupted = float(summary.get("interrupted_time_s") or 0.0)
+            run_interruptions = int((summary.get("active_time") or {}).get("interruption_count") or 0)
             entry = {
                 "run_id": summary.get("run_id"),
                 "task_id": summary.get("task_id"),
@@ -1879,10 +1941,17 @@ class RunContext:
                 # #320: active-seconds and interruption totals travel with the
                 # history entry so a task total can be summed across resumed
                 # segments without re-deriving the definition.
+                "definition": "active_seconds",
                 "active_seconds": summary.get("wall_time_s"),
                 "interrupted_seconds": summary.get("interrupted_time_s"),
-                "interruption_count": (summary.get("active_time") or {}).get("interruption_count", 0),
+                "interruption_count": run_interruptions,
                 "elapsed_wall_clock_s": summary.get("elapsed_wall_clock_s"),
+                # Running task total: survives the 50-entry trim below, so a
+                # long resumed task cannot silently lose its first segments.
+                "task_active_seconds": round(prior_active + run_active, 3),
+                "task_interrupted_seconds": round(prior_interrupted + run_interrupted, 3),
+                "task_interruption_count": prior_interruptions + run_interruptions,
+                "task_segments": prior_segments + 1,
                 "status": summary.get("status"),
                 "segment_count": summary.get("dataset", {}).get("segment_count", 0),
                 "peak_ram_mb": summary.get("resources", {}).get("process_rss_peak_mb", 0.0),

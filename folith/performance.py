@@ -4,6 +4,13 @@ The profiler is intentionally independent from the workflow state machine.  A
 stage can record timing data without changing whether the stage succeeds,
 fails, or is resumed.  It is safe to call from OCR/LLM worker threads and
 keeps the persisted payload small enough to be useful as an audit artifact.
+
+:class:`ActiveTimeTracker` (issue #320) measures the task duration with a
+wall-clock heartbeat instead of ``perf_counter``.  Its guarantee is bounded, not
+absolute: a *detected* interruption (gap > factor x interval) is excluded and
+understates work by at most the heartbeat period preceding it, while pauses
+shorter than that threshold cannot be distinguished from work and are counted
+as active time.  See the class docstring for the failure examples.
 """
 from __future__ import annotations
 
@@ -297,8 +304,25 @@ class ActiveTimeTracker:
     ``interval_s``.  A gap between two samples larger than
     ``factor * interval_s`` is treated as an interruption — machine suspend /
     hibernation, a frozen process, or the gap before a resume — and contributes
-    zero active seconds.  The result therefore can only understate work, never
-    inflate it; at most one heartbeat period per interruption is lost.
+    zero active seconds.
+
+    The guarantee is bounded and two-sided, not "never inflates":
+
+    * A **detected** interruption contributes zero, so a real suspend is
+      understated by at most one heartbeat period (the work between the last
+      sample and the suspend start).
+    * A pause **shorter than the threshold cannot be distinguished from work**.
+      With the defaults (5 s heartbeat, factor 3) a 10 s sleep or a 10 s silent
+      pause is counted as active time, i.e. the result *overstates* by up to
+      the threshold.
+    * **Real work longer than the threshold is dropped**: an 18 s stop-the-world
+      GC pause or 18 s of heartbeat-starved computation looks like an
+      interruption, so that stretch is *understated* by up to the gap itself.
+    * The final stretch is only committed by ``stop()``: if a run ends 20 s
+      after the last sample without a heartbeat in between, that 20 s is
+      classified as one interruption and ``active_seconds`` can be 0 even
+      though 20 s of work happened.  That is why the commit interval matters
+      for very short runs.
 
     Only the wall clock (``time.time``) is injected, so tests can jump it
     without sleeping.

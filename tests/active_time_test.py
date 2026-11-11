@@ -279,3 +279,100 @@ def test_trace_manager_exposes_the_same_accessor(tmp_path):
 
 def test_trace_reexports_the_same_tracker_class():
     assert TraceActiveTimeTracker is ActiveTimeTracker
+
+
+# ---------------------------------------- honesty of the bounded guarantee
+def test_shorter_pause_is_counted_as_work_and_overstates():
+    """Review: a 10 s pause is below 3 x 5 s, so it becomes active time."""
+    clock = [0.0]
+    tracker = ActiveTimeTracker(interval_s=5.0, wall_clock=lambda: clock[0])
+    tracker.start()
+    clock[0] += 10.0  # shorter than 15 s: cannot be told apart from work
+    assert tracker.tick() is None
+    snapshot = tracker.snapshot()
+    assert snapshot["active_seconds"] == pytest.approx(10.0)
+    assert snapshot["interruption_count"] == 0  # overstates by the pause length
+
+
+def test_long_real_work_gap_is_dropped_as_an_interruption():
+    """Review: an 18 s stop-the-world GC pause looks like an interruption."""
+    clock = [0.0]
+    tracker = ActiveTimeTracker(interval_s=5.0, wall_clock=lambda: clock[0])
+    tracker.start()
+    clock[0] += 18.0
+    span = tracker.tick()
+    assert span is not None and span["duration_s"] == pytest.approx(18.0)
+    snapshot = tracker.snapshot()
+    assert snapshot["active_seconds"] == 0.0  # 18 s of real work is lost
+    assert snapshot["interrupted_seconds"] == pytest.approx(18.0)
+
+
+def test_stop_inside_one_long_gap_can_report_zero_active():
+    """Review: 20 s of work with no heartbeat in between -> active 0."""
+    clock = [0.0]
+    tracker = ActiveTimeTracker(interval_s=5.0, wall_clock=lambda: clock[0])
+    tracker.start()
+    clock[0] += 20.0
+    snapshot = tracker.stop()
+    assert snapshot["active_seconds"] == 0.0
+    assert snapshot["interruption_count"] == 1
+    assert snapshot["spans"][0]["duration_s"] == pytest.approx(20.0)
+
+
+# ------------------------------------------------ history definition markers
+def test_history_marks_the_definition_and_carries_a_running_total(tmp_path):
+    first = RunContext("task-total", output_dir=tmp_path, level=TraceLevel.STANDARD,
+                       active_tracker=_FixedTracker(_snapshot(active=0.06, interrupted=0.0, count=0)))
+    first.finish()
+    second = RunContext("task-total", output_dir=tmp_path, level=TraceLevel.STANDARD,
+                        active_tracker=_FixedTracker(_snapshot(active=0.04, interrupted=0.0, count=0)))
+    second.finish()
+    history = json.loads((tmp_path / ".performance" / "history.json").read_text(encoding="utf-8"))
+    assert history[-1]["definition"] == "active_seconds"
+    assert history[-1]["active_seconds"] == pytest.approx(0.04)
+    assert history[-1]["task_active_seconds"] == pytest.approx(0.10)
+    assert history[-1]["task_segments"] == 2
+    total = sum_active_time(history)
+    assert total["source"] == "history_cumulative"
+    assert total["active_seconds"] == pytest.approx(0.10)
+    assert total["legacy_entries"] == 0
+
+
+def test_sum_active_time_skips_legacy_wall_clock_entries():
+    legacy = {"run_id": "old", "wall_time_s": 100.0,
+              "started_at": "2026-11-01T00:00:00+00:00",
+              "finished_at": "2026-11-01T00:01:40+00:00"}  # no definition marker
+    new = {"run_id": "new", "definition": "active_seconds", "active_seconds": 7.0,
+           "interrupted_seconds": 0.0, "interruption_count": 0,
+           "started_at": "2026-11-02T00:00:00+00:00",
+           "finished_at": "2026-11-02T00:00:07+00:00"}
+    total = sum_active_time([legacy, new])
+    assert total["active_seconds"] == pytest.approx(7.0)  # 100 s legacy is not added
+    assert total["legacy_entries"] == 1
+    assert total["segments"] == 1
+
+
+def test_trimmed_history_uses_the_running_total_instead_of_losing_segments():
+    """history.json keeps 50 runs; a 52-segment task must still report 52 s."""
+    entries = []
+    for index in range(1, 53):
+        entries.append({
+            "run_id": f"run-{index}",
+            "definition": "active_seconds",
+            "active_seconds": 1.0,
+            "interrupted_seconds": 0.0,
+            "interruption_count": 0,
+            "task_active_seconds": float(index),
+            "task_interrupted_seconds": 0.0,
+            "task_interruption_count": 0,
+            "task_segments": index,
+            "started_at": f"2026-11-11T00:{index:02d}:00+00:00",
+            "finished_at": f"2026-11-11T00:{index:02d}:01+00:00",
+        })
+    retained = entries[-50:]  # what the file actually holds after trimming
+    total = sum_active_time(retained)
+    assert total["active_seconds"] == pytest.approx(52.0)  # not 50.0
+    assert total["source"] == "history_cumulative"
+    assert total["segments"] == 52
+    assert total["wall_span_covers"] == "retained_segments_only"
+    assert "trimmed to the last 50 runs" in total["note"]

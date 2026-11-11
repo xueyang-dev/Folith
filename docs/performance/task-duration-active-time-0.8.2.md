@@ -47,8 +47,22 @@ those are the product's own performance and must stay visible.
   process all produce exactly such a gap regardless of platform.
 - An interrupted gap contributes **zero** active seconds and is recorded as a
   span (`started_at`, `ended_at`, `duration_s`, `reason: inactive_gap`).
-  The rule therefore can only *understate* work (by at most one heartbeat
-  period per interruption), never inflate it.
+
+**The guarantee is bounded and two-sided — it is not "never overstates".**
+With the defaults (5 s heartbeat, factor 3, threshold 15 s):
+
+| Situation | Result | Error |
+| --- | --- | --- |
+| A detected interruption, e.g. a 132-minute suspend | excluded entirely | understates a *real* suspend by at most one heartbeat period (5 s) — the work between the last sample and the suspend start |
+| A 15 s gap | counted as work (`<=` includes the boundary) | if the process was idle it overstates by 15 s |
+| A **10 s** sleep or silent pause | counted as work | overstates: the pause is shorter than the threshold, so it cannot be told apart from work (up to threshold per gap) |
+| An **18 s** stop-the-world GC pause, or 18 s of heartbeat-starved computation | classified as an interruption, dropped | understates: up to the whole gap of real work is lost |
+| A run that ends **20 s** after its last heartbeat (no sample in between) | `stop()` commits the final gap as one interruption | understates: `active_seconds` can be **0** although 20 s of work happened |
+
+In other words: a *detected* interruption only understates; anything shorter
+than the threshold is counted as work and can overstate; real work mistaken for
+an interruption is dropped.  A shorter heartbeat narrows both error bands
+(`FOLITH_ACTIVE_HEARTBEAT_S`).
 - A backwards wall-clock jump (NTP) contributes nothing and is counted in
   `clock_anomalies`; it is not called an interruption.  A forward jump is
   indistinguishable from a suspend and is treated as one.
@@ -59,6 +73,21 @@ Resumed tasks: each run keeps its own active seconds.  `sum_active_time(entries)
 sums them for a task total; `wall_span_s` is the naive first-start→last-finish
 difference kept only to show what the old definition would have claimed, and
 `excluded_between_segments_s` is that difference minus the active sum.
+
+`history.json` is trimmed to the last 50 runs.  That used to make a task
+resumed more than 50 times silently lose its first segments, so every entry now
+also stores the *running* task totals (`task_active_seconds`,
+`task_interrupted_seconds`, `task_interruption_count`, `task_segments`):
+`sum_active_time()` takes the newest running total (`source:
+"history_cumulative"`) instead of re-summing the retained window, and marks
+`wall_span_covers: "retained_segments_only"` plus a note when the window was
+trimmed.  **Decision: the 50-entry bound stays (it is an on-disk window, not a
+data loss), and the running total makes the task duration exact anyway.**
+
+Entries carry `"definition": "active_seconds"`.  Older entries in the same file
+predate #320 and their `wall_time_s` is a wall-clock duration; they have no
+marker, `sum_active_time()` never adds them to the active total, and
+`legacy_entries` counts how many were skipped.
 
 ## 4. Network outages — agreed condition, not implemented
 
@@ -130,9 +159,12 @@ report's unaccounted time / retry observation, labelled as such.
   meaningful instead of claiming the whole run was unaccounted.  The
   unaccounted percentage is computed against *active* time and is labelled as
   such.
-- `history.json` entries carry `active_seconds`, `interrupted_seconds` and
-  `elapsed_wall_clock_s`, so a task total can be summed across resumed
-  segments.
+- `history.json` entries carry `definition: "active_seconds"`, per-run
+  `active_seconds` / `interrupted_seconds` / `elapsed_wall_clock_s`, and the
+  running task totals `task_active_seconds` / `task_interrupted_seconds` /
+  `task_interruption_count` / `task_segments` (see §3 for why the running total
+  is the authoritative task duration).  Entries without the `definition`
+  marker are pre-#320 wall-clock durations and must not be added to these.
 - `performance.json` (legacy viewer) now gets `wall_time_s` = active time, plus
   `active_seconds` / `interrupted_seconds` / `monotonic_elapsed_s`.
 
@@ -208,11 +240,18 @@ Real-device acceptance (mock tests cannot replace this; both are still pending):
 
 ## 8. Known limits
 
-- One heartbeat period per interruption can be lost from active time (the gap
-  is excluded wholesale).  With the 5 s default this is negligible and always
-  errs on the conservative side.
-- A forward wall-clock jump (manual clock change, large NTP step) is treated as
-  an interruption.  It errs in the same direction (never inflates).
+- The measurement is quantised by the heartbeat: pauses shorter than the
+  threshold are counted as work (a 10 s sleep overstates active time), and real
+  work longer than the threshold is dropped (an 18 s stop-the-world GC pause
+  understates).  A detected real suspend loses at most one heartbeat period.
+  See the table in §3.
+- A run whose final stretch is longer than the threshold and has no heartbeat in
+  it reports that stretch as one interruption, so a 20 s run that ends right
+  after 20 s of work can report `active_seconds = 0`.  Keep runs long relative
+  to the heartbeat, or lower `FOLITH_ACTIVE_HEARTBEAT_S` for very short probes.
+- A forward wall-clock jump larger than the threshold is treated as an
+  interruption (understates); a smaller forward jump is counted as work
+  (overstates).  Neither direction is guaranteed.
 - The tracker covers the process that runs the task.  Time before the first
   heartbeat (run creation → first sample) is counted normally, so the first
   interruption of a run is detected from the first sample on.
