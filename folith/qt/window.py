@@ -2194,6 +2194,13 @@ class MainWindow(QMainWindow):
                 self._log(f"workbench delta resync ({exc.reason})")
                 self._resync_from_full(job_id)
                 return
+            except Exception as exc:  # noqa: BLE001 - one bad delta must not freeze the view
+                # A delta the read model cannot apply is a correctness problem,
+                # not a reason to keep showing stale rows: fall back to the
+                # authoritative state and keep the reason in the log.
+                self._log(f"workbench delta failed ({type(exc).__name__}: {exc})")
+                self._resync_from_full(job_id)
+                return
             self._delta_applied_seq = int(result.seq)
             counts = adapter.document_counts(self._delta_model)
             changed = self.workbench.apply_delta(

@@ -3940,14 +3940,20 @@ def test_exit_closes_an_open_settings_window(client, monkeypatch):
 
 
 class _HeldRunner:
-    """Hold operation callbacks; navigation still runs through the real pool."""
+    """Hold operation callbacks; background maintenance keeps running.
+
+    ``open-job`` and the incremental poll reads (``poll-*``) belong to the
+    window's own machinery (A1): they must keep running so the workbench
+    settles, and they are not "operations" the tests below are counting.  Only
+    real user operations are held for inspection.
+    """
 
     def __init__(self, navigation_submit) -> None:
         self.calls: list[dict] = []
         self.navigation_submit = navigation_submit
 
     def submit(self, fn, *args, on_done=None, on_error=None, label="", **kwargs):
-        if label == "open-job":
+        if label == "open-job" or str(label).startswith("poll"):
             return self.navigation_submit(fn, *args, on_done=on_done, on_error=on_error,
                                           label=label, **kwargs)
         self.calls.append({"fn": fn, "args": args, "kwargs": kwargs,
