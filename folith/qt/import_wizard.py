@@ -85,6 +85,12 @@ class ImportWizardController:
         self.detail = ""
         self.retry_step = STEP_PREFLIGHT
         self.exported: dict = {}
+        self.preflight_stale = False
+
+    @property
+    def importer(self):
+        """实际执行导入的可调用对象（对话框把它带进工作线程）。"""
+        return self._importer
 
     # ---- 状态查询 ----
     def state(self) -> dict:
@@ -130,14 +136,40 @@ class ImportWizardController:
             self._fail(str(exc), detail="preflight")
             return self.state()
         self.step = STEP_PREFLIGHT
+        self.preflight_stale = False
         self.message = ""
         self.detail = ""
         return self.state()
 
-    def begin_import(self) -> dict:
-        """进入导入步并返回工作线程需要的载荷（不在这里做 IO）。"""
-        if self.step not in (STEP_PREFLIGHT, STEP_ERROR):
+    def invalidate_preflight(self) -> dict:
+        """项目/目标语言变了：旧预检作废（导入绝不能沿用旧参数）。
+
+        清掉预检结果与参数后，``begin_import`` 会拒绝执行（只允许从预检步
+        进入），调用方必须重新预检。对话框在选项变化时会自动重跑预检，因此
+        用户看到的是"参数变了 → 预期条目数/语言对立刻按新参数重算"。
+        """
+        self.preflight = {}
+        self.project_id = ""
+        self.target_lang = ""
+        self.preflight_stale = True
+        return self.state()
+
+    def begin_import(self, *, project_id: str | None = None,
+                     target_lang: str | None = None) -> dict:
+        """进入导入步并返回工作线程需要的载荷（不在这里做 IO）。
+
+        **只允许从预检步进入**，并且参数以调用方此刻传入的值为准：预检与
+        导入必须使用同一份参数，否则会出现"预检用 A 项目、写入用 B 项目"
+        （术语写库只增不覆盖，写错不可撤销）。
+        """
+        if self.step != STEP_PREFLIGHT:
             raise RuntimeError(f"当前步骤无法导入：{self.step}")
+        if project_id is not None:
+            self.project_id = str(project_id)
+        if target_lang is not None:
+            self.target_lang = str(target_lang)
+        if self.preflight_stale or not self.preflight:
+            raise RuntimeError("预检已作废：请先重新预检")
         self.step = STEP_IMPORTING
         self.message = ""
         self.detail = ""
@@ -158,8 +190,15 @@ class ImportWizardController:
         return self.state()
 
     def fail(self, message: str, *, report: dict | None = None,
-             detail: str = "") -> dict:
-        """导入失败：进入错误页（重试回到预检步）。"""
+             detail: str = "", store: dict | None = None) -> dict:
+        """导入失败：进入错误页（重试回到预检步）。
+
+        ``report`` 是引擎的结构化报告（``ImportReportError.report``），
+        ``store`` 是"已经写入多少条"的如实计数——失败页要能展示它们，并且
+        允许把失败报告导出归档。
+        """
+        if store:
+            self.store = dict(store)
         self._fail(message, report=report, detail=detail)
         return self.state()
 
@@ -195,6 +234,31 @@ class ImportWizardController:
         self.step = STEP_ERROR
 
 
+def _import_worker(path: str, *, importer, project_id=None, target_lang="",
+                   preflight=None) -> dict:
+    """工作线程入口：把异常（含 ``.report`` / ``.store``）变成可渲染的结果。
+
+    ``TaskRunner`` 的错误回调只给 ``(message, detail)``，异常对象在这一层就
+    丢了；而 #150 要求失败也能看到分类计数、也能导出报告。因此这里自己接住
+    异常，把结构化报告与已写入条数一起带回 GUI 线程。
+    """
+    import traceback
+
+    try:
+        result = importer(
+            path, project_id=project_id, target_lang=target_lang,
+            preflight=preflight)
+    except Exception as exc:  # noqa: BLE001 - 失败要变成可展示的数据
+        return {
+            "error": str(exc) or type(exc).__name__,
+            "detail": traceback.format_exc(),
+            "report": getattr(exc, "report", None) or {},
+            "store": getattr(exc, "store", None) or {},
+        }
+    return {"report": dict(result.get("report") or {}),
+            "store": dict(result.get("store") or {})}
+
+
 def _report_summary(report: dict, store: dict | None = None) -> str:
     """把引擎报告渲染成对话框里的纯文本摘要（HTML 只做最小排版）。"""
     if not report:
@@ -202,15 +266,25 @@ def _report_summary(report: dict, store: dict | None = None) -> str:
     lines: list[str] = []
     status = str(report.get("status") or "")
     lines.append(f"<p><b>{i18n.tr('导入状态')}</b>：{_status_label(status)}</p>")
+    error = str(report.get("error") or "")
+    if error:
+        lines.append(f"<p>{_escape(error)}</p>")
     store = store or {}
     if store.get("written") is not None:
         lines.append(
             f"<p><b>{i18n.tr('写入结果')}</b>：{i18n.tr('已写入 {v0} 条，跳过 {v1} 条。', v0=store.get('written', 0), v1=store.get('skipped', store.get('skipped_existing', 0)))}</p>")
     counts = report.get("counts") or {}
     if counts:
+        # 引擎报告**不写** count_labels（那是模块常量 COUNT_LABELS）；这里用
+        # 引擎的固定键序与标签，9 类计数一条不漏（0 也列出来，口径与报告一致）。
+        from folith.engine import migration_report as _migration
+
         lines.append(f"<p><b>{i18n.tr('分类计数')}</b></p><ul>")
-        for key, label in (report.get("count_labels") or {}).items():
-            lines.append(f"<li>{_escape(str(label))}：{int(counts.get(key) or 0)}</li>")
+        for key in _migration.COUNT_KEYS:
+            if key not in counts:
+                continue
+            label = _migration.COUNT_LABELS.get(key, key)
+            lines.append(f"<li>{_escape(i18n.tr(label))}：{int(counts.get(key) or 0)}</li>")
         lines.append("</ul>")
     pair = report.get("language_pair") or {}
     if pair:
@@ -342,6 +416,7 @@ class ImportWizardDialog(QDialog):
         self.project_combo.currentIndexChanged.connect(self._project_changed)
         self.language_edit = QLineEdit()
         self.language_edit.setPlaceholderText(i18n.tr("例如：简体中文"))
+        self.language_edit.editingFinished.connect(self._language_changed)
         form.addRow(i18n.tr("文件类型"), self.kind_label)
         form.addRow(i18n.tr("预计条目数"), self.units_label)
         form.addRow(i18n.tr("语言对"), self.pair_label)
@@ -408,7 +483,8 @@ class ImportWizardDialog(QDialog):
                                  else i18n.tr("下一步"))
         self.next_button.setEnabled(
             not busy and (step == STEP_PREFLIGHT or bool(self.controller.path)))
-        self.export_button.setVisible(step == STEP_REPORT and bool(self.controller.report))
+        self.export_button.setVisible(
+            step in (STEP_REPORT, STEP_ERROR) and bool(self.controller.report))
         self.retry_button.setVisible(step == STEP_ERROR)
         self.restart_button.setVisible(step in (STEP_ERROR,))
         self.close_button.setVisible(True)
@@ -420,8 +496,13 @@ class ImportWizardDialog(QDialog):
         elif step == STEP_ERROR:
             self.error_label.setText(
                 i18n.tr("导入失败：{v0}", v0=self.controller.message or i18n.tr("未知原因")))
-            detail = self.controller.detail or ""
-            self.error_detail.setHtml(_escape(detail or self.controller.message))
+            summary = _report_summary(self.controller.report, self.controller.store)
+            if summary:
+                self.error_detail.setHtml(
+                    summary + f"<p>{_escape(self.controller.detail or '')}</p>")
+            else:
+                self.error_detail.setHtml(
+                    _escape(self.controller.detail or self.controller.message))
 
     def _render_preflight(self) -> None:
         data = self.controller.preflight or {}
@@ -472,9 +553,25 @@ class ImportWizardDialog(QDialog):
             self.project_combo.setCurrentIndex(index)
 
     def _project_changed(self, _index: int) -> None:
+        """换项目：预填它的语言方向，并**重新预检**（旧预检立即作废）。"""
         language = self.project_combo.currentData(Qt.ItemDataRole.UserRole + 1)
         if language:
             self.language_edit.setText(str(language))
+        self._refresh_preflight()
+
+    def _language_changed(self) -> None:
+        """目标语言编辑完成：重新预检（语言对判定依赖它）。"""
+        self._refresh_preflight()
+
+    def _refresh_preflight(self) -> None:
+        """参数变了就重算预检；没有选中文件时只作废旧预检。"""
+        if not self.controller.path:
+            self.controller.invalidate_preflight()
+            return
+        if self.controller.step not in (STEP_PREFLIGHT, STEP_ERROR):
+            self.controller.invalidate_preflight()
+            return
+        self._run_preflight()
 
     # ---- 动作 ----
     def _choose_file(self) -> None:
@@ -513,8 +610,16 @@ class ImportWizardDialog(QDialog):
             self._start_import()
 
     def _start_import(self) -> None:
+        # 导入必须与预检使用同一份参数：这里先用当前控件值重跑一次预检
+        # （只读、廉价），再 begin_import。用户在预检后改项目/语言时，
+        # 不会出现"预检 A 项目、写入 B 项目"。
+        self._run_preflight()
+        if self.controller.step != STEP_PREFLIGHT:
+            return
         try:
-            payload = self.controller.begin_import()
+            payload = self.controller.begin_import(
+                project_id=str(self.project_combo.currentData() or ""),
+                target_lang=self.language_edit.text().strip())
         except RuntimeError as exc:
             self.controller.fail(str(exc))
             self._show_step()
@@ -524,19 +629,26 @@ class ImportWizardDialog(QDialog):
 
         def done(result) -> None:
             self._busy = False
-            self.controller.finish_import(result)
+            result = dict(result or {})
+            if "error" in result:
+                self.controller.fail(
+                    str(result.get("error") or ""),
+                    report=dict(result.get("report") or {}) or None,
+                    detail=str(result.get("detail") or ""),
+                    store=dict(result.get("store") or {}))
+            else:
+                self.controller.finish_import(result)
             self._show_step()
 
         def failed(message: str, detail: str) -> None:
+            # Worker 自己接住了异常；这里只兜底线程池级别的失败（没有报告）。
             self._busy = False
-            report = getattr(self, "_pending_report", None)
-            self.controller.fail(message, report=report,
-                                 detail=detail or message)
+            self.controller.fail(str(message), detail=detail or str(message))
             self._show_step()
 
-        self._pending_report = None
         try:
-            self.runner.submit(adapter.import_wizard_run, payload["path"],
+            self.runner.submit(_import_worker, payload["path"],
+                               importer=self.controller.importer,
                                project_id=payload["project_id"] or None,
                                target_lang=payload["target_lang"],
                                preflight=payload["preflight"],

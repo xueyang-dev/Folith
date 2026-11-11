@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+import io
+import time
 from pathlib import Path
 
 import pytest
@@ -116,7 +118,11 @@ def test_import_failure_keeps_report_and_retries_from_preflight(tmp_path):
     assert state["step"] == import_wizard.STEP_ERROR
     assert state["report"] == report, "失败也要保留报告（分类计数可见）"
     assert controller.retry()["step"] == import_wizard.STEP_PREFLIGHT
-    # 重试后可以重新导入：状态机允许从预检再次开始。
+    # 错误页不能直接导入（m4）：必须先回到预检步。
+    controller.fail("again")
+    with pytest.raises(RuntimeError):
+        controller.begin_import()
+    controller.retry()
     assert controller.begin_import()["path"] == str(file)
 
 
@@ -148,7 +154,6 @@ def test_dialog_switches_steps_and_enables_the_right_buttons(tmp_path):
             "status": "imported",
             "counts": {"total": 3, "imported": 3,
                        "skipped_conflict": 0, "skipped_ineligible": 0},
-            "count_labels": {"total": "总单元数", "imported": "已导入"},
             "language_pair": {"status": "match", "expected_target": "简体中文",
                               "declared_targets": ["zh-CN"]},
             "metadata_loss": {"categories": [
@@ -228,6 +233,213 @@ def test_dialog_error_page_offers_retry(tmp_path):
     finally:
         dialog.close()
         dialog.deleteLater()
+
+
+# --------------------------------------------------------------------------
+# 审查修复：参数新鲜度（blocker）、真实计数、失败报告、三语与 ENTITY
+# --------------------------------------------------------------------------
+def _pump(app, dialog, step, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    app.processEvents()
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if dialog.controller.step == step:
+            return True
+        time.sleep(0.005)
+    return dialog.controller.step == step
+
+
+def test_changing_project_after_preflight_repreflights_and_uses_new_value(tmp_path):
+    """Blocker：预检后改项目/语言必须重跑预检，导入用新参数（术语写错不可撤销）。"""
+    seen = []
+
+    def preflight(path, *, project_id=None, target_lang=""):
+        seen.append((project_id, target_lang))
+        return {"kind": "tbx", "expected_units": 2, "blocking": "",
+                "language_pair": {"status": "match"}, "warnings": []}
+
+    controller, _calls = _controller(preflight=preflight)
+    dialog = import_wizard.ImportWizardDialog(controller=controller)
+    try:
+        dialog.project_combo.clear()
+        dialog.project_combo.addItem("旧项目", "PROJ_OLD")
+        dialog.project_combo.addItem("新项目", "PROJ_NEW")
+        file = tmp_path / "terms.tbx"
+        file.write_text("<tbx/>", encoding="utf-8")
+        dialog.set_path(str(file))
+        assert seen[-1][0] == "PROJ_OLD"
+
+        dialog.project_combo.setCurrentIndex(1)      # 用户换成新项目
+        assert seen[-1][0] == "PROJ_NEW", "换项目后必须重新预检"
+        assert controller.project_id == "PROJ_NEW"
+
+        payload = controller.begin_import()
+        assert payload["project_id"] == "PROJ_NEW", "导入必须用新项目"
+
+        # 参数变化后旧预检不能再用：作废后 begin_import 拒绝。
+        controller.invalidate_preflight()
+        with pytest.raises(RuntimeError):
+            controller.begin_import()
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_changing_target_language_after_preflight_takes_effect(tmp_path):
+    seen = []
+
+    def preflight(path, *, project_id=None, target_lang=""):
+        seen.append(target_lang)
+        return {"kind": "tmx", "expected_units": 1, "blocking": "",
+                "language_pair": {"status": "match"}, "warnings": []}
+
+    controller, _calls = _controller(preflight=preflight)
+    dialog = import_wizard.ImportWizardDialog(controller=controller)
+    try:
+        file = tmp_path / "memory.tmx"
+        file.write_text("<tmx/>", encoding="utf-8")
+        dialog.set_path(str(file))
+        dialog.language_edit.setText("法语")
+        dialog._language_changed()
+        assert seen[-1] == "法语"
+        assert controller.begin_import()["target_lang"] == "法语"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_report_renders_all_engine_counts_from_a_real_report(temp_output):
+    """M1：用真实引擎报告驱动渲染——9 类计数一条不漏（引擎没有 count_labels）。"""
+    import io
+
+    from folith.engine import migration_report
+
+    from folith.qt import adapter
+
+    source = temp_output / "counts.tmx"
+    source.write_bytes(_tmx([("Sentence one is here.", "第一句。"),
+                             ("Sentence two is here.", "第二句。")]))
+    core.import_tmx(io.BytesIO(source.read_bytes()), target_lang="简体中文",
+                    report=True)                       # 先入库
+    # 第二次导入 -> 全部冲突，引擎按既有约定抛错；报告随异常带回。
+    with pytest.raises(adapter.AdapterError) as caught:
+        adapter.import_wizard_run(str(source), target_lang="简体中文")
+    report = caught.value.report
+    assert "count_labels" not in report
+    html = import_wizard._report_summary(report)
+    counts_block = html.split("分类计数", 1)[1].split("元数据丢失", 1)[0]
+    assert counts_block.count("<li>") == len(migration_report.COUNT_KEYS) == 9
+    assert "总单元数" in html and "已导入" in html
+    assert report["counts"]["skipped_conflict"] == 2
+
+
+def test_failed_import_keeps_the_structured_report_via_worker(tmp_path):
+    """M2：worker 失败要带回引擎报告（分类计数可见、可导出），不是一句通用消息。"""
+    from PySide6.QtWidgets import QApplication
+
+    from folith.engine import migration_report
+    from folith.qt import adapter
+
+    def failing_importer(path, *, project_id=None, target_lang="", preflight=None):
+        # 用引擎自己的构造器造报告：形状与真实失败报告完全一致（不是手拼 key）。
+        report = migration_report.new_report("tmx", file_name="mismatch.tmx")
+        counts = migration_report.empty_counts()
+        counts["total"] = 1
+        counts["skipped_language_mismatch"] = 1
+        migration_report.set_counts(report, counts)
+        report["language_pair"] = migration_report.language_pair_report(
+            expected_target="英语", declared_targets=["zh-CN"],
+            mismatch_units=1)
+        migration_report.finalize(report)
+        error = adapter.AdapterError("因语言不符拒绝 1 条")
+        error.report = report
+        error.store = {"written": 0}
+        raise error
+
+    controller, _calls = _controller(
+        importer=failing_importer,
+        exporter=adapter.import_wizard_export_report)
+    dialog = import_wizard.ImportWizardDialog(controller=controller)
+    try:
+        file = tmp_path / "mismatch.tmx"
+        file.write_text("<tmx/>", encoding="utf-8")
+        # 绕开文件对话框，但走真实的 _start_import → worker → done 路径。
+        controller.choose_file(str(file))
+        controller.run_preflight()
+        app = QApplication.instance()
+        dialog._start_import()
+        assert _pump(app, dialog, import_wizard.STEP_ERROR), dialog.controller.state()
+        assert "因语言不符拒绝" in dialog.controller.message
+        assert dialog.controller.report["counts"]["skipped_language_mismatch"] == 1
+        html = dialog.error_detail.toHtml()
+        assert "分类计数" in html and "语言不符" in html
+        assert dialog.export_button.isVisibleTo(dialog) is True, "失败报告也要能导出"
+        paths = dialog.export_report(str(tmp_path / "exported"))
+        assert paths and Path(paths["json"]).is_file()
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_three_language_tmx_preflight_matches_the_engine_verdict(temp_output):
+    """M3：预检必须按引擎的取法（每个 TU 只看前两个非空 seg）。"""
+    from folith.qt import adapter
+
+    body = (
+        '<tmx version="1.4"><header srclang="en" adminlang="en"'
+        ' segtype="sentence"/><body>'
+        '<tu><tuv xml:lang="en"><seg>The gate is closed.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>大门已经关闭。</seg></tuv>'
+        '<tuv xml:lang="fr"><seg>La porte est fermée.</seg></tuv></tu>'
+        "</body></tmx>")
+    source = temp_output / "three-languages.tmx"
+    source.write_bytes(body.encode("utf-8"))
+
+    preflight = adapter.import_wizard_preflight(str(source), target_lang="简体中文")
+    assert preflight["language_pair"]["declared_targets"] == ["zh-CN"]
+    assert preflight["language_pair"]["status"] == "match"
+
+    engine = core.import_tmx(io.BytesIO(source.read_bytes()),
+                             target_lang="简体中文", report=True)
+    assert engine["report"]["language_pair"]["status"] == "match"
+    assert preflight["language_pair"]["status"] \
+        == engine["report"]["language_pair"]["status"]
+
+
+def test_entity_bearing_tmx_is_rejected_by_preflight_like_the_engine(temp_output):
+    """M4：预检必须和引擎用同一个（defusedxml）解析器，ENTITY 两边都拒绝。"""
+    from folith.qt import adapter
+
+    body = ('<?xml version="1.0"?>'
+            '<!DOCTYPE tmx [<!ENTITY bomb "boom">]>'
+            '<tmx version="1.4"><header srclang="en"/>'
+            '<body><tu><tuv xml:lang="en"><seg>&bomb;</seg></tuv>'
+            '<tuv xml:lang="zh-CN"><seg>爆炸。</seg></tuv></tu></body></tmx>')
+    source = temp_output / "entity.tmx"
+    source.write_bytes(body.encode("utf-8"))
+
+    with pytest.raises(adapter.AdapterError) as preflight_error:
+        adapter.import_wizard_preflight(str(source), target_lang="简体中文")
+    assert "无法解析 TMX 文件" in str(preflight_error.value)
+    with pytest.raises(ValueError) as engine_error:
+        core.import_tmx(io.BytesIO(source.read_bytes()),
+                        target_lang="简体中文", report=True)
+    assert "无法解析 TMX 文件" in str(engine_error.value)
+
+
+def test_tmx_without_header_does_not_crash_the_preflight(temp_output):
+    """M4：缺 <header> 时给"文件未声明"，不是 NoneType AttributeError。"""
+    from folith.qt import adapter
+
+    body = ('<tmx version="1.4"><body>'
+            '<tu><tuv xml:lang="en"><seg>No header here.</seg></tuv></tu>'
+            "</body></tmx>")
+    source = temp_output / "no-header.tmx"
+    source.write_bytes(body.encode("utf-8"))
+
+    preflight = adapter.import_wizard_preflight(str(source), target_lang="简体中文")
+    assert preflight["expected_units"] == 1
+    assert preflight["language_pair"]["status"] in ("undeclared", "not_checked")
 
 
 # --------------------------------------------------------------------------

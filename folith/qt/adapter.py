@@ -6231,10 +6231,19 @@ def _wizard_tmx_preview(data: bytes, *, target_lang: str) -> dict:
     """TMX 预检：只读计数与语言声明，**不写库**。
 
     这不是第二条导入实现：导入仍然只走 ``core.import_tmx``；预检只需要
-    "预计多少条 + 文件声明了什么语言"，因此在这里做一次只读解析。真正的
-    分类计数、跳过原因、元数据丢失一律以导入后的引擎报告为准。
+    "预计多少条 + 文件声明了什么语言"。因此这里刻意与引擎保持同一套取法，
+    否则预检和导入会对同一份文件给出不同结论：
+
+    * 解析器与引擎相同（``defusedxml``）：含 ENTITY/DOCTYPE 的文件预检也要
+      拒绝，不能"预检接受、导入失败"（预检跑在主线程，实体展开更是风险）；
+    * 语言声明按引擎的规则取：每个 ``<tu>`` 只看**前两个非空 ``<seg>``**，
+      目标语言是其中最后一个的语言。第三个及以后的语言引擎根本不看，
+      预检不能把它们算成"文件声明了别的目标语言"；
+    * 缺 ``<header>`` 时源语言留空，不崩。
+
+    真正的分类计数、跳过原因、元数据丢失一律以导入后的引擎报告为准。
     """
-    import xml.etree.ElementTree as ET
+    from defusedxml import ElementTree as ET
 
     from folith.engine import migration_report as _report
 
@@ -6247,41 +6256,45 @@ def _wizard_tmx_preview(data: bytes, *, target_lang: str) -> dict:
         return str(tag).rsplit("}", 1)[-1]
 
     def _lang(node):
+        if node is None:
+            return ""
         return str(node.get("{http://www.w3.org/XML/1998/namespace}lang")
                    or node.get("lang") or "").strip()
 
-    header = next((node for node in root if _local(node.tag) == "header"), None)
+    header = next((node for node in root
+                   if _local(node.tag) == "header"), None)
     declared_source = str((header.get("srclang") if header is not None else "")
                           or _lang(header) or "").strip()
     total = 0
     declared_targets: list[str] = []
     for tu in root.iter():
-        if _local(tu.tag) == "tu":
-            total += 1
-        elif _local(tu.tag) == "tuv":
-            language = _lang(tu)
-            if not language or language.casefold() == declared_source.casefold():
-                # 源语言的 tuv 不是"目标语言声明"，否则每个正常文件都会
-                # 因为 en vs zh-CN 被误报成 partial_mismatch。
+        if _local(tu.tag) != "tu":
+            continue
+        total += 1
+        texts = 0
+        target_language = ""
+        for tuv in tu:
+            if _local(tuv.tag) != "tuv":
                 continue
-            if language not in declared_targets:
-                declared_targets.append(language)
+            seg = next((node for node in tuv if _local(node.tag) == "seg"), None)
+            if seg is None or not "".join(seg.itertext()).strip():
+                continue
+            texts += 1
+            if texts >= 2:
+                # 引擎在第二个非空 seg 处停下，并把它当作目标语言声明。
+                target_language = _lang(tuv)
+                break
+        if target_language and target_language not in declared_targets:
+            declared_targets.append(target_language)
+
     expected = str(target_lang or "").strip()
-    statuses = [_report.language_compatibility(language, expected)
-                for language in declared_targets] if expected else []
     if not expected:
         status = "not_checked"
-    elif not declared_targets:
-        status = "undeclared"
-    elif "different" in statuses and "same" not in statuses \
-            and "unknown" not in statuses:
-        status = "mismatch"
-    elif "different" in statuses:
-        status = "partial_mismatch"
-    elif statuses and all(value == "same" for value in statuses):
-        status = "match"
     else:
-        status = "unverified"
+        pair = _report.language_pair_report(
+            expected_target=expected, declared_source=declared_source,
+            declared_targets=declared_targets)
+        status = str(pair.get("status") or "unverified")
     return {
         "expected_units": total,
         "declared_source": declared_source,
@@ -6342,35 +6355,52 @@ def import_wizard_preflight(path: str | os.PathLike[str], *,
         result["expected_units"] = int((report.get("counts") or {}).get("total") or 0)
         result["language_pair"] = dict(report.get("language_pair") or {})
         result["warnings"] = list(report.get("warnings") or [])
+        # 预检的报告是临时产物：TemporaryDirectory 一关，persistence 里的
+        # 路径就不存在了。清空它，避免界面显示一个打不开的"报告文件"。
+        report = dict(report)
+        report["persistence"] = {"directory": "", "json": "", "markdown": ""}
         result["report"] = report
     return result
 
 
 def _wizard_write_terms(project_id: str, entries: Sequence[dict]) -> dict:
-    """把解析出的术语写进项目术语库：**只增不覆盖**（既有导入语义）。"""
+    """把解析出的术语写进项目术语库：**只增不覆盖**（既有导入语义）。
+
+    逐条写入没有事务：第 N 条失败时前 N-1 条已经落盘。因此失败一律抛
+    ``AdapterError`` 并把**已写入条数**挂在 ``.store`` 上——界面必须能如实
+    说出"写到哪一条、还剩什么"，而不是只报一句"导入失败"。
+    """
     project = core.load_project(project_id)
     if not project:
         raise AdapterError(f"项目不存在：{project_id}")
     existing = {str(entry.get("source") or "").strip().casefold()
                 for entry in (dict(project).get("glossary") or [])}
-    written = skipped = 0
+    store = {"written": 0, "skipped_existing": 0, "skipped_missing": 0,
+             "target": f"project:{project_id}"}
     for entry in entries:
         source = str(entry.get("source") or "").strip()
         target = str(entry.get("target") or "").strip()
         if not source or not target:
-            skipped += 1
+            # 空原文/译文不是"与现有记忆冲突"，口径分开记（与引擎的
+            # skipped_missing_pair 对齐）。
+            store["skipped_missing"] += 1
             continue
         if source.casefold() in existing:
-            skipped += 1
+            store["skipped_existing"] += 1
             continue
-        core.set_project_term(
-            project_id, source, target,
-            domain=str(entry.get("domain") or entry.get("scope") or ""),
-            note=str(entry.get("note") or ""))
+        try:
+            core.set_project_term(
+                project_id, source, target,
+                domain=str(entry.get("domain") or entry.get("scope") or ""),
+                note=str(entry.get("note") or ""))
+        except (RuntimeError, ValueError, OSError) as exc:
+            error = AdapterError(
+                f"写入第 {store['written'] + 1} 条术语时失败：{exc}")
+            error.store = dict(store)
+            raise error from exc
         existing.add(source.casefold())
-        written += 1
-    return {"written": written, "skipped_existing": skipped,
-            "target": f"project:{project_id}"}
+        store["written"] += 1
+    return store
 
 
 def import_wizard_run(path: str | os.PathLike[str], *,
@@ -6429,6 +6459,8 @@ def import_wizard_run(path: str | os.PathLike[str], *,
         counts["imported"] = int(store["written"])
         counts["skipped_conflict"] = int(counts.get("skipped_conflict") or 0) \
             + int(store["skipped_existing"])
+        counts["skipped_missing_pair"] = int(counts.get("skipped_missing_pair") or 0) \
+            + int(store["skipped_missing"])
         _report.set_counts(report, counts)
     _report.finalize(report)
     try:
