@@ -1,8 +1,10 @@
 # Runtime baseline 0.8.2 — A0 sampler and fixed scenarios (issue #323)
 
 Status: **sampler merged; S1 harness measurement v2 implemented (the harness no
-longer pumps the GUI thread) and the macOS effective baseline re-measured with
-it; S2–S4, the frozen-app baseline and Windows acceptance are still pending.**
+longer pumps the GUI thread) and macOS diagnostic runs recorded with it.  No
+gate baseline exists yet: S2–S4, the frozen `8109b9c2` baseline build (with the
+v2 probe back-ported) and Windows acceptance are still pending.  Every number in
+this file is diagnostic data, not a gate denominator.**
 
 ## What already existed
 
@@ -146,7 +148,8 @@ harness as `metrics.gui_jank_process`) adds `scope`, all-pulse percentiles,
 QT_QPA_PLATFORM=offscreen venv/bin/python scripts/runtime_baseline_runner.py \
     --out /tmp/rb-s1 --paras 200 --seconds 90 --offscreen
 
-# S1 for a real baseline: frozen app, large EPUB, 30 minutes of interaction
+# S1 acceptance run on the candidate build: frozen app, large EPUB, 30 minutes
+# of interaction
 venv/bin/python scripts/runtime_baseline_runner.py --out /tmp/rb-mac-s1 \
     --paras 10000 --seconds 1800 --mode frozen \
     --frozen-app dist/qt-desktop/Folith.app/Contents/MacOS/Folith
@@ -163,14 +166,14 @@ input, so it can never stand in for the frozen-app run.
 application's own `app.exec()`; the harness never calls `processEvents()`, and
 the only remaining harness work (predicate polling) is marked
 `instrumentation` and excluded from the product numbers.  The harness no longer
-appears as a stall bucket.  See the effective-baseline section for the numbers
+appears as a stall bucket.  See the macOS diagnostic section for the numbers
 and for why the superseded v1 numbers were lower (its pump chopped the loop).
 
 Scenario status:
 
 | Scenario | Meaning | State |
 | --- | --- | --- |
-| S1 | ~10k-segment EPUB translating while the user scrolls / edits / switches pages | harness v2 (event-loop driven, instrumentation split); macOS v2 effective baseline measured; frozen run and Windows pending |
+| S1 | ~10k-segment EPUB translating while the user scrolls / edits / switches pages | harness v2 (event-loop driven, instrumentation split); macOS v2 diagnostic runs recorded (60 s, mock, source build); frozen run and Windows pending |
 | S2 | ≥300-page scanned PDF, paging + thumbnails during OCR | declared, not implemented |
 | S3 | open a finished large task, switch tasks | declared, not implemented |
 | S4 | 8-hour run against a local mock gateway | declared, not implemented |
@@ -186,39 +189,83 @@ not a remote provider over the WAN.
 
 ## Release gate (#327 ruling)
 
-The user replaced the old absolute responsiveness gate with a **relative** one.
-The absolute numbers that used to be discussed (p99 < 100 ms, longest < 500 ms)
-are **superseded** and must not be quoted as gates any more.
+#327 keeps a **relative** gate and keeps the absolute responsiveness numbers
+**as targets**.  Both are reported here; neither one replaces the other.
 
-1. **Measurement first.**  These numbers are only comparable once the measuring
+1. **Relative gate (pass/fail).**  The `>100 ms` rate and the `>500 ms` rate
+   must each drop by **≥ 70 %** against the effective baseline.  Both tiers
+   count, both platforms count.  Decision D1 of the 0.8.2 plan splits each rate
+   into R ("during translation", the task's own window) and I ("after
+   completion", a fixed finished large task) because one whole-window number
+   hides movements in opposite directions.
+2. **No gate denominator has been measured yet.**  Per D1 and the #327 text, the
+   baseline is the frozen `8109b9c2` build (code from before A1 and A3) with the
+   v2 probe back-ported, at least 3 rounds of at least 5 minutes each on the
+   replay gateway (a mock gateway replaying a recorded real latency
+   distribution), median of the rounds.  Measuring on A1/A3-era code, as the
+   numbers in this file were, would make the candidate beat A1 *on top of* A1,
+   which is not what the ruling asks for.  This baseline has not been built or
+   measured in this round; nothing in this file is it.
+3. **Absolute targets are retained, with actual values stated next to them.**
+   `p99 < 100 ms` (over all pulse intervals) and longest single stall
+   `< 500 ms` remain the absolute targets.  They are **not** superseded and
+   must not be suppressed; the honest reading is that today's numbers are far
+   above them:
+   - all-pulse `p99`: **771 / 824 / 802 ms** in the three diagnostic v2 runs
+     (7.7–8.2× the 100 ms target);
+   - longest single stall: **2648 / 2905 / 2774 ms** (5.3–5.8× the 500 ms
+     target);
+   - the superseded v1 control was over as well (all-pulse `p99` 440.5 ms,
+     longest 1572.7 ms).
+
+   The relative gate measures progress against a baseline; it does not make the
+   absolute target met, moot, or unquotable.
+4. **Measurement first.**  These numbers are only comparable once the measuring
    harness stopped pumping the GUI thread (measurement v2 below).  Gate results
    measured with the v1 harness are not accepted.
-2. **Relative target.**  The `>100 ms` rate and the `>500 ms` rate must each
-   drop by **≥ 70 %** against the effective baseline below.  Both tiers count,
-   both platforms count.
-3. **Hard gates (unchanged).**  Zero "unresponsive" incidents; an 8-hour run
+5. **Hard gates (unchanged).**  Zero "unresponsive" incidents; an 8-hour run
    with zero crashes and no sustained RSS growth; 30 freeze-pressure rounds on
    the frozen build with zero crashes.
-4. **Dual-platform real-machine acceptance is still outstanding** (macOS source
+6. **Dual-platform real-machine acceptance is still outstanding** (macOS source
    build measured here; Windows belongs to the user's real machine).
 
-## Baseline report
+## Measurement reports (diagnostic data)
 
-Numbers are entered here only after they were measured.  The **effective
-baseline** is the v2 controlled workload (mock gateway, fixed fixture and
-window) below; the real-endpoint numbers are a separate reference and never
-feed the gate.  The macOS runs use the **source** build (same code, same Qt,
-real cocoa GUI); the frozen `.app` remains the target for the final
-acceptance, and no frozen 0.8.2 artifact was available in this round.
+Numbers are entered here only after they were measured, and every number below
+is **diagnostic data**: short (60 s) runs on the **source** build at
+`bc765adc` — which already contains A1 P0–P2 and A3, so it is not "before the
+change" — against a mock gateway that replies instantly.  None of these sections
+is a gate baseline, none is a denominator for the ≥ 70 % target, and the
+real-endpoint runs are a separate reference that never feeds a gate.  The gate
+denominator is defined in the release-gate section above and has not been
+measured.
 
-### macOS — measurement v2: effective baseline (可控负载基线)
+Reading rule used by every table in this file: `p50` / `p99` / `max` are
+percentiles of the **recorded stall events' `interval_ms`** (events ≥ 100 ms),
+not of all pulse intervals.  A p50 of 238 ms therefore means "the median stall
+lasted 238 ms"; the median *pulse* of a healthy 25 ms timer is tens of
+milliseconds.  All-pulse percentiles are a different distribution and live in
+`metrics.gui_jank_process.interval_ms`; they are quoted only where the text says
+so — the absolute-target `p99 < 100 ms` is an all-pulse number.
 
-**This is the gate denominator.**  It is intentionally a *controlled* workload:
-deterministic EPUB fixture, fixed 1000-paragraph document, fixed 60 s
-interaction window, mock model gateway with instant replies.  That makes it
-reproducible and comparable between commits.  It is **not** a "real user
-experience" baseline — see the real-endpoint section below for why those two
-numbers differ by an order of magnitude.
+### macOS — measurement v2: diagnostic runs (可控负载, source build)
+
+**Diagnostic data — not a baseline and not a gate denominator.**  The gate
+denominator is the frozen `8109b9c2` build with the v2 probe back-ported and
+≥ 3 × 5 min replay-gateway rounds (release gate above); nothing in this section
+qualifies, and calling these numbers a baseline is the exact misreading this
+section exists to prevent.
+
+Conditions, stated so that they cannot be mistaken for a gate run: **source
+build at `bc765adc`**, deterministic 1000-paragraph / 2000-segment EPUB fixture,
+**60 s window per run, 3 runs**, mock model gateway with instant replies, macOS
+cocoa QPA.  This is a **short diagnostic measurement**: even inside the three v2
+runs the same parameters differ by 1.1–1.4× on the tail metrics (the v1 control
+pair differs by up to 1.55×, see the noise note further down), so only very
+large effects are resolvable, and the mock load measures GIL saturation rather
+than user experience (0.8.2 plan §6.3).  It is kept because it is reproducible
+and shows where the tail comes from — **not** because it can serve as a gate
+comparison.
 
 Measurement: `measurement: v2` — the scenario runs inside the application's own
 event loop (`app.exec()`, every step a `QTimer` callback) instead of the v1
@@ -226,20 +273,32 @@ harness pumping `QApplication.processEvents()` from script code.  The only
 remaining harness work (predicate polling such as job listing / runtime state
 reads) is marked `instrumentation` and counted in `instrumentation_slow_count` /
 `instrumentation_total_ms`, never in `slow_count`, `stall_ms`, `longest` or
-`top_stacks`.  Same machine, same build, same parameters as the v1 table below.
+`top_stacks`.  Same machine and same parameters as the v1 control below; no
+commit was recorded for that v1 control, so an identical build cannot be
+confirmed (see the comparison below).
 
-| Run | segments | window (s) | pulses | >100 ms | >500 ms | p50 (ms) | p99 (ms) | max (ms) | instrumentation stalls / ms | RSS peak (MB) | CPU avg / peak % | threads | settled |
+| Run | segments | window (s) | pulses | >100 ms | >500 ms | stall p50 (ms) | stall p99 (ms) | max stall (ms) | instrumentation stalls / ms | RSS peak (MB) | CPU avg / peak % | threads | settled |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | v2 #1 | 2000 | 61.758 | 966 | 94 (91.32/min) | 19 (18.46/min) | 237.5035 | 1273.0593 | 2648.4925 | 1 / 304.1 | 825.83 | 113.7 / 185.5 | 16 | yes |
 | v2 #2 | 2000 | 62.321 | 941 | 86 (82.8/min) | 24 (23.11/min) | 232.9181 | 1752.7818 | 2904.5755 | 2 / 494.2 | 789.14 | 119.5 / 282.4 | 16 | yes |
 | v2 #3 | 2000 | 61.916 | 895 | 91 (88.18/min) | 26 (25.2/min) | 259.1497 | 1696.9372 | 2773.7492 | 0 / 0.0 | 789.7 | 118.1 / 213.6 | 15 | yes |
 | v2 offscreen control | 2000 | 61.149 | 930 | 90 (88.31/min) | 25 (24.53/min) | 247.2909 | 1783.1414 | 1834.6595 | 1 / 457.4 | 721.75 | 110.3 / 138.1 | 16 | yes |
 
-**Effective baseline (v2, mock gateway), the numbers the ≥70 % target uses:**
+`p50` / `p99` / `max` in this table are stall-event percentiles (definition
+above), not all-pulse percentiles.  The three runs tabulated here are three of
+the seven mock-mode runs in the development series under `/private/tmp/a0-m2`
+(`after-1` … `after-7`; the offscreen control is `off-v2`); the others are not
+part of this table.  Those reports predate the `measurement` marker — see How to
+re-measure.
+
+**Diagnostic summary (v2 driver, mock gateway) — these are NOT the numbers the
+≥ 70 % target uses:**
 
 - `>100 ms` rate: **91.3, 82.8, 88.2 per minute** (3 runs)
 - `>500 ms` rate: **18.5, 23.1, 25.2 per minute**
-- p50 / p99 / max: 238–259 ms / 1273, 1753, 1697 ms / 2648, 2905, 2774 ms
+- median stall / stall p99 / longest stall: 238–259 / 1273, 1753, 1697 /
+  2648, 2905, 2774 ms
+- all-pulse `p99` (the absolute target's metric): **771, 824, 802 ms**
 - zero "unresponsive" incidents in every run (watchdog gate never fired)
 
 #### v1 (harness pumped the GUI) vs v2 — same machine, 1000 paragraphs, 60 s, mock
@@ -248,19 +307,22 @@ reads) is marked `instrumentation` and counted in `instrumentation_slow_count` /
 | --- | --- | --- | --- |
 | `>100 ms` per minute | 80.61 | 91.3, 82.8, 88.2 | roughly level |
 | `>500 ms` per minute | 10.68 | 18.5, 23.1, 25.2 | **v2 higher** |
-| p99 (ms) | 1246.2451 | 1273, 1753, 1697 | **v2 higher** |
-| max (ms) | 1572.6792 | 2648, 2905, 2774 | **v2 higher** |
+| stall p99 (ms) | 1246.2451 | 1273, 1753, 1697 | **v2 higher** |
+| max stall (ms) | 1572.6792 | 2648, 2905, 2774 | **v2 higher** |
 | #1 aggregated bucket | 16 events / 2944 ms / max 437 ms — `_interact → QApplication.processEvents()` (the harness itself) | `_run_scenario_event_loop` — native Qt dispatch, **no pump**; product frames own the rest | harness bucket removed |
 
-**Why v2 is worse — and why that is not a regression.**  v1 called
+**Why v2 is worse — and why that is not a regression claim.**  v1 called
 `processEvents()` roughly every 10 ms, so the event loop returned to the harness
 between batches of product work; long bursts were split across several pulse
 intervals and the measured tail came out **shorter than what the shipping app
 actually experiences** (`folith/qt/app.py` also runs `app.exec()`).  v2 measures
-the real loop, so the tail grows and the harness bucket disappears.  No product
-code changed between the two tables.  Anyone comparing a v1 number with a v2
-number is comparing two different measurements, not two product states — this
-is why the v1 table below is marked superseded.
+the real loop, so the tail grows and the harness bucket disappears.  The two
+tables are **not** a controlled before/after pair: no commit was recorded for
+the v1 control's measurement, so "no product code changed between the two
+tables" **cannot be verified** and is withdrawn.  What is verifiable is the
+driver change above and its effect on the numbers.  Anyone comparing a v1 number
+with a v2 number is comparing two different measurements, not two product
+states — this is why the v1 table below is marked superseded.
 
 #### v2 Top stacks (mock workload, by accumulated stall time)
 
@@ -285,7 +347,7 @@ The remaining product hotspots are the real A1 candidates:
 2.9 s in a single event), `segment_assist`, `window._poll_workbench_full`, and
 `flow_layout` sizing.
 
-### 真实模型端点对照（真实 API，**不参与门槛分母**）
+### 真实模型端点对照（真实 API；仅作参考，不参与门槛判定）
 
 Same code, same machine, same 1000-paragraph document and UI scale, but
 translation runs against the user's configured real endpoint
@@ -295,16 +357,19 @@ memory from the provider config and never written into any output
 (`api_key_loaded: true`); the 2-minute window is **live translation, not a
 finished task**.
 
-| Run | segments | window (s) | pulses | >100 ms | >500 ms | p50 (ms) | p99 (ms) | max (ms) | instrumentation stalls / ms | RSS peak (MB) | CPU avg / peak % | threads | settled |
+| Run | segments | window (s) | pulses | >100 ms | >500 ms | stall p50 (ms) | stall p99 (ms) | max stall (ms) | instrumentation stalls / ms | RSS peak (MB) | CPU avg / peak % | threads | settled |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | real API #1 | 24 | 141.533 | 5456 | 15 (6.36/min) | 1 (0.42/min) | 133.9134 | 743.4853 | 743.4853 | 0 / 0.0 | 532.48 | 19.5 / 110.5 | 18 | no — stopped mid-task |
 | real API #2 | 20 | 141.472 | 5394 | 18 (7.63/min) | 2 (0.85/min) | 120.1927 | 721.315 | 721.315 | 0 / 0.0 | 491.56 | 17.6 / 128.8 | 17 | no — stopped mid-task |
 
 - `>100 ms`: **6.4, 7.6 per minute**; `>500 ms`: **0.4, 0.8 per minute**;
-  p99 743, 721 ms, max 743, 721 ms (n=2).
-- **Why it is not the gate baseline:** with real model latency the GUI spends
+  stall p99 743, 721 ms, longest 743, 721 ms (n=2).  All-pulse `p99` here is
+  56.7 / 66.2 ms — under the 100 ms absolute target only because the GUI is
+  idle waiting for the network, so it is not comparable with the mock-load rows
+  above and is not evidence that the target is met.
+- **Why it is not a gate input:** with real model latency the GUI spends
   most of its time waiting for the network, so the stall rate is an order of
-  magnitude lower (6.4, 7.6 vs 91.3, 82.8, 88.2 per minute for the controlled
+  magnitude lower (6.4, 7.6 vs 91.3, 82.8, 88.2 per minute for the mock
   workload).  That is a different scenario, not a better product.
 - **Why it is not a finished S1 run:** in 140 s the real endpoint translated
   24 / 20 of the 2000 segments.  A full 1000-paragraph real-endpoint run would
@@ -321,7 +386,8 @@ finished task**.
 ### How to re-measure (do not run as part of the gate PR)
 
 ```bash
-# Controlled baseline (the gate denominator): 1000 paragraphs, 60 s, mock gateway
+# Short diagnostic run (1000 paragraphs, 60 s, mock gateway) — NOT a gate
+# measurement and NOT the denominator the ≥ 70 % target uses.
 QT_QPA_PLATFORM=offscreen venv/bin/python scripts/runtime_baseline_runner.py \
     --out /tmp/rb-v2 --paras 1000 --seconds 60 --settle-timeout 240 --offscreen
 
@@ -337,17 +403,30 @@ venv/bin/python scripts/runtime_baseline_runner.py \
 `--engine-config` reads the real connection **in memory**: the key is never
 copied into the report, the isolated data dir or a log.  The runner always
 isolates data/log/QSettings under `--out`, so a measurement never touches the
-user's real Folith data.  Every report carries
-`measurement: {"version": 2, "driver": "qt_event_loop_callbacks"}` — a
-report without that marker was produced by the superseded v1 harness.  On macOS the window is raised/activated for the run
+user's real Folith data.  Reports written by the current runner carry
+`measurement: {"version": 2, "driver": "qt_event_loop_callbacks",
+"instrumentation_split": true}`.  The three runs in the v2 diagnostic table
+above were measured before that marker was added to the report (the harness was
+still being finished), so their reports carry no `measurement` block even though
+they were produced by the v2 driver; do not treat "no marker" on its own as
+proof of a v1 run — the v1 pump bucket (`_interact` / `processEvents`) is the
+distinguishing evidence.  On macOS the window is raised/activated for the run
 (S1 is a foreground session); offscreen runs ignore that.
+
+No command is given for the **gate baseline**, because the current code cannot
+produce it: it needs the frozen `8109b9c2` build with the v2 probe back-ported,
+≥ 3 rounds of ≥ 5 minutes, and the replay gateway (a recorded real latency
+distribution), median of rounds, split into R and I.  Until that build and the
+replay gateway exist, no number in this file can be compared against it, and a
+60 s mock run must not be presented as if it could.
 
 ### macOS 真机 — measurement v1 (superseded: the harness pumped the GUI)
 
 > The numbers in this section were measured with the **v1** harness, whose own
 > `processEvents()` pump was the top stall bucket and split product work into
-> 10 ms slices (under-reporting the tail).  They are **superseded** and are not
-> the gate baseline.  Use measurement v2 above.
+> 10 ms slices (under-reporting the tail).  They are **superseded** as a
+> measurement and are not used for any gate comparison; the v2 diagnostic runs
+> above are the only v2 numbers in this file.
 
 
 
@@ -370,7 +449,7 @@ gateway.  The product rejects an edit while the task is busy
 (`[qt:无法提交] 任务正在后台处理，请等待完成后保存`), so that interaction mostly
 exercises the reject path; this is product behaviour, not a harness failure.
 
-| Run | paras → segments | window (s) | effective pulse rate (Hz) | >100 ms | >500 ms | /min >100 | /min >500 | p50 (ms) | p99 (ms) | max (ms) | RSS start → peak (MB) | CPU avg / peak % | threads | settled |
+| Run | paras → segments | window (s) | effective pulse rate (Hz) | >100 ms | >500 ms | /min >100 | /min >500 | stall p50 (ms) | stall p99 (ms) | max stall (ms) | RSS start → peak (MB) | CPU avg / peak % | threads | settled |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | real #1 | 1000 → 2000 | 62.18 | 15.8 | 107 | 14 | 103.2 | 13.5 | 183 | 1073 | 1357 | 405 → 710 | 117.3 / 241.2 | 15 | yes (task 47.3 s) |
 | real #2 | 1000 → 2000 | 61.56 | 20.8 | 87 | 11 | 84.8 | 10.7 | 215 | 747 | 874 | 422 → 788 | 112.8 / 128.7 | 15 | yes |
@@ -386,7 +465,7 @@ says `status: interrupted`.  That run's window also contains the 300 s settle
 wait and its polling (`_pump` bucket below), so treat it as a stress case, not
 as a fourth comparable S1 sample.
 
-#### S1 rows for the baseline table
+#### S1 rows for the real-machine table (v1)
 
 | Metric | S1, macOS real machine (2 runs, 1000 paragraphs, 60 s) | State |
 | --- | --- | --- |
@@ -404,8 +483,9 @@ as a fourth comparable S1 sample.
 Noise: two runs with identical parameters differ by 1.22× (>100/min), 1.26×
 (>500/min), 1.17× (p50), 1.44× (p99), 1.55× (max).  All are inside 2×, so the
 pair is reported as one range rather than a single number.  n=2 is still thin:
-a committed baseline needs at least 3 runs of 5+ minutes each against a real
-endpoint; the 60 s windows here are a starting range, not a final baseline.
+a gate baseline needs ≥ 3 rounds of ≥ 5 minutes each, on the replay gateway,
+built from the frozen `8109b9c2` code (D1) — not a real-endpoint run and not
+these 60 s windows, which are a starting range only.
 
 #### Top stacks by accumulated stall time (macOS, 1000 paragraphs)
 
@@ -444,15 +524,15 @@ running) has 85 slow / 8 severe = 107.8/min versus the scenario window's
 | --- | --- | --- | --- | --- |
 | >100 ms per minute | 103.2 | 84.8 | 71.3 | 1.19–1.45× |
 | >500 ms per minute | 13.5 | 10.7 | 5.0 | 2.1–2.7× |
-| p99 (ms) | 1073 | 747 | 638 | 1.17–1.68× |
-| max (ms) | 1357 | 874 | 795 | 1.10–1.71× |
+| stall p99 (ms) | 1073 | 747 | 638 | 1.17–1.68× |
+| max stall (ms) | 1357 | 874 | 795 | 1.10–1.71× |
 | RSS peak (MB) | 710 | 788 | 735 | ≈1.0× |
 | CPU avg % | 117.3 | 112.8 | 110.5 | ≈1.05× |
 
 Conclusion: offscreen undercounts >500 ms stalls by 2.1–2.7× and p99 by up to
 1.7×, while its resource numbers are close to the real GUI.  Offscreen is
-acceptable for pipeline and resource checks and is **not** a substitute for the
-responsiveness baseline — exactly what the issue requires.
+acceptable for pipeline and resource checks and is **not** a substitute for a
+real-machine run — exactly what the issue requires.
 
 ### Windows — pending
 
@@ -463,12 +543,12 @@ source-on-macOS or offscreen numbers are not a substitute.
 Same table; a Windows run must be executed on a Windows machine by the user.
 Mocked, source-mode-on-macOS or offscreen numbers are not a substitute.
 
-### Offscreen control (not a baseline)
+### Offscreen control (diagnostic only)
 
 Two offscreen runs exist and are kept only as controls: the 12-paragraph/6 s
 pipeline smoke recorded in `/tmp/rb1/runtime-baseline.json`, and the
-1000-paragraph/60 s control in the comparison table above.  Neither is entered
-in the macOS real-machine table.
+1000-paragraph/60 s control in the comparison table above.  Neither is a
+baseline, and neither is entered in the macOS real-machine table.
 
 ## Verifying the sampler itself
 
