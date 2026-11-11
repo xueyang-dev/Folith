@@ -26,36 +26,52 @@
 
 ## 1. 段落身份（Segment identity）
 
-外部 TU id ↔ Folith pair 的映射键定义为：
+**实例身份不含源文哈希**（#143 裁定）：身份只由外部 TU id 决定，源文摘要只作为
+**独立的变化证据**，不参与身份、不拼进 key。
 
 ```
-pair_key = "tu:" + external_id + ":" + sha256(source_text)[:16]
+identity        = "tu:" + external_id                 # 第 1 个实例
+instance n ≥ 2  = "tu:" + external_id + "#" + n       # 源文变化后的显式新实例
+source_digest   = sha256(source_text)                 # 变化证据，与身份分开存放
 ```
 
-- **可复现**：同一文件重复导入，(external_id, 源文摘要) 不变，映射键逐字节
-  相同。
-- **不稳定即再指派**：外部 id 不变而源文摘要变化时，旧身份不可证明仍然
-  成立——新映射键天然不同（嵌入了新摘要），该单元按**新身份**导入，并在
-  导入报告的 `reassignments` 中记入旧键、新键与原因 `source_changed`。
-  禁止静默沿用旧身份，也禁止按内容相似度猜测"还是同一段"。
-- 身份账本（`IdentityLedger`：external_id → 源文摘要 + pair key）随导入
-  更新；账本版本不识别时显式报错，不猜语义。
+- **可复现**：同一文件重复导入（external_id 不变），身份逐字节相同；**只改译文
+  不改身份**（摘要只吃源文，target 根本不进摘要，也不进身份）。
+- **摘要只是变化证据**：`source_digest` 单独出现在身份记录、账本与再指派报告里，
+  用来判断"源文是否变过"；它既不参与身份计算，也不出现在身份字符串里。
+- **源文变化 = 显式新实例 + 报告**：同一 external_id 的摘要与当前实例不符时，
+  分配**新实例身份**（`tu:<id>#2`、`#3`…），并记入导入报告 `reassignments`：
+  `reason="source_changed"`、`previous_identity` / `identity`、
+  `previous_digest` / `digest`、`previous_confirmed_state` / `confirmed_state`。
+  禁止让旧身份"漂移"成新内容，也禁止按内容相似度猜测"还是同一段"。
+- **旧确认状态不自动继承**：新实例的 `confirmed_state` 一律从 `False` 开始
+  （`reviewed`/审校状态不复制、不自动置真）；旧实例及其确认状态进账本
+  `history` 留档供报告与回溯，但**旧身份永不复用**——哪怕源文后来改回原文，
+  也会分配下一个新实例（`#3`），而不是悄悄回到 `tu:<id>`。
+- 身份账本（`IdentityLedger`，版本 2）：`external_id → {identity, source_digest,
+  instance, confirmed_state, history}`；同一实例重复导入命中身份与摘要 →
+  `stable=True`（"本次导入证明了身份未变"），`mark_confirmed()` 只记当前实例。
+  版本 1 的旧口径账本（身份里含源文哈希）**显式拒绝**：必须重新导入以建立新
+  账本，不得沿用旧身份。
 - **身份映射必须单射**：同一批导入里重复的外部 TU id 是身份层缺陷（损坏的
   CAT 文件、跨 `<file>` 复用 id、按 `id` 而非 `file+id` 去重都会造成），
   契约按 `DUPLICATE_EXTERNAL_ID` **单元级拒绝**该单元——绝不允许多个 TU
-  共用同一 `pair_key`（注入时后写覆盖前写，段落内容会静默丢失），也绝不把
+  共用同一身份（注入时后写覆盖前写，段落内容会静默丢失），也绝不把
   "文件内重复 id"谎报成 `source_changed`。首次出现的单元照常导入，账本保留
-  首次身份，重复单元不进 `identities`。
+  首次出现的实例，重复单元不进 `identities`。
 - 无外部 id 的单元由适配器**显式赋号并报告**；若仍未赋号，契约按
   `IDENTITY_MISSING` **单元级拒绝**（`unit_ref` 用 1 基位置引用 `#1`、`#2`…），
   其余单元继续导入——单个坏单元不得中断整份文件。
-- 不可证明稳定的再指派**不是拒绝**：单元照常导入，但报告必须让用户看见
-  "这些段被视为新段落"。需要保留历史关联时由适配器在文件内自担。
+- 再指派**不是拒绝**：单元照常导入，但报告必须让用户看见"这些段被视为新段落，
+  需要重新定位/重译/重审"。
 
-可测试判定：同一 fixture 导入两次 → 身份键与身份账本 JSON 逐字节相同
-（`ledger_first.to_json() == ledger_second.to_json()`）；篡改任一单元源文
-再导入 → 该单元出现在 `reassignments`，其余单元身份不变；重复外部 id →
-`DUPLICATE_EXTERNAL_ID` 单元级拒绝且只产出一个身份；空外部 id →
+可测试判定：同一 fixture 导入两次 → 身份列表与身份账本 JSON 逐字节相同
+（`ledger_first.to_json() == ledger_second.to_json()`），且身份里不含摘要；
+只改译文再导入 → 身份不变、`stable=True`、账本 JSON 不变；篡改任一单元源文
+再导入 → 该单元得到 `tu:<id>#2` 新身份并出现在 `reassignments`（新旧身份与
+新旧摘要齐全、`previous_confirmed_state=True` 而 `confirmed_state=False`），
+其余单元身份不变；把源文改回原文 → 又是新实例（`#3`），旧身份不复用；重复
+外部 id → `DUPLICATE_EXTERNAL_ID` 单元级拒绝且只产出一个身份；空外部 id →
 `IDENTITY_MISSING` 单元级拒绝且其余单元照常导入。
 
 ## 2. Inline 标签语义
@@ -219,9 +235,10 @@ fixture 产出指定拒绝码的单元级拒绝；文件级拒绝码登记到 `f
 - **`locked` 的落点**：第 3 节的正向映射给出 pair 字段 `{"excluded": True}`，
   而规范落点是排除账本 `excluded_segments`（另一种记录形状，本契约未定义
   其类型/键名）；二者如何统一、锁定段落是否"工作台可见只读"，待用户裁定。
-- **`source_digest` 的哈希域**：摘要吃的是带占位符的 `source_text`，因此
-  纯标签重编号会被判成源文变化；摘要输入口径（是否去占位符/归一空白）与
-  `docs/docx-contract-v1.md` 的身份口径冲突一并待裁定。
+- **`source_digest` 的输入口径**（本轮裁定只确定"摘要不做身份"，没有改摘要
+  怎么算）：摘要吃的是带占位符的 `source_text`，因此纯标签重编号会被判成源文
+  变化 → 产生一个新实例。是否去占位符/归一空白仍待后续裁定；若改口径，只影响
+  "是否判成变化"，不影响身份规则本身。
 - **标签配对的扩展语义**：按 `code_name` 栈式配对，尚无 `rid` 配对键、
   无法表达 XLIFF 2.0 `<pc>`，"允许整对省略"与"写回必须禁止整对省略"的
   严格度也不可配（属 v1.1 扩展）。

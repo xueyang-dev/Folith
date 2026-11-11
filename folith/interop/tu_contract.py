@@ -24,26 +24,51 @@ CONTRACT_VERSION = 1
 # ---------------------------------------------------------------------------
 # 1. 段落身份（Segment identity）
 # ---------------------------------------------------------------------------
-# 身份 = (外部 TU id, 源文内容摘要)。两者都可复现：同一文件重复导入必然得到
-# 同一身份；外部 id 不变而源文变化时，旧身份不可证明仍然成立——按规则生成
-# **新**身份（新 pair key 天然不同，因为它嵌入了新摘要）并如实上报再指派，
-# 绝不静默沿用旧身份。
+# #143 裁定：**实例身份不含源文哈希**。身份只由外部 TU id 决定，因此同一文件
+# 重复导入必得同一身份、只改译文不改身份；源文摘要（``source_digest``）是**独立
+# 的变化证据**，不参与身份、不拼进 key。源文变化时旧身份不被"漂移"，而是显式
+# 分配**新实例身份**（``tu:<id>#<n>``，n ≥ 2）并进入报告；旧实例留档可回溯，
+# 旧确认状态不继承。
 
 def source_digest(source_text: str) -> str:
-    """源文内容摘要（身份的第二个分量）。文本逐字符参与，不做空白归一。"""
+    """源文内容摘要（**变化证据**，不是身份的一部分）。文本逐字符参与，不做空白归一。"""
     return hashlib.sha256(str(source_text or "").encode("utf-8")).hexdigest()
 
 
-def identity_pair_key(external_id: str, digest: str) -> str:
-    """外部 TU id ↔ Folith pair 的稳定映射键。
+def identity_key(external_id: str) -> str:
+    """外部 TU id ↔ Folith pair 的身份（该 id 的第 1 个实例）。
 
-    键中同时嵌入外部 id 与源文摘要：重复导入同一文件必然得到同一键
-    （身份可复现）；源文变化时键必然变化（旧身份不会冒充仍然稳定）。
+    身份只由外部 id 决定：同一文件重复导入必得同一身份；只改译文不改身份；
+    源文摘要不参与计算。源文变化不改变这个映射，而是由
+    :func:`reconcile_identities` 分配新实例身份并报告。
     """
     ext = str(external_id or "").strip()
     if not ext:
         raise ValueError("外部 TU id 不能为空；无 id 的单元必须由适配器显式赋号并报告")
-    return f"tu:{ext}:{str(digest or '')[:16]}"
+    return f"tu:{ext}"
+
+
+def instance_identity(external_id: str, instance: int) -> str:
+    """第 ``instance`` 个实例的身份；``instance == 1`` 就是 :func:`identity_key`。
+
+    实例序号来自身份账本（源文每变化一次递增一个），因此**不含源文哈希**且可
+    复现：带着账本再导入同一份文件，身份逐字节相同。旧实例的身份不复用。
+    """
+    if isinstance(instance, bool) or not isinstance(instance, int):
+        raise ValueError(f"实例序号必须是整数：{instance!r}")
+    if instance < 1:
+        raise ValueError("实例序号必须从 1 开始")
+    base = identity_key(external_id)
+    return base if instance == 1 else f"{base}#{instance}"
+
+
+def identity_pair_key(external_id: str) -> str:
+    """v1 早期名称的兼容别名；返回的就是 :func:`identity_key`。
+
+    摘要不再参与身份，因此本函数不再接受摘要参数——需要变化证据时用
+    :func:`source_digest` 单独取。
+    """
+    return identity_key(external_id)
 
 
 # ---------------------------------------------------------------------------
@@ -426,61 +451,107 @@ def build_import_report(
 # 身份账本与再指派
 # ---------------------------------------------------------------------------
 
-LEDGER_VERSION = 1
+LEDGER_VERSION = 2
 
 
 @dataclass
 class IdentityLedger:
-    """外部 TU id → (源文摘要, pair key) 的落库记录。
+    """外部 TU id → 当前实例（身份 + 源文摘要 + 确认状态）与既往实例留档。
 
-    同一文件重复导入时用它证明身份稳定；源文件被 CAT 工具改写后再次导入，
-    摘要不符的条目按规则**再指派新身份**并进入报告，绝不静默沿用。
+    当前实例的 ``identity``/``source_digest`` 用于证明"身份未变"；``history``
+    保留旧实例（以便报告与回溯），但旧实例的**确认状态与身份都不被新实例继承**。
+    版本 1 的旧口径账本（身份里含源文哈希）显式拒绝，必须重新导入。
     """
 
     version: int = LEDGER_VERSION
-    entries: dict[str, dict[str, str]] = field(default_factory=dict)
+    entries: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, payload: Mapping[str, Any] | None) -> "IdentityLedger":
         payload = payload or {}
-        if payload and int(payload.get("version") or 0) != LEDGER_VERSION:
-            raise ValueError("身份账本版本不识别；拒绝猜测语义")
-        entries = {}
+        if payload:
+            version = int(payload.get("version") or 0)
+            if version != LEDGER_VERSION:
+                raise ValueError(
+                    f"身份账本版本 {version} 不识别（当前 {LEDGER_VERSION}）；"
+                    f"版本 {LEDGER_VERSION - 1} 的旧口径把源文摘要拼进身份，"
+                    f"必须重新导入以建立新账本，不得沿用旧身份")
+        entries: dict[str, dict[str, Any]] = {}
         for external_id, record in (payload.get("entries") or {}).items():
-            if isinstance(record, dict) and record.get("pair_key"):
-                entries[str(external_id)] = {
-                    "source_digest": str(record.get("source_digest") or ""),
-                    "pair_key": str(record["pair_key"]),
-                }
+            if not isinstance(record, dict):
+                continue
+            identity = str(record.get("identity") or "")
+            if not identity:
+                continue
+            try:
+                instance = int(record.get("instance") or 1)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"身份账本条目 {external_id!r} 的实例序号不可解析；拒绝猜测语义")
+            entries[str(external_id)] = {
+                "identity": identity,
+                "source_digest": str(record.get("source_digest") or ""),
+                "instance": max(1, instance),
+                "confirmed_state": bool(record.get("confirmed_state")),
+                "history": [dict(item) for item in (record.get("history") or [])
+                            if isinstance(item, dict)],
+            }
         return cls(entries=entries)
 
     def to_json(self) -> dict[str, Any]:
-        return {"version": self.version,
-                "entries": {key: dict(value) for key, value in self.entries.items()}}
+        return {
+            "version": self.version,
+            "entries": {
+                key: {**dict(value),
+                      "history": [dict(item) for item in (value.get("history") or [])]}
+                for key, value in self.entries.items()
+            },
+        }
+
+    def mark_confirmed(self, external_id: str, confirmed: bool = True) -> bool:
+        """记下**当前实例**的人工确认状态；同一实例跨导入保留，新实例不继承。"""
+        entry = self.entries.get(str(external_id or "").strip())
+        if entry is None:
+            return False
+        entry["confirmed_state"] = bool(confirmed)
+        return True
+
+
+def _current_instance(entry: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "identity": str(entry.get("identity") or ""),
+        "source_digest": str(entry.get("source_digest") or ""),
+        "instance": max(1, int(entry.get("instance") or 1)),
+        "confirmed_state": bool(entry.get("confirmed_state")),
+    }
 
 
 def reconcile_identities(
     units: Iterable[Mapping[str, Any]],
     ledger: IdentityLedger | None = None,
-) -> tuple[list[dict[str, str]], list[dict[str, str]], IdentityLedger,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], IdentityLedger,
            list[Rejection]]:
-    """为每个单元确定 pair 身份，返回
+    """为每个单元确定实例身份，返回
     ``(identities, reassignments, ledger, rejections)``。
 
-    - 账本没有该 id，或 id 存在且源文摘要一致 → 身份按规则计算（可复现）；
-    - id 存在但摘要变化 → 旧身份不可证明稳定，生成新身份并记入
-      ``reassignments``（``reason=source_changed``）；
+    - 账本没有该 id：分配第 1 个实例身份（``identity_key``），``stable=False``
+      （还没有可比对的旧身份）；
+    - 账本有该 id 且**摘要相同**：身份不变（``stable=True``），确认状态沿用；
+    - 账本有该 id 但**摘要变化**：分配**新实例身份**（``tu:<id>#<n>``），记入
+      ``reassignments``（``reason=source_changed``，带旧/新身份与旧/新摘要），
+      新实例的 ``confirmed_state`` 从 ``False`` 开始——旧确认状态不继承；旧身份
+      进入账本 ``history``，永不复用（哪怕源文改回原文也是新实例）；
     - 单元没有外部 id → **单元级拒绝** ``IDENTITY_MISSING``（``unit_ref`` 是
       1 基位置引用 ``#n``），其余单元继续导入；
     - 同一批次内重复的外部 id → **单元级拒绝** ``DUPLICATE_EXTERNAL_ID``：
-      身份映射必须单射，两个 TU 共用同一 ``pair_key`` 会让注入互相覆盖；
-      重复单元不进入 ``identities``，账本保留首次出现的身份，也不谎报
-      ``source_changed``。
+      身份映射必须单射，两个 TU 共用同一身份会让注入互相覆盖；重复单元不进入
+      ``identities``，账本保留首次出现的实例，也不谎报 ``source_changed``。
 
-    返回的账本已更新到本次导入之后的状态（同一文件重复导入身份可复现）。
+    ``stable`` 只表示"本次导入证明了身份未变"；源文变化得到的是**新实例**，
+    不是"身份不稳定"。
     """
     ledger = ledger or IdentityLedger()
-    identities: list[dict[str, str]] = []
+    identities: list[dict[str, Any]] = []
     reassignments: list[dict[str, str]] = []
     rejections: list[Rejection] = []
     seen_positions: dict[str, int] = {}
@@ -505,23 +576,57 @@ def reconcile_identities(
         digest = str(unit.get("source_digest") or "") or source_digest(
             str(unit.get("source_text") or ""))
         known = ledger.entries.get(external_id)
-        pair_key = identity_pair_key(external_id, digest)
-        if known and known.get("pair_key") != pair_key:
+        if not known or not known.get("identity"):
+            # 第一次见到该外部 id：第 1 个实例，没有可比对的旧身份。
+            current = {
+                "identity": identity_key(external_id),
+                "source_digest": digest,
+                "instance": 1,
+                "confirmed_state": False,
+            }
+            identity, instance = current["identity"], 1
+            stable = False
+            confirmed_state = False
+            history: list[dict[str, Any]] = []
+        elif known.get("source_digest") == digest:
+            # 身份与摘要都命中：身份未变（stable），确认状态沿用同一实例。
+            previous = _current_instance(known)
+            identity, instance = previous["identity"], previous["instance"]
+            stable = True
+            confirmed_state = previous["confirmed_state"]
+            history = [dict(item) for item in (known.get("history") or [])]
+        else:
+            # 源文变了：显式新实例；旧实例留档，确认状态不继承。
+            previous = _current_instance(known)
+            instance = previous["instance"] + 1
+            identity = instance_identity(external_id, instance)
+            stable = False
+            confirmed_state = False
+            history = [dict(item) for item in (known.get("history") or [])]
+            history.append(previous)
             reassignments.append({
                 "external_id": external_id,
-                "previous_pair_key": str(known.get("pair_key") or ""),
-                "pair_key": pair_key,
                 "reason": "source_changed",
+                "previous_identity": previous["identity"],
+                "identity": identity,
+                "previous_digest": previous["source_digest"],
+                "digest": digest,
+                "previous_confirmed_state": previous["confirmed_state"],
+                "confirmed_state": False,
             })
         identities.append({
             "external_id": external_id,
+            "identity": identity,
             "source_digest": digest,
-            "pair_key": pair_key,
-            "stable": bool(known and not any(
-                item["external_id"] == external_id for item in reassignments)),
+            "instance": instance,
+            "stable": stable,
+            "confirmed_state": confirmed_state,
         })
         ledger.entries[external_id] = {
+            "identity": identity,
             "source_digest": digest,
-            "pair_key": pair_key,
+            "instance": instance,
+            "confirmed_state": confirmed_state,
+            "history": history,
         }
     return identities, reassignments, ledger, rejections

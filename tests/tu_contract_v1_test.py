@@ -30,7 +30,9 @@ from folith.interop import (  # noqa: E402
     build_import_report,
     canonical_snapshot,
     diff_snapshots,
+    identity_key,
     identity_pair_key,
+    instance_identity,
     map_cat_status,
     map_folith_status,
     no_op_verdict,
@@ -70,8 +72,34 @@ def _units(fixture):
 
 
 # ---------------------------------------------------------------------------
-# 1. 段落身份
+# 1. 段落身份（#143 裁定：实例身份不含源文哈希）
 # ---------------------------------------------------------------------------
+
+def test_identity_is_the_external_id_without_any_content_hash():
+    # 身份只由外部 TU id 决定：不含源文摘要、不含时间戳。
+    assert identity_key("1") == "tu:1"
+    assert identity_key(" 7 ") == "tu:7"
+    assert source_digest("Hello world.") not in identity_key("1")
+    # 旧名 identity_pair_key 仍可调用，但它返回的就是同一个身份。
+    assert identity_pair_key("1") == identity_key("1") == "tu:1"
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        identity_key("   ")
+
+
+def test_instance_identity_adds_an_ordinal_but_never_the_digest():
+    assert instance_identity("1", 1) == identity_key("1") == "tu:1"
+    assert instance_identity("1", 2) == "tu:1#2"
+    assert instance_identity("1", 3) == "tu:1#3"
+    assert source_digest("anything at all") not in instance_identity("1", 2)
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        instance_identity("1", 0)
+
 
 def test_identity_reproducible_across_reimports():
     fixture = _fixture("synthetic-minimal")
@@ -82,59 +110,150 @@ def test_identity_reproducible_across_reimports():
     second, reassignments_second, ledger_second, rejections_second = \
         reconcile_identities(units, ledger_first)
 
-    assert reassignments_first == []
-    assert reassignments_second == []
-    assert rejections_first == []
-    assert rejections_second == []
-    # 全部身份都被证明稳定；``stable`` 是"本次导入是否证明了稳定"的注记，
-    # 不是身份的一部分——身份键本身逐字节可复现，不含时间戳等不可复现分量。
+    assert reassignments_first == reassignments_second == []
+    assert rejections_first == rejections_second == []
+    expected = [identity_key(unit["external_id"]) for unit in units]
+    assert [item["identity"] for item in first] == expected
+    assert [item["identity"] for item in second] == expected
+    assert [item["instance"] for item in first] == [1] * len(units)
+    # stable = 身份与摘要都命中账本（本次证明了"身份未变"）。
     assert not any(item["stable"] for item in first)
     assert all(item["stable"] for item in second)
-    assert [item["pair_key"] for item in first] \
-        == [item["pair_key"] for item in second] \
-        == [identity_pair_key(unit["external_id"],
-                              source_digest(unit["source_text"]))
-            for unit in units]
-    # 文档声称的"身份账本 diff 为空"必须由测试判定，而不只是 pair_key 相等（N4）。
+    # 摘要作为独立证据随身份返回，但不参与身份。
+    assert [item["source_digest"] for item in first] == [
+        source_digest(unit["source_text"]) for unit in units]
+    assert all(item["source_digest"] not in item["identity"] for item in first)
+    # 文档声称的"账本 diff 为空"由测试判定（N4）。
     assert ledger_first.to_json() == ledger_second.to_json()
 
 
-def test_identity_reassigned_when_source_changed_and_reported():
-    fixture = _fixture("synthetic-minimal")
-    units = _units(fixture)
+def test_identity_unchanged_when_only_the_target_changed():
+    units = _units(_fixture("synthetic-minimal"))
     _identities, _reassignments, ledger, _rejections = reconcile_identities(units)
 
-    tampered = [dict(unit) for unit in units]
-    tampered[1]["source_text"] = tampered[1]["source_text"] + " Added clause."
-    tampered[1]["source_digest"] = source_digest(tampered[1]["source_text"])
+    retranslated = [dict(unit) for unit in units]
+    for unit in retranslated:
+        unit["target"] = "改过的译文"  # 译文不参与身份，也不参与源文摘要
     identities, reassignments, ledger_after, rejections = \
-        reconcile_identities(tampered, ledger)
+        reconcile_identities(retranslated, ledger)
+
+    assert reassignments == [] and rejections == []
+    assert [(item["identity"], item["stable"]) for item in identities] == [
+        (identity_key(unit["external_id"]), True) for unit in units]
+    assert [item["source_digest"] for item in identities] == [
+        unit["source_digest"] for unit in units]
+    assert ledger_after.to_json() == ledger.to_json()
+
+
+def test_source_change_assigns_a_new_instance_and_reports_it():
+    units = _units(_fixture("synthetic-minimal"))
+    _identities, _reassignments, ledger, _rejections = reconcile_identities(units)
+
+    changed = [dict(unit) for unit in units]
+    changed[1]["source_text"] += " Added clause."
+    changed[1]["source_digest"] = source_digest(changed[1]["source_text"])
+    identities, reassignments, ledger_after, rejections = \
+        reconcile_identities(changed, ledger)
 
     assert rejections == []
+    by_id = {item["external_id"]: item for item in identities}
+    # 未变的单元：身份不变，stable=True。
+    assert by_id["1"]["identity"] == identity_key("1")
+    assert by_id["1"]["stable"] is True
+    # 源文变化的单元：显式新实例，不是同一个身份悄悄漂移。
+    assert by_id["2"]["identity"] == instance_identity("2", 2) == "tu:2#2"
+    assert by_id["2"]["instance"] == 2
+    assert by_id["2"]["stable"] is False
+    assert by_id["2"]["confirmed_state"] is False
+
     assert len(reassignments) == 1
-    assert reassignments[0]["external_id"] == "2"
-    assert reassignments[0]["reason"] == "source_changed"
-    assert reassignments[0]["previous_pair_key"] != reassignments[0]["pair_key"]
-    # 其余单元身份不变。
-    stable = {item["external_id"]: item["pair_key"] for item in identities}
-    assert stable["1"] == identity_pair_key("1", source_digest("Hello world."))
-    # 再指派后账本已更新：再次原样导入身份保持可复现。
-    _again, reassignments_again, _ledger_again, rejections_again = \
-        reconcile_identities(tampered, ledger_after)
-    assert rejections_again == []
-    assert reassignments_again == []
+    record = reassignments[0]
+    assert record["external_id"] == "2"
+    assert record["reason"] == "source_changed"
+    assert record["previous_identity"] == "tu:2"
+    assert record["identity"] == "tu:2#2"
+    assert record["previous_digest"] == source_digest("Please review the contract.")
+    assert record["digest"] == source_digest(changed[1]["source_text"])
+    assert record["previous_digest"] != record["digest"]
+    # 新旧身份与旧摘要能进导入报告。
+    report = build_import_report(
+        accepted=[item["identity"] for item in identities],
+        reassignments=reassignments)
+    assert report.to_json()["reassignments"][0]["previous_identity"] == "tu:2"
+
+    # 再导入同一份（未再改）→ 身份保持，stable=True。
+    again, reassignments_again, _ledger_again, rejections_again = \
+        reconcile_identities(changed, ledger_after)
+    assert reassignments_again == [] and rejections_again == []
+    assert all(item["stable"] for item in again)
+    assert [item["identity"] for item in again] == [
+        item["identity"] for item in identities]
+
+
+def test_old_confirmed_state_is_not_inherited_by_the_new_instance():
+    units = _units(_fixture("synthetic-minimal"))
+    _identities, _reassignments, ledger, _rejections = reconcile_identities(units)
+    assert ledger.mark_confirmed("2") is True
+    identities, _reassignments, ledger, _rejections = \
+        reconcile_identities(units, ledger)
+    assert {item["external_id"]: item for item in identities}["2"][
+        "confirmed_state"] is True
+
+    changed = [dict(unit) for unit in units]
+    changed[1]["source_text"] += " Added clause."
+    changed[1]["source_digest"] = source_digest(changed[1]["source_text"])
+    identities, reassignments, ledger_after, _rejections = \
+        reconcile_identities(changed, ledger)
+
+    by_id = {item["external_id"]: item for item in identities}
+    # 新实例从零开始：旧实例的确认状态不得复制过来。
+    assert by_id["2"]["identity"] == "tu:2#2"
+    assert by_id["2"]["confirmed_state"] is False
+    assert reassignments[0]["previous_confirmed_state"] is True
+    assert reassignments[0]["confirmed_state"] is False
+    assert ledger_after.entries["2"]["confirmed_state"] is False
+    # 旧实例（含确认状态）留在账本 history 里可回溯，但不会被复用。
+    history = ledger_after.entries["2"]["history"]
+    assert [item["identity"] for item in history] == ["tu:2"]
+    assert history[0]["confirmed_state"] is True
+    # 确认只记在当前实例上。
+    assert ledger_after.mark_confirmed("2") is True
+    assert ledger_after.entries["2"]["identity"] == "tu:2#2"
+    assert ledger_after.entries["2"]["confirmed_state"] is True
+
+
+def test_an_old_identity_is_never_reused_even_when_the_source_returns():
+    units = _units(_fixture("synthetic-minimal"))
+    _identities, _reassignments, ledger, _rejections = reconcile_identities(units)
+
+    changed = [dict(unit) for unit in units]
+    changed[1]["source_text"] += " Added clause."
+    changed[1]["source_digest"] = source_digest(changed[1]["source_text"])
+    identities, _reassignments, ledger, _rejections = \
+        reconcile_identities(changed, ledger)
+    assert identities[1]["identity"] == "tu:2#2"
+
+    # 把源文改回原文：仍分配新实例（tu:2#3），不会悄悄复用旧的 tu:2。
+    identities, reassignments, ledger, _rejections = \
+        reconcile_identities(units, ledger)
+    by_id = {item["external_id"]: item for item in identities}
+    assert by_id["2"]["identity"] == "tu:2#3"
+    assert by_id["2"]["instance"] == 3
+    assert by_id["2"]["stable"] is False
+    assert reassignments[0]["previous_identity"] == "tu:2#2"
+    assert [item["identity"] for item in ledger.entries["2"]["history"]] == [
+        "tu:2", "tu:2#2"]
 
 
 def test_identity_duplicate_external_id_rejected_per_unit():
-    """B3：同一批次内重复 external_id 必须单元级显式拒绝，不得静默共享 pair_key。"""
+    """B3：同一批次内重复 external_id 必须单元级显式拒绝，不得静默共享身份。"""
     identities, reassignments, ledger, rejections = reconcile_identities([
         {"external_id": "1", "source_text": "Same sentence."},
         {"external_id": "1", "source_text": "Same sentence."},
     ])
 
-    # 只产出一个身份：第二个单元被拒绝，绝不出现两个 TU 共用同一 pair_key。
-    assert [item["pair_key"] for item in identities] == [
-        identity_pair_key("1", source_digest("Same sentence."))]
+    # 只产出一个身份：第二个单元被拒绝，绝不出现两个 TU 共用同一 identity。
+    assert [item["identity"] for item in identities] == [identity_key("1")]
     assert not any(item["stable"] for item in identities)
     assert reassignments == []
     assert len(rejections) == 1
@@ -157,7 +276,7 @@ def test_identity_duplicate_external_id_rejected_per_unit():
 
     # 重复 id 的拒绝码是登记过的单元级码：可直接进导入报告。
     report = build_import_report(
-        accepted=[item["pair_key"] for item in identities],
+        accepted=[item["identity"] for item in identities],
         rejections=rejections)
     assert report.to_json()["rejections"][0]["code"] == "DUPLICATE_EXTERNAL_ID"
     assert "DUPLICATE_EXTERNAL_ID" in UNIT_SCOPE_CODES
@@ -188,7 +307,7 @@ def test_identity_requires_external_id_and_ledger_roundtrip():
     import pytest
 
     with pytest.raises(ValueError):
-        identity_pair_key("", source_digest("x"))
+        identity_key("")
     ledger = IdentityLedger.from_json(IdentityLedger().to_json())
     _identities, _reassignments, ledger, _rejections = reconcile_identities(
         _units(_fixture("synthetic-minimal")), ledger)
@@ -196,6 +315,12 @@ def test_identity_requires_external_id_and_ledger_roundtrip():
     assert restored == ledger
     with pytest.raises(ValueError):
         IdentityLedger.from_json({"version": 99, "entries": {}})
+    # v1 账本（身份里含源文哈希）是旧口径：显式拒绝并要求重新导入，绝不沿用。
+    with pytest.raises(ValueError) as excinfo:
+        IdentityLedger.from_json({"version": 1, "entries": {
+            "1": {"source_digest": source_digest("x"),
+                  "pair_key": "tu:1:0123456789abcdef"}}})
+    assert "重新导入" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
