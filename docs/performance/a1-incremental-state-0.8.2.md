@@ -356,3 +356,12 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 - 窗口级：`domains=("rows","counts")` 时 `adapter.load_state` 调用 0 次、无投影在飞；`domains=("review",)` 时投影 worker 起一次；`domains=("delivery",)` 时交付预检被调用；
 - snapshot：worker 活跃 + state.json 变化 → `_poll_workbench_full` 0 次、delta 路径保留；无 worker + 变化 → 整份重建且 `_cached_state` 更新；
 - 静态检查正负向（退出码与输出）。
+
+### 13.8 P3 收尾（2026-11-11）
+
+- **P2 审查 minor 已修并合入 P3**：`window.py` 的两条 `failed()` 现在也调用 `_flush_pending_poll()`（P2 分支 `527e2541`，P3 经 merge `6e2a215d` 带入）。修后 P2 分支同会话 `tests/qt_workbench_poll_test.py tests/qt_workbench_delta_test.py` → **15 passed in 40.92 s**。
+- **全量客户端套件发现并修复一个真实缺陷**：`WorkbenchReadModel.apply` 在"行来自 `paras`、`_pairs` 仍为空"时（任务第一批译文刚到）直接 `self._pairs[index] = pair` → `IndexError` 抛在 `done` 回调里，行保持旧值（客户端用例 `test_workbench_poll_reloads_a_journal_only_translation` 复现）。修复：`_pairs` 随索引增长；同时 `_apply_feed_result` 对应用 delta 的任何意外异常都回退到整份重建并记日志，不再留下过期行。
+- **P3 测试**：`tests/qt_workbench_domain_versions_test.py` 8 passed；P3 套件（poll/projection/delta/domain/layout/projects）**72 passed**；客户端全量 `qt_client_window_test.py` 见下（118 例，修复后重跑）。
+- **perf 复测（域版本迁移后，`FOLITH_PERF_MEASURE=1`）**：1k 每批 p50 **0.36 ms**（p95 0.70 / max 1.71），10k p50 **0.56 ms**（p95 1.02 / max 2.16）；整份重建 63 ms / 655 ms。相对 P2 的 0.73/1.11 更好（机器更空），**没有回归**。
+
+**边界外发现（只报不改）**：`folith/qt/workers.py::TaskRunner.submit` 的 `on_done` 是通过把普通 Python 函数连接到 `Task.signals.done` 实现的。PySide6 对"非 QObject 接收者的可调用对象"默认按 DirectConnection 处理，实测**回调在 QThreadPool 工作线程执行**（探针：`on_done` 记录线程 id != GUI 线程 id），也就是说 `MainWindow._poll_workbench*` 的 `done()` 实际上在 worker 线程里触碰 view/窗口对象。这是 **P2/P3 之前就存在的架构问题**（#343 审查范围未覆盖 workers.py），与 #327 的随机 SIGSEGV 风险同类，建议单开 issue：给 `TaskRunner` 加一个真正的 QObject 接收者（或显式 `Qt.QueuedConnection`），并补"窗口销毁后 in-flight 回调"的用例。本分支未改 `workers.py`。
