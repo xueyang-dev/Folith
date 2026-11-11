@@ -177,17 +177,18 @@ class StyleCard(QFrame):
         self.ring = QLabel()
         self.ring.setObjectName("radioRing")
         self.ring.setFixedSize(18, 18)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        head = QHBoxLayout()
+        column.addLayout(head)
+        head.setSpacing(theme_module.SPACE["md"])
+        head.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
         text = QVBoxLayout()
+        head.addLayout(text, 1)
         text.setSpacing(2)
         text.addWidget(title)
         text.addWidget(self.summary_label)
-        head = QHBoxLayout()
-        head.setSpacing(theme_module.SPACE["md"])
-        head.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
-        head.addLayout(text, 1)
         head.addWidget(self.check, 0, Qt.AlignmentFlag.AlignTop)
         head.addWidget(self.ring, 0, Qt.AlignmentFlag.AlignTop)
-        column.addLayout(head)
 
         fits = [i18n.tr(fit) for fit in STYLE_FITS.get(style_id, ())]
         if fits:

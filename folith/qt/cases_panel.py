@@ -46,6 +46,14 @@ class CasesPanel(QWidget):
         self.lead.setWordWrap(True)
         self.truth = style_module.NoticeStrip("", tone="info")
 
+        # 先建外层布局并挂到页面上，再往子布局里放控件：先填后挂会让 PySide 为每个
+        # 条目留下 QWidgetItem 包装器（见 tests/qt_layout_item_wrapper_test.py）。
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(10)
+        for widget in (self.title, self.lead, self.truth):
+            layout.addWidget(widget)
+
         self.origin_box = style_module.ComboBox()
         for value in cases_view.ORIGIN_FILTERS:
             self.origin_box.addItem(i18n.tr(value), value)
@@ -59,6 +67,7 @@ class CasesPanel(QWidget):
                        self.search_edit.textChanged):
             signal.connect(self._refilter)
         filters = QHBoxLayout()
+        layout.addLayout(filters)
         filters.addWidget(self.origin_box)
         filters.addWidget(self.status_box)
         filters.addWidget(self.search_edit, 1)
@@ -73,7 +82,14 @@ class CasesPanel(QWidget):
         self.empty = QLabel(i18n.tr('尚未生成案例选择产物。'))
         self.empty.setProperty("role", "muted")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.empty)
+
+        # 左右两栏：左栏列表，右栏详情卡。容器布局先挂到页面上，再挂子布局/控件。
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        layout.addLayout(body, 1)
         left = QVBoxLayout()
+        body.addLayout(left, 0)
         left.addWidget(self.queue, 1)
         left.addWidget(self.queue_caption)
 
@@ -84,6 +100,14 @@ class CasesPanel(QWidget):
         self.note_label = QLabel("")
         self.note_label.setObjectName("hint")
         self.note_label.setWordWrap(True)
+
+        detail_card = Card()
+        body.addWidget(detail_card, 1)
+        detail_layout = QVBoxLayout(detail_card)
+        detail_layout.setContentsMargins(16, 14, 16, 14)
+        detail_layout.setSpacing(8)
+        for widget in (self.detail, self.stale_notice, self.note_label):
+            detail_layout.addWidget(widget)
 
         def button(text: str, name: str = "") -> QPushButton:
             widget = QPushButton(text)
@@ -100,6 +124,7 @@ class CasesPanel(QWidget):
         self.edit_button.clicked.connect(lambda: self._emit("edit"))
         self.replace_button.clicked.connect(lambda: self._emit("replace"))
         actions = QHBoxLayout()
+        detail_layout.addLayout(actions)
         for widget in (self.approve_button, self.exclude_button, self.edit_button,
                        self.replace_button):
             actions.addWidget(widget)
@@ -113,38 +138,17 @@ class CasesPanel(QWidget):
         self.baseline_reject = button(i18n.tr('拒绝模拟初译'))
         self.baseline_save.clicked.connect(lambda: self._emit("baseline_save"))
         self.baseline_reject.clicked.connect(lambda: self._emit("baseline_reject"))
-        baseline_actions = QHBoxLayout()
-        baseline_actions.addWidget(self.baseline_save)
-        baseline_actions.addWidget(self.baseline_reject)
-        baseline_actions.addStretch(1)
         self.baseline_box = QWidget()
         baseline_layout = QVBoxLayout(self.baseline_box)
         baseline_layout.setContentsMargins(0, 0, 0, 0)
         for widget in (self.baseline_title, self.baseline_edit):
             baseline_layout.addWidget(widget)
+        baseline_actions = QHBoxLayout()
         baseline_layout.addLayout(baseline_actions)
-
-        detail_card = Card()
-        detail_layout = QVBoxLayout(detail_card)
-        detail_layout.setContentsMargins(16, 14, 16, 14)
-        detail_layout.setSpacing(8)
-        for widget in (self.detail, self.stale_notice, self.note_label):
-            detail_layout.addWidget(widget)
-        detail_layout.addLayout(actions)
+        baseline_actions.addWidget(self.baseline_save)
+        baseline_actions.addWidget(self.baseline_reject)
+        baseline_actions.addStretch(1)
         detail_layout.addWidget(self.baseline_box)
-
-        body = QHBoxLayout()
-        body.setSpacing(12)
-        body.addLayout(left, 0)
-        body.addWidget(detail_card, 1)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(10)
-        for widget in (self.title, self.lead, self.truth):
-            layout.addWidget(widget)
-        layout.addLayout(filters)
-        layout.addWidget(self.empty)
-        layout.addLayout(body, 1)
         self.apply([], {})
 
     # ================= 数据 =================

@@ -2487,12 +2487,13 @@ class EmptyState(QFrame):
         if page:
             # 说明限宽居中：折行的 QLabel 不能直接带 AlignHCenter 放进布局——那样它按
             # 单行宽度取高度，折行后的第二行会被裁掉。放进一个限宽的行里，两侧留弹性。
+            # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
             line = QHBoxLayout()
+            column.addLayout(line)
             line.addStretch(1)
             self.hint_label.setFixedWidth(420)
             line.addWidget(self.hint_label)
             line.addStretch(1)
-            column.addLayout(line)
         else:
             column.addWidget(self.hint_label)
         column.addSpacing(theme_module.SPACE["sm"])

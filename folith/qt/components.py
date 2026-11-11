@@ -294,13 +294,14 @@ class _MetricCard(Card):
         self.badge = IconBadge(icon_name, tone, size=32, icon_size=16)
         self.name = QLabel(label)
         self.name.setObjectName("metricLabel")
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         head = QHBoxLayout()
+        column.addLayout(head)
         head.setSpacing(space["sm"])
         head.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignVCenter)
         head.addWidget(self.name, 1, Qt.AlignmentFlag.AlignVCenter)
         self.value = QLabel("—")
         self.value.setObjectName("metricValue")
-        column.addLayout(head)
         column.addWidget(self.value)
         # 投影由 Card（style.Surface）自己画，不再叠 QGraphicsDropShadowEffect。
 
@@ -797,7 +798,7 @@ class ProjectTabs(QWidget):
 
     def _reveal(self, tab) -> None:
         if tab is not None and self.isVisible():
-            QTimer.singleShot(0, lambda: self.scroll.ensureWidgetVisible(tab, 24, 0))
+            QTimer.singleShot(0, self, lambda: self.scroll.ensureWidgetVisible(tab, 24, 0))
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt naming
         # 竖向滚轮 → 横向滚动（鼠标用户没有横向滚轮）。
@@ -1687,12 +1688,14 @@ class StatusLabel(QWidget):
         #: 折行模式下状态短语之后的说明（次要色，不着色）——只有状态本身带语气色。
         self.detail = None
         if wrap:
+            # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
             dot_box = QVBoxLayout()
+            row.addLayout(dot_box)
             dot_box.setContentsMargins(0, max(0, (self.label.fontMetrics().height() - 8) // 2 + 1), 0, 0)
             dot_box.addWidget(self.dot)
             dot_box.addStretch(1)
-            row.addLayout(dot_box)
             column = QVBoxLayout()
+            row.addLayout(column, 1)
             column.setContentsMargins(0, 0, 0, 0)
             column.setSpacing(2)
             column.addWidget(self.label)
@@ -1700,7 +1703,6 @@ class StatusLabel(QWidget):
             style_module.set_text_role(self.detail, "meta")
             self.detail.setVisible(False)
             column.addWidget(self.detail)
-            row.addLayout(column, 1)
         else:
             row.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignVCenter)
             row.addWidget(self.label, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -2221,16 +2223,17 @@ class Popover(QFrame):
                                   theme_module.SPACE["md"], theme_module.SPACE["md"])
         layout.setSpacing(theme_module.SPACE["sm"])
         if header:
+            # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+            head = QHBoxLayout()
+            layout.addLayout(head)
+            head.setContentsMargins(0, 0, 0, 0)
             head_text = QVBoxLayout()
+            head.addLayout(head_text, 1)
             head_text.setContentsMargins(0, 0, 0, 0)
             head_text.setSpacing(0)
             head_text.addWidget(self.title_label)
             head_text.addWidget(self.subtitle_label)
-            head = QHBoxLayout()
-            head.setContentsMargins(0, 0, 0, 0)
-            head.addLayout(head_text, 1)
             head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
-            layout.addLayout(head)
         else:
             # 小卡（侧栏连接浮窗）：内容自己说清楚是什么，点外面或 Esc 关闭，不要 ×。
             for widget in (self.title_label, self.subtitle_label, self.close_button):
@@ -2690,6 +2693,7 @@ class OptionCard(QPushButton):
                                   theme_module.SPACE["md"] + 2, theme_module.SPACE["sm"] + 2)
         column.setSpacing(theme_module.SPACE["xxs"])
         head = QHBoxLayout()
+        column.addLayout(head)
         head.setSpacing(theme_module.SPACE["xs"] + 2)
         # 子控件一开始就带父窗口：没有父窗口时 setVisible(True) 会让它闪成顶层小窗。
         self.icon_label = QLabel(self)
@@ -2707,7 +2711,6 @@ class OptionCard(QPushButton):
         self.detail_label.setWordWrap(True)
         self.detail_label.setMinimumWidth(1)
         self.detail_label.setVisible(bool(detail))
-        column.addLayout(head)
         column.addWidget(self.detail_label)
         self.toggled.connect(self._sync)
         self._sync()
@@ -2722,7 +2725,7 @@ class OptionCard(QPushButton):
         if event.type() == QEvent.Type.EnabledChange:
             self._sync()
         elif event.type() == QEvent.Type.StyleChange:
-            QTimer.singleShot(0, self._sync)      # 主题名在样式表之后才改
+            QTimer.singleShot(0, self, self._sync)      # 主题名在样式表之后才改
 
     def _sync(self, *_args) -> None:
         # 标题颜色在这里写：QSS 的「父控件 :checked 下的子标签」在夜间主题里不可靠。
@@ -3039,7 +3042,9 @@ class FormRow(QWidget):
         self.hint_label: QLabel | None = None
         stretch = 0 if value is not None else 1
         if hint:
+            # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
             column = QVBoxLayout()
+            layout.addLayout(column, stretch)
             column.setContentsMargins(0, 0, 0, 0)
             column.setSpacing(sp["xxs"])
             column.addWidget(self.title_label)
@@ -3047,7 +3052,6 @@ class FormRow(QWidget):
             self.hint_label.setObjectName("hint")
             self.hint_label.setWordWrap(True)
             column.addWidget(self.hint_label)
-            layout.addLayout(column, stretch)
         else:
             layout.addWidget(self.title_label, stretch, Qt.AlignmentFlag.AlignVCenter)
         if value is not None:
