@@ -263,6 +263,28 @@ def _signature(path: Optional[Path]) -> Optional[Tuple[int, int]]:
     return stat.st_mtime_ns, stat.st_size
 
 
+#: Bytes of the journal head used to detect a replaced/rewritten file.
+#: Filesystem metadata is not portable enough for that decision: Windows
+#: updates the last-write time from a coarse system clock (~15.6 ms), so a
+#: truncate-and-refill can leave an identical ``(mtime_ns, size)``; and
+#: ``st_ino`` is 0 / unstable on some Windows filesystems.  The head of the
+#: file is content, not metadata: an append-only journal never changes it, and
+#: any replacement starts with different bytes (each record carries a random
+#: ``mutation_id``), so comparing it works the same on every platform.
+_HEAD_BYTES = 256
+
+
+def _read_head(path: Path, size: int) -> bytes:
+    """First ``_HEAD_BYTES`` bytes of the journal (empty when it is empty)."""
+    if size <= 0:
+        return b""
+    try:
+        with path.open("rb") as stream:
+            return stream.read(min(size, _HEAD_BYTES))
+    except OSError:
+        return b""
+
+
 def _journal_signature(path: Path) -> Optional[Tuple[int, int, int, int]]:
     """``(dev, inode, mtime_ns, size)``.
 
@@ -422,6 +444,7 @@ class StateFeed:
         self._seq = max(0, int(cursor_seq))
         self._offset = 0
         self._journal_sig = None
+        self._head: Optional[bytes] = None
         self._snapshot_sig = _signature(self.state_path)
         self._legacy_reason = ""
 
@@ -450,21 +473,21 @@ class StateFeed:
         if journal_sig is None:
             return Idle()
         size = journal_sig[3]
-        if self._journal_sig is not None \
-                and (journal_sig[0], journal_sig[1]) != (self._journal_sig[0], self._journal_sig[1]):
-            # Compaction replaced the journal file.  Sequence numbers continue
-            # from the snapshot cursor, so the byte cursor is the only thing to
-            # reset; the seq check below decides whether anything was lost.
+        head = _read_head(self.journal_path, size)
+        # A changed head means the file we were reading has been replaced or
+        # rewritten in place.  This is the portable criterion: it does not trust
+        # the inode (unreliable on Windows) or the nanosecond mtime (Windows
+        # stamps come from a ~15.6 ms clock, so two writes can share one).
+        rewritten = self._head is not None and head != self._head
+        replaced = self._journal_sig is not None \
+            and (journal_sig[0], journal_sig[1]) != (self._journal_sig[0], self._journal_sig[1])
+        if rewritten or replaced or size < self._offset:
+            # Sequence numbers continue across compaction, so the byte cursor is
+            # the only thing to reset; the seq check below decides whether any
+            # record was actually lost.
             self._offset = 0
-        if size < self._offset:
-            self._offset = 0
-        if size == self._offset and journal_sig != self._journal_sig:
-            # Same length, different content/timestamp: an in-place rewrite (a
-            # truncation that refilled the file to the old byte count).  The
-            # byte cursor cannot prove what is behind it any more, so re-read
-            # from the start once and let the sequence check decide.
-            self._offset = 0
-        if self._offset == size and journal_sig == self._journal_sig:
+        if self._offset == size and journal_sig == self._journal_sig and not rewritten:
+            self._head = head
             return Idle()
 
         records, next_offset = _read_suffix(self.journal_path, self._offset,
@@ -475,15 +498,18 @@ class StateFeed:
                 # the clean prefix reaches so the next poll starts after them.
                 self._offset = next_offset
                 self._journal_sig = journal_sig
+                self._head = head
                 return Idle()
             if self._offset < size:
                 kind = _tail_kind(self.journal_path, self._offset, size)
                 self._journal_sig = journal_sig
                 if kind == "partial":
+                    self._head = head
                     return Idle("partial_tail")
                 return ResyncRequired(REASON_CORRUPT_RECORD,
                                       f"unusable line at offset {self._offset}")
             self._journal_sig = journal_sig
+            self._head = head
             return Idle()
 
         expected = self._seq + 1
@@ -524,6 +550,7 @@ class StateFeed:
         self._seq = last_seq
         self._offset = next_offset
         self._journal_sig = journal_sig
+        self._head = head
         return delta
 
     # -- building ---------------------------------------------------------
