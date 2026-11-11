@@ -163,18 +163,23 @@ def _setting_row(title: str, control: QWidget, hint="") -> QWidget:
     row = QHBoxLayout(holder)
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(theme_module.SPACE["md"])
-    row.addLayout(_copy_column(title, hint), 1)
+    _add_copy_column(row, title, hint)
     row.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
     return holder
 
 
-def _copy_column(title: str, hint="") -> QVBoxLayout:
-    """左侧的"标题 + 一行说明"。
+def _add_copy_column(row: QHBoxLayout, title: str, hint="") -> None:
+    """左侧的"标题 + 一行说明"：先把列挂到 ``row``，再往里放标签。
+
+    先挂后填是硬要求（``tests/qt_layout_item_wrapper_test.py``）：``row`` 已经装
+    在控件上，若先填好列再 ``addLayout``，PySide 会给每个标签留下一个
+    ``QWidgetItem`` 包装器，Qt 删掉条目后它仍在 Shiboken 表里（SIGSEGV 种子）。
 
     ``hint`` 既可以是一句话，也可以是一个 **QLabel** —— 后者用于说明会随控件
     取值变化的行（如「请求调度」的批次说明），调用方要能在后面接着改它的文案。
     """
     column = QVBoxLayout()
+    row.addLayout(column, 1)
     column.setContentsMargins(0, 0, 0, 0)
     column.setSpacing(theme_module.SPACE["xxs"])
     column.addWidget(style_module.field_label(title))
@@ -186,7 +191,6 @@ def _copy_column(title: str, hint="") -> QVBoxLayout:
         note.setObjectName("hint")
         note.setWordWrap(True)
         column.addWidget(note)
-    return column
 
 
 #: 分组行的左缩进（发丝线与折叠体从这里开始）；分组与分组行在 components 里，全应用共用。
@@ -226,7 +230,7 @@ class ToggleRow(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(theme_module.SPACE["md"])
-        row.addLayout(_copy_column(title, hint), 1)
+        _add_copy_column(row, title, hint)
         row.addWidget(box, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt 命名
@@ -950,12 +954,13 @@ class TaskSetupPanel(QWidget):
         self.style_inherit_button.setCheckable(True)
         self.style_inherit_button.setToolTip(i18n.tr('沿用设置里的风格规则'))
         self.style_inherit_button.clicked.connect(lambda: self.style_box.setCurrentIndex(0))
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         actions = QHBoxLayout()
+        inner.addLayout(actions)
         actions.setSpacing(theme_module.SPACE["md"])
         actions.addStretch(1)
         actions.addWidget(self.style_profile_button)
         actions.addWidget(self.style_inherit_button)
-        inner.addLayout(actions)
 
         # 推荐结果只在用过「智能画像」之后才出现。
         self.style_accept_button = QPushButton(i18n.tr('接受推荐'))
@@ -967,10 +972,10 @@ class TaskSetupPanel(QWidget):
         self.style_status.setWordWrap(True)
         self.style_status.setVisible(False)
         reco_row = QHBoxLayout()
+        inner.addLayout(reco_row)
         reco_row.setSpacing(theme_module.SPACE["md"])
         reco_row.addWidget(self.style_status, 1)
         reco_row.addWidget(self.style_accept_button, 0, Qt.AlignmentFlag.AlignVCenter)
-        inner.addLayout(reco_row)
 
         # 文档画像：模型把这份文档当成什么来译（领域 · 文本类型 · 读者 · 语域）。
         # 判断错了可以改；保存后翻译直接用它。

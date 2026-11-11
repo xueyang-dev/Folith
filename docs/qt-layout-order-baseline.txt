@@ -1,14 +1,3 @@
 # Existing "apply after attach" layout sites (ratchet).
 # Each fix batch removes its own lines; see docs/segfault-audit-0.8.2.md.
-folith/qt/views.py:1266
-folith/qt/views.py:1808
-folith/qt/views.py:1828
-folith/qt/views.py:2156
-folith/qt/views.py:3419
-folith/qt/views.py:3496
-folith/qt/views.py:3712
-folith/qt/views.py:447
-folith/qt/views.py:5066
-folith/qt/views.py:5095
-folith/qt/views.py:788
-folith/qt/views.py:809
+

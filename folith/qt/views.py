@@ -437,6 +437,7 @@ class _TaskCard(QFrame):
         self.status_label.setObjectName("coverStatus")
         self.status_label.setProperty("state", tone)
         status_row = QHBoxLayout()
+        text.addLayout(status_row)
         status_row.setSpacing(6)
         status_row.setContentsMargins(0, 0, 0, 0)
         status_row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -444,7 +445,6 @@ class _TaskCard(QFrame):
         text.addWidget(self.title)
         text.addWidget(self.meta)
         text.addSpacing(2)
-        text.addLayout(status_row)
         self.progress = None
         if percent is not None:
             # 进度条的颜色跟"这次运行"走，但任务还没做完时不许是绿色的：满格绿条
@@ -774,18 +774,18 @@ class HomeView(QWidget):
         engine_row.addWidget(self.engine_model, 1, Qt.AlignmentFlag.AlignVCenter)
 
         # 品牌字标在侧栏左上角（E 层次 v2）；底部只留连接状态 + 设置按钮同一行。
-        footer_row = QHBoxLayout()
-        footer_row.setContentsMargins(0, 0, 0, 0)
-        footer_row.setSpacing(theme_module.SPACE["sm"])
-        footer_row.addWidget(engine_card, 1)
-        footer_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
-
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         sidebar_footer = QFrame()
         sidebar_footer.setObjectName("sidebarFooterGG")
         footer_layout = QVBoxLayout(sidebar_footer)
         footer_layout.setContentsMargins(0, 0, 0, 0)
         footer_layout.setSpacing(0)
+        footer_row = QHBoxLayout()
         footer_layout.addLayout(footer_row)
+        footer_row.setContentsMargins(0, 0, 0, 0)
+        footer_row.setSpacing(theme_module.SPACE["sm"])
+        footer_row.addWidget(engine_card, 1)
+        footer_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         sidebar = QWidget()
         self.sidebar = sidebar
@@ -800,13 +800,13 @@ class HomeView(QWidget):
         # 与导航图标左缘对齐（按钮左内边距 + 1px 透明边）。
         side.addSpacing(theme_module.SPACE["xs"])
         logo_row = QHBoxLayout()
+        side.addLayout(logo_row)
         logo_row.setContentsMargins(theme_module.SPACE["md"] + 1, 0, 0, 0)
         self._brand_mark = QLabel()
         self._brand_mark.setPixmap(self._mark_pixmap())
         logo_row.addWidget(self._brand_mark, 0, Qt.AlignmentFlag.AlignVCenter)
         # 字标独占剩余宽度：再加一个弹簧会分走一半，副标题就提前折行。
         logo_row.addWidget(self._logo_label, 1)
-        side.addLayout(logo_row)
         side.addSpacing(theme_module.SPACE["lg"])
         side.addWidget(self.import_button)
         # 分组之间 20px、组内 4px：只在"组"上写间距，行与行之间保持同一条节奏。
@@ -833,13 +833,24 @@ class HomeView(QWidget):
         self.stats_line.setTextFormat(Qt.TextFormat.RichText)
         self.stats_line.setVisible(False)
         self.stats_line.linkActivated.connect(self._status_filter_changed)
+        # ---- 主区组装：先把布局挂到画布上，再往里填（见 qt_layout_item_wrapper_test）----
+        main = components.GradientCanvas()
+        layout = QVBoxLayout(main)
+        layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                  theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        layout.setSpacing(theme_module.SPACE["lg"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        page_header = QHBoxLayout()
+        layout.addLayout(page_header)
+        page_header.setSpacing(theme_module.SPACE["lg"])
+        title_box = QVBoxLayout()
+        page_header.addLayout(title_box, 1)
+        title_box.setSpacing(theme_module.SPACE["xxs"])
         title_row = QHBoxLayout()
+        title_box.addLayout(title_row)
         title_row.setSpacing(theme_module.SPACE["lg"])
         title_row.addWidget(title, 0, Qt.AlignmentFlag.AlignBaseline)
         title_row.addWidget(self.stats_line, 1, Qt.AlignmentFlag.AlignBaseline)
-        title_box = QVBoxLayout()
-        title_box.setSpacing(theme_module.SPACE["xxs"])
-        title_box.addLayout(title_row)
         title_box.addWidget(self.subtitle)
 
         self.refresh_icon_button = style_module.icon_button("refresh", i18n.tr('刷新任务'))
@@ -890,14 +901,10 @@ class HomeView(QWidget):
         self.sort_box.currentIndexChanged.connect(self._apply_filter)
 
         header_actions = QHBoxLayout()
+        page_header.addLayout(header_actions, 0)
         header_actions.setSpacing(theme_module.SPACE["sm"])
         header_actions.addWidget(self.search_edit)
         header_actions.addWidget(self.refresh_icon_button)
-
-        page_header = QHBoxLayout()
-        page_header.setSpacing(theme_module.SPACE["lg"])
-        page_header.addLayout(title_box, 1)
-        page_header.addLayout(header_actions, 0)
 
         # ---- 首次运行提示（只有未配置模型时出现） --------------------------
         self.setup_banner = style_module.NoticeStrip(tone="warn")
@@ -1078,13 +1085,7 @@ class HomeView(QWidget):
         self.list_card.body_layout.addWidget(self.stack, 1)
         self.list_card.body_layout.addWidget(self.actions_frame)
 
-        # ---- 主区组装 ------------------------------------------------------
-        main = components.GradientCanvas()
-        layout = QVBoxLayout(main)
-        layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
-                                  theme_module.SPACE["xl"], theme_module.SPACE["lg"])
-        layout.setSpacing(theme_module.SPACE["lg"])
-        layout.addLayout(page_header)
+        # ---- 主区组装：main/layout/page_header 已在前段创建并挂好 ----
         layout.addWidget(self.setup_banner)
         layout.addWidget(self.stats)
         layout.addWidget(self.continue_card)
@@ -1230,7 +1231,9 @@ class HomeView(QWidget):
         self.continue_row = row
         self.continue_paper = components.DocThumb(40, 52)
         row.addWidget(self.continue_paper, 0, Qt.AlignmentFlag.AlignVCenter)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         text = QVBoxLayout()
+        row.addLayout(text, 1)
         text.setSpacing(0)
         self.continue_title = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideMiddle)
         self.continue_title.setObjectName("continueTitle")
@@ -1247,15 +1250,15 @@ class HomeView(QWidget):
         self.continue_divider = QFrame()
         self.continue_divider.setObjectName("statSeparator")
         self.continue_divider.setFixedSize(1, 12)
+        text.addStretch(1)
+        text.addWidget(self.continue_title)
         detail = QHBoxLayout()
+        text.addLayout(detail)
         detail.setSpacing(theme_module.SPACE["md"])
         detail.addWidget(self.continue_meta, 0)
         detail.addWidget(self.continue_divider, 0, Qt.AlignmentFlag.AlignVCenter)
         detail.addWidget(self.continue_stage, 0)
         detail.addStretch(1)
-        text.addStretch(1)
-        text.addWidget(self.continue_title)
-        text.addLayout(detail)
         text.addStretch(1)
         self.continue_button = QPushButton(i18n.tr('继续'))
         style_module.set_button(self.continue_button, "primary")
@@ -1263,7 +1266,6 @@ class HomeView(QWidget):
         self.continue_button.clicked.connect(
             lambda: self._continue_job_id and self.openRequested.emit(self._continue_job_id))
         style_module.fit_button(self.continue_button, max_width=200)
-        row.addLayout(text, 1)
         row.addWidget(self.continue_button, 0, Qt.AlignmentFlag.AlignVCenter)
         card.setVisible(False)
         return card
@@ -1541,7 +1543,7 @@ class HomeView(QWidget):
         if event.type() == QEvent.Type.StyleChange and not getattr(self, "_restyle_pending", False):
             # 样式表先换、当前主题名后改（window.apply_theme_preference）：下一轮再取颜色。
             self._restyle_pending = True
-            QTimer.singleShot(0, self._restyle_rich_text)
+            QTimer.singleShot(0, self, self._restyle_rich_text)
 
     def _restyle_rich_text(self) -> None:
         self._restyle_pending = False
@@ -1797,6 +1799,7 @@ class HomeView(QWidget):
             # 已经选中了一个项目：上面的标签就是标题，分组标题不再重复一遍。
             if not (self.project_filter.currentData() or ""):
                 heading_row = QHBoxLayout()
+                section_layout.addLayout(heading_row)
                 heading_row.setSpacing(theme_module.SPACE["sm"])
                 heading = QLabel(self._project_label(project_id))
                 heading.setObjectName("groupHeading")
@@ -1805,9 +1808,9 @@ class HomeView(QWidget):
                 count.setObjectName("hint")
                 heading_row.addWidget(count, 0, Qt.AlignmentFlag.AlignBaseline)
                 heading_row.addStretch(1)
-                section_layout.addLayout(heading_row)
 
             grid = QGridLayout()
+            section_layout.addLayout(grid)
             grid.setContentsMargins(0, 0, 0, 0)
             grid.setHorizontalSpacing(theme_module.SPACE["lg"])
             grid.setVerticalSpacing(theme_module.SPACE["lg"])
@@ -1825,7 +1828,6 @@ class HomeView(QWidget):
             for column in range(columns):
                 grid.setColumnStretch(column, 0)
             grid.setColumnStretch(columns, 1)     # 多出来的宽度留在右侧，卡片保持紧凑
-            section_layout.addLayout(grid)
             self.card_layout.addWidget(section)
         if groups:
             # 虚线格排在最后一组的最后一张卡后面（与卡片同一套网格）。
@@ -1919,7 +1921,7 @@ class HomeView(QWidget):
             self._select_current_row_for_keyboard()
         if (event.type() == QEvent.Type.Resize and hasattr(self, "card_scroll")
                 and watched is self.card_scroll.viewport()):
-            QTimer.singleShot(0, self._relayout_cards)
+            QTimer.singleShot(0, self, self._relayout_cards)
         if watched is getattr(self, "engine_card", None) and (
                 event.type() == QEvent.Type.MouseButtonRelease
                 or (event.type() == QEvent.Type.KeyPress
@@ -2143,17 +2145,18 @@ class RunStatusGroup(QFrame):
         self.line.setObjectName("runStatusLine")
         # 兼容旧调用点：状态行本身就是那个「视图」，不再套一层滚动容器。
         self.line_view = self.line
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(theme_module.SPACE["xs"] + 2)
-        top.addWidget(self.track, 1, Qt.AlignmentFlag.AlignVCenter)
-        top.addWidget(self.percent, 0, Qt.AlignmentFlag.AlignVCenter)
         layout = QVBoxLayout(self)
         # 四周留够白：展开运行记录时这一块是「凸」字的上半截，进度条贴着它的上、左、右
         # 边会显得局促（试用反馈）。
         layout.setContentsMargins(*self.PADDING)
         layout.setSpacing(3)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        top = QHBoxLayout()
         layout.addLayout(top)
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(theme_module.SPACE["xs"] + 2)
+        top.addWidget(self.track, 1, Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(self.percent, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.line)
         # 状态行自己会省略，所以只有进度那一行需要硬下限。让整组可以缩到 144，
         # 窄窗口下才不至于把统一工具栏撑宽。
@@ -3399,12 +3402,7 @@ class WorkbenchView(QWidget):
             i18n.tr('被排除的段落不进入译文与交付；原文与排除时的译文完整保留。交付包里会附上这份排除清单。'))
         self.excluded_hint.setObjectName("hint")
         self.excluded_hint.setWordWrap(True)
-        excluded_actions = QHBoxLayout()
-        excluded_actions.addWidget(self.excluded_list, 1)
-        excluded_actions.addWidget(self.restore_excluded_button)
-        self.excluded_empty = style_module.EmptyState(
-            icon="check-circle", title=i18n.tr('没有被排除的段落'),
-            hint=i18n.tr('排除的段落会出现在这里，并附在交付包中；恢复后段落回到工作台。'))
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         excluded_card = Card()
         # F11：0 条时整张卡片不出现（原来一个空状态占满一张卡）。
         self.excluded_card = excluded_card
@@ -3416,7 +3414,13 @@ class WorkbenchView(QWidget):
         self.excluded_title.setObjectName("cardTitle")
         excluded_layout.addWidget(self.excluded_title)
         excluded_layout.addWidget(self.excluded_hint)
+        excluded_actions = QHBoxLayout()
         excluded_layout.addLayout(excluded_actions)
+        excluded_actions.addWidget(self.excluded_list, 1)
+        excluded_actions.addWidget(self.restore_excluded_button)
+        self.excluded_empty = style_module.EmptyState(
+            icon="check-circle", title=i18n.tr('没有被排除的段落'),
+            hint=i18n.tr('排除的段落会出现在这里，并附在交付包中；恢复后段落回到工作台。'))
         excluded_layout.addWidget(self.excluded_empty)
 
         # 交付页内容随清单长度变化：套一层滚动区，窗口不高时整页滚动，
@@ -3487,13 +3491,14 @@ class WorkbenchView(QWidget):
         terms_close.setAccessibleName(i18n.tr('收起术语'))
         terms_close.clicked.connect(lambda: self.set_terms_open(False))
         self.terms_close_button = terms_close
+        terms_layout = QVBoxLayout(self.terms_side)
+        terms_layout.setContentsMargins(0, 8, theme_module.SPACE["sm"], 0)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         terms_head = QHBoxLayout()
+        terms_layout.addLayout(terms_head)
         terms_head.setContentsMargins(0, 0, 0, 0)
         terms_head.addWidget(terms_title, 1)
         terms_head.addWidget(terms_close)
-        terms_layout = QVBoxLayout(self.terms_side)
-        terms_layout.setContentsMargins(0, 8, theme_module.SPACE["sm"], 0)
-        terms_layout.addLayout(terms_head)
         # The compact panel can be taller than the available workspace in a
         # short window. Scroll the complete panel instead of compressing its
         # editor and navigation controls into overlapping rectangles.
@@ -3700,16 +3705,17 @@ class WorkbenchView(QWidget):
         self._terms_blocked = False
         self._sync_academic_tabs()
 
-        body = QVBoxLayout()
-        body.setContentsMargins(20, 12, 20, 12)
-        body.setSpacing(10)
-        body.addWidget(self.terms_gate)
-        body.addWidget(self.tabs, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(header_card)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        body = QVBoxLayout()
         layout.addLayout(body, 1)
+        body.setContentsMargins(20, 12, 20, 12)
+        body.setSpacing(10)
+        body.addWidget(self.terms_gate)
+        body.addWidget(self.tabs, 1)
 
         # ⌘↩：编辑框里由编辑框自己接住（保存并进入下一段）；焦点在表格时是"下一段"。
         next_shortcut = QAction(i18n.tr('下一段'), self)
@@ -4252,7 +4258,7 @@ class WorkbenchView(QWidget):
         self.term_focus_bar.setVisible(found is not None)
         if was_visible != (found is not None):
             # 定位条出现 / 消失会改变网格高度：当前编辑的行不能因此滑出视野。
-            QTimer.singleShot(0, self._keep_active_row_visible)
+            QTimer.singleShot(0, self, self._keep_active_row_visible)
         self._sync_escape()
         self._update_term_markers()
         self.segment_list.viewport().update()
@@ -4537,7 +4543,7 @@ class WorkbenchView(QWidget):
         if self.select_segment(first):
             self._sync_outline_highlight()
             self.focus_editor()
-            QTimer.singleShot(0, lambda: self._keep_active_row_visible()
+            QTimer.singleShot(0, self, lambda: self._keep_active_row_visible()
                               if self._current_index == first else None)
             return
         if self._filters_active():
@@ -4548,7 +4554,7 @@ class WorkbenchView(QWidget):
             if self.select_segment(first):
                 self._sync_outline_highlight()
                 self.focus_editor()
-                QTimer.singleShot(0, lambda: self._keep_active_row_visible()
+                QTimer.singleShot(0, self, lambda: self._keep_active_row_visible()
                                   if self._current_index == first else None)
                 return
         self.set_task_notice(i18n.tr('「{v0}」当前无法定位', v0=title), error=True)
@@ -4663,7 +4669,7 @@ class WorkbenchView(QWidget):
         split.setSizes(self._translation_column_sizes())
         # The grid's columns are re-laid out after this returns; the inline
         # editor must follow them, or it hangs past the grid's new right edge.
-        QTimer.singleShot(0, self._place_inline_editor)
+        QTimer.singleShot(0, self, self._place_inline_editor)
 
     def inspector_min_width(self) -> int:
         """操作台完整显示所需的宽度：内容的最小宽度 + 纵向滚动条。"""
@@ -5053,6 +5059,7 @@ class WorkbenchView(QWidget):
         dialog.resize(1050, 680)
         layout = QVBoxLayout(dialog)
         header = QHBoxLayout()
+        layout.addLayout(header)
         header.addWidget(QLabel(i18n.tr('当前审校队列中的术语问题：{v0}', v0=len(items))))
         header.addStretch(1)
         header.addWidget(QLabel(i18n.tr('问题类型')))
@@ -5063,7 +5070,6 @@ class WorkbenchView(QWidget):
         for code, label in TERMINOLOGY_CONFLICT_KINDS:
             kind_filter.addItem(f"{i18n.tr(label)} · {counts[code]}", code)
         header.addWidget(kind_filter)
-        layout.addLayout(header)
         table = QTableWidget(0, 6)
         table.setHorizontalHeaderLabels([
             i18n.tr('类型'), i18n.tr('源术语'), i18n.tr('问题'),
@@ -5085,6 +5091,7 @@ class WorkbenchView(QWidget):
         detail.setMaximumHeight(180)
         layout.addWidget(detail)
         buttons = QHBoxLayout()
+        layout.addLayout(buttons)
         edit_term = QPushButton(i18n.tr('编辑相关术语'))
         locate = QPushButton(i18n.tr('定位段落'))
         review = QPushButton(i18n.tr('重新审校'))
@@ -5092,7 +5099,6 @@ class WorkbenchView(QWidget):
         revalidate = QPushButton(i18n.tr('重新验证术语表'))
         for button in (edit_term, locate, review, resolve, revalidate):
             buttons.addWidget(button)
-        layout.addLayout(buttons)
         action = []
         visible_items: list[dict] = []
 
@@ -5280,7 +5286,7 @@ class WorkbenchView(QWidget):
         self.search_edit.setText(text)
 
     def _filters_changed(self, *_args) -> None:
-        QTimer.singleShot(0, self._sync_context_visibility)
+        QTimer.singleShot(0, self, self._sync_context_visibility)
         self._search = self.search_edit.text()
         self._only_edited = self.only_edited_box.isChecked()
         self._only_issues = self.only_issues_box.isChecked()
@@ -6452,7 +6458,7 @@ class WorkbenchView(QWidget):
         self._sync_outline_highlight()
 
     def _load_selected_row(self, position: int) -> None:
-        QTimer.singleShot(0, self._sync_term_focus_label)
+        QTimer.singleShot(0, self, self._sync_term_focus_label)
         if position < 0 or position >= len(self._rows):
             self._activate_position(-1)
             return
