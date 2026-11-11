@@ -6172,3 +6172,315 @@ def setup_choices() -> dict:
                              _source_languages.SOURCE_LANGUAGES],
         "projects": project_options(),
     }
+
+
+# ================= #150 导入校验向导（新增；不改既有导入语义） =================
+# 这里是"向导"需要的薄适配层：只做文件识别、预检、编排既有引擎入口、导出报告。
+# 真正的解析/校验/落库全部在引擎层（folith.engine.glossary_checks 与
+# folith.engine.migration_report），本层不重写任何导入规则。
+
+#: 向导接受的格式 -> 报告 kind（与引擎的 migration_report.KINDS 一致）。
+IMPORT_WIZARD_KINDS = {
+    ".tmx": "tmx", ".tbx": "tbx", ".xlsx": "xlsx", ".csv": "csv",
+}
+
+
+def import_wizard_project_choices() -> list[dict]:
+    """向导的目标项目列表（含语言方向，供预填目标语言）。"""
+    from folith.engine import projects as _projects
+
+    choices = []
+    for row in project_rows():
+        project_id = str(row.get("project_id") or "")
+        try:
+            direction = _projects.project_direction(
+                core.load_project(project_id) or {"project_id": project_id})
+        except Exception:  # noqa: BLE001 - 列表必须仍能显示
+            direction = {"source_lang": "", "target_lang": ""}
+        choices.append({
+            "project_id": project_id,
+            "name": str(row.get("name") or ""),
+            "is_system": bool(row.get("is_system")),
+            "source_lang": str(direction.get("source_lang") or ""),
+            "target_lang": str(direction.get("target_lang") or ""),
+        })
+    return choices
+
+
+def _wizard_read_bytes(path: str | os.PathLike[str]) -> tuple[Path, bytes]:
+    file = Path(path)
+    try:
+        data = file.read_bytes()
+    except OSError as exc:
+        raise AdapterError(f"无法读取文件：{exc}") from exc
+    if not data:
+        raise AdapterError(f"{file.name} 是空文件。")
+    if len(data) > MAX_TERMBASE_BYTES:
+        raise AdapterError(
+            f"{file.name} 超过 {MAX_TERMBASE_BYTES // (1024 * 1024)} MB。")
+    return file, data
+
+
+def _wizard_stream(name: str, data: bytes):
+    stream = io.BytesIO(data)
+    stream.name = name
+    return stream
+
+
+def _wizard_tmx_preview(data: bytes, *, target_lang: str) -> dict:
+    """TMX 预检：只读计数与语言声明，**不写库**。
+
+    这不是第二条导入实现：导入仍然只走 ``core.import_tmx``；预检只需要
+    "预计多少条 + 文件声明了什么语言"。因此这里刻意与引擎保持同一套取法，
+    否则预检和导入会对同一份文件给出不同结论：
+
+    * 解析器与引擎相同（``defusedxml``）：含 ENTITY/DOCTYPE 的文件预检也要
+      拒绝，不能"预检接受、导入失败"（预检跑在主线程，实体展开更是风险）；
+    * 语言声明按引擎的规则取：每个 ``<tu>`` 只看**前两个非空 ``<seg>``**，
+      目标语言是其中最后一个的语言。第三个及以后的语言引擎根本不看，
+      预检不能把它们算成"文件声明了别的目标语言"；
+    * 缺 ``<header>`` 时源语言留空，不崩。
+
+    真正的分类计数、跳过原因、元数据丢失一律以导入后的引擎报告为准。
+    """
+    from defusedxml import ElementTree as ET
+
+    from folith.engine import migration_report as _report
+
+    try:
+        root = ET.fromstring(data)
+    except Exception as exc:  # noqa: BLE001 - 预检失败要能原样展示
+        raise AdapterError(f"无法解析 TMX 文件：{exc}") from exc
+
+    def _local(tag):
+        return str(tag).rsplit("}", 1)[-1]
+
+    def _lang(node):
+        if node is None:
+            return ""
+        return str(node.get("{http://www.w3.org/XML/1998/namespace}lang")
+                   or node.get("lang") or "").strip()
+
+    header = next((node for node in root
+                   if _local(node.tag) == "header"), None)
+    declared_source = str((header.get("srclang") if header is not None else "")
+                          or _lang(header) or "").strip()
+    total = 0
+    declared_targets: list[str] = []
+    for tu in root.iter():
+        if _local(tu.tag) != "tu":
+            continue
+        total += 1
+        texts = 0
+        target_language = ""
+        for tuv in tu:
+            if _local(tuv.tag) != "tuv":
+                continue
+            seg = next((node for node in tuv if _local(node.tag) == "seg"), None)
+            if seg is None or not "".join(seg.itertext()).strip():
+                continue
+            texts += 1
+            if texts >= 2:
+                # 引擎在第二个非空 seg 处停下，并把它当作目标语言声明。
+                target_language = _lang(tuv)
+                break
+        if target_language and target_language not in declared_targets:
+            declared_targets.append(target_language)
+
+    expected = str(target_lang or "").strip()
+    if not expected:
+        status = "not_checked"
+    else:
+        pair = _report.language_pair_report(
+            expected_target=expected, declared_source=declared_source,
+            declared_targets=declared_targets)
+        status = str(pair.get("status") or "unverified")
+    return {
+        "expected_units": total,
+        "declared_source": declared_source,
+        "declared_targets": declared_targets,
+        "language_pair": {
+            "expected_target": expected,
+            "declared_source": declared_source,
+            "declared_targets": declared_targets,
+            "status": status,
+        },
+    }
+
+
+def import_wizard_preflight(path: str | os.PathLike[str], *,
+                            project_id: str | None = None,
+                            target_lang: str = "") -> dict:
+    """向导第 2 步：识别格式、语言对与预计条目数（**只读，不写库**）。
+
+    TMX 用只读预览（见 ``_wizard_tmx_preview``）；术语格式复用引擎的
+    ``parse_termbase*``（``report=True``），解析结果也一并返回，导入步骤不需要
+    再解析一遍，预检与导入看到的是同一份数据。
+    """
+    file, data = _wizard_read_bytes(path)
+    kind = IMPORT_WIZARD_KINDS.get(file.suffix.lower())
+    if kind is None:
+        raise AdapterError(
+            f"不支持的格式：{file.suffix or file.name}（支持 TMX / TBX / XLSX / CSV）")
+    expected_language = str(target_lang or "").strip()
+    result: dict = {
+        "path": str(file),
+        "name": file.name,
+        "kind": kind,
+        "bytes": len(data),
+        "project_id": str(project_id or ""),
+        "target_lang": expected_language,
+        "expected_units": None,
+        "language_pair": {},
+        "warnings": [],
+        "blocking": "",
+    }
+    if kind == "tmx":
+        preview = _wizard_tmx_preview(data, target_lang=expected_language)
+        result["expected_units"] = preview["expected_units"]
+        result["language_pair"] = preview["language_pair"]
+        return result
+
+    if not str(project_id or "").strip():
+        result["blocking"] = "termbase_requires_project"
+        return result
+    with tempfile.TemporaryDirectory(prefix="folith-import-precheck-") as scratch:
+        stream = _wizard_stream(file.name, data)
+        parser = {".xlsx": core.parse_termbase, ".csv": core.parse_termbase_csv,
+                  ".tbx": core.parse_termbase_tbx}[file.suffix.lower()]
+        parsed = parser(stream, target_lang=expected_language or None,
+                        report=True, report_dir=scratch)
+        report = getattr(parsed, "report", None) or {}
+        result["entries"] = list(parsed)
+        result["expected_units"] = int((report.get("counts") or {}).get("total") or 0)
+        result["language_pair"] = dict(report.get("language_pair") or {})
+        result["warnings"] = list(report.get("warnings") or [])
+        # 预检的报告是临时产物：TemporaryDirectory 一关，persistence 里的
+        # 路径就不存在了。清空它，避免界面显示一个打不开的"报告文件"。
+        report = dict(report)
+        report["persistence"] = {"directory": "", "json": "", "markdown": ""}
+        result["report"] = report
+    return result
+
+
+def _wizard_write_terms(project_id: str, entries: Sequence[dict]) -> dict:
+    """把解析出的术语写进项目术语库：**只增不覆盖**（既有导入语义）。
+
+    逐条写入没有事务：第 N 条失败时前 N-1 条已经落盘。因此失败一律抛
+    ``AdapterError`` 并把**已写入条数**挂在 ``.store`` 上——界面必须能如实
+    说出"写到哪一条、还剩什么"，而不是只报一句"导入失败"。
+    """
+    project = core.load_project(project_id)
+    if not project:
+        raise AdapterError(f"项目不存在：{project_id}")
+    existing = {str(entry.get("source") or "").strip().casefold()
+                for entry in (dict(project).get("glossary") or [])}
+    store = {"written": 0, "skipped_existing": 0, "skipped_missing": 0,
+             "target": f"project:{project_id}"}
+    for entry in entries:
+        source = str(entry.get("source") or "").strip()
+        target = str(entry.get("target") or "").strip()
+        if not source or not target:
+            # 空原文/译文不是"与现有记忆冲突"，口径分开记（与引擎的
+            # skipped_missing_pair 对齐）。
+            store["skipped_missing"] += 1
+            continue
+        if source.casefold() in existing:
+            store["skipped_existing"] += 1
+            continue
+        try:
+            core.set_project_term(
+                project_id, source, target,
+                domain=str(entry.get("domain") or entry.get("scope") or ""),
+                note=str(entry.get("note") or ""))
+        except (RuntimeError, ValueError, OSError) as exc:
+            error = AdapterError(
+                f"写入第 {store['written'] + 1} 条术语时失败：{exc}")
+            error.store = dict(store)
+            raise error from exc
+        existing.add(source.casefold())
+        store["written"] += 1
+    return store
+
+
+def import_wizard_run(path: str | os.PathLike[str], *,
+                      project_id: str | None = None,
+                      target_lang: str = "",
+                      preflight: dict | None = None) -> dict:
+    """向导第 3 步：执行导入并返回 ``{"report", "store"}``。
+
+    TMX 走 ``core.import_tmx(..., report=True)``（既有原子写 TM 的路径）；
+    术语格式走引擎解析 + 项目术语库只增不覆盖。失败抛 :class:`AdapterError`，
+    异常的 ``.report``（若有）由调用方展示——**不产生半成品**：TMX 失败不写
+    TM；术语库是逐条写入，"已写入 N 条"会如实记在 store 里。
+    """
+    from folith.engine import migration_report as _report
+
+    file, data = _wizard_read_bytes(path)
+    kind = IMPORT_WIZARD_KINDS.get(file.suffix.lower())
+    if kind is None:
+        raise AdapterError(
+            f"不支持的格式：{file.suffix or file.name}（支持 TMX / TBX / XLSX / CSV）")
+    if kind == "tmx":
+        stream = _wizard_stream(file.name, data)
+        try:
+            result = core.import_tmx(
+                stream, project_id=project_id or None,
+                target_lang=str(target_lang or "").strip() or None,
+                report=True)
+        except ValueError as exc:
+            report = getattr(exc, "report", None)
+            error = AdapterError(str(exc))
+            error.report = report
+            raise error from exc
+        return {"report": dict(result.get("report") or {}),
+                "store": {"kind": "tm",
+                          "written": int(result.get("added", 0)),
+                          "skipped": int(result.get("skipped", 0)),
+                          "target": f"project:{project_id}" if project_id else "project:system"}}
+
+    if not str(project_id or "").strip():
+        raise AdapterError("术语库需要导入到具体项目：请先选择一个项目。")
+    entries = (preflight or {}).get("entries")
+    if entries is None:
+        with tempfile.TemporaryDirectory(prefix="folith-import-parse-") as scratch:
+            stream = _wizard_stream(file.name, data)
+            parser = {".xlsx": core.parse_termbase, ".csv": core.parse_termbase_csv,
+                      ".tbx": core.parse_termbase_tbx}[file.suffix.lower()]
+            parsed = parser(stream, target_lang=str(target_lang or "").strip() or None,
+                            report=True, report_dir=scratch)
+            entries = list(parsed)
+            report = dict(getattr(parsed, "report", None) or {})
+    else:
+        report = dict(((preflight or {}).get("report") or {}))
+    store = _wizard_write_terms(project_id, list(entries))
+    counts = dict(report.get("counts") or {})
+    if counts:
+        counts["imported"] = int(store["written"])
+        counts["skipped_conflict"] = int(counts.get("skipped_conflict") or 0) \
+            + int(store["skipped_existing"])
+        counts["skipped_missing_pair"] = int(counts.get("skipped_missing_pair") or 0) \
+            + int(store["skipped_missing"])
+        _report.set_counts(report, counts)
+    _report.finalize(report)
+    try:
+        _report.write_report(report, project_id=project_id or None)
+    except OSError:
+        # 报告是成功的副作用：写不进去不能把已成功的导入变失败。
+        pass
+    store["kind"] = "glossary"
+    return {"report": report, "store": store}
+
+
+def import_wizard_export_report(report: dict, directory: str | os.PathLike[str]) -> dict:
+    """把一份导入报告（JSON + Markdown）另存到用户选择的位置。"""
+    from folith.engine import migration_report as _report
+
+    target = Path(directory)
+    if not str(target).strip():
+        raise AdapterError("请选择导出目录。")
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        return dict(_report.write_report(dict(report), directory=target))
+    except OSError as exc:
+        raise AdapterError(f"无法写入报告：{exc}") from exc
