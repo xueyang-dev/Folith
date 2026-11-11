@@ -307,3 +307,21 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 | 3 | **15 passed**（1:03） | 0.39 / 0.81 ms | 21 / 771 ms |
 
 此前同会话红的原因是：测量直接调用 `_poll_workbench_delta` 绕过了窗口的在飞/接力逻辑，且上一轮 poll 文件的读可能仍在飞。改为走公开的 `_poll_workbench()`，并在每批后等"已应用且无在读"再进入下一批，纯粹由状态驱动、不依赖墙钟。
+
+### 13.6 cost 测试的 CI 稳定性（第三轮复核，2026-11-11）
+
+**失败断言定位**：`test_per_batch_delta_touches_only_the_batch` 在"poll + delta 同会话、负载高"时红；单跑 5 次也出现 1 次 309 s。两类断言的机制分别是：
+
+1. **全局 `load_state/segment_rows/document_count == 0` 被打破**：慢投影（O(document)）的节奏是"距上次投影 5 s"，与本测试无关。测量循环在忙机器上可能跨过 5 s，`_maybe_slow_projection` 于是在某批的 `_poll_workbench` 里合法地起一个 worker 读整份 state —— 这是**产品正确行为**（慢投影的独立节奏），但它让"任意时刻这些调用为 0"的断言在负载下必然抖。
+2. **等待超时**：打开并布局 10k 行在忙机器上可能要几分钟；测试、或者它与其他文件同会话时的排队，会超过等待上限。
+
+**修法（全部确定性，无 sleep）**：
+- 每批 `_poll_workbench()` 之前把慢投影节奏"钉"到当前时刻（`_delta_projection_at` / `_delivery_cache._at`），并让等待谓词包含 `not _delta_projection_in_flight`。于是被测量的窗口恒为 delta 路径：慢投影只会发生在窗口之外，计数器断言不再依赖机器快慢。
+- 等待改为纯事件谓词 + 宽松安全上限（300 s），失败时打印 `seq/inflight/projection/pending/repoll`，便于区分"契约坏"与"机器慢"。
+- 每批断言"恰好一次 `apply_delta`、位置数 == 4"，把"只更新批大小行"变成契约而不是耗时推论。
+- **10k 对照改为可选**：默认 CI 在 1,000 段上验证契约（快、稳）；`FOLITH_PERF_MEASURE=1` 时同时跑 10,000 段并打印数字（issue 的 1k/10k 证据由此产生）。10k 网格的打开/布局是 fixture 成本，不是 delta 路径的属性，不该成为 CI 的门槛。
+
+**验收原始结果（load 4.8–5.4）**：
+- 同会话 `pytest tests/qt_workbench_poll_test.py tests/qt_workbench_delta_test.py` × 3：**15 passed / 15 passed / 15 passed**（86 s / 87 s / 88 s）。
+- 该测试单独 × 5：**5 passed**（6.2 / 4.7 / 5.3 / 5.4 / 5.1 s）。
+- `FOLITH_PERF_MEASURE=1` 一轮：1k p50 **0.73 ms**（p95 0.96，max 2.98），10k p50 **1.11 ms**（p95 2.00，max 4.39）；整份重建 26 ms / 1,230 ms。
