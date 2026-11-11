@@ -360,6 +360,108 @@ def test_snapshot_with_a_live_worker_reaches_the_ui_within_one_projection_cycle(
     assert full_calls["count"] == 0, full_calls
 
 
+def test_a_start_carried_by_the_slow_projection_leaves_the_prepare_page(
+        client, monkeypatch):
+    """A start that only exists in state.json must still open the body.
+
+    ``p1_done`` / ``source_paras`` never reach the journal, so the slow
+    projection is their only carrier.  ``_task_started()`` reads the *setup
+    view*, and ``apply_projection()`` used to refresh the panels without
+    replacing it: a task the GUI did not start itself (opened from the home
+    list while its worker was already running, second window on the same task,
+    crash recovery) stayed on the prepare page -- body hidden, ``translate``
+    locked, details/terms entry points hidden -- until some unrelated forced
+    refresh.
+    """
+    from folith.qt import window as window_module
+
+    window, adapter, core = client["window"], client["adapter"], client["core"]
+    job_id = _open(client)              # paragraphs exist, no checkpoint
+    workbench = window.workbench
+    cadence = window_module.DELTA_PROJECTION_SECONDS
+
+    def translate_step_state() -> str:
+        return str(workbench.stage_bar.steps["translate"].state())
+
+    # The task looks unstarted: prepare sheet up, body and entries hidden.
+    assert workbench._state.get("p1_done") is not True
+    assert workbench.task_started() is False
+    assert workbench._showing_setup is True
+    assert workbench.setup_page.isVisible() is True
+    assert workbench.translation_split.isVisible() is False
+    assert translate_step_state() == "locked", translate_step_state()
+    assert workbench.details_button.isVisible() is False
+
+    full_calls = {"count": 0}
+    original_full = window._poll_workbench_full
+    monkeypatch.setattr(window, "_poll_workbench_full",
+                        lambda: (full_calls.__setitem__("count", full_calls["count"] + 1),
+                                 original_full())[1])
+    monkeypatch.setattr(adapter, "job_is_alive", lambda _job: True)
+
+    state = core.load_job_state(job_id)
+    state["p1_done"] = True             # pipeline checkpoint: never in the journal
+    core.save_job_state(job_id, state)
+
+    # The projection is due on the next idle tick: the whole change has to come
+    # through apply_projection(), within one cadence, with no state rebuild.
+    window._delta_projection_at = 0.0
+    started = time.monotonic()
+    deadline = started + cadence
+    while time.monotonic() < deadline and not workbench.task_started():
+        client["app"].processEvents()
+        window._poll_workbench()
+        time.sleep(0.01)
+    elapsed = time.monotonic() - started
+    assert _settle(client, lambda: not window._state_load_in_flight
+                   and not window._delta_projection_in_flight)
+
+    assert workbench._state.get("p1_done") is True, (
+        f"the checkpoint never reached the view ({elapsed:.1f}s)")
+    assert workbench.task_started() is True
+    assert workbench._showing_setup is False
+    assert workbench.setup_page.isVisible() is False
+    assert workbench.translation_split.isVisible() is True
+    assert translate_step_state() == "current", translate_step_state()
+    assert workbench.details_button.isVisible() is True
+    # It arrived through the slow projection, not by rebuilding the state.
+    assert full_calls["count"] == 0, full_calls
+    assert elapsed <= cadence, elapsed
+
+
+def test_an_unchanged_projection_does_not_rebuild_the_prepare_sheet(
+        client, monkeypatch):
+    """The transition guard, not the cadence, decides when the sheet is rebuilt.
+
+    Replacing the setup view on every slow projection would reset the fields the
+    user is filling in, once per ``DELTA_PROJECTION_SECONDS``.  Three projections
+    of an unchanged, not-yet-started task must leave the sheet alone.
+    """
+    window = client["window"]
+    _open(client)
+    workbench = window.workbench
+    assert workbench.task_started() is False
+    view_before = workbench._setup_view
+    load_calls = {"count": 0}
+    original_load_setup = window._load_setup
+    monkeypatch.setattr(
+        window, "_load_setup",
+        lambda *a, **k: (load_calls.__setitem__("count", load_calls["count"] + 1),
+                         original_load_setup(*a, **k))[1])
+
+    for _ in range(3):
+        window._delta_projection_at = 0.0
+        window._maybe_slow_projection(window._current_job_id, ())
+        assert window._delta_projection_in_flight is True
+        assert _settle(client, lambda: not window._delta_projection_in_flight)
+        assert _settle(client, lambda: not window._state_load_in_flight)
+
+    assert load_calls["count"] == 0, load_calls
+    assert workbench._setup_view is view_before
+    assert workbench.task_started() is False
+    assert workbench.setup_page.isVisible() is True
+
+
 def test_a_failed_projection_reissues_the_pending_poll(client, monkeypatch):
     """A tick that arrived during a projection must not be dropped on failure.
 

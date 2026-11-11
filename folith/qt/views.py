@@ -4019,6 +4019,13 @@ class WorkbenchView(QWidget):
         self._render_activity()
         self._render_details()
         self._render_stage()
+        # The body is whichever of prepare / grid / empty card applies, and the
+        # grid keeps the rows the incremental path applied: the segments are not
+        # rebuilt here (that is O(n); ``_render_segments`` owns it).  But a start
+        # that arrived on this path only changes ``started``, which is exactly the
+        # flag this decides -- skipping it left the prepare sheet in front of a
+        # running task until some unrelated forced refresh.
+        self._sync_segment_placeholder()
 
     def apply_runtime(self, runtime: dict | None) -> None:
         """One cheap tick: progress/status only (used while no batch arrived)."""

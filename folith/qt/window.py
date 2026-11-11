@@ -2339,6 +2339,13 @@ class MainWindow(QMainWindow):
             runtime_view = models.get("runtime") or adapter.runtime_view(job_id, state)
             snapshots = models.get("snapshots") or []
             self._last_runtime_status = str(runtime_view.get("status") or "")
+            # A start that only exists in state.json (``p1_done``,
+            # ``source_paras``: neither reaches the journal) lands here and
+            # nowhere else, and ``_task_started()`` reads the setup view.  Only a
+            # real transition pays for this: the slow cadence must not rebuild
+            # the prepare sheet every DELTA_PROJECTION_SECONDS.
+            if self._state_started(state) != self.workbench.task_started():
+                self._load_setup(job_id, state)
             self.workbench.apply_projection(
                 job_id, state, runtime_view, snapshots, models=models,
                 refresh_delivery=refresh_delivery)
