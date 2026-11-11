@@ -47,7 +47,7 @@ import time
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 
 from folith.trace import compute_percentiles
 
@@ -86,6 +86,26 @@ def _rate(count: int, observed_s: float) -> float:
     if observed_s <= 0.0:
         return 0.0
     return round(count * 60.0 / observed_s, 2)
+
+
+def _longest_product_stall(events: Iterable[Optional[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+    """Largest *product* stall among *events*, or ``None``.
+
+    This is the single definition of "longest" the module reports: every entry
+    point (``summary()`` and ``summary_since()``) goes through it, so the two
+    scopes cannot drift apart.  Instrumentation stalls are filtered here and
+    nowhere else — they are the measuring harness's own cost, so they never
+    enter the user-visible jank statistics even when one is the largest event
+    retained.  Ties keep the earliest event, and ``None`` entries (an unset
+    running maximum) are skipped.
+    """
+    best: Optional[Dict[str, Any]] = None
+    for event in events:
+        if event is None or event.get("instrumentation"):
+            continue
+        if best is None or event["interval_ms"] > best["interval_ms"]:
+            best = event
+    return best
 
 
 def render_frames(frame: Any, *, limit: int = STACK_DEPTH) -> Tuple[str, ...]:
@@ -378,8 +398,10 @@ class JankMonitor:
         entry["last_at"] = event["at"]
         self._trim_aggregates_locked(keep=key)
         self._recent.append(event)
-        if self._longest is None or interval_ms > self._longest["interval_ms"]:
-            self._longest = dict(event)
+        # Same rule as the run window: a product stall only wins if it beats the
+        # previous product maximum.  Instrumentation can never win, by
+        # construction of the branch above.
+        self._longest = _longest_product_stall((self._longest, dict(event)))
         return event
 
     def _trim_aggregates_locked(self, *, keep: Tuple[str, ...]) -> None:
@@ -452,7 +474,12 @@ class JankMonitor:
             }
 
     def summary(self) -> Dict[str, Any]:
-        """Whole-session view (bounded) of the stalls observed so far."""
+        """Whole-session view (bounded) of the stalls observed so far.
+
+        ``slow_count``/``severe_count``/``stall_ms``/``longest``/``top_stacks``
+        are product statistics: instrumentation stalls go to the
+        ``instrumentation_*`` fields and are never eligible for any of them.
+        """
         with self._lock:
             now = self._clock()
             observed = max(0.0, now - self._observed_from) if self._observed_from else 0.0
@@ -532,6 +559,8 @@ class JankMonitor:
         Counters are exact differences.  ``top_stacks[].count/total_ms`` are
         exact for the window; ``max_ms`` is ``None`` when that stack also stalled
         before the window, because a delta of maxima is not derivable.
+        ``longest`` uses the same rule as :meth:`summary` and the same helper, so
+        instrumentation stalls are not eligible in either scope.
         """
         with self._lock:
             start = float(checkpoint.get("at") or 0.0)
@@ -567,7 +596,9 @@ class JankMonitor:
                     "max_ms": peak,
                 })
             rows.sort(key=lambda row: row["total_ms"], reverse=True)
-            longest = max(events, key=lambda event: event["interval_ms"]) if events else None
+            # Same helper as summary(): instrumentation stalls are not eligible,
+            # so a 2 s predicate poll can never become the window's "longest".
+            longest = _longest_product_stall(events)
             return {
                 "version": VERSION,
                 "scope": "run_window",
@@ -594,7 +625,7 @@ class JankMonitor:
                 "notes": [
                     "counters and per-stack count/total_ms are exact for this window",
                     "top_stacks[].max_ms is null when that stack also stalled before the window",
-                    "longest names the largest stall still present in the retained event list",
+                    "longest is the largest non-instrumentation stall still present in the retained event list",
                     "stall_ms percentiles cover retained stall samples inside the window",
                     "slow_count/severe_count/stall_ms/longest/top_stacks exclude instrumentation stalls; "
                     "instrumentation_* fields count the harness's own stalls",

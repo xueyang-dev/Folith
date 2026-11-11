@@ -560,6 +560,9 @@ def test_instrumentation_stalls_are_counted_apart_from_product_stalls():
     assert summary["instrumentation_stall_ms"]["count"] == 1
     assert summary["longest"] is None          # product longest excludes it
     assert summary["top_stacks"] == []         # product hotspots exclude it
+    # The event is still recorded (recent/report readers can see the harness
+    # cost); it is only ineligible for the product statistics above.
+    assert summary["recent"][0]["instrumentation"] is True
     assert monitor.snapshot()["instrumentation_slow"] == 1
 
     # A product stall afterwards is counted normally again.
@@ -605,4 +608,62 @@ def test_run_window_splits_product_and_instrumentation():
     assert window["instrumentation_total_ms"] == pytest.approx(400.0, abs=0.1)
     assert window["stall_ms"]["count"] == 1
     assert window["instrumentation_stall_ms"]["count"] == 1
+    # #347 B1: the 400 ms harness event is the larger event in this window, so a
+    # naive max() over the event ring would hand it to the product as "longest".
+    assert window["longest"]["interval_ms"] == pytest.approx(200.0, abs=0.1)
+    assert window["longest"]["instrumentation"] is False
+    assert window["longest"]["interval_ms"] <= window["stall_ms"]["max"] + 0.1
     assert "instrumentation stalls" in " ".join(window["notes"])
+
+
+def test_run_window_longest_ignores_a_2s_instrumentation_stall():
+    """#347 B1 regression: a settle-phase predicate poll must not be "longest".
+
+    Deterministic reproduction from the review: a 2 s harness stall inside an
+    instrumentation window, with no product stall anywhere near it.
+    """
+    clock = [0.0]
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 1e6 + clock[0])
+    monitor.mark_pulse(0.0)
+    clock[0] = 0.020
+    monitor.mark_pulse(0.020)
+    marker = monitor.checkpoint()
+    monitor.set_instrumentation(True)
+    clock[0] = 0.030
+    monitor.set_instrumentation(False)        # instrumentation window closes
+    clock[0] = 2.030
+    event = monitor.mark_pulse(2.030)         # this 2 s interval belongs to the harness
+    assert event is not None and event["instrumentation"] is True
+    window = monitor.summary_since(marker)
+    assert window["slow_count"] == 0
+    assert window["severe_count"] == 0
+    assert window["stall_ms"]["count"] == 0
+    assert window["instrumentation_slow_count"] == 1
+    assert window["instrumentation_stall_ms"]["max"] == pytest.approx(2010.0, abs=0.1)
+    # The event is still recorded — this is what used to leak out as "longest".
+    assert window["instrumentation_total_ms"] == pytest.approx(2010.0, abs=0.1)
+    assert window["longest"] is None
+    assert window["top_stacks"] == []
+
+
+def test_summary_and_run_window_agree_on_the_longest_product_stall():
+    """Both entry points must apply one rule for longest/slow_count/stall_ms."""
+    clock = [0.0]
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0)
+    monitor.mark_pulse()
+    marker = monitor.checkpoint()             # window starts here = whole session
+    for interval_ms, stack in ((150.0, ("a.py:1 in a",)),
+                               (900.0, ("b.py:2 in b",)),
+                               (300.0, ("c.py:3 in c",))):
+        _stall(monitor, clock, interval_ms, stack)
+    with monitor.instrumentation():
+        clock[0] += 2.0                       # harness stall, larger than any product one
+    monitor.mark_pulse()
+    whole = monitor.summary()
+    window = monitor.summary_since(marker)
+    assert whole["longest"]["interval_ms"] == pytest.approx(900.0, abs=0.1)
+    assert whole["longest"]["stack"] == ["b.py:2 in b"]
+    assert window["longest"] == whole["longest"]
+    assert window["slow_count"] == whole["slow_count"] == 3
+    assert window["stall_ms"] == whole["stall_ms"]
+    assert window["severe_count"] == whole["severe_count"] == 1

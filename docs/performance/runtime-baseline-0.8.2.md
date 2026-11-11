@@ -123,8 +123,13 @@ Reading rules:
   stacks aggregated.  `count`/`total_ms` are exact for the window;
   `max_ms` is `null` when that stack also stalled before the window (a delta of
   maxima is not derivable).
-- `longest.stack` is the largest stall still present in the retained event
-  ring; the numeric `longest.interval_ms` is exact.
+- `longest` is the largest **non-instrumentation** stall visible to the view.
+  The process view (`summary()`) keeps an exact running maximum; the run window
+  takes the maximum over the retained event ring
+  (`retention.recent_events`, 50 events), so a window whose product stalls
+  overflow that ring reports the largest *retained* product stall.  In both
+  scopes `longest.instrumentation` is always `false`: a harness stall is never
+  eligible, even when it is the largest event in the ring.
 - `instrumentation_*` count stalls caused by the measuring harness itself
   (predicate polling such as job listing / runtime-state reads).  They are
   **never** part of `slow_count`, `severe_count`, `stall_ms`, `longest` or
@@ -258,14 +263,21 @@ section exists to prevent.
 
 Conditions, stated so that they cannot be mistaken for a gate run: **source
 build at `bc765adc`**, deterministic 1000-paragraph / 2000-segment EPUB fixture,
-**60 s window per run, 3 runs**, mock model gateway with instant replies, macOS
-cocoa QPA.  This is a **short diagnostic measurement**: even inside the three v2
-runs the same parameters differ by 1.1–1.4× on the tail metrics (the v1 control
-pair differs by up to 1.55×, see the noise note further down), so only very
-large effects are resolvable, and the mock load measures GIL saturation rather
-than user experience (0.8.2 plan §6.3).  It is kept because it is reproducible
-and shows where the tail comes from — **not** because it can serve as a gate
-comparison.
+**60 s window per run, 3 runs tabulated** (seven completed runs of the same
+series exist — see the sampling note under the table), mock model gateway with
+instant replies, macOS cocoa QPA.  This is a **short diagnostic measurement**:
+across the **seven** completed runs with identical parameters the stall p99
+spans 1198.4–1967.3 ms — **1.64×** — and the longest stall spans
+2451.3–3254.3 ms.  That run-to-run noise is wider than the 1.55× max-stall
+spread of the two v1 real-endpoint runs quoted further down (p99 there:
+1.44×), and it is far wider than any effect three 60 s rounds could attribute:
+with a 1.64× spread between identical runs, this setup cannot resolve an effect
+of that size, let alone a smaller one.  (Inside the three tabulated runs the
+tail happens to differ by only 1.1–1.4×; that narrower figure holds **only for
+those three** and is not the series' noise bound.)  So only very large effects
+would be resolvable, and the mock load measures GIL saturation rather than user
+experience (0.8.2 plan §6.3).  It is kept because it is reproducible and shows
+where the tail comes from — **not** because it can serve as a gate comparison.
 
 Measurement: `measurement: v2` — the scenario runs inside the application's own
 event loop (`app.exec()`, every step a `QTimer` callback) instead of the v1
@@ -285,11 +297,20 @@ confirmed (see the comparison below).
 | v2 offscreen control | 2000 | 61.149 | 930 | 90 (88.31/min) | 25 (24.53/min) | 247.2909 | 1783.1414 | 1834.6595 | 1 / 457.4 | 721.75 | 110.3 / 138.1 | 16 | yes |
 
 `p50` / `p99` / `max` in this table are stall-event percentiles (definition
-above), not all-pulse percentiles.  The three runs tabulated here are three of
-the seven mock-mode runs in the development series under `/private/tmp/a0-m2`
-(`after-1` … `after-7`; the offscreen control is `off-v2`); the others are not
-part of this table.  Those reports predate the `measurement` marker — see How to
-re-measure.
+above), not all-pulse percentiles.  The three tabulated runs are `after-4`,
+`after-5` and `after-6` — three of the seven completed mock-mode runs in the
+development series under `/private/tmp/a0-m2` (`after-1` … `after-7`; the
+offscreen control is `off-v2`; `after-8/` left no report, so it is not one of
+the seven and is not counted).  **The original reports record no selection
+rule, and none is reconstructed here:** these three are documented as *the runs
+that were tabulated*, not as a representative, best-case or worst-case sample.
+They are not the group's worst case — untabulated `after-1` has the group's
+worst single stall (**3254.3 ms**, vs 2648.5 / 2904.6 / 2773.7 ms here) and
+untabulated `after-2` the worst stall p99 (**1967.3 ms**, vs 1273.1 / 1752.8 /
+1696.9 ms here).  Both numbers exist in completed reports, so **this table does
+not represent the worst case of the seven runs**; the group range is p99
+1198.4–1967.3 ms (1.64×) and longest stall 2451.3–3254.3 ms.  Those reports
+predate the `measurement` marker — see How to re-measure.
 
 **Diagnostic summary (v2 driver, mock gateway) — these are NOT the numbers the
 ≥ 70 % target uses:**
