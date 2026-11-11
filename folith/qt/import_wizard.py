@@ -329,6 +329,11 @@ class ImportWizardDialog(QDialog):
         layout = QVBoxLayout(page)
         layout.setSpacing(theme_module.SPACE["sm"])
         form = QFormLayout()
+        # 先挂后填（#326 / docs/segfault-audit-0.8.2.md）：外层 layout 已经装在
+        # page 上，若等 form 填满再 addLayout，PySide 会把 form 里每个条目包进
+        # QWidgetItem 包装器，Qt 删掉 C++ item 后包装器仍注册在原地址，之后的
+        # 对象落在同一地址就会 SIGSEGV。视觉顺序不变：form 仍是第一个条目。
+        layout.addLayout(form)
         self.kind_label = QLabel()
         self.units_label = QLabel()
         self.pair_label = QLabel()
@@ -343,7 +348,6 @@ class ImportWizardDialog(QDialog):
         form.addRow(i18n.tr("警告"), self.unit_label)
         form.addRow(i18n.tr("目标项目"), self.project_combo)
         form.addRow(i18n.tr("目标语言"), self.language_edit)
-        layout.addLayout(form)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)          # 不确定态：引擎不提供逐条进度
         self.progress.setVisible(False)

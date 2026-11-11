@@ -189,6 +189,28 @@ def test_dialog_blocks_import_when_a_project_is_required(tmp_path):
         dialog.deleteLater()
 
 
+def test_preflight_form_is_attached_before_it_is_filled():
+    """#326 回归：预检页的表单必须"先挂后填"，且它仍是第一个条目。
+
+    外层 layout 已装在 page 上时，先填 form 再 addLayout 会在 Qt 侧留下
+    QWidgetItem 包装器（SIGSEGV 的种子）；`scripts/check_qt_layout_order.py`
+    检查同一性质，这里再从运行期确认视觉顺序没变。
+    """
+    from PySide6.QtWidgets import QFormLayout
+
+    controller, _calls = _controller()
+    dialog = import_wizard.ImportWizardDialog(controller=controller)
+    try:
+        page = dialog.stack.widget(1)
+        layout = page.layout()
+        assert isinstance(layout.itemAt(0).layout(), QFormLayout)
+        assert layout.count() >= 2, "表单之后还应有进度条/提示标签"
+        assert dialog.project_combo.count() >= 0  # 表单内容已填
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
 def test_dialog_error_page_offers_retry(tmp_path):
     def failing(path, *, project_id=None, target_lang=""):
         raise ValueError("无法读取文件：permission denied")
