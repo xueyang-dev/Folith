@@ -2172,6 +2172,7 @@ class MainWindow(QMainWindow):
 
         def failed(_message: str, _detail: str) -> None:
             self._state_load_in_flight = False
+            self._flush_pending_poll()
 
         self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-delta")
@@ -2407,6 +2408,7 @@ class MainWindow(QMainWindow):
 
         def failed(_message: str, _detail: str) -> None:
             self._state_load_in_flight = False
+            self._flush_pending_poll()
 
         self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-state")
