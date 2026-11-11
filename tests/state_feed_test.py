@@ -179,10 +179,12 @@ def test_journal_rotation_continues_by_sequence_not_by_offset(tmp_path):
 
     # Compaction truncates the journal; sequence numbers continue from the
     # snapshot cursor, so the next record is seq 2 even though the file shrank.
+    before_size = job.journal.stat().st_size
     job.journal.write_bytes(b"")
     job.append(_record(2, 1, [_pair("u1", "World", "世界")]))
+    assert job.journal.stat().st_size == before_size, "the case under test needs equal length"
     second = feed.poll()
-    assert isinstance(second, state_feed.DeltaBatch)
+    assert isinstance(second, state_feed.DeltaBatch), type(second)
     assert second.from_seq == 2 and second.seq == 2
 
 
@@ -341,3 +343,36 @@ def test_feed_reads_the_same_suffix_as_the_journal_helper(tmp_path):
     assert [record["seq"] for record in records] == [1, 2, 3]
     assert next_offset == job.journal.stat().st_size
     assert feed.cursor.offset == next_offset
+
+def test_in_place_rewrite_with_identical_size_and_time_is_still_detected(tmp_path):
+    """Windows-portable rotation detection.
+
+    Windows stamps the last-write time from a coarse system clock (~15.6 ms), so
+    a truncate-and-refill can leave exactly the same ``(mtime_ns, size)`` as
+    before; ``st_ino`` is also 0/unstable on some Windows filesystems.  The feed
+    therefore compares the *content head* of the journal -- an append-only
+    journal never changes it, any replacement does.  This test reproduces the
+    Windows situation deterministically on every platform by restoring the old
+    timestamp after the rewrite.
+    """
+    import os
+
+    job = _Job(tmp_path)
+    job.append(_record(1, 0, [_pair("u0", "Hello", "你好")]))
+    feed = job.feed()
+    feed.start(cursor_seq=0)
+    assert isinstance(feed.poll(), state_feed.DeltaBatch)
+    before = job.journal.stat()
+
+    job.journal.write_bytes(b"")
+    job.append(_record(2, 1, [_pair("u1", "World", "世界")]))
+    after = job.journal.stat()
+    assert (after.st_size, after.st_ino) == (before.st_size, before.st_ino)
+    os.utime(job.journal, ns=(before.st_atime_ns, before.st_mtime_ns))
+    restored = job.journal.stat()
+    assert restored.st_mtime_ns == before.st_mtime_ns
+
+    second = feed.poll()
+    assert isinstance(second, state_feed.DeltaBatch), type(second)
+    assert [segment.index for segment in second.segments] == [1]
+    assert second.seq == 2
