@@ -255,6 +255,85 @@ def test_unchanged_refresh_keeps_domain_versions_and_skips_projections(client, m
     assert recomputes == {"view": 0, "panel": 0}, recomputes
 
 
+def test_an_edit_does_not_revalidate_the_whole_delivery_on_every_save(
+        client, monkeypatch):
+    """An edit bumps all 12 domains; the delivery preview must keep its gate.
+
+    ``_replace_state()`` bumps *every* domain revision when it receives a new
+    state object, and after a run every edit produces one.  When
+    ``_render_delivery()``'s cache key included ``_domain_version("delivery")``,
+    ``unchanged`` was False on every edit, so both time gates
+    (``DELIVERY_REFRESH_SECONDS`` / ``DELIVERY_FORCE_FLOOR_SECONDS``) were
+    bypassed and the whole-document validation ran once per edit instead of once
+    per 5 s (P0-5x: 20 vs 7 runs over 20 driven edits; 391.6 vs 288.2 ms per
+    refresh).  The key must name what the panel shows, not the domain revision:
+    a domain moves on edits that cannot change the preview.
+
+    No wall-clock wait: the loop only asserts that, within the gate window, the
+    preview does not run -- with the old key it would run on *every* edit
+    because ``unchanged`` never becomes true, which is what makes this red.
+    """
+    window, adapter, core = client["window"], client["adapter"], client["core"]
+    job_id = _open_started(client)          # p1_done already set before opening
+    workbench = window.workbench
+
+    # A finished, idle task: its runtime status never changes during the loop,
+    # so no terminal transition forces a delivery refresh.
+    state = core.load_job_state(job_id)
+    state["p2_done"] = True
+    state["p3_done"] = True
+    core.save_job_state(job_id, state)
+    window.refresh_workbench(force=True)
+    client["app"].processEvents()
+    assert workbench._last_runtime.get("status") == "completed", workbench._last_runtime
+
+    calls = {"preview": 0}
+    original_preview = adapter.delivery_preview
+
+    def counted_preview(*args, **kwargs):
+        calls["preview"] += 1
+        return original_preview(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "delivery_preview", counted_preview)
+    before = workbench.domain_versions()
+    keys = {workbench._delivery_key}
+    previous = workbench._state
+    edits = 8
+    for index in range(edits):
+        state = core.load_job_state(job_id)
+        state["pairs"][index]["target"] = f"人工修改后的译文 {index}"
+        core.save_job_state(job_id, state)
+        window.refresh_workbench()
+        client["app"].processEvents()
+        # The edit really is the "new state object" case: it replaces the state.
+        assert workbench._state is not previous, index
+        previous = workbench._state
+        keys.add(workbench._delivery_key)
+
+    during_loop = calls["preview"]
+    after = workbench.domain_versions()
+    # Every domain -- delivery included -- moved once per edit ...
+    assert after == {name: value + edits for name, value in before.items()}, (
+        before, after)
+    assert after["delivery"] - before["delivery"] == edits
+    # ... and the delivery key ignored those revisions: one content key, so the
+    # 5 s / 1 s gates stay in charge instead of being skipped on every edit.
+    assert during_loop <= edits // 2, (calls, keys)
+    assert len(keys) == 1, keys
+    # Not a dead panel: a real content change (the fields the key names)
+    # validates immediately, and the next plain refresh is under the gate again.
+    state = core.load_job_state(job_id)
+    state["delivery_status"] = "final"
+    core.save_job_state(job_id, state)
+    window.refresh_workbench()
+    client["app"].processEvents()
+    assert calls["preview"] == during_loop + 1, calls
+    assert workbench._delivery_key[-1] == "final", workbench._delivery_key
+    window.refresh_workbench()
+    client["app"].processEvents()
+    assert calls["preview"] == during_loop + 1, calls
+
+
 # ---------------------------------------------------------------------------
 # snapshot policy: only a snapshot without a live worker rebuilds
 # ---------------------------------------------------------------------------

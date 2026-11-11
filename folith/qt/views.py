@@ -6212,7 +6212,15 @@ class WorkbenchView(QWidget):
         now = time.monotonic()
         prepared = getattr(self, "_prepared_delivery", None)
         self._prepared_delivery = None
-        key = (self.job_id, self._domain_version("delivery"), len(self._snapshots),
+        # 键只放"面板上看得见的内容"，不要放 `_domain_version("delivery")`：
+        # `_replace_state()` 收到新的 state 对象时会给**全部 12 个域**各 +1，
+        # 而完成后每一次编辑落盘都是一个新对象。域版本挂进这个键，`unchanged`
+        # 就永远是 False，下面两道时间闸门（5 s 与 1 s 地板）同时失效，整个
+        # 全文档交付校验退化成"每次编辑一次"（P0-5x：20 次驱动校验 20 次 vs
+        # main 的 5 次；刷新均值 391.6 ms vs 288.2 ms）。后台
+        # `_DeliveryPreviewCache` + `_maybe_slow_projection` 已经按自己的 5 s
+        # 地板重算并回传 `models["delivery"]`，GUI 线程这次同步重算只是重复。
+        key = (self.job_id, len(self._snapshots),
                str(self._state.get("delivery_status") or ""))
         unchanged = self._delivery_rendered and key == self._delivery_key
         same_job = bool(self._delivery_rendered and self._delivery_key
