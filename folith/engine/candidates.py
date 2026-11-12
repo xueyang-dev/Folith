@@ -173,12 +173,14 @@ def stage_concept_revision(job_id: str, card: Mapping[str, Any], *,
     的显式覆盖路径，不存在批量入口。
     """
     from folith import concept_revision as _cr
+    from folith import consistency as _consistency
 
     state = _loaded(job_id)
     pairs = state.get("pairs") or []
     preview = _cr.preview_concept_revision(
         card, state.get("entity_registry") or [], pairs,
-        state.get("concept_decisions"), exclusions=exclusions)
+        state.get("concept_decisions"), exclusions=exclusions,
+        known_forms=_consistency.collect_known_forms(state))
     card = dict(card) if isinstance(card, Mapping) else {}
     card_id = str(card.get("card_id") or "")
     member_forms = {str(form or "").strip().casefold()
@@ -238,12 +240,14 @@ def stage_term_revision(job_id: str, source_term: str, old_target: str,
     （``excluded: true``）但不产生候选。
     """
     from folith import term_revision as _tr
+    from folith import consistency as _consistency
 
     state = _loaded(job_id)
     pairs = state.get("pairs") or []
     preview = _tr.preview_term_revision(
         source_term, old_target, new_target, pairs,
-        forbidden=forbidden, exclusions=exclusions)
+        forbidden=forbidden, exclusions=exclusions,
+        known_forms=_consistency.collect_known_forms(state))
     source_key = _tr.consistency.spelling(source_term).casefold()
     drafts: List[Dict[str, Any]] = []
     for row in preview["rows"]:
@@ -314,7 +318,8 @@ def _conflict_reason(code: str, record: Mapping[str, Any]) -> str:
 
 
 def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
-               actor: str, note: str, allow_protected: bool) -> tuple[Dict[str, Any], bool]:
+               actor: str, note: str, allow_protected: bool,
+               record_type: str = "") -> tuple[Dict[str, Any], bool]:
     """Adopt one candidate against ``state``; return ``(result, state_changed)``.
 
     Callers own the lock and the save.  Splitting this out is what lets a batch
@@ -392,7 +397,7 @@ def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
 
         _delivery.add_human_action(
             state, f"candidate:{record.get('candidate_id')}", "candidate_adopted_unchanged",
-            record["note"], actor)
+            record["note"], actor, record_type=record_type)
         return {"committed": True, "already_adopted": False, "changed_text": False,
                 "candidate": _cand.public_view(record, pair=pair),
                 "conflict": None, "reason": ""}, True
@@ -463,7 +468,7 @@ def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
 
     _delivery.add_human_action(
         state, f"candidate:{record.get('candidate_id')}", "candidate_adopted",
-        note or "采用翻译候选", actor)
+        note or "采用翻译候选", actor, record_type=record_type)
     return {"committed": True, "already_adopted": False, "changed_text": True,
             "candidate": _cand.public_view(record, pair=pair),
             "conflict": None, "reason": ""}, True
@@ -472,7 +477,8 @@ def _adopt_one(state: Dict[str, Any], job_id: str, candidate_id: str, *,
 @_serialized_job_mutation
 def adopt_translation_candidate(job_id: str, candidate_id: str, *,
                                 actor: str = "user", note: str = "",
-                                allow_protected: bool = True) -> Dict[str, Any]:
+                                allow_protected: bool = True,
+                                record_type: str = "") -> Dict[str, Any]:
     """Adopt one candidate as the working translation, or explain why not.
 
     The whole decision runs under the task's state lock, against freshly loaded
@@ -490,7 +496,8 @@ def adopt_translation_candidate(job_id: str, candidate_id: str, *,
     """
     state = _loaded(job_id)
     result, dirty = _adopt_one(state, job_id, candidate_id, actor=actor,
-                               note=note, allow_protected=allow_protected)
+                               note=note, allow_protected=allow_protected,
+                               record_type=record_type)
     if dirty:
         _c.save_job_state(job_id, state)
     result["state"] = state
@@ -500,7 +507,8 @@ def adopt_translation_candidate(job_id: str, candidate_id: str, *,
 @_serialized_job_mutation
 def adopt_translation_candidates(job_id: str, candidate_ids: Sequence[str], *,
                                  actor: str = "user", note: str = "",
-                                 allow_protected: bool = False) -> Dict[str, Any]:
+                                 allow_protected: bool = False,
+                                 record_type: str = "") -> Dict[str, Any]:
     """Adopt several candidates in one transaction, reporting every item.
 
     Policy (documented here because #92 asks for one stated batch semantic):
@@ -535,7 +543,8 @@ def adopt_translation_candidates(job_id: str, candidate_ids: Sequence[str], *,
             continue
         result, item_dirty = _adopt_one(state, job_id, candidate_id,
                                         actor=actor, note=note,
-                                        allow_protected=allow_protected)
+                                        allow_protected=allow_protected,
+                                        record_type=record_type)
         dirty = dirty or item_dirty
         results.append({"candidate_id": candidate_id,
                         "committed": bool(result.get("committed")),

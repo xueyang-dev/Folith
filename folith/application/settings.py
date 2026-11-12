@@ -237,6 +237,13 @@ _TASK_FIELDS: Tuple[_Field, ...] = (
     _Field("translation_concurrency", truthy=True, state_keys=("translation_concurrency",)),
     _Field("batch_size", truthy=True, state_derived="batch_profile_size"),
     _Field("max_batch_chars", truthy=True, state_derived="batch_profile_chars"),
+    # Phase 3 explicit batching strategy: the core records it in
+    # pipeline_config when a task starts, so it travels with the task (the
+    # batch plan is part of the resume contract).  With no saved value the
+    # JobConfig supplies the desktop entry default (sentence, matching the
+    # historic inference); this layer never derives a strategy from other
+    # fields.
+    _Field("batch_strategy", state_keys=("batch_strategy",)),
     # Per-batch knowledge feedback (name continuity, term candidates).  快速
     # switches it off; absent means on.
     _Field("knowledge_feedback", state_keys=("knowledge_feedback",)),

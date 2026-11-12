@@ -64,8 +64,13 @@ def _translate_step(translated: bool, runtime: Mapping, state: Mapping) -> dict:
     return _step(TRANSLATE, ATTENTION if status in _TROUBLED else CURRENT, hint)
 
 
-def _review_step(translated: bool, review: Mapping) -> tuple[dict, bool]:
-    """返回 (步骤, 审校是否已放行)。"""
+def _review_step(translated: bool, review: Mapping, blocking_override: int | None = None) -> tuple[dict, bool]:
+    """返回 (步骤, 审校是否已放行)。
+
+    ``blocking_override``：调用方用交付门禁的同一个函数数出来的「未解决阻断项」数量。
+    给了就以它为准——审校投影只看得见审校队列自己知道的收据，看不见旧式阻断项，
+    两边各数一遍正是 F2 里「审校页说完成、交付页拦住 1 项」的来源。
+    """
     if not translated:
         return _step(REVIEW, TODO), False
     readiness = review.get("readiness") or {}
@@ -74,6 +79,8 @@ def _review_step(translated: bool, review: Mapping) -> tuple[dict, bool]:
         return _step(REVIEW, TODO), False
     failed, stale = _count(progress.get("failed")), _count(progress.get("stale"))
     blocking, missing = _count(progress.get("blocking")), _count(progress.get("missing"))
+    if blocking_override is not None:
+        blocking = _count(blocking_override)
     if not readiness.get("required") and readiness.get("status") == "not_required":
         # 没启用独立审校也可能有未解决的阻断项（旧的交付门禁仍然看它们）。
         if blocking:
@@ -97,7 +104,8 @@ def _review_step(translated: bool, review: Mapping) -> tuple[dict, bool]:
     return _step(REVIEW, CURRENT, i18n.tr("尚未审校")), False
 
 
-def _deliver_step(translated: bool, review_ok: bool, delivery: Mapping) -> dict:
+def _deliver_step(translated: bool, review_ok: bool, delivery: Mapping,
+                  blocking_override: int | None = None) -> dict:
     snapshot = delivery.get("snapshot") or {}
     if snapshot.get("current"):
         version = (snapshot.get("latest") or {}).get("snapshot_version")
@@ -106,9 +114,9 @@ def _deliver_step(translated: bool, review_ok: bool, delivery: Mapping) -> dict:
                      else i18n.tr("已冻结"))
     if not translated or not review_ok:
         return _step(DELIVER, TODO)
-    if delivery.get("can_deliver"):
+    if delivery.get("can_deliver") and not (blocking_override or 0):
         return _step(DELIVER, CURRENT, i18n.tr("可以交付"))
-    if delivery.get("issues") or delivery.get("blocking"):
+    if delivery.get("issues") or delivery.get("blocking") or blocking_override:
         return _step(DELIVER, ATTENTION, i18n.tr("有阻断项"))
     return _step(DELIVER, CURRENT)
 
@@ -122,8 +130,13 @@ def _action(review: Mapping, delivery: Mapping, current: str) -> dict | None:
             return {"kind": kind, "label": i18n.tr_dynamic(str(primary.get("label") or "")),
                     "segment_ids": list(primary["segment_ids"]), "target": REVIEW}
         if kind == "handle_finding":
-            return {"kind": kind, "label": str(primary.get("label") or ""),
+            return {"kind": kind, "label": i18n.tr_dynamic(str(primary.get("label") or "")),
                     "item_id": primary.get("item_id"), "target": REVIEW}
+        if kind == "delivery":
+            # 审校这边已经没有要做的了，问题在交付门禁上：头部不放主按钮——
+            # 否则会落到下面的 "review_all"，把一个 100% 审校完的任务又送去
+            # 重跑一遍全部段落（真实模型调用）。入口在交付页的「去处理」。
+            return None
         # 审校还没跑过：没有"缺哪几段"的清单，推荐的就是跑一遍全部。
         return {"kind": "review_all", "label": i18n.tr("审校全部段落"), "target": REVIEW}
     if current == DELIVER and delivery.get("can_deliver"):
@@ -133,11 +146,15 @@ def _action(review: Mapping, delivery: Mapping, current: str) -> dict | None:
 
 def stage_view(*, started: bool, runtime: Mapping | None, state: Mapping | None,
                review: Mapping | None, delivery: Mapping | None,
-               terms_blocked: bool = False) -> dict:
+               terms_blocked: bool = False,
+               blocking: int | None = None) -> dict:
     """把运行视图 / 审校投影 / 交付预检折成阶段视图。
 
     ``terms_blocked``：严格术语治理正在拦着翻译（候选术语没冻结）。此时"翻译"一步
     不是在跑，而是在等人去术语页确认。
+
+    ``blocking``：`delivery.unresolved_blocking()` 数出来的未解决阻断项。传了它，
+    「审校」与「交付」两步就用**同一个数**说话（F2）；不传则退回各自读投影的老行为。
 
     返回 ``{"steps": [...], "current": id, "action": {...} | None}``。缺任何一份
     输入都按"没有这方面的信息"处理，不抛异常——这个视图每秒会被重算。
@@ -158,8 +175,8 @@ def stage_view(*, started: bool, runtime: Mapping | None, state: Mapping | None,
     translate = _translate_step(translated, runtime, state)
     if terms_blocked and not translated:
         translate = _step(TRANSLATE, ATTENTION, i18n.tr("待确认术语"))
-    review_step, review_ok = _review_step(translated, review)
-    deliver = _deliver_step(translated, review_ok, delivery)
+    review_step, review_ok = _review_step(translated, review, blocking)
+    deliver = _deliver_step(translated, review_ok, delivery, blocking)
     steps = [prepare, translate, review_step, deliver]
 
     current = next((s["id"] for s in steps if s["state"] in (CURRENT, ATTENTION)),

@@ -72,6 +72,23 @@ def _view(*items):
                           "detail": "完成待审段落或处理必须解决的问题后即可继续"}}
 
 
+def _first_card_text(panel) -> str:
+    """队列表第 0 行是分组标题；测试要的是第一张卡片。"""
+    for row in range(panel.list.count()):
+        entry = panel.list.item(row)
+        if entry.data(Qt.ItemDataRole.UserRole):
+            return entry.text()
+    return ""
+
+
+def _first_card_entry(panel):
+    for row in range(panel.list.count()):
+        entry = panel.list.item(row)
+        if entry.data(Qt.ItemDataRole.UserRole):
+            return entry
+    return None
+
+
 def _panel(*items):
     panel = ReviewPanel()
     panel.resize(1180, 760)
@@ -90,9 +107,10 @@ def test_panel_fits_the_default_window_in_every_ui_language(qt_app, lang):
     try:
         # 默认窗口 1180px；门槛留一点余量，确认长语言不再把最小宽度撑出去。
         assert panel.minimumSizeHint().width() <= 900
-        # 筛选条横跨整页，七个页签在默认窗口里是一行。
-        assert panel.filter_control.height() <= 40
-        assert panel.filter_control.width() > 900
+        # 左栏的组标题只有一行高，长语言也不会把面板撑宽。
+        group = panel._group_of(panel._items[0])
+        assert panel._group_buttons[group].height() <= 40
+        assert panel.list.minimumWidth() <= 300
         # 两个主按钮不能同时是实心主行动。
         assert [button for button in (panel.apply_button, panel.open_button,
                                       panel.confirm_button)
@@ -101,11 +119,12 @@ def test_panel_fits_the_default_window_in_every_ui_language(qt_app, lang):
         panel.close()
 
 
-def test_confirm_is_the_only_primary_action_without_a_suggestion(qt_app):
+def test_style_finding_without_suggestion_prioritizes_edit(qt_app):
     panel = _panel(_item(suggested_target=""))
     try:
         assert panel.apply_button.property("kind") == "secondary"
-        assert panel.confirm_button.property("kind") == "primary"
+        assert panel.confirm_button.property("kind") == "secondary"
+        assert panel.edit_button.property("kind") == "primary"
     finally:
         panel.close()
 
@@ -137,15 +156,14 @@ def test_synthetic_task_copy_is_translated_but_findings_are_not(qt_app):
                  summary="当前译文尚未完成独立审校")
     panel = _panel(task)
     try:
-        assert "The current translation has not been reviewed" in (
-            panel.list.item(0).text())
+        assert "The current translation has not been reviewed" in _first_card_text(panel)
     finally:
         panel.close()
 
     finding = _item(summary="模型产出的中文问题")
     panel = _panel(finding)
     try:
-        assert "模型产出的中文问题" in panel.list.item(0).text()
+        assert "模型产出的中文问题" in _first_card_text(panel)
     finally:
         panel.close()
 
@@ -156,7 +174,7 @@ def test_queue_keeps_the_full_problem_and_offers_it_as_a_tooltip(qt_app):
     item = _item(summary="这句话可以更自然一些，" * 8)
     panel = _panel(item)
     try:
-        entry = panel.list.item(0)
+        entry = _first_card_entry(panel)
         assert len(item["summary"]) > 60
         assert item["summary"] in entry.toolTip()
         accessible = entry.data(Qt.ItemDataRole.AccessibleTextRole)
@@ -170,9 +188,11 @@ def test_confirmed_open_decision_is_visible_in_the_queue_and_detail(qt_app):
     panel = _panel(_item(decision="confirmed_open",
                          decision_label="已确认存在，待修订"))
     try:
-        assert "已确认存在，待修订" in panel.list.item(0).text()
-        assert "已确认存在，待修订" in panel.item_body.toPlainText()
-        assert "已记录的决定" in panel.item_body.toPlainText()
+        assert "已确认存在，待修订" in _first_card_text(panel)
+        detail = (panel.item_body.toPlainText() + "\n"
+                  + panel.evidence_body.toPlainText())
+        assert "已确认存在，待修订" in detail
+        assert "已记录的决定" in detail
     finally:
         panel.close()
 
@@ -183,7 +203,7 @@ def test_key_controls_expose_accessible_names(qt_app):
     panel = _panel(_item())
     try:
         assert panel.accessibleName()
-        for widget in (panel.list, panel.item_body, panel.filter_control,
+        for widget in (panel.list, panel.item_body,
                        panel.note_edit, panel.source_note_edit):
             assert widget.accessibleName(), widget
         # 快捷键没有画在按钮文字里，但读屏要能听到。
@@ -242,9 +262,129 @@ def test_english_filter_and_segment_frame_are_translated(qt_app):
     i18n.set_language("en")
     panel = _panel(_item())
     try:
-        labels = [button.text() for button in panel.filter_control.findChildren(
-            type(panel.review_all_button))]
-        assert any(label.startswith("Skipped") for label in labels)
-        assert panel.list.item(0).text().startswith("Segment 4 · ")
+        labels = [button.text() for button in panel._group_buttons.values()]
+        assert any(label.startswith("Suggestion") for label in labels)
+        assert _first_card_text(panel).startswith("Segment 4 · ")
     finally:
         panel.close()
+
+
+# ---------------------------------------- #102 剩余缺口：核心拼接句本地化 --------
+#
+# 审校就绪里的「按策略跳过：<原因> N 段」与合成项（跳过/待审/需重审/失败）的
+# 摘要/建议原本在核心层拼成中文再交给界面，英文界面会漏出中文。这里钉住：
+# 结构化的覆盖信息 + 跳过原因码能在界面层按语言重排，且默认中文逐字不变。
+
+import re as _re  # noqa: E402
+
+from folith.workbench_view import review_workbench_view  # noqa: E402
+
+_CJK = _re.compile(r"[\u4e00-\u9fff]")
+
+_REVIEW = {"phase": "formal_review", "review_scope": "current_translation",
+           "segment_ids": [], "freshness_status": "current",
+           "stale_segment_ids": []}
+
+
+def _clean_event(index):
+    return {**_REVIEW, "review_event_id": f"clean-{index}",
+            "segment_ids": [index], "decision": "clean",
+            "completion_receipt": {"status": "completed",
+                                   "reviewed_segment_ids": [index]}}
+
+
+def _skipped_event(index):
+    return {**_REVIEW, "review_event_id": f"skip-{index}",
+            "segment_ids": [index], "decision": "skipped_low_risk",
+            "skip_reason": "clean_deterministic",
+            "completion_receipt": {"status": "skipped_low_risk",
+                                   "reviewed_segment_ids": []}}
+
+
+def _stale_event(index):
+    return {**_REVIEW, "review_event_id": f"stale-{index}",
+            "segment_ids": [index], "decision": "clean",
+            "freshness_status": "stale", "stale_segment_ids": [index],
+            "stale_reason": "当前译文已修改",
+            "completion_receipt": {"status": "completed",
+                                   "reviewed_segment_ids": [index]}}
+
+
+def _review_state(count, evidence):
+    return {"translation_core_review_required": True, "p2_done": True,
+            "pairs": [{"source": f"Source {index}", "target": f"Target {index}"}
+                      for index in range(count)],
+            "findings": [], "human_actions": [], "review_evidence": evidence}
+
+
+def _all_skipped():
+    return _review_state(3, [_skipped_event(index) for index in range(3)])
+
+
+def _partial():
+    return _review_state(4, [_clean_event(0), _clean_event(1),
+                             _skipped_event(2), _skipped_event(3)])
+
+
+def _stale():
+    return _review_state(2, [_stale_event(0), _clean_event(1)])
+
+
+def _select_first_card(panel):
+    for row in range(panel.list.count()):
+        if panel.list.item(row).data(Qt.ItemDataRole.UserRole):
+            panel.list.setCurrentRow(row)
+            return
+    raise AssertionError("队列里没有卡片")
+
+
+@pytest.mark.parametrize("lang", ["en", "de", "es", "fr", "ru", "ar"])
+@pytest.mark.parametrize("factory", [_all_skipped, _partial])
+def test_skipped_coverage_copy_is_localized_without_leaking_chinese(
+        qt_app, lang, factory):
+    i18n.set_language(lang)
+    view = review_workbench_view(factory())
+    assert view["coverage"]["kind"] in ("skipped", "partial")
+    panel = ReviewPanel()
+    panel.resize(1180, 760)
+    panel.apply(view)
+    try:
+        assert not _CJK.search(panel.headline.text()), panel.headline.text()
+        assert not _CJK.search(panel.detail.text()), panel.detail.text()
+        card = _first_card_text(panel)
+        assert not _CJK.search(card), card
+        _select_first_card(panel)
+        body = panel.item_body.toPlainText()
+        assert not _CJK.search(body), body
+    finally:
+        panel.close()
+
+
+@pytest.mark.parametrize("lang", ["en", "de"])
+def test_stale_task_recommendation_is_localized(qt_app, lang):
+    i18n.set_language(lang)
+    view = review_workbench_view(_stale())
+    panel = ReviewPanel()
+    panel.resize(1180, 760)
+    panel.apply(view)
+    try:
+        _select_first_card(panel)
+        body = panel.item_body.toPlainText()
+        assert not _CJK.search(body), body
+        if lang == "en":
+            assert "Re-run review" in body
+    finally:
+        panel.close()
+
+
+def test_default_chinese_coverage_copy_is_byte_identical_to_core(qt_app):
+    i18n.set_language("zh-CN")
+    for factory in (_all_skipped, _partial):
+        view = review_workbench_view(factory())
+        panel = ReviewPanel()
+        panel.apply(view)
+        try:
+            assert panel.headline.text() == view["readiness"]["label"]
+            assert panel.detail.text() == view["readiness"]["detail"]
+        finally:
+            panel.close()

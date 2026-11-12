@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 
 import core
@@ -33,27 +34,59 @@ def test_run_snapshot_excludes_secrets_and_prompt_text(tmp_path):
 
 
 def test_annotation_boundaries_expose_ordered_commit_wait(tmp_path, monkeypatch):
+    """批次提交严格按批次号串行，等待点在提交，而不在请求完成。
+
+    旧断言要求 ``commit_started - result_ready`` 这段时间超过 50 毫秒。那段
+    时间只包含"等前一批把结果写进 job state"，长度取决于机器负载、磁盘 fsync
+    以及 worker 之间谁先跑完；Windows 上实测到过 28 毫秒，属于假红。这里改为
+    检验同一个不变量的事件顺序：批次 2 的结果已经就绪（result_ready），但它
+    的提交必须等到批次 1 提交完成（commit_finished）之后才开始。
+    """
     monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(core, "ANNOT_BATCH_SIZE", 1)
     monkeypatch.setattr(core, "save_job_state", lambda *_: None)
     state = core.new_job_state("boundaries.txt")
     state["pairs"] = [{"source": f"Section {i} explains operational requirements.", "target": f"第{i}节解释运行要求。"} for i in range(2)]
+    # 两个 worker：批次 2 可以在批次 1 还没返回时先完成，从而真的暴露"按序提交"。
+    state["pipeline_config"] = {"translation_concurrency": 2, "annotation_scheduler": "c2"}
+    second_ready = threading.Event()
 
     def response(pairs, *_):
         if "Section 0" in pairs[0]["source"]:
-            time.sleep(0.03)
+            # 只做顺序握手：让批次 1 的请求不返回，直到批次 2 记下自己的
+            # result_ready。等的是事件而不是时间，机器快慢不影响判定；10s 是
+            # 死锁保护（worker 退化成 1 时会在这里失败），不是性能阈值。
+            assert second_ready.wait(10), "批次 2 从未记录 result_ready"
         return core.AnnotationBatchResult(status="empty")
 
+    record_timing = core._batch_timing
+
+    def timing(job_id, stage, batch_id, phase, **metadata):
+        record_timing(job_id, stage, batch_id, phase, **metadata)
+        if batch_id == 2 and phase == "result_ready":
+            second_ready.set()
+
     monkeypatch.setattr(core, "annotate_batch", response)
+    monkeypatch.setattr(core, "_batch_timing", timing)
     run = trace.start_run("boundaries", output_dir=tmp_path / "trace", level=TraceLevel.STANDARD)
     try:
         core.annotate_stage(state, "boundaries", [], "DeepSeek", "mock", "model", "简体中文")
     finally:
         trace.finish_run("boundaries")
     events = [json.loads(line) for line in run.requests_path.read_text(encoding="utf-8").splitlines()]
-    batch = {e["phase"]: e["monotonic"] for e in events if e["event"] == "batch_timing" and e["batch_id"] == 2}
-    assert batch["queued"] <= batch["worker_started"] <= batch["result_ready"] < batch["commit_started"] <= batch["commit_finished"]
-    assert batch["commit_started"] - batch["result_ready"] > 0.01
+    # trace 的写入在同一把锁内完成，所以文件中的先后就是事件发生的先后。
+    # 下面比较的是事件在流里的序号，不是时间戳，也不含任何时间差阈值。
+    order = {}
+    for index, event in enumerate(events):
+        if event["event"] == "batch_timing":
+            order.setdefault(event["batch_id"], {})[event["phase"]] = index
+    first, second = order[1], order[2]
+    for batch in (first, second):
+        assert batch["queued"] < batch["worker_started"] < batch["result_ready"] < batch["commit_started"] < batch["commit_finished"]
+    # 批次 2 的结果在批次 1 开始提交之前就已就绪（它本可以先提交）……
+    assert second["result_ready"] < first["commit_started"]
+    # ……但批次 2 的提交直到批次 1 提交完成之后才开始：等待发生在提交点。
+    assert first["commit_finished"] < second["commit_started"]
     assert any(e.get("phase") == "annotation_complete" for e in events)
 
 

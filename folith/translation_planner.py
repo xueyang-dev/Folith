@@ -189,13 +189,11 @@ def _term_entries(state: Mapping[str, Any]) -> List[Dict[str, str]]:
             expected = _text(raw.get("preferred")) or _text(raw.get("target"))
             if not expected and in_auto:
                 expected = _text(auto_terms.get(source))
-            if source in entries:
-                continue
-            entries[source] = {
-                "source": source,
-                "expected": expected,
-                "status": status or "candidate",
-            }
+            for form in [source, *(raw.get('source_aliases') or [])]:
+                form = _text(form)
+                if form and form not in entries:
+                    entries[form] = {"source": form, "expected": expected,
+                                     "status": status or "candidate"}
     for key, value in auto_terms.items():
         source = _text(key)
         if not source or source in entries:

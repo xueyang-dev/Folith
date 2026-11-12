@@ -1,0 +1,41 @@
+[
+  {
+    "finding_id": "BR01",
+    "severity": "HIGH",
+    "component": "annotation request identity",
+    "title": "SDK environment endpoint is omitted from annotation fingerprint",
+    "file": "folith/engine/llm_provider.py",
+    "line": 139,
+    "reproduction": "Run test_observation_sdk_environment_endpoint_is_missing_from_fingerprint: stage under OPENAI_BASE_URL=A; replay under B; force a new job under B. A/B final HTTP URLs differ but fingerprints are equal and the old candidate is replayed.",
+    "expected": "The identity covers the final endpoint consumed by the actual SDK.",
+    "actual": "Official OpenAI default route is empty in the fingerprint; SDK independently applies OPENAI_BASE_URL.",
+    "impact": "A candidate from another endpoint can be reused after an endpoint change.",
+    "evidence_type": "reproduced with real OpenAI SDK and final HTTP MockTransport capture",
+    "confidence": "HIGH",
+    "recommendation": "Resolve final SDK endpoint before request identity and client acquisition; use that single result for identity, pool and SDK constructor.",
+    "related_findings": [
+      "F04"
+    ],
+    "blocks_merge": true
+  },
+  {
+    "finding_id": "BR02",
+    "severity": "HIGH",
+    "component": "annotation failure shutdown",
+    "title": "Staging failure does not wake a paused peer and delays product failure publication",
+    "file": "core.py",
+    "line": 4568,
+    "reproduction": "Run test_observation_product_failure_publication_waits_for_manual_pause_release for c2/c4/ordered and test_observation_real_http_request_can_start_after_peer_staging_failure.",
+    "expected": "Failure stops requests not yet dispatched, wakes internal pause waits, preserves the storage error, and releases worker ownership before reporting failed.",
+    "actual": "Executor shutdown waits for a peer in the real pause loop; product retains its worker lock without publishing error. Manual Continue permits another model request before failed is published.",
+    "impact": "Failure cleanup requires manual intervention; a post-failure request can create additional paid work. Manual cancel/unpause can recover, so this is not an irreversible deadlock.",
+    "evidence_type": "reproduced actual background-worker API, real pause checkpoints, runtime/lock observations, and final HTTP MockTransport capture",
+    "confidence": "HIGH",
+    "recommendation": "Propagate an annotation fail-stop reason to pause/provider-gate/predispatch checks and wake waiters; preserve original failure classification and release worker/heartbeat ownership.",
+    "related_findings": [
+      "F06",
+      "F08"
+    ],
+    "blocks_merge": true
+  }
+]

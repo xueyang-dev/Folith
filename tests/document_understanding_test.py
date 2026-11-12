@@ -1,6 +1,7 @@
 """Provider/geometry contracts: fake service responses, real PDFs and persistence."""
 import json
 from dataclasses import asdict
+from pathlib import Path
 from types import SimpleNamespace
 
 import fitz
@@ -9,7 +10,8 @@ import pytest
 import core
 from folith import pdf_preview
 from folith.document_ir import PageEnvelope, PageUnderstanding, SemanticBlock, SourceSpan, normalized_bbox
-from folith.document_understanding import VLMDocumentProvider, decode_semantics, understand_visual_pdf
+from folith.document_understanding import (DocumentUnderstandingError, VLMDocumentProvider, decode_semantics,
+                                           understand_visual_pdf)
 from folith.ocr_online import OnlineOCRConfig
 from folith.spatial_index import SpatialRegion, SpatialTextIndex, align_blocks
 
@@ -106,6 +108,81 @@ def test_bad_or_truncated_response_is_failure(raw,finish):
 def test_explicit_blank_page_accepted():
     client,_ = fake_client(response('{"b":[]}'))
     assert VLMDocumentProvider(config(),client=client).understand_page(page()).blocks == []
+
+
+EMPTY_TRAILING_BLOCK_CASES = json.loads(
+    (Path(__file__).parent/'fixtures'/'vlm_empty_trailing_block_responses.json').read_text(encoding='utf-8'))['cases']
+
+
+@pytest.mark.parametrize('case', EMPTY_TRAILING_BLOCK_CASES, ids=lambda c: c['source_run_file'])
+def test_issue8_trailing_empty_paragraph_is_dropped_not_rejected(case):
+    # Issue #8：这 7 份真实响应以前只因末尾空 paragraph 被整页拒收。
+    client,_ = fake_client(response(case['raw']))
+    result = VLMDocumentProvider(config(),client=client).understand_page(page())
+    assert [{'type':b.type, 'text':b.text} for b in result.blocks] == case['expected_blocks']
+    assert result.diagnostics['dropped_empty_blocks'] == case['dropped_empty_blocks']
+    # 空块上的 p/n 不挪给正文段：续段判断退回看文字。
+    assert all(b.continues_previous is None and b.continues_next is None for b in result.blocks)
+
+
+def test_whitespace_blocks_dropped_anywhere_and_order_kept():
+    raw = ('{"b":[{"t":"heading","s":"Chapter 3"},{"t":"paragraph","s":" \\n "},'
+           '{"t":"paragraph","s":"First body text.","p":1},{"t":"caption","s":""},'
+           '{"t":"figure","s":""},{"t":"paragraph","s":"Last body text","n":1}]}')
+    client,_ = fake_client(response(raw))
+    result = VLMDocumentProvider(config(),client=client).understand_page(page())
+    assert [(b.type, b.text) for b in result.blocks] == [
+        ('heading','Chapter 3'), ('paragraph','First body text.'), ('figure',''), ('paragraph','Last body text')]
+    assert result.blocks[1].continues_previous is True and result.blocks[3].continues_next is True
+    assert result.diagnostics['dropped_empty_blocks'] == 2
+
+
+def test_nothing_dropped_leaves_no_diagnostic():
+    client,_ = fake_client(response('{"b":[{"t":"paragraph","s":"Visible"}]}'))
+    assert 'dropped_empty_blocks' not in VLMDocumentProvider(config(),client=client).understand_page(page()).diagnostics
+
+
+@pytest.mark.parametrize('raw', ['{"b":[{"t":"paragraph","s":"","n":1}]}',
+                                 '{"b":[{"t":"paragraph","s":"  "},{"t":"heading","s":"\\n"}]}'])
+def test_page_of_only_empty_blocks_still_fails(raw):
+    with pytest.raises(ValueError, match='empty_semantic_block'):
+        decode_semantics(raw)
+    client,_ = fake_client(response(raw))
+    with pytest.raises(DocumentUnderstandingError) as failure:
+        VLMDocumentProvider(config(),client=client).understand_page(page())
+    assert failure.value.diagnostics['error_code'] == 'empty_semantic_block'
+    assert 'dropped_empty_blocks' not in failure.value.diagnostics
+
+
+def test_empty_figure_and_table_text_unchanged():
+    # 空 figure 原样保留；table 的 text 由单元格拼出来（main 的既有行为）。
+    blocks = decode_semantics('{"b":[{"t":"figure","s":""},{"t":"table","s":" ","c":[{"r":0,"c":0,"s":"A"}]}]}')
+    assert [(b.type, b.text) for b in blocks] == [('figure',''), ('table','A')]
+    assert blocks[1].cells[0]['text'] == 'A'
+
+
+def test_dropped_block_keeps_ids_anchors_and_cross_page_join_aligned():
+    pages = {0: decode_semantics('{"b":[{"t":"paragraph","s":"Opening paragraph ends here."},'
+                                 '{"t":"paragraph","s":""},'
+                                 '{"t":"paragraph","s":"The sensorium of the drone was an instrument of"},'
+                                 '{"t":"paragraph","s":"","p":0,"n":1}]}'),
+             1: decode_semantics('{"b":[{"t":"paragraph","s":"perception and of war."}]}')}
+
+    class PerPage:
+        def understand_page(self, envelope):
+            return PageUnderstanding(pages[envelope.page_index],'fixture-vlm')
+
+    paragraphs,document = understand_visual_pdf('scan.pdf',scanned_pdf(2),PerPage())
+    assert paragraphs == ['Opening paragraph ends here.',
+                          'The sensorium of the drone was an instrument of perception and of war.']
+    ids = [b['block_id'] for b in document['blocks']]
+    assert ids == ['p1-semantic-0','p1-semantic-1']
+    assert document['translation_block_ids'] == ids
+    assert [b['reading_order'] for b in document['blocks']] == [0,1]
+    joined = document['blocks'][1]
+    assert joined['relations'] == [{'type':'continued_by','block_id':'p2-semantic-0'}]
+    assert [s['page_id'] for s in joined['source_anchor']['source_spans']] == ['p1','p2']
+    assert all(s['block_id'] == 'p1-semantic-1' for s in joined['source_anchor']['source_spans'])
 
 
 class Provider:
@@ -208,6 +285,20 @@ def test_failed_page_preserves_request_accounting(tmp_path):
     assert report['page_diagnostics'][0]['attempt_count']==1
     assert (tmp_path/'document_understanding'/'0-failure.json').exists()
     assert not (tmp_path/'document_understanding'/'0.json').exists()
+
+
+def test_failure_record_names_the_page_both_ways(tmp_path):
+    """#220 C3：文件名保持 0 基（同目录逐页缓存也是 0 基，改名会撞号或作废缓存），
+    但记录里必须有 1 基的 `page`（界面、事件口径）和 0 基的 `page_index`（文件名口径），
+    读记录的人不用再自己加一。"""
+    client,_=fake_client(response('{"b":[]}',finish='length'))
+    provider=VLMDocumentProvider(config(),client=client)
+    core.extract_document_paragraphs_with_report(
+        'scan.pdf',scanned_pdf(2),understanding_provider=provider,
+        spatial_engine=lambda p:SpatialTextIndex(p.page_id),checkpoint_dir=tmp_path)
+    recorded=json.loads((tmp_path/'document_understanding'/'0-failure.json').read_text(encoding='utf-8'))
+    assert recorded['page']==1, f"page 应从 1 计，实际：{recorded.get('page')!r}"
+    assert recorded['page_index']==0, f"page_index 应与文件名一致，实际：{recorded.get('page_index')!r}"
 
 
 def test_real_relay_fenced_payload_is_normalized():
@@ -313,3 +404,146 @@ def test_page_only_never_claims_a_rectangle():
 def test_optional_language_direction_may_be_null():
     block=decode_semantics('{"b":[{"t":"paragraph","s":"Visible content","l":null,"d":null}]}')[0]
     assert block.language is None and block.direction is None
+
+
+def scripted_client(*replies):
+    calls = []
+    def create(**body):
+        calls.append(body)
+        return replies[min(len(calls), len(replies)) - 1]
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))), calls
+
+
+def test_failed_page_is_read_again_with_thinking_on():
+    cfg = OnlineOCRConfig(provider='fixture', model='vision', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled_vllm')
+    client, calls = scripted_client(response('{"b":[{"t":"table"'),
+                                    response('{"b":[{"t":"heading","s":"Chapter 3"}]}'))
+    result = VLMDocumentProvider(cfg, client=client).understand_page(page())
+    assert result.blocks[0].text == 'Chapter 3'
+    assert 'extra_body' in calls[0] and 'extra_body' not in calls[1]
+    fallback = result.diagnostics['thinking_fallback']
+    assert fallback['from'] == 'thinking_disabled_vllm' and fallback['first_error'] == 'invalid_semantic_json'
+    assert result.diagnostics['reasoning_mode'] == 'provider_default'
+
+
+def test_thinking_fallback_is_bounded_and_skipped_when_thinking_was_never_off():
+    off = OnlineOCRConfig(provider='fixture', model='vision', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled_vllm')
+    client, calls = scripted_client(response('bad'))
+    with pytest.raises(ValueError):
+        VLMDocumentProvider(off, client=client).understand_page(page())
+    # the original read, one thinking-on retry, then one plain-text retry: never more
+    assert len(calls) == 3
+
+    client, calls = scripted_client(response('bad'))
+    with pytest.raises(ValueError):
+        VLMDocumentProvider(config(), client=client).understand_page(page())
+    # thinking was already on, so only the plain-text retry follows
+    assert len(calls) == 2
+
+
+def test_thinking_fallback_is_skipped_for_models_that_exhaust_their_budget_thinking():
+    deepseek = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                               api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    client, calls = scripted_client(response('bad'))
+    with pytest.raises(ValueError):
+        VLMDocumentProvider(deepseek, client=client).understand_page(page())
+    # no read with thinking on (it would only burn the budget); just the plain-text retry
+    assert len(calls) == 2
+    assert all(call['extra_body'] == {'thinking': {'type': 'disabled'}} for call in calls)
+
+
+def test_table_and_figure_blocks_may_omit_the_text_field():
+    blocks = decode_semantics('{"b":[{"t":"table","c":[{"r":0,"c":0,"s":"地方別"},{"r":0,"c":1,"s":"連行数"},'
+                              '{"r":1,"c":0,"s":"福岡"},{"r":1,"c":1,"s":"5"}]},{"t":"figure"}]}')
+    assert blocks[0].type == 'table' and blocks[0].text == '地方別\t連行数\n福岡\t5'
+    assert [c['text'] for c in blocks[0].cells] == ['地方別', '連行数', '福岡', '5']
+    assert blocks[1].type == 'figure' and blocks[1].text == ''
+    # Other blocks still need their text, and a table still needs its cells.
+    for raw in ('{"b":[{"t":"paragraph"}]}', '{"b":[{"t":"table"}]}'):
+        with pytest.raises(ValueError):
+            decode_semantics(raw)
+
+
+def test_a_page_whose_structured_read_broke_is_read_again_as_plain_lines():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    client, calls = scripted_client(response('{"b":[{"t":"table","c":[{"r":0,"c":0,"s":"x"'),
+                                    response('{"b":[{"t":"paragraph","s":"a | b"}]}'))
+    result = VLMDocumentProvider(cfg, client=client).understand_page(page())
+    assert result.blocks[0].text == 'a | b'
+    system = lambda body: body['messages'][0]['content']
+    assert 'do not return table cells' not in system(calls[0]).lower().replace('for this page ', '')
+    assert 'do not return table cells' in system(calls[1]).lower()
+    assert result.diagnostics['plain_fallback']['first_error'] == 'invalid_semantic_json'
+
+
+def test_plain_fallback_is_bounded_and_not_used_for_transport_errors():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    client, calls = scripted_client(response('bad'))
+    with pytest.raises(ValueError):
+        VLMDocumentProvider(cfg, client=client).understand_page(page())
+    assert len(calls) == 2           # the read plus one plain-text retry, never more
+    assert 'List only the cells that\ncontain text' in calls[0]['messages'][0]['content']
+def _png(width=40, height=80):
+    import io
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new('RGB', (width, height), 'white').save(buffer, format='PNG')
+    return buffer.getvalue()
+
+
+def test_a_page_that_runs_away_even_as_plain_lines_is_read_in_two_bands():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    client, calls = scripted_client(
+        response('{"b":[{"t":"table","c":[', finish='length'),
+        response('{"b":[{"t":"paragraph","s":"一 | 一"}]}', finish='length'),
+        response('{"b":[{"t":"paragraph","s":"top"},{"t":"paragraph","s":"cut line"}]}'),
+        response('{"b":[{"t":"paragraph","s":"cut line"},{"t":"paragraph","s":"bottom"}]}'))
+    tall = PageEnvelope('doc', 'p2', 1, 400, 600, image=_png(), image_width=40, image_height=80)
+    result = VLMDocumentProvider(cfg, client=client).understand_page(tall)
+    assert [b.text for b in result.blocks] == ['top', 'cut line', 'bottom']     # the overlap line once
+    assert len(calls) == 4
+    assert 'tiled_fallback' in result.diagnostics
+    assert result.diagnostics['tiled_fallback']['first_error'] == 'truncated'
+
+
+def test_bands_are_not_tried_for_a_reply_that_was_merely_malformed():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    client, calls = scripted_client(response('bad'))
+    tall = PageEnvelope('doc', 'p2', 1, 400, 600, image=_png(), image_width=40, image_height=80)
+    with pytest.raises(ValueError):
+        VLMDocumentProvider(cfg, client=client).understand_page(tall)
+    assert len(calls) == 2
+
+
+def test_a_band_that_still_runs_away_is_cut_again():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    loop = lambda: response('{"b":[{"t":"paragraph","s":"一 | 一', finish='length')
+    ok = lambda text: response('{"b":[{"t":"paragraph","s":"%s"}]}' % text)
+    client, calls = scripted_client(loop(), loop(),             # whole page: structured, then plain
+                                    ok('top'),                    # upper half reads
+                                    loop(), ok('b1'), ok('b2'))   # lower half runs away, its two quarters read
+    tall = PageEnvelope('doc', 'p2', 1, 400, 600, image=_png(40, 160), image_width=40, image_height=160)
+    result = VLMDocumentProvider(cfg, client=client).understand_page(tall)
+    assert [b.text for b in result.blocks] == ['top', 'b1', 'b2']
+    assert len(calls) == 6
+
+
+def test_bands_skip_empty_blocks_and_retry_a_table_without_cells():
+    cfg = OnlineOCRConfig(provider='DeepSeek', model='deepseek-flash', base_url='https://fixture.invalid/v1',
+                          api_key='fixture-secret', max_retries=0, reasoning_mode='thinking_disabled')
+    run = lambda: response('{"b":[{"t":"paragraph","s":"一 | 一', finish='length')
+    ok = lambda text: response('{"b":[{"t":"paragraph","s":"%s"}]}' % text)
+    client, _ = scripted_client(run(), run(), ok('top'), ok('bottom'))
+    tall = PageEnvelope('doc', 'p2', 1, 400, 600, image=_png(), image_width=40, image_height=80)
+    provider = VLMDocumentProvider(cfg, client=client)
+    real = provider._read
+    provider._read = lambda t, pg, system=None: (lambda r: ([None] + list(r[0]), r[1]))(real(t, pg, system))
+    result = provider.understand_page(tall)
+    assert [b.text for b in result.blocks] == ['top', 'bottom']

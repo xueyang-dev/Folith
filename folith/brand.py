@@ -2,7 +2,7 @@
 
 APP_NAME = "Folith"
 APP_NAME_ZH = "译页"
-WORDMARK = "Folith·译页"
+WORDMARK = "Folith · 译页"
 TAGLINE = "Agentic Translation Workspace"
 TAGLINE_ZH = "智能体翻译工作台"
 

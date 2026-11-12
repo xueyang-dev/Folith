@@ -444,14 +444,18 @@ def test_contract_v1_integration_with_freeze_delivery(tmp_path, monkeypatch):
     job_id = "job-docx-contract-test"
     core.save_source(job_id, data)
 
+    # A real import state: pairs carry the source-paragraph identity the
+    # write-back matches on (position alone never decides a placement).
+    raw, _, report = core.extract_document_paragraphs_with_report("docx-simple.docx", data)
     state = core.new_job_state("docx-simple.docx")
-    state["source_paras"] = ["段落1", "段落2", "段落3", "段落4"]
-    state["paras"] = ["段落1", "段落2", "段落3", "段落4"]
+    state["source_paras"] = raw
+    units, _ = core._apply_source_segmentation(state, raw, mode="sentence")
+    state["paras"] = units
+    state["extraction_report"] = report
     state["pairs"] = [
-        {"source": "S1", "target": "交付译文1", "reviewed": True, "target_provenance": "human_edit"},
-        {"source": "S2", "target": "交付译文2", "reviewed": True, "target_provenance": "model"},
-        {"source": "S3", "target": "交付译文3", "reviewed": True, "target_provenance": "human_edit"},
-        {"source": "S4", "target": "交付译文4", "reviewed": True, "target_provenance": "human_edit"},
+        {"source": unit, "target": f"交付译文{i + 1}", "reviewed": True,
+         "target_provenance": "human_edit" if i % 2 == 0 else "model"}
+        for i, unit in enumerate(units)
     ]
     state["p1_done"] = True
     state["p2_done"] = True

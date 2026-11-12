@@ -14,11 +14,15 @@ the window will show, and "nothing happened" is never reported as success.
 """
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import re
 import shutil
+import tempfile
 import time
+import zipfile
 import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,7 +34,10 @@ from folith.desktop import exit_flow
 from folith.desktop import file_actions
 from folith.desktop import legacy_import
 from folith.desktop import paths as desktop_paths
+from folith import snapshots as _snapshots
+from folith import state_feed as _state_feed
 from folith import translation_evidence
+from folith import workbench_rows as _workbench_rows
 from folith import retrospective as _retrospective
 from folith import source_languages as _source_languages
 # Architecture Phase 1/3: the shared, frontend-neutral application layer.  Qt only
@@ -118,6 +125,7 @@ class EngineConfig:
     deliver_bilingual_docx: bool = True
     deliver_pdf: bool = False
     deliver_original_pdf: bool = False
+    deliver_original_docx: bool = False
     deliver_epub: bool = False
     deliver_terms_xlsx: bool = True
     deliver_evidence: bool = True
@@ -476,6 +484,8 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
     # into a DOCX job and promise an artifact that will never be produced.
     deliver_original_pdf = bool(config.deliver_original_pdf) and (
         core.original_layout_pdf_applicable(state.get("filename")))
+    deliver_original_docx = bool(config.deliver_original_docx) and (
+        core.original_format_docx_applicable(state.get("filename")))
     try:
         base_url = config.translator_base_url()
     except ValueError:
@@ -518,6 +528,7 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
             "deliver_bilingual_docx": config.deliver_bilingual_docx,
             "deliver_pdf": config.deliver_pdf,
             "deliver_original_pdf": deliver_original_pdf,
+            "deliver_original_docx": deliver_original_docx,
             "deliver_epub": config.deliver_epub,
             "deliver_terms_xlsx": config.deliver_terms_xlsx,
             "deliver_evidence": config.deliver_evidence,
@@ -669,8 +680,18 @@ def pause_job(job_id: str) -> bool:
     return _commands.pause_job(job_id)
 
 
-def continue_job(job_id: str) -> bool:
-    return _commands.continue_job(job_id)
+def continue_job(job_id: str, config: "EngineConfig | None" = None, *,
+                 user_defaults: dict | None = None) -> bool:
+    """Continue a paused task, restarting it if the connection changed.
+
+    Passing ``config`` (the user's current connection in the desktop client)
+    lets the shared command resolve the effective connection against the task
+    state and restart a paused worker when it differs (issue #222).
+    """
+    if config is None:
+        return _commands.continue_job(job_id)
+    return _commands.continue_job(
+        job_id, settings_sources(config, {}, user_defaults=user_defaults))
 
 
 def cancel_job(job_id: str, *, force: bool = False) -> bool:
@@ -723,32 +744,11 @@ def drafts_signature(job_id: str) -> str:
 # ================= the editing workbench =================
 
 
-@dataclass
-class SegmentRow:
-    index: int
-    segment_uid: str
-    source: str
-    target: str
-    status: str
-    reviewed: bool
-    human_edited: bool
-    excluded: bool
-    has_draft: bool
-    draft_text: str = ""
-    #: 草稿是针对**旧**译文写的（`baseline` 与当前提交文本不一致）。
-    #: 这种草稿仍然保留并显示给用户（那是他没提交的工作），但必须显式提示：
-    #: 期间译文已经被改过（例如定点重译），直接提交会覆盖较新的文本。
-    stale_draft: bool = False
-
-    @property
-    def source_preview(self) -> str:
-        text = " ".join((self.source or "").split())
-        return text[:80] + ("…" if len(text) > 80 else "")
-
-    @property
-    def target_preview(self) -> str:
-        text = " ".join((self.target or "").split())
-        return text[:80] + ("…" if len(text) > 80 else "")
+#: One workbench row.  The shared, Qt-free model owns the data structure and
+#: the incremental update algorithm (issue #324); this module owns the
+#: localized status text, which is injected below.  The old class had exactly
+#: these fields, so every existing caller keeps working.
+SegmentRow = _workbench_rows.WorkbenchRow
 
 
 def _pair_status(pair: dict) -> str:
@@ -1110,10 +1110,12 @@ def preview_term_revision(state: dict, source_term: str, old_target: str,
                           forbidden: Sequence[str] = ()) -> dict:
     """术语修订预览（纯函数）：原文锚定、逐段分类，不改任何状态。"""
     from folith import term_revision as _tr
+    from folith import consistency as _consistency
 
     return _tr.preview_term_revision(
         source_term, old_target, new_target, state.get("pairs") or [],
-        forbidden=forbidden)
+        forbidden=forbidden,
+        known_forms=_consistency.collect_known_forms(state))
 
 
 def replace_term_targets(job_id: str, source_term: str, old_target: str,
@@ -1211,10 +1213,15 @@ def translation_scope(job_id: str, state: dict | None = None) -> dict:
     同一个对话框恢复。
     """
     state = state if state is not None else load_state(job_id)
-    tree = core.translation_scope_tree(state or {})
-    if not tree.get("available"):
+    if not (state or {}).get("pairs") and not (state or {}).get("paras") and not (state or {}).get("p1_done"):
         state = core.ensure_source_outline(job_id, state) or {}
-        tree = core.translation_scope_tree(state)
+        from folith import outline_corrections, outline_recovery
+        state = dict(state)
+        recovered = outline_recovery.load(job_id, state.get("source_outline") or {})
+        state["source_outline"], correction_status = outline_corrections.apply(job_id, recovered)
+        if correction_status == outline_corrections.UNREADABLE:
+            state["source_outline"] = {}
+    tree = core.translation_scope_tree(state or {})
     return {
         "available": bool(tree.get("available")),
         "pre_start": bool(tree.get("pre_start")),
@@ -1231,6 +1238,115 @@ def translation_scope(job_id: str, state: dict | None = None) -> dict:
                         (tree.get("excluded") or {}).get("records") or []],
         },
     }
+
+
+def task_outline(job_id: str, state: dict | None = None, *,
+                 no_parse: bool = False) -> dict:
+    """The task's persisted source outline (#186), parsed at most once.
+
+    The panel consumes this payload; it never calls the parser itself.  Reading
+    a warm sidecar performs no source extraction and no model call.  When the
+    source or parser version changed, ``parsed``/``invalidated`` say so rather
+    than pretending the cache was still current.
+
+    When ``no_parse=True`` and the sidecar is cold or missing the call returns
+    immediately with ``{"pending": True, ...}`` without starting a parse.  The
+    caller must schedule the actual build separately (e.g. via
+    :class:`folith.qt.outline_loader.OutlineLoader`).
+    """
+    from folith import outline_anchor
+
+    try:
+        payload = outline_anchor.load_outline(
+            job_id, state if state is not None else load_state(job_id),
+            no_parse=no_parse)
+    except OSError:
+        # A missing/unreadable source is a task with no structure, not a reason
+        # to refuse to open the workspace.
+        return {"outline": {}, "mapping": {}, "parsed": False,
+                "invalidated": "source_missing", "node_count": 0}
+    if payload.get("pending"):
+        return payload  # cold sidecar; background parse not yet done
+    from folith import outline_corrections, outline_recovery
+    native = payload.get("outline") or {}
+    extracted = outline_recovery.load(job_id, native)
+    payload["native_outline"] = native
+    outline, dropped = outline_corrections.apply(job_id, extracted)
+    payload["extracted_outline"] = extracted
+    payload["outline"] = outline
+    payload["corrections_dropped"] = dropped
+    if outline.get("fingerprint") != extracted.get("fingerprint"):
+        payload["mapping"] = {}
+    payload["node_count"] = len(outline.get("nodes") or [])
+    return payload
+
+
+def outline_mapping(job_id: str, state: dict, payload: dict | None = None) -> dict:
+    """Resolve outline nodes to segments without re-parsing the source (#186)."""
+    from folith import outline_anchor
+
+    return outline_anchor.resolve(job_id, state or {}, payload)
+
+
+def analyze_outline_recovery(job_id: str, config: EngineConfig, expected_fingerprint: str) -> dict:
+    """Run one bounded, explicit model request and persist only validated candidates."""
+    from folith import outline_anchor, outline_corrections, outline_recovery
+    problem = config.connection_problem()
+    if problem:
+        raise AdapterError(problem)
+    if outline_corrections.has_corrections(job_id):
+        raise AdapterError("已有手动修正，请先恢复原始结构再分析。")
+    payload = outline_anchor.load_outline(job_id, load_state(job_id))
+    native = payload.get("outline") or {}
+    if native.get("fingerprint") != expected_fingerprint:
+        raise AdapterError("原文结构已经变化，请重新打开准备页。")
+    if outline_recovery.ai_rejected(job_id, native):
+        raise AdapterError("此原文的 AI 结构分析已被撤销。")
+    prompt, rows = outline_recovery.ai_prompt(native)
+    if not rows:
+        raise AdapterError("没有可分析的候选标题。")
+    previous = outline_recovery.load(job_id, native)
+    source_digest = payload.get("source_sha256")
+    calls = 0
+    try:
+        calls = 1
+        raw = core.call_llm(config.provider, config.api_key, config.model,
+            outline_recovery.AI_SYSTEM,
+            prompt, temperature=0.1, base_url=config.translator_base_url() or None,
+            max_attempts=outline_recovery.MAX_AI_CALLS)
+        result = outline_recovery.from_ai(native, rows, raw)
+        if (outline_anchor.source_sha256(core.load_source(job_id) or b"") != source_digest
+                or outline_corrections.has_corrections(job_id)
+                or outline_recovery.load(job_id, native) != previous):
+            raise AdapterError("分析期间原文或结构已变化，结果没有保存。")
+        outline_recovery.save(job_id, native, result, previous=previous)
+    finally:
+        def record(state):
+            state["outline_recovery_analysis"] = {"fingerprint": expected_fingerprint,
+                "calls": calls, "input_characters": len(prompt) + len(outline_recovery.AI_SYSTEM),
+                "max_calls": outline_recovery.MAX_AI_CALLS,
+                "max_input_characters": outline_recovery.MAX_AI_INPUT_CHARS}
+        core.mutate_job_state(job_id, record)
+    return result
+
+
+def outline_revision(state: dict) -> int:
+    """Cheap structural counter used to avoid re-resolving an unchanged tree."""
+    from folith import outline_anchor
+
+    return outline_anchor.structure_revision(state)
+
+
+def outline_structure_signature(state: dict) -> str:
+    """Identity of the paragraph/cleanup chain a mapping was resolved from.
+
+    The revision above only moves on editor structural edits; cleanup and
+    re-segmentation rebuild positions without touching it, so the cache keys
+    need this hash too (#186/#204).
+    """
+    from folith import outline_anchor
+
+    return outline_anchor.structure_signature(state)
 
 
 def exclude_scope(job_id: str, keys: Sequence[str]) -> dict:
@@ -1459,15 +1575,8 @@ def _glossary_entries(state: dict) -> list[dict]:
 
 def _term_in(term: str, text: str) -> bool:
     """术语是否出现在原文里：拉丁字母按整词匹配（不把 "art" 算进 "start"），其余按子串。"""
-    import re
-
-    term = str(term or "").strip()
-    if not term:
-        return False
-    if re.search(r"[A-Za-z]", term):
-        return re.search(rf"(?<![A-Za-z]){re.escape(term)}(?![A-Za-z])", text,
-                         re.IGNORECASE) is not None
-    return term in text
+    from folith.terminology import term_matches
+    return term_matches(str(term or ''), str(text or ''))
 
 
 def segment_terms(state: dict, index: int) -> list[dict]:
@@ -1484,24 +1593,26 @@ def segment_terms(state: dict, index: int) -> list[dict]:
     target = str(pair.get("target") or "")
     attached = {str(item) for item in pair.get("glossary_entry_ids") or []}
     rows: list[tuple[int, int, dict]] = []
+    from folith.terminology import entry_matches, source_forms
     for entry in _glossary_entries(state):
         if str(entry.get("status") or "") == "rejected":
             continue
         term = str(entry.get("source") or "")
         hit = str(entry.get("id") or "") in attached
-        if not (hit or _term_in(term, source)):
+        if not (hit or entry_matches(entry, source)):
             continue
         preferred = str(entry.get("preferred") or entry.get("target") or "")
         forbidden = [str(item) for item in entry.get("forbidden") or [] if str(item or "")]
         position = source.lower().find(term.lower()) if term else -1
         rows.append((0 if hit else 1, position if position >= 0 else len(source), {
             "id": str(entry.get("id") or ""), "source": term, "target": preferred,
+            "source_aliases": source_forms(entry)[1:],
             "status": str(entry.get("status") or ""),
             "forbidden": forbidden,
-            "forbidden_hits": [item for item in forbidden if item in target],
+            "forbidden_hits": [item for item in forbidden if _term_in(item, target)],
             # 原文出现了术语、译文已经有了，却没有用首选译名（可能是同义写法，也可能是漏改）。
             "missing_preferred": bool(target.strip() and preferred and preferred != "—"
-                                      and _term_in(term, source)
+                                      and entry_matches(entry, source)
                                       and not _term_in(preferred, target)),
         }))
     rows.sort(key=lambda item: (item[0], item[1]))
@@ -1842,12 +1953,27 @@ def _group_entity_conflicts(view: dict) -> None:
             continue
         first = seen.get(source)
         if first is None:
-            seen[source] = item = dict(item, segment_indexes=[])
-            items.append(item)
-            first = item
+            # #277: 第一行自带完整命中段列表（segment_indexes），不能清空后只靠
+            # 逐行的 segment_index 重新数——那会把多段命中缩成一个段。
+            first = dict(item, segment_indexes=[
+                index for index in (item.get("segment_indexes") or [])
+                if isinstance(index, int) and not isinstance(index, bool)])
+            seen[source] = first
+            items.append(first)
         index = item.get("segment_index")
         if isinstance(index, int) and index not in first["segment_indexes"]:
             first["segment_indexes"].append(index)
+        if first is item:
+            continue
+        for extra in (item.get("segment_indexes") or []):
+            if isinstance(extra, int) and extra not in first["segment_indexes"]:
+                first["segment_indexes"].append(extra)
+        # #277: 合并行的决定参考字段跟着并起来；段数按并后的实际命中重算。
+        for key in ("term_frozen_target", "term_previous_target"):
+            if not str(first.get(key) or "") and item.get(key):
+                first[key] = item[key]
+        first["term_segment_total"] = len(first["segment_indexes"])
+        first["affected_segment_ids"] = list(first["segment_indexes"])
     view["queue_items"] = items
     counts = {name: sum(item.get("filter_group") == name for item in items)
               for name in ("pending", "rereview", "skipped", "suggested", "reference")}
@@ -1906,6 +2032,64 @@ def resolve_findings(job_id: str, finding_ids: Sequence[str], action: str,
     if state is None:
         raise AdapterError(f"找不到任务 {job_id}")
     return state
+
+
+def set_auto_handling(job_id: str, enabled: bool) -> dict:
+    """打开或关闭这个任务的自动处理（QA 分诊）。不改译文，也不放宽交付门禁。"""
+    from folith import finding_triage as _triage
+    from folith.engine import triage_resolution
+
+    if enabled and not _triage.enabled({_triage.ENABLED_KEY: True}):
+        raise AdapterError(f"环境变量 {_triage.ENV_SWITCH} 已关闭 QA 分诊。")
+    try:
+        return triage_resolution.set_triage_enabled(job_id, enabled)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+
+
+def revoke_auto_handling(job_id: str, record_key: str,
+                         reason: str = "人工在审计列表撤销") -> dict:
+    """撤销一条自动处理结论（#289）：这一项回到人工队列。
+
+    只调用既有核心函数，面板不写状态：
+
+    * 记录**已提交**（committed 的确定性修复）：走
+      ``triage_resolution.revert_auto_resolution``——只暂存一条撤回候选，
+      **不改** ``pair["target"]``，并把记录标记撤销；
+    * 其余（``verified_safe`` 等）：走 ``finding_triage.revoke``。
+
+    两条路径都不删除 finding、不写 resolved/dismissed/HumanDecision。
+    """
+    from folith import finding_triage as _triage
+
+    key = str(record_key or "").strip()
+    if not key:
+        raise AdapterError("这一条审计记录没有标识。")
+    state = load_state(job_id)
+    if not _triage.enabled(state):
+        raise AdapterError("QA 分流开关已关闭：审计列表不再产生，无需撤销。")
+    entry = (state.get(_triage.STATE_KEY) or {}).get(key)
+    if not isinstance(entry, dict):
+        raise AdapterError("这条审计记录已经不存在。")
+    if entry.get("committed"):
+        from folith.engine import triage_resolution
+        try:
+            result = triage_resolution.revert_auto_resolution(
+                job_id, key, reason=reason)
+        except (RuntimeError, ValueError) as exc:
+            raise AdapterError(str(exc) or type(exc).__name__) from exc
+        if not result.get("reverted"):
+            raise AdapterError(f"无法撤回这条自动修复："
+                               f"{result.get('reason') or '未知原因'}")
+        return {"revoked": True, "revert_candidate_id":
+                str(result.get("candidate_id") or "")}
+    if not _triage.revoke(state, key, reason=reason):
+        raise AdapterError("无法撤销这条记录。")
+    try:
+        core.save_job_state(job_id, state)
+    except (RuntimeError, ValueError) as exc:
+        raise AdapterError(str(exc) or type(exc).__name__) from exc
+    return {"revoked": True, "revert_candidate_id": ""}
 
 
 def apply_suggested_translation(job_id: str, item: dict, note: str = "") -> dict:
@@ -2125,6 +2309,17 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         recovery = {}
     busy = bool(core._job_execution_alive(job_id))
     failures = run_facts(state)["failures"]
+    # F2（2026-11-04 审校）：检查浮层也要看得见交付门禁挂着的阻断项——它原来只看
+    # 流水线健康，于是「浮层说没问题、交付页拦住 1 项」。数与交付门禁同一个函数。
+    from folith import delivery as _delivery
+    try:
+        blocking_rows = list(_delivery.unresolved_blocking(state))
+    except Exception:  # noqa: BLE001 - 只读投影
+        blocking_rows = []
+    blocking_count = len(blocking_rows)
+    blocking_anchor = next((int(item["segment_index"]) for item in blocking_rows
+                            if isinstance(item, dict) and item.get("segment_index") is not None),
+                           None)
     return {
         # 翻译协议失败、还没被当前译文补上的批次（"重试当前步骤"会补译它们）。
         "failures": failures,
@@ -2140,15 +2335,19 @@ def followup_view(job_id: str, state: dict | None = None) -> dict:
         # 读失败、至今没补读成功的扫描页：译稿缺页，挡住交付。
         "scan_pages": {"pages": scan_pages},
         "busy": busy,
+        "blocking": blocking_count,
+        "blocking_anchor": blocking_anchor,
         "has_work": bool(
             understanding.get("status") == "degraded" or scan_pages
             or annotation.get("status") == "partial" or entities or failures
-            or recovery.get("current_batch") or profile_view["missing"]),
+            or recovery.get("current_batch") or profile_view["missing"]
+            or blocking_count),
     }
 
 
 #: 用量账本里的角色 → 界面标签（目录键）。
-USAGE_ROLE_LABELS = {"translation": "翻译", "review": "审校", "auxiliary": "辅助（画像、理解、标注）"}
+USAGE_ROLE_LABELS = {"translation": "翻译", "vision": "视觉（读页）",
+                     "review": "审校", "auxiliary": "辅助（画像、理解、标注）"}
 
 
 def run_facts(state: dict) -> dict:
@@ -2433,6 +2632,20 @@ def accept_entity_variants(job_id: str, source: str) -> dict:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
 
 
+def batch_apply_entity_repair(job_id: str, source: str, target: str) -> dict:
+    """批量统一流程用：在同一个动作里计算预览再应用（无需调用方持有预览列表）。
+
+    核心的 apply_entity_repair 会在写入前再次验证预览，所以这里的 preview 只是
+    "调用方看过的那份"，两步之间若有其他写入则核心会抛异常，由批量流程记为失败。
+    """
+    from . import i18n
+    state = load_state(job_id)
+    preview = entity_repair_preview(job_id, source, target, state=state)
+    if not preview:
+        raise AdapterError(i18n.tr("没有需要修改的段落。"))
+    return apply_entity_repair(job_id, source, target, preview)
+
+
 # ================= 活动记录（运行时事件） =================
 #
 # 旧界面有一个"运行抽屉"：任务卡在哪一步、最近发生了什么。Qt 原来只有诊断包。
@@ -2502,6 +2715,75 @@ def workbench_models(job_id: str, state: dict, *,
         except Exception:  # noqa: BLE001 - one failed projection must not hide the rest
             continue
     return models
+
+
+# ================= 增量读模型（A1 / #324 P2） =================
+#
+# The pipeline appends one committed batch to ``state_journal.jsonl``; the
+# incremental path reads that record (``folith.state_feed``) and updates only
+# the rows it names.  It deliberately does **not** read ``state.json``: the
+# read-side projection must stay O(batch), and every doubt (sequence gap,
+# corrupt record, external snapshot) falls back to the whole-state path below.
+#
+# These wrappers exist so the Qt window talks to one module only; nothing here
+# writes job state.
+
+#: Result types of :func:`new_delta_feed` (re-exported for the window/tests).
+DeltaBatch = _state_feed.DeltaBatch
+DeltaSegment = _state_feed.SegmentChange
+DeltaIdle = _state_feed.Idle
+DeltaSnapshotChanged = _state_feed.SnapshotChanged
+DeltaResyncRequired = _state_feed.ResyncRequired
+DeltaLegacyMode = _state_feed.LegacyMode
+#: Raised when a delta no longer lines up with the rows on screen.
+WorkbenchNeedResync = _workbench_rows.NeedResync
+
+
+def delta_enabled() -> bool:
+    """Whether the incremental polling path is enabled (env rollback switch)."""
+    return _state_feed.delta_enabled()
+
+
+def load_drafts(job_id: str) -> dict:
+    """Uncommitted editor drafts (small file; not part of the task state)."""
+    return core.load_translation_drafts(job_id) or {}
+
+
+def new_workbench_model() -> _workbench_rows.WorkbenchReadModel:
+    """A read model whose row statuses use the workbench's localized labels."""
+    return _workbench_rows.WorkbenchReadModel(status_of=_pair_status)
+
+
+def new_delta_feed(job_id: str, *, environ: dict | None = None) -> _state_feed.StateFeed:
+    """A feed over the task's journal, snapshot and runtime files.
+
+    Paths come from the core's own layout (same files the persistence layer
+    uses); the feed never writes them.
+    """
+    return _state_feed.StateFeed(
+        journal_path=core._state_journal.journal_path(job_id),
+        state_path=core._job_repo.get_job_state_path(job_id),
+        job_id=job_id,
+        runtime_path=core.runtime_state_path(job_id),
+        environ=environ,
+    )
+
+
+def reset_workbench_model(model: _workbench_rows.WorkbenchReadModel, state: dict,
+                          drafts: dict | None = None) -> None:
+    """Whole-state rebuild of the read model (open task / resync)."""
+    model.reset_from(state, drafts)
+
+
+def apply_workbench_delta(model: _workbench_rows.WorkbenchReadModel, delta,
+                          drafts: dict | None = None):
+    """Apply one typed delta; returns ``AppliedDelta`` or raises ``NeedResync``."""
+    return model.apply(delta, drafts)
+
+
+def document_counts(model: _workbench_rows.WorkbenchReadModel):
+    """The incremental whole-document count for the current rows."""
+    return model.counts.as_document_count()
 
 
 def source_path(job_id: str) -> Path | None:
@@ -2732,7 +3014,7 @@ def _promote_accepted_term(row: dict, source: str) -> str:
         raise AdapterError(f"候选已接受并写入任务术语表，但收进项目术语库失败：{exc}") from exc
     name = project.get("name") or "未命名项目"
     if report.get("conflicts"):
-        return f"和项目「{name}」术语库里的译名不一致，已放进待审核，没有覆盖"
+        return f"和项目「{name}」术语库里的译名不一致，已放进待确认，没有覆盖"
     return f"已收进项目「{name}」的术语库"
 
 
@@ -2937,7 +3219,7 @@ def _term_usage(project_jobs: list[dict]) -> dict[str, list[tuple[str, int]]]:
     return usage
 
 
-_ORIGIN_TEXT = {"review": "审核收进", "manual": "手动添加", "import": "导入",
+_ORIGIN_TEXT = {"review": "确认收进", "manual": "手动添加", "import": "导入",
                 "move": "随任务带来"}
 
 
@@ -2972,7 +3254,7 @@ def project_detail(project_id: str, *, basis: str = "all",
             "domain": entry.get("domain") or "", "note": entry.get("note") or "",
             "forbidden": list(entry.get("forbidden") or []),
             "origin_how": origin.get("how") or "", "origin_job": origin.get("job_name") or "",
-            "origin_text": _ORIGIN_TEXT.get(origin.get("how") or "", "审核收进"),
+            "origin_text": _ORIGIN_TEXT.get(origin.get("how") or "", "确认收进"),
             "status": "confirmed",
             "used_tasks": hit_tasks, "used_total": sum(n for _name, n in hit_tasks)})
     terms.sort(key=lambda t: t["source"].casefold())
@@ -3819,7 +4101,8 @@ def remove_termbase(job_id: str) -> dict:
 # 所以需要一个地方单独配置视觉模型。OCR 本身只是可选的本机定位插件，不在这里配置。
 
 VISION_REASONING_LABELS = {"provider_default": "服务默认",
-                           "thinking_disabled": "关闭思考（DeepSeek 系）"}
+                           "thinking_disabled": "关闭思考（DeepSeek 系）",
+                           "thinking_disabled_vllm": "关闭思考"}
 
 
 def vision_providers() -> list[str]:
@@ -3839,11 +4122,18 @@ def vision_connection_view() -> dict:
         "base_url": str(profile.get("base_url") or ""),
         "max_tokens": int(profile.get("max_tokens") or core.OCR_ONLINE_DEFAULT_MAX_TOKENS),
         "reasoning_mode": str(profile.get("reasoning_mode") or "provider_default"),
+        "reasoning_effort": str(profile.get("reasoning_effort") or ""),
+        "reasoning_efforts": list(reasoning_effort_options(
+            str(profile.get("provider") or ""), str(profile.get("model") or ""))),
         "has_key": bool(profile.get("api_key")),
         "providers": vision_providers(),
         "min_tokens": int(core.OCR_ONLINE_MIN_MAX_TOKENS),
         "max_tokens_limit": int(core.OCR_ONLINE_MAX_MAX_TOKENS),
-        "reasoning_modes": list(core.OCR_ONLINE_REASONING_MODES),
+        "reasoning_modes": [
+            mode for mode in core.OCR_ONLINE_REASONING_MODES
+            if mode != "thinking_disabled_vllm"
+            or mode in core.thinking_control_options(
+                str(profile.get("provider") or ""), str(profile.get("model") or ""))],
         "status": {"ok": bool(status.get("ok")),
                    "message": str(status.get("message") or "").replace("线上 OCR", "视觉理解"),
                    "model": str(status.get("model") or ""),
@@ -3852,12 +4142,18 @@ def vision_connection_view() -> dict:
 
 
 def vision_connection_problem(*, provider: str, model: str, api_key: str,
-                              has_saved_key: bool) -> str:
+                              has_saved_key: bool, base_url: str = "") -> str:
     """保存专用视觉连接前的检查；返回空串表示可以保存。"""
-    if not str(provider or "").strip():
+    provider = str(provider or "").strip()
+    if not provider:
         return "请选择视觉模型的服务商。"
     if not str(model or "").strip():
         return "请填写视觉模型名（需要支持图像输入）。"
+    if provider == "Local Gateway":
+        # 本地网关不校验密钥，但地址必须显式给：没有注册表默认值可退回。
+        if not str(base_url or "").strip():
+            return "本地网关需要填写视觉连接的 API 地址。"
+        return ""
     if not str(api_key or "").strip() and not has_saved_key:
         return "请填写视觉连接的 API Key。"
     return ""
@@ -3865,12 +4161,13 @@ def vision_connection_problem(*, provider: str, model: str, api_key: str,
 
 def save_vision_connection(*, provider: str, model: str, api_key: str = "",
                            base_url: str = "", max_tokens: int | None = None,
-                           reasoning_mode: str = "provider_default") -> dict:
+                           reasoning_mode: str = "provider_default",
+                           reasoning_effort: str | None = None) -> dict:
     """保存专用视觉连接。``api_key`` 留空表示沿用已保存的值。"""
     saved = core.load_ocr_online_config() or {}
     problem = vision_connection_problem(
         provider=provider, model=model, api_key=api_key,
-        has_saved_key=bool(saved.get("api_key")))
+        has_saved_key=bool(saved.get("api_key")), base_url=base_url)
     if problem:
         raise AdapterError(problem)
     limits = (int(core.OCR_ONLINE_MIN_MAX_TOKENS), int(core.OCR_ONLINE_MAX_MAX_TOKENS))
@@ -3878,12 +4175,17 @@ def save_vision_connection(*, provider: str, model: str, api_key: str = "",
     tokens = max(limits[0], min(limits[1], tokens))
     if reasoning_mode not in core.OCR_ONLINE_REASONING_MODES:
         reasoning_mode = "provider_default"
+    # 档位只对实测认这个字段的端点有意义；换了模型就丢掉，不留一个发不出去的档位。
+    effort = str(reasoning_effort if reasoning_effort is not None
+                 else saved.get("reasoning_effort") or "").strip().lower()
+    if effort not in reasoning_effort_options(str(provider).strip(), str(model).strip()):
+        effort = ""
     try:
         core.save_ocr_online_config(
             provider=str(provider).strip(), model=str(model).strip(),
             api_key=str(api_key or "").strip() or str(saved.get("api_key") or ""),
             base_url=str(base_url or "").strip(), max_tokens=tokens,
-            reasoning_mode=reasoning_mode)
+            reasoning_mode=reasoning_mode, reasoning_effort=effort)
     except (OSError, ValueError) as exc:
         raise AdapterError(f"无法保存视觉连接：{exc}") from exc
     return vision_connection_view()
@@ -3919,17 +4221,29 @@ def glossary_view(job_id: str, state: dict | None = None, *,
     其余字段（门禁、待确认数、状态）不变；术语页不在眼前时用它。
     """
     from folith import workspace_presentation as _presentation
+    from folith.terminology import source_forms
 
     state = state if state is not None else load_state(job_id)
     rows = []
+    modified = {}
+    for action in state.get('human_actions') or []:
+        if not isinstance(action, dict) or not str(action.get('action') or '').startswith('glossary_'):
+            continue
+        finding_id = str(action.get('finding_id') or '')
+        if finding_id.startswith('glossary:'):
+            key = finding_id[len('glossary:'):]
+            modified[key] = max(modified.get(key, ''), str(action.get('timestamp') or ''))
     for row in _presentation.term_rows(state, count_occurrences=count_occurrences):
         entry = row.get("entry") or {}
         rows.append({
             "id": row["id"],
             "source": row["source"],
+            "source_aliases": source_forms(entry)[1:],
             "preferred": row["target"],
             "status": row["status"],
             "domain": str(entry.get("domain") or ""),
+            "scope": str(entry.get("scope") or ""),
+            "behavior": str(entry.get("behavior") or "translate"),
             "note": str(entry.get("note") or ""),
             "occurrences": len(row.get("occurrences") or []),
             "matched": int(row.get("matched") or 0),
@@ -3937,6 +4251,7 @@ def glossary_view(job_id: str, state: dict | None = None, *,
             "conflict": row.get("exception") == "存在冲突" or bool(entry.get("conflict")),
             "forbidden": [str(item) for item in entry.get("forbidden") or [] if str(item or "")],
             "read_only": bool(entry.get("read_only")),
+            "modified_at": modified.get(str(row['id']), ''),
         })
     frozen = state.get("glossary_frozen") or {}
     pending = [r for r in rows if r["status"] == "candidate"]
@@ -3986,6 +4301,36 @@ def _merge_glossary_rows(state: dict, rows: Sequence[dict]) -> list[dict]:
         base["proposed_target"] = base.get("proposed_target") or base["preferred"]
         merged.append(base)
     return merged
+
+
+def merge_glossary_entries(job_id: str, keep_id: str, remove_id: str, expected: list) -> str:
+    try:
+        state = core.merge_glossary_entries(job_id, keep_id, remove_id, expected, actor='用户')
+    except (ValueError, RuntimeError) as exc:
+        raise AdapterError(str(exc)) from exc
+    if state is None:
+        raise AdapterError('找不到任务')
+    return '术语已合并，原始记录和源形式已保留。'
+
+
+def revalidate_terminology_conflicts(job_id: str) -> dict:
+    try:
+        return core.revalidate_terminology_conflicts(job_id, actor='用户')
+    except (ValueError, RuntimeError) as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+def preview_terminology_replacement(job_id: str, entry_id: str, old: str,
+                                    indexes: Sequence[int] | None = None) -> dict:
+    return core.preview_terminology_replacement(load_state(job_id), entry_id, old, indexes)
+
+
+def apply_terminology_replacement(job_id: str, preview: dict) -> int:
+    return core.apply_terminology_replacement(job_id, preview)
+
+
+def undo_terminology_replacement(job_id: str) -> int:
+    return core.undo_terminology_replacement(job_id)
 
 
 def save_glossary_draft(job_id: str, rows: Sequence[dict]) -> dict:
@@ -4058,13 +4403,14 @@ def set_terms_status(job_id: str, entry_ids: Sequence[str], status: str) -> str:
     ids = [str(item) for item in entry_ids if str(item or "")]
     if not ids:
         raise AdapterError("没有选中术语。")
-    state = core.set_glossary_entry_status(job_id, ids, status)
+    try:
+        state = core.set_glossary_entry_status(job_id, ids, status)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
     if state is None:
         raise AdapterError(f"找不到任务 {job_id}")
     if state.get("p2_done"):
-        frozen = core.freeze_glossary(job_id, entries=state.get("glossary") or [],
-                                      frozen_by="用户")
-        version = ((frozen or {}).get("glossary_frozen") or {}).get("version")
+        version = (state.get("glossary_frozen") or {}).get("version")
         return f"已更新 {len(ids)} 个术语" + (f"，术语版本 v{version}" if version else "")
     return f"已更新 {len(ids)} 个术语"
 
@@ -4085,15 +4431,89 @@ def delete_glossary_entry(job_id: str, entry_id: str) -> str:
 # ================= delivery =================
 
 
+def _blocking_finding_messages(validation: dict) -> list[str]:
+    """Locate the deterministic blockers the gate reports but ``issues`` omits.
+
+    ``validation.blocking_findings`` (deterministic QA: empty/truncated/wrapped
+    targets) is part of the gate verdict but used to be invisible in the preview,
+    so the page said "可以冻结交付" while the gate blocked.  One message per
+    finding, with the segment number; a finding already described by a
+    segment-level issue is not repeated (one problem, one line).
+    """
+    seen = {
+        (issue.get("segment_index"), str(issue.get("message") or ""))
+        for issue in validation.get("issues") or [] if isinstance(issue, dict)
+    }
+    messages: list[str] = []
+    for finding in validation.get("blocking_findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        index = finding.get("segment_index")
+        index = index if isinstance(index, int) and not isinstance(index, bool) else None
+        summary = str(finding.get("summary") or finding.get("reason")
+                      or "译文未通过交付检查")
+        reason = str(finding.get("reason") or "").strip()
+        text = summary if not reason or reason == summary else f"{summary}（{reason}）"
+        if (index, summary) in seen or (index, text) in seen:
+            continue
+        seen.add((index, summary))
+        location = f"第 {index + 1} 段" if index is not None else "全文"
+        messages.append(f"{location}：{text}")
+    return messages
+
+
+def _reconcile_delivery_gate_for_preview(job_id: str, state: dict,
+                                         validation: dict) -> tuple[dict, dict]:
+    """Repair persisted gate findings once, then preview from the same truth.
+
+    ``delivery_preview`` is called on every poll, so the repair is gated by a
+    cheap comparison of the persisted findings against the report already in
+    hand.  Only a real disagreement writes, and the write makes the next
+    comparison agree, so a read-only poll never touches the disk.  The caller's
+    state object is updated in place: the Qt open path hands that same object to
+    the review queue and its own cache, and they must not keep showing findings
+    the delivery page just reconciled.
+    """
+    from folith.engine import delivery_state as _delivery_state
+
+    if state.get("delivery_status") == "final":
+        # Never rewrite review metadata of a frozen task from the preview: the
+        # state identity is what proves the frozen snapshot still matches.
+        return state, validation
+    if not _delivery_state.gate_reconciliation_needed(state, validation):
+        return state, validation
+    try:
+        fresh, report = _delivery_state.reconcile_delivery_gate(job_id)
+    except Exception:  # noqa: BLE001 - a preview must not fail because repair failed
+        # A live worker owns the task, or the state could not be written; the
+        # next open retries.  Never fight it from a read-only preview and never
+        # turn a display call into an error dialog.
+        return state, validation
+    if fresh is None:
+        return state, validation
+    if isinstance(report, dict):
+        _delivery_state.apply_gate_reconciliation(state, report)
+        return state, report
+    return state, validation
+
+
 def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
                      state: dict | None = None) -> dict:
-    """What the delivery gate currently says, without changing anything.
+    """What the delivery gate currently says.
+
+    Read-only apart from one guarded repair: when a persisted gate finding is no
+    longer reported by the current gate report (a stale ``delivery_invariant``),
+    it is resolved once — with an audit record — so the label, the issue list and
+    the button all read from the same verdict.  The open/preview path never adds
+    current blockers and never reopens resolved ones (that stays with explicit
+    delivery/review actions), and a poll that finds nothing stale never writes.
 
     ``state``: the caller's already-loaded state.  Reloading means parsing and
     deep-copying the whole task state again (tens of MB for a book).
     """
     state = state if state is not None else load_state(job_id)
     validation = core.validate_delivery_translation_state(state)
+    state, validation = _reconcile_delivery_gate_for_preview(job_id, state, validation)
     snapshot = core.delivery_snapshot_status(job_id, state)
     configured = core.normalize_delivery_config(
         state.get("delivery_config"),
@@ -4108,6 +4528,9 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
         names.append("translation.pdf")
     if configured.get("deliver_original_pdf"):
         names.append("original_layout.pdf")
+    if configured.get("deliver_original_docx") and \
+            core.original_format_docx_applicable(state.get("filename", "")):
+        names.append("original_format.docx")
     if configured.get("deliver_epub"):
         names.append("translation.epub")
     if configured.get("deliver_terms_xlsx"):
@@ -4155,14 +4578,27 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
 
         count = len(legacy_blocking)
         review_issues.append(i18n.tr_n("必须处理的问题 {v0} 个", count, v0=count))
-    return {
+    # 交付页正文、顶部和按钮必须是同一判据（issue 2）：门禁阻断时绝不承诺
+    # "可以冻结交付"。这里只覆盖会自相矛盾的那个标签；"待审校"等已经如实的
+    # 标签保持原样。首页用 core.task_status_label 的同一判据（见 delivery_state）。
+    status_label = core.task_status_label(state, job_id)
+    if validation.get("blocking") and status_label == "可以冻结交付":
+        status_label = "暂不满足交付条件"
+    preview = {
         "can_accept_risk": can_accept_risk,
         "blocking_count": blocking_count,
-        "status_label": core.task_status_label(state, job_id),
+        "status_label": status_label,
         "delivery_status": state.get("delivery_status") or "draft",
         "validation": validation,
         "blocking": bool(validation.get("blocking")),
-        "issues": list(validation.get("issues") or []) + review_issues,
+        # ``validation["issues"]`` are engine dicts (code/message/severity); the
+        # page renders this list as text, so hand it the human-readable message.
+        # Leaving the dicts in made a document-level problem (pair count, missing
+        # source pages) render as a Python literal instead of a sentence.
+        "issues": ([str(item.get("message") or item) if isinstance(item, dict) else str(item)
+                    for item in validation.get("issues") or []]
+                   + _blocking_finding_messages(validation)
+                   + review_issues),
         "snapshot": snapshot,
         "asset_names": names,
         "review_gate": {
@@ -4178,6 +4614,12 @@ def delivery_preview(job_id: str, config: EngineConfig | None = None, *,
         and not legacy_blocking
         and (not review.get("required") or bool(review.get("ready"))),
     }
+    # QA triage supplies explanation, never permission.  Add the key only when
+    # triage is on so a switch-off preview is byte-for-byte unchanged.
+    from folith import finding_triage as _finding_triage
+    if _finding_triage.enabled(state):
+        preview["blocking_explanations"] = _delivery.blocking_explanations(state)
+    return preview
 
 
 GATE_HINTS: tuple[tuple[str, str], ...] = (
@@ -4266,7 +4708,9 @@ def supplementable_outputs(job_id: str, state: dict | None = None) -> list[dict]
     items = _task_setup.delivery_items_for_source(
         (*_task_setup.DELIVERY_TRANSLATION_ITEMS, *_task_setup.DELIVERY_ASSET_ITEMS),
         core.original_layout_pdf_applicable(state.get("filename", ""),
-                                            core.load_source(job_id)))
+                                            core.load_source(job_id)),
+        core.original_format_docx_applicable(state.get("filename", ""),
+                                             core.load_source(job_id)))
     return [{"key": str(item["key"]), "title": str(item["title"]),
              "format": str(item.get("format") or ""),
              "detail": str(item.get("detail") or "")}
@@ -4471,6 +4915,228 @@ def open_with_default_app(path: str | os.PathLike[str]) -> dict:
     result = file_actions.open_with_default_app(path)
     return {"ok": bool(getattr(result, "ok", False)),
             "detail": str(getattr(result, "detail", "") or "")}
+
+
+# ================= 冻结交付的文件动作（ZIP / 打开目录 / 另存为 / 文件信息） =================
+#
+# 这一组操作作用在**不可修改**的冻结快照上：读快照、写到用户选定的位置，
+# 但绝不改动快照本身，也绝不把"少文件、内容不符"包装成成功。
+
+
+def _delivery_snapshot_manifest(job_id: str, version: int) -> dict:
+    """冻结快照的清单；版本不存在时直接报错，不返回空值让人误以为成功。"""
+    manifest = None
+    try:
+        wanted = int(version)
+    except (TypeError, ValueError):
+        wanted = None
+    if wanted is not None:
+        manifest = next((item for item in core.list_delivery_snapshots(job_id)
+                         if item.get("snapshot_version") == wanted), None)
+    if manifest is None:
+        raise AdapterError(f"找不到 v{version} 的冻结交付")
+    return manifest
+
+
+def _delivery_asset_record(manifest: dict, name: str) -> dict:
+    record = next((item for item in manifest.get("assets") or []
+                   if item.get("name") == str(name)), None)
+    if record is None:
+        raise AdapterError(f"交付快照里没有这个文件：{name}")
+    return record
+
+
+def _write_bytes_atomically(target: Path, data: bytes) -> None:
+    """先写同目录临时文件再 ``os.replace``：中途失败不会留下半截文件。"""
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handle_fd, temp_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".part", dir=str(target.parent))
+    except OSError as exc:
+        raise AdapterError(f"无法写入 {target.name}：{exc}") from exc
+    try:
+        with os.fdopen(handle_fd, "wb") as handle:
+            handle.write(data)
+        os.replace(temp_name, target)
+    except OSError as exc:
+        raise AdapterError(f"无法写入 {target.name}：{exc}") from exc
+    finally:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+
+
+def delivery_archive_name(job_id: str, version: int) -> str:
+    """冻结交付的 ZIP 默认文件名：``<原文件名>_delivery_v<版本>.zip``。
+
+    快照里的文件都叫 ``bilingual.docx``、``translation.pdf``……几个任务存进同一个
+    文件夹就会重名，ZIP 也一样；所以沿用 ``delivery_file_name`` 的清洗规则，只保留
+    原文件名里可读、且两个系统都接受的部分。没有原文件名时退回 ``delivery_v<版本>.zip``。
+    """
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    source = PurePosixPath(str(_source_name(job_id) or "").replace("\\", "/"))
+    stem = _UNSAFE_NAME.sub("_", source.stem).strip(" ._")
+    if not stem:
+        return f"delivery_v{wanted}.zip"
+    return f"{stem}_delivery_v{wanted}.zip"
+
+
+def delivery_archive_bytes(job_id: str, version: int) -> bytes:
+    """把冻结交付打成一个 ZIP（与 ``snapshots.archive`` 相同的布局）。
+
+    返回前逐个核对清单里的每个文件：缺文件、内容与 sha256 不符都明确报错——
+    绝不返回一个"看起来完整"、实际少文件或内容被改过的包。
+    """
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    assets = core.delivery_snapshot_assets(job_id, wanted)
+    missing: list[str] = []
+    corrupt: list[str] = []
+    payload: list[tuple[str, bytes]] = []
+    for item in manifest.get("assets") or []:
+        name = str(item.get("name") or "")
+        if not name:
+            continue
+        data = assets.get(name)
+        if data is None:
+            # load_asset 对"文件不在"和"内容不符"都返回 None，用磁盘实况区分。
+            if Path(core.delivery_snapshot_asset_path(job_id, wanted, name)).is_file():
+                corrupt.append(name)
+            else:
+                missing.append(name)
+            continue
+        if item.get("sha256") != hashlib.sha256(data).hexdigest():
+            corrupt.append(name)
+            continue
+        payload.append((name, data))
+    if missing:
+        raise AdapterError("交付快照缺少文件：" + "、".join(missing))
+    if corrupt:
+        raise AdapterError("交付快照中的文件校验失败：" + "、".join(corrupt))
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for name, data in payload:
+            bundle.writestr(name, data)
+        try:
+            manifest_payload = Path(core.delivery_snapshot_asset_path(
+                job_id, wanted, _snapshots.MANIFEST_FILE)).read_bytes()
+        except OSError:
+            manifest_payload = _snapshots.manifest_bytes(manifest)
+        bundle.writestr(_snapshots.MANIFEST_FILE, manifest_payload)
+    return output.getvalue()
+
+
+def save_delivery_archive(job_id: str, version: int,
+                          destination: str | os.PathLike[str]) -> Path:
+    """把冻结交付 ZIP 写到保存面板给出的文件路径。
+
+    先完整校验、再落盘：校验失败时目标位置不会出现任何文件。
+    """
+    data = delivery_archive_bytes(job_id, version)
+    target = Path(destination).expanduser()
+    if target.is_dir():
+        raise AdapterError(f"目标位置是文件夹，不是文件：{target}")
+    _write_bytes_atomically(target, data)
+    return target
+
+
+def delivery_folder_path(job_id: str, version: int) -> Path:
+    """冻结交付在磁盘上的真实目录（不是导出目录）。"""
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    # 空文件名交给 asset_path，得到的就是版本目录本身：目录布局只由 snapshots 决定。
+    folder = Path(core.delivery_snapshot_asset_path(job_id, wanted, ""))
+    if not folder.is_dir():
+        raise AdapterError(f"交付快照 v{wanted} 的文件夹不存在，请重新冻结交付。")
+    return folder
+
+
+def open_delivery_folder(job_id: str, version: int, *, opener=None) -> dict:
+    """在系统文件管理器里打开冻结交付目录。
+
+    返回 ``{"ok", "path", "detail"}``；失败时 ``ok=False`` 并给出原因，不抛异常。
+    ``opener`` 供测试注入，默认走 ``file_actions.open_directory``——测试因此永远
+    不会真的打开 Finder/Explorer。
+    """
+    try:
+        folder = delivery_folder_path(job_id, version)
+    except AdapterError as exc:
+        return {"ok": False, "path": "", "detail": str(exc)}
+    action = opener if opener is not None else file_actions.open_directory
+    try:
+        result = action(folder)
+    except Exception as exc:  # noqa: BLE001 - 打开文件夹失败不能让界面崩掉
+        return {"ok": False, "path": str(folder),
+                "detail": f"{type(exc).__name__}: {exc}"}
+    return {"ok": bool(getattr(result, "ok", False)), "path": str(folder),
+            "detail": str(getattr(result, "detail", "") or "")}
+
+
+def delivery_default_asset_name(job_id: str, version: int, name: str) -> str:
+    """单个文件"另存为"时的默认文件名：``<原文件名>_<快照文件名>``。"""
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    record = _delivery_asset_record(manifest, name)
+    return delivery_file_name(_source_name(job_id), str(record.get("name")))
+
+
+def save_delivery_asset_copy(job_id: str, version: int, name: str,
+                             destination: str | os.PathLike[str], *,
+                             overwrite: bool = False) -> Path:
+    """把快照里的**一个**文件另存到保存面板给出的文件路径。
+
+    写之前先按清单校验字节；默认不覆盖已有文件（``overwrite=True`` 才替换，
+    由界面先确认）。快照本身只读，这里不会改动它。
+    """
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    record = _delivery_asset_record(manifest, name)
+    asset = str(record.get("name"))
+    data = _snapshots.load_asset(core.job_dir(job_id), wanted, asset)
+    if data is None:
+        if Path(core.delivery_snapshot_asset_path(job_id, wanted, asset)).is_file():
+            raise AdapterError(f"交付快照中的文件校验失败：{asset}")
+        raise AdapterError(f"交付快照缺少文件：{asset}")
+    if record.get("sha256") != hashlib.sha256(data).hexdigest():
+        raise AdapterError(f"交付快照中的文件校验失败：{asset}")
+    target = Path(destination).expanduser()
+    if target.is_dir():
+        raise AdapterError(f"目标位置是文件夹，不是文件：{target}")
+    if target.exists() and not overwrite:
+        raise AdapterError(
+            f"目标文件已存在，未覆盖：{target.name}。请确认覆盖或另选位置。")
+    _write_bytes_atomically(target, data)
+    return target
+
+
+def delivery_asset_info(job_id: str, version: int, name: str) -> dict:
+    """一个冻结文件的信息：清单记录（大小 / sha256 / 冻结时间）+ 磁盘实况。"""
+    manifest = _delivery_snapshot_manifest(job_id, version)
+    wanted = int(manifest.get("snapshot_version") or version)
+    record = _delivery_asset_record(manifest, name)
+    asset = str(record.get("name"))
+    path = Path(core.delivery_snapshot_asset_path(job_id, wanted, asset))
+    try:
+        stat = path.stat()
+    except OSError:
+        stat = None
+    exists = bool(stat is not None and path.is_file())
+    return {
+        "name": asset,
+        "path": str(path),
+        "exists": exists,
+        "size": int(record.get("size") or 0),
+        "sha256": str(record.get("sha256") or ""),
+        "actual_size": stat.st_size if exists else None,
+        "created_at": str(manifest.get("created_at") or ""),
+        "version": wanted,
+        "source_name": _source_name(job_id),
+        "extension": path.suffix,
+        "modified_at": datetime.fromtimestamp(
+            stat.st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
+            if exists else None,
+    }
 
 
 # ================= deletion =================
@@ -5056,6 +5722,101 @@ def reasoning_effort_options(provider: str, model: str) -> tuple[str, ...]:
     return tuple(core.reasoning_effort_options(provider, model) or ())
 
 
+# 只有实测过端点确实认得的模型才出现在这里，所以界面上不会出现"选了但没生效"的开关。
+THINKING_MODE_LABELS = {"thinking_disabled_vllm": "关闭思考", "thinking_disabled": "关闭思考（DeepSeek 系）"}
+
+
+def thinking_control_options(provider: str, model: str) -> tuple[str, ...]:
+    """这个模型的端点已验证支持哪些"关闭思考"方式；没有则返回空，界面不显示这一项。"""
+    return tuple(core.thinking_control_options(provider, model) or ())
+
+
+def task_cost_report(job_id: str) -> dict:
+    """每任务成本报告：只读性能追踪（#231）。
+
+    ``.performance/runs/*/requests.jsonl`` 里的每条 ``model_call`` 计一次，文本
+    请求与视觉读页（含失败 / 重试的尝试）因此共用一本账。仓库没有该服务商的
+    价目表，所以这里只报调用次数与提供方真实回报的 token，绝不编造金额。
+    """
+    try:
+        from folith import cost_report as _cost_report
+        return _cost_report.task_cost_report(
+            Path(core.job_dir(job_id)) / ".performance" / "runs")
+    except Exception:  # noqa: BLE001 - a broken trace simply hides the section
+        return {"available": False}
+
+
+def _cost_token_text(agg) -> str:
+    """'1,234（2/3 次回报）' for one nullable token total; '' when unreported."""
+    if not isinstance(agg, dict):
+        return ""
+    total = agg.get("total")
+    if total is None:
+        return ""
+    text = f"{int(total):,}"
+    reported, calls = int(agg.get("calls_reported") or 0), int(agg.get("calls_total") or 0)
+    if calls and reported < calls:
+        text += f"（{reported}/{calls} 次回报）"
+    return text
+
+
+def _cost_usage_text(entry: dict) -> str:
+    """One row of calls / failures / tokens for a role or a provider·model bucket."""
+    calls = int(entry.get("calls") or 0)
+    failures = int(entry.get("failures") or 0)
+    text = f"{calls:,} 次" + (f"（失败 {failures:,}）" if failures else "")
+    tokens = entry.get("tokens") or {}
+    prompt = _cost_token_text(tokens.get("prompt_tokens"))
+    completion = _cost_token_text(tokens.get("completion_tokens"))
+    cached = _cost_token_text(tokens.get("cached_tokens"))
+    parts = []
+    if prompt:
+        parts.append(f"输入 {prompt}")
+    if completion:
+        parts.append(f"输出 {completion}")
+    if cached and int((tokens.get("cached_tokens") or {}).get("total") or 0) > 0:
+        parts.append(f"缓存命中 {cached}")
+    if parts:
+        text += " · " + " · ".join(parts)
+    return text
+
+
+def _cost_report_group(report: dict):
+    """Task-page rows for the cost section, or None when the trace has no calls."""
+    report = report or {}
+    if not report.get("available"):
+        return None
+    calls = int(report.get("calls") or 0)
+    successes = int(report.get("successes") or 0)
+    failures = int(report.get("failures") or 0)
+    rows = [("模型调用", f"{calls:,} 次（成功 {successes:,} · 失败 {failures:,}）")]
+    totals = report.get("tokens") or {}
+    prompt = _cost_token_text(totals.get("prompt_tokens"))
+    completion = _cost_token_text(totals.get("completion_tokens"))
+    cached = _cost_token_text(totals.get("cached_tokens"))
+    total_parts = []
+    if prompt:
+        total_parts.append(f"输入 {prompt}")
+    if completion:
+        total_parts.append(f"输出 {completion}")
+    if cached and int((totals.get("cached_tokens") or {}).get("total") or 0) > 0:
+        total_parts.append(f"缓存命中 {cached}")
+    if total_parts:
+        rows.append(("合计 token", " · ".join(total_parts)))
+    for entry in report.get("by_role") or []:
+        role = str(entry.get("role") or "unknown")
+        rows.append((USAGE_ROLE_LABELS.get(role, role), _cost_usage_text(entry)))
+    models = report.get("by_model") or []
+    if len(models) > 1:
+        for entry in models:
+            rows.append((f"模型 · {entry.get('label')}", _cost_usage_text(entry)))
+    # No price table exists in this repository: tokens and calls only, never USD.
+    rows.append(("金额", "未计算：仓库内没有该服务商的价目表，只报 token 与调用次数。"))
+    return {"title": "成本",
+            "rows": [(label, value) for label, value in rows
+                     if value not in (None, "", [])]}
+
+
 def task_details(config: EngineConfig, job_id: str,
                  state: dict | None = None) -> list[dict]:
     """任务开始以后，"这个任务用的是什么设置"：分组的（标签, 值）。
@@ -5139,8 +5900,11 @@ def task_details(config: EngineConfig, job_id: str,
                           *_task_setup.DELIVERY_RESEARCH_ITEMS)
              if (setup.get("delivery") or {}).get(item["key"])]
     delivery = group("交付内容", [("文件", "、".join(names))])
-    return [item for item in (document, strategy_group, engine, source, delivery)
-            if item["rows"]]
+    items = [document, strategy_group, engine, source, delivery]
+    cost_group = _cost_report_group(task_cost_report(job_id))
+    if cost_group:
+        items.append(cost_group)
+    return [item for item in items if item["rows"]]
 
 
 def task_setup_view(config: EngineConfig, job_id: str,
@@ -5189,6 +5953,7 @@ def task_setup_view(config: EngineConfig, job_id: str,
         "filename": filename,
         "started": started,
         "is_pdf": filename.lower().endswith(".pdf"),
+        "is_docx": core.original_format_docx_applicable(filename),
         "target_lang": str(_pick(state, "target_lang", config.target_lang)),
         # 原文语言在导入时确定（它是任务身份的一部分）；准备页只显示，不改。
         "source_lang": str(state.get("source_lang") or ""),
@@ -5457,3 +6222,315 @@ def setup_choices() -> dict:
                              _source_languages.SOURCE_LANGUAGES],
         "projects": project_options(),
     }
+
+
+# ================= #150 导入校验向导（新增；不改既有导入语义） =================
+# 这里是"向导"需要的薄适配层：只做文件识别、预检、编排既有引擎入口、导出报告。
+# 真正的解析/校验/落库全部在引擎层（folith.engine.glossary_checks 与
+# folith.engine.migration_report），本层不重写任何导入规则。
+
+#: 向导接受的格式 -> 报告 kind（与引擎的 migration_report.KINDS 一致）。
+IMPORT_WIZARD_KINDS = {
+    ".tmx": "tmx", ".tbx": "tbx", ".xlsx": "xlsx", ".csv": "csv",
+}
+
+
+def import_wizard_project_choices() -> list[dict]:
+    """向导的目标项目列表（含语言方向，供预填目标语言）。"""
+    from folith.engine import projects as _projects
+
+    choices = []
+    for row in project_rows():
+        project_id = str(row.get("project_id") or "")
+        try:
+            direction = _projects.project_direction(
+                core.load_project(project_id) or {"project_id": project_id})
+        except Exception:  # noqa: BLE001 - 列表必须仍能显示
+            direction = {"source_lang": "", "target_lang": ""}
+        choices.append({
+            "project_id": project_id,
+            "name": str(row.get("name") or ""),
+            "is_system": bool(row.get("is_system")),
+            "source_lang": str(direction.get("source_lang") or ""),
+            "target_lang": str(direction.get("target_lang") or ""),
+        })
+    return choices
+
+
+def _wizard_read_bytes(path: str | os.PathLike[str]) -> tuple[Path, bytes]:
+    file = Path(path)
+    try:
+        data = file.read_bytes()
+    except OSError as exc:
+        raise AdapterError(f"无法读取文件：{exc}") from exc
+    if not data:
+        raise AdapterError(f"{file.name} 是空文件。")
+    if len(data) > MAX_TERMBASE_BYTES:
+        raise AdapterError(
+            f"{file.name} 超过 {MAX_TERMBASE_BYTES // (1024 * 1024)} MB。")
+    return file, data
+
+
+def _wizard_stream(name: str, data: bytes):
+    stream = io.BytesIO(data)
+    stream.name = name
+    return stream
+
+
+def _wizard_tmx_preview(data: bytes, *, target_lang: str) -> dict:
+    """TMX 预检：只读计数与语言声明，**不写库**。
+
+    这不是第二条导入实现：导入仍然只走 ``core.import_tmx``；预检只需要
+    "预计多少条 + 文件声明了什么语言"。因此这里刻意与引擎保持同一套取法，
+    否则预检和导入会对同一份文件给出不同结论：
+
+    * 解析器与引擎相同（``defusedxml``）：含 ENTITY/DOCTYPE 的文件预检也要
+      拒绝，不能"预检接受、导入失败"（预检跑在主线程，实体展开更是风险）；
+    * 语言声明按引擎的规则取：每个 ``<tu>`` 只看**前两个非空 ``<seg>``**，
+      目标语言是其中最后一个的语言。第三个及以后的语言引擎根本不看，
+      预检不能把它们算成"文件声明了别的目标语言"；
+    * 缺 ``<header>`` 时源语言留空，不崩。
+
+    真正的分类计数、跳过原因、元数据丢失一律以导入后的引擎报告为准。
+    """
+    from defusedxml import ElementTree as ET
+
+    from folith.engine import migration_report as _report
+
+    try:
+        root = ET.fromstring(data)
+    except Exception as exc:  # noqa: BLE001 - 预检失败要能原样展示
+        raise AdapterError(f"无法解析 TMX 文件：{exc}") from exc
+
+    def _local(tag):
+        return str(tag).rsplit("}", 1)[-1]
+
+    def _lang(node):
+        if node is None:
+            return ""
+        return str(node.get("{http://www.w3.org/XML/1998/namespace}lang")
+                   or node.get("lang") or "").strip()
+
+    header = next((node for node in root
+                   if _local(node.tag) == "header"), None)
+    declared_source = str((header.get("srclang") if header is not None else "")
+                          or _lang(header) or "").strip()
+    total = 0
+    declared_targets: list[str] = []
+    for tu in root.iter():
+        if _local(tu.tag) != "tu":
+            continue
+        total += 1
+        texts = 0
+        target_language = ""
+        for tuv in tu:
+            if _local(tuv.tag) != "tuv":
+                continue
+            seg = next((node for node in tuv if _local(node.tag) == "seg"), None)
+            if seg is None or not "".join(seg.itertext()).strip():
+                continue
+            texts += 1
+            if texts >= 2:
+                # 引擎在第二个非空 seg 处停下，并把它当作目标语言声明。
+                target_language = _lang(tuv)
+                break
+        if target_language and target_language not in declared_targets:
+            declared_targets.append(target_language)
+
+    expected = str(target_lang or "").strip()
+    if not expected:
+        status = "not_checked"
+    else:
+        pair = _report.language_pair_report(
+            expected_target=expected, declared_source=declared_source,
+            declared_targets=declared_targets)
+        status = str(pair.get("status") or "unverified")
+    return {
+        "expected_units": total,
+        "declared_source": declared_source,
+        "declared_targets": declared_targets,
+        "language_pair": {
+            "expected_target": expected,
+            "declared_source": declared_source,
+            "declared_targets": declared_targets,
+            "status": status,
+        },
+    }
+
+
+def import_wizard_preflight(path: str | os.PathLike[str], *,
+                            project_id: str | None = None,
+                            target_lang: str = "") -> dict:
+    """向导第 2 步：识别格式、语言对与预计条目数（**只读，不写库**）。
+
+    TMX 用只读预览（见 ``_wizard_tmx_preview``）；术语格式复用引擎的
+    ``parse_termbase*``（``report=True``），解析结果也一并返回，导入步骤不需要
+    再解析一遍，预检与导入看到的是同一份数据。
+    """
+    file, data = _wizard_read_bytes(path)
+    kind = IMPORT_WIZARD_KINDS.get(file.suffix.lower())
+    if kind is None:
+        raise AdapterError(
+            f"不支持的格式：{file.suffix or file.name}（支持 TMX / TBX / XLSX / CSV）")
+    expected_language = str(target_lang or "").strip()
+    result: dict = {
+        "path": str(file),
+        "name": file.name,
+        "kind": kind,
+        "bytes": len(data),
+        "project_id": str(project_id or ""),
+        "target_lang": expected_language,
+        "expected_units": None,
+        "language_pair": {},
+        "warnings": [],
+        "blocking": "",
+    }
+    if kind == "tmx":
+        preview = _wizard_tmx_preview(data, target_lang=expected_language)
+        result["expected_units"] = preview["expected_units"]
+        result["language_pair"] = preview["language_pair"]
+        return result
+
+    if not str(project_id or "").strip():
+        result["blocking"] = "termbase_requires_project"
+        return result
+    with tempfile.TemporaryDirectory(prefix="folith-import-precheck-") as scratch:
+        stream = _wizard_stream(file.name, data)
+        parser = {".xlsx": core.parse_termbase, ".csv": core.parse_termbase_csv,
+                  ".tbx": core.parse_termbase_tbx}[file.suffix.lower()]
+        parsed = parser(stream, target_lang=expected_language or None,
+                        report=True, report_dir=scratch)
+        report = getattr(parsed, "report", None) or {}
+        result["entries"] = list(parsed)
+        result["expected_units"] = int((report.get("counts") or {}).get("total") or 0)
+        result["language_pair"] = dict(report.get("language_pair") or {})
+        result["warnings"] = list(report.get("warnings") or [])
+        # 预检的报告是临时产物：TemporaryDirectory 一关，persistence 里的
+        # 路径就不存在了。清空它，避免界面显示一个打不开的"报告文件"。
+        report = dict(report)
+        report["persistence"] = {"directory": "", "json": "", "markdown": ""}
+        result["report"] = report
+    return result
+
+
+def _wizard_write_terms(project_id: str, entries: Sequence[dict]) -> dict:
+    """把解析出的术语写进项目术语库：**只增不覆盖**（既有导入语义）。
+
+    逐条写入没有事务：第 N 条失败时前 N-1 条已经落盘。因此失败一律抛
+    ``AdapterError`` 并把**已写入条数**挂在 ``.store`` 上——界面必须能如实
+    说出"写到哪一条、还剩什么"，而不是只报一句"导入失败"。
+    """
+    project = core.load_project(project_id)
+    if not project:
+        raise AdapterError(f"项目不存在：{project_id}")
+    existing = {str(entry.get("source") or "").strip().casefold()
+                for entry in (dict(project).get("glossary") or [])}
+    store = {"written": 0, "skipped_existing": 0, "skipped_missing": 0,
+             "target": f"project:{project_id}"}
+    for entry in entries:
+        source = str(entry.get("source") or "").strip()
+        target = str(entry.get("target") or "").strip()
+        if not source or not target:
+            # 空原文/译文不是"与现有记忆冲突"，口径分开记（与引擎的
+            # skipped_missing_pair 对齐）。
+            store["skipped_missing"] += 1
+            continue
+        if source.casefold() in existing:
+            store["skipped_existing"] += 1
+            continue
+        try:
+            core.set_project_term(
+                project_id, source, target,
+                domain=str(entry.get("domain") or entry.get("scope") or ""),
+                note=str(entry.get("note") or ""))
+        except (RuntimeError, ValueError, OSError) as exc:
+            error = AdapterError(
+                f"写入第 {store['written'] + 1} 条术语时失败：{exc}")
+            error.store = dict(store)
+            raise error from exc
+        existing.add(source.casefold())
+        store["written"] += 1
+    return store
+
+
+def import_wizard_run(path: str | os.PathLike[str], *,
+                      project_id: str | None = None,
+                      target_lang: str = "",
+                      preflight: dict | None = None) -> dict:
+    """向导第 3 步：执行导入并返回 ``{"report", "store"}``。
+
+    TMX 走 ``core.import_tmx(..., report=True)``（既有原子写 TM 的路径）；
+    术语格式走引擎解析 + 项目术语库只增不覆盖。失败抛 :class:`AdapterError`，
+    异常的 ``.report``（若有）由调用方展示——**不产生半成品**：TMX 失败不写
+    TM；术语库是逐条写入，"已写入 N 条"会如实记在 store 里。
+    """
+    from folith.engine import migration_report as _report
+
+    file, data = _wizard_read_bytes(path)
+    kind = IMPORT_WIZARD_KINDS.get(file.suffix.lower())
+    if kind is None:
+        raise AdapterError(
+            f"不支持的格式：{file.suffix or file.name}（支持 TMX / TBX / XLSX / CSV）")
+    if kind == "tmx":
+        stream = _wizard_stream(file.name, data)
+        try:
+            result = core.import_tmx(
+                stream, project_id=project_id or None,
+                target_lang=str(target_lang or "").strip() or None,
+                report=True)
+        except ValueError as exc:
+            report = getattr(exc, "report", None)
+            error = AdapterError(str(exc))
+            error.report = report
+            raise error from exc
+        return {"report": dict(result.get("report") or {}),
+                "store": {"kind": "tm",
+                          "written": int(result.get("added", 0)),
+                          "skipped": int(result.get("skipped", 0)),
+                          "target": f"project:{project_id}" if project_id else "project:system"}}
+
+    if not str(project_id or "").strip():
+        raise AdapterError("术语库需要导入到具体项目：请先选择一个项目。")
+    entries = (preflight or {}).get("entries")
+    if entries is None:
+        with tempfile.TemporaryDirectory(prefix="folith-import-parse-") as scratch:
+            stream = _wizard_stream(file.name, data)
+            parser = {".xlsx": core.parse_termbase, ".csv": core.parse_termbase_csv,
+                      ".tbx": core.parse_termbase_tbx}[file.suffix.lower()]
+            parsed = parser(stream, target_lang=str(target_lang or "").strip() or None,
+                            report=True, report_dir=scratch)
+            entries = list(parsed)
+            report = dict(getattr(parsed, "report", None) or {})
+    else:
+        report = dict(((preflight or {}).get("report") or {}))
+    store = _wizard_write_terms(project_id, list(entries))
+    counts = dict(report.get("counts") or {})
+    if counts:
+        counts["imported"] = int(store["written"])
+        counts["skipped_conflict"] = int(counts.get("skipped_conflict") or 0) \
+            + int(store["skipped_existing"])
+        counts["skipped_missing_pair"] = int(counts.get("skipped_missing_pair") or 0) \
+            + int(store["skipped_missing"])
+        _report.set_counts(report, counts)
+    _report.finalize(report)
+    try:
+        _report.write_report(report, project_id=project_id or None)
+    except OSError:
+        # 报告是成功的副作用：写不进去不能把已成功的导入变失败。
+        pass
+    store["kind"] = "glossary"
+    return {"report": report, "store": store}
+
+
+def import_wizard_export_report(report: dict, directory: str | os.PathLike[str]) -> dict:
+    """把一份导入报告（JSON + Markdown）另存到用户选择的位置。"""
+    from folith.engine import migration_report as _report
+
+    target = Path(directory)
+    if not str(target).strip():
+        raise AdapterError("请选择导出目录。")
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        return dict(_report.write_report(dict(report), directory=target))
+    except OSError as exc:
+        raise AdapterError(f"无法写入报告：{exc}") from exc

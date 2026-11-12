@@ -1,8 +1,8 @@
 """One structured VLM adapter and the native PDF adapter for DocumentIR v1."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Optional
+from dataclasses import asdict, dataclass, replace
+from typing import Any, Dict, Optional
 import json
 import hashlib
 from pathlib import Path
@@ -19,7 +19,8 @@ import fitz
 from folith.document_ir import (BLOCK_TYPES, DocumentUnderstandingProvider, PageEnvelope, PageUnderstanding,
                                 SemanticBlock, SourceSpan, new_document, normalized_bbox)
 from folith import page_events
-from folith.ocr_online import OnlineOCRBackend
+from folith.engine import ocr_config as _ocr_config
+from folith.ocr_online import OnlineOCRBackend, default_vision_reasoning
 from folith.spatial_index import SpatialTextIndex, align_blocks
 
 LOG = logging.getLogger(__name__)
@@ -31,13 +32,17 @@ Return only JSON: {"b":[{"t":"paragraph","s":"visible text"}]}.
 Blocks must be in reading order. t may be title, heading, paragraph, list_item,
 table, figure, caption, footnote, header, footer, equation, code, page_number, unknown.
 Optional l=language, d=ltr/rtl. Tables must have c=[{"r":0,"c":0,"s":"cell text",
-"rs":1,"cs":1}]; do not substitute Markdown tables. Figures use empty s; include
+"rs":1,"cs":1}]; do not substitute Markdown tables. List only the cells that
+contain text: never emit an empty cell and never repeat a cell. Figures use empty s; include
 captions as separate blocks. A genuinely blank page uses {"b":[]}.
 A title or heading set over several lines is one block. Text that is part of a
 logo, badge or certification mark belongs to its figure, not to separate blocks.
 On a printed page, omit later handwritten additions (reader notes, signatures,
 dates, underlining) and library or ownership stamps; transcribe handwriting only
 when it is the page's own content, as in a manuscript or a facsimile letter.
+Ignore show-through: faint, mirrored or reversed text that is the other side of the
+sheet showing through thin paper is not content of this page, and a page that has
+only such ghost text is blank ({"b":[]}).
 On the first and the last paragraph block of the page, add p and n (0 or 1):
 p=1 if the block continues a paragraph from the previous page (its first line is
 not indented and starts mid-sentence); n=1 if the paragraph runs on to the next
@@ -45,8 +50,23 @@ page (its last line is full width and the paragraph has not ended).
 Do not emit page identity, image dimensions, provenance, coordinates or word boxes.'''
 
 
+#: Second chance for a page whose structured read broke (cut off, or JSON that does not parse).
+#: Dense ruled tables with many empty cells are the usual cause; the translation only needs the
+#: text, so a table becomes plain lines instead of a grid of cells.
+PLAIN_PROMPT_SUFFIX = '''
+For this page do not return table cells. Use only paragraph, heading, title, list_item,
+footnote, header, footer and page_number blocks. Write a table as plain lines, one
+paragraph per table row, the cell texts of a row in reading order separated by " | ";
+skip empty cells. Vertical text is read in its reading order, column by column.'''
+
+
 def decode_semantics(raw):
     """Strict adapter validation: malformed/truncated content is never accepted."""
+    return _decode_semantics(raw)[0]
+
+
+def _decode_semantics(raw):
+    """``decode_semantics`` 的实现，另外返回丢掉的空白块数（写进读页诊断）。"""
     try:
         text = str(raw or '').strip()
         # The exercised relay wraps otherwise valid JSON in Markdown fences.
@@ -62,10 +82,18 @@ def decode_semantics(raw):
     # The transport historically rejects empty OCR. A sentinel permits explicit
     # blank-page understanding without treating malformed content as blank.
     if not value['b']:
-        return [None]
+        return [None], 0
     blocks = []
+    dropped = 0
     for item in value['b']:
-        if not isinstance(item, dict) or item.get('t') not in BLOCK_TYPES or not isinstance(item.get('s'), str):
+        if not isinstance(item, dict) or item.get('t') not in BLOCK_TYPES:
+            raise ValueError('invalid_semantic_block')
+        text = item.get('s')
+        if text is None and item['t'] in {'table', 'figure'}:
+            # Models routinely leave ``s`` out of a table (its text lives in the cells)
+            # or a figure (the prompt asks for an empty one); that is not a broken page.
+            text = ''
+        if not isinstance(text, str):
             raise ValueError('invalid_semantic_block')
         if (item.get('d') not in {None, 'ltr', 'rtl'}
                 or (item.get('l') is not None and not isinstance(item.get('l'), str))):
@@ -88,16 +116,27 @@ def decode_semantics(raw):
                 occupied.add((r, c, r + rs, c + cs))
                 cells.append({'row': r, 'col': c, 'row_span': rs, 'col_span': cs,
                               'text': cell['s'], 'source_anchor': None})
-        if not item['s'].strip() and item['t'] not in {'figure', 'table'}:
-            raise ValueError('empty_semantic_block')
+        if item['t'] == 'table' and not text.strip():
+            rows = {}
+            for cell in cells:
+                rows.setdefault(cell['row'], []).append((cell['col'], cell['text']))
+            text = '\n'.join('\t'.join(t for _, t in sorted(row)) for _, row in sorted(rows.items()))
+        if not text.strip() and item['t'] not in {'figure', 'table'}:
+            # 模型常在页尾多给一个空 paragraph（只带 p/n）：丢掉它，不拒收整页。
+            # 它的 p/n 不挪给相邻块——那是猜测，续段判断会退回看文字。
+            dropped += 1
+            continue
         flags = {}
         for key, name in (('p', 'continues_previous'), ('n', 'continues_next')):
             # 续段标记只是提示：缺失或取值不合法都当作"没给"，不拒收整页。
             if item.get(key) in (0, 1, True, False):
                 flags[name] = bool(item[key])
-        blocks.append(SemanticBlock(item['t'], item['s'].strip(), language=item.get('l'),
+        blocks.append(SemanticBlock(item['t'], text.strip(), language=item.get('l'),
                                     direction=item.get('d'), cells=cells, **flags))
-    return blocks
+    if not blocks:
+        # 只有空白块不是空白页：空白页要明确回答 {"b":[]}。
+        raise ValueError('empty_semantic_block')
+    return blocks, dropped
 
 
 class DocumentUnderstandingError(ValueError):
@@ -133,7 +172,13 @@ class PageFailed:
             return "服务商超时"
         if self.code == "rate_limited":
             return "服务商限流"
+        # #258：模型不按结构化格式回答（常见于只做 OCR 的模型），不能让用户
+        # 以为是「输出太长」，也不能只显示一句内部错误码。
+        if self.code.startswith("invalid_semantic"):
+            return "模型未按结构化格式回答（疑似只做 OCR 的模型）"
         if self.code == "truncated":
+            if "纯文本" in self.message:
+                return "模型只返回纯文本，未按结构化格式回答"
             return "输出被截断"
         if self.code == "incomplete_response":
             return "模型没有正常结束"
@@ -155,28 +200,239 @@ def language_hint(language: str) -> str:
             f"it into another language that shares the script.")
 
 
+TILE_DEPTH = 3   # a page is cut at most into eighths
+# Failures of the reply on a dense page; a smaller piece of the page often reads cleanly.
+TILE_ERROR_CODES = ('truncated', 'missing_table_cells')
+
+
+THINKING_OFF_MODES = frozenset({'thinking_disabled', 'thinking_disabled_vllm'})
+
+#: Fallback keys whose presence in a page's diagnostics proves it was read again
+#: after its first reply failed — i.e. tokens were burnt on a rejected attempt.
+_FALLBACK_KEYS = ('thinking_fallback', 'plain_fallback', 'tiled_fallback')
+
+
+def _append_failure_log(directory, row: Dict[str, Any]) -> None:
+    """Append one failure/recovery record, never replacing an earlier one.
+
+    The per-page ``{i}-failure.json`` is deleted when the page is later read, so
+    this append-only log is the only durable place a recovered attempt survives.
+    """
+    try:
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        with open(directory / 'failures.jsonl', 'a', encoding='utf-8') as log:
+            log.write(json.dumps(row, ensure_ascii=False) + '\n')
+    except OSError:
+        pass  # Diagnostics must never replace the page's real result.
+
+
 class VLMDocumentProvider:
-    def __init__(self, config, *, client=None, cancel_check=None, language=''):
+    def __init__(self, config, *, client=None, cancel_check=None, language='',
+                 trace_job_id=None, usage_ledger=None):
         self.language = str(language or '').strip()
         self.system_prompt = SYSTEM_PROMPT + language_hint(self.language)
         # 语言提示改变了读页请求，所以它是缓存身份的一部分：换了原文语言不会复用旧结果。
         self.cache_identity = {**config.describe(), "prompt_version":PROMPT_VERSION}
         if self.language:
             self.cache_identity["language"] = self.language
-        self.transport = OnlineOCRBackend(config, client_factory=(lambda _: client) if client is not None else None, cancel_check=cancel_check)
-        self._init_args = (config, client, cancel_check, language)
+        # #231: 读页用量要进任务的 trace / 账本，而不是只留在逐页缓存里。
+        self._trace_job_id = str(trace_job_id) if trace_job_id else None
+        self._usage_ledger = usage_ledger if isinstance(usage_ledger, dict) else None
+        self.transport = self._make_transport(config, client, cancel_check)
+        self._init_args = (config, client, cancel_check, language,
+                           self._trace_job_id, self._usage_ledger)
+
+    def _make_transport(self, config, client, cancel_check):
+        return OnlineOCRBackend(
+            config,
+            client_factory=(lambda _: client) if client is not None else None,
+            cancel_check=cancel_check,
+            trace_job_id=self._trace_job_id,
+            usage_ledger=self._usage_ledger)
 
     def clone(self):
         """同配置的新实例：并发读页时每个线程一份，单次请求的诊断互不覆盖。"""
-        config, client, cancel_check, language = self._init_args
-        return VLMDocumentProvider(config, client=client, cancel_check=cancel_check, language=language)
+        config, client, cancel_check, language, trace_job_id, usage_ledger = self._init_args
+        return VLMDocumentProvider(config, client=client, cancel_check=cancel_check,
+                                   language=language, trace_job_id=trace_job_id,
+                                   usage_ledger=usage_ledger)
+
+    def attach_trace_context(self, *, trace_job_id=None, usage_ledger=None):
+        """Let a caller-supplied provider join the task trace and usage ledger (#231)."""
+        if trace_job_id:
+            self._trace_job_id = str(trace_job_id)
+        if isinstance(usage_ledger, dict):
+            self._usage_ledger = usage_ledger
+        config, client, cancel_check, language = self._init_args[:4]
+        self._init_args = (config, client, cancel_check, language,
+                           self._trace_job_id, self._usage_ledger)
+        transport = getattr(self, 'transport', None)
+        if transport is not None:
+            transport._trace_job_id = self._trace_job_id
+            transport._usage_ledger = self._usage_ledger
+
+    def _read(self, transport, page, system_prompt=None):
+        def decoder(raw):
+            blocks, dropped = _decode_semantics(raw)
+            # 丢弃的空块数挂在实例上：读页诊断要用，但不改 _read 的调用约定
+            # （测试与调用方都把它当成「读一次图」）。
+            self._dropped_empty_blocks = getattr(self, '_dropped_empty_blocks', 0) + dropped
+            return blocks
+        return transport.read_image(page.image, system_prompt=system_prompt or self.system_prompt,
+                                    user_prompt='Read all content on this page.', decoder=decoder,
+                                    page_index=page.page_index,
+                                    page_number=page.page_index + 1)
+
+    def _thinking_fallback(self, page, first):
+        """Final failure with thinking switched off: read the page once more with it on.
+
+        Switching thinking off is a speed trade; a few pages (dense tables, long
+        runs of text) come back as broken JSON or never stop.  Those are content
+        failures, so one bounded attempt with the service default is worth it.
+        Transport trouble (timeouts, 5xx, rate limits) and configuration errors
+        would only be slower with thinking on, so they are not retried here.
+        Models whose default is thinking-off (DeepSeek family) are skipped too:
+        with thinking on they spend the whole output budget on reasoning and
+        come back truncated, so the retry would only cost tokens.
+        """
+        config = self._init_args[0]
+        code = str(first.get('error_code') or '')
+        if (str(config.reasoning_mode or '') not in THINKING_OFF_MODES or not code
+                or default_vision_reasoning(config.provider, config.model) != 'provider_default'
+                or code in FATAL_PAGE_ERROR_CODES or code in TIMEOUT_LIKE_ERROR_CODES
+                or code == 'rate_limited'):
+            return None
+        client, cancel_check = self._init_args[1], self._init_args[2]
+        fallback = self._make_transport(
+            replace(config, reasoning_mode='provider_default',
+                    max_retries=min(int(config.max_retries), 1)),
+            client, cancel_check)
+        page_events.emit('retry', attempt=0, attempts=2, http_status=None, code=code,
+                         message='关闭思考读页失败，改用服务默认再试一次')
+        blocks, error = self._read(fallback, page)
+        return blocks, error, fallback
+
+    def _plain_fallback(self, page, first):
+        """Last resort for a content failure: read the page again as plain text lines.
+
+        Only for failures of the reply itself (cut off, not JSON, wrong shape).  Transport
+        trouble, rate limits and configuration errors are not helped by asking differently.
+        """
+        config = self._init_args[0]
+        code = str(first.get('error_code') or '')
+        if (not code or code in FATAL_PAGE_ERROR_CODES or code in TIMEOUT_LIKE_ERROR_CODES
+                or code == 'rate_limited'):
+            return None
+        client, cancel_check = self._init_args[1], self._init_args[2]
+        fallback = self._make_transport(
+            replace(config, max_retries=min(int(config.max_retries), 1)),
+            client, cancel_check)
+        page_events.emit('retry', attempt=0, attempts=2, http_status=None, code=code,
+                         message='结构化读页失败，改用纯文本行再试一次')
+        blocks, error = self._read(fallback, page, self.system_prompt + PLAIN_PROMPT_SUFFIX)
+        return blocks, error, fallback
+
+    def _tiled_fallback(self, page, first):
+        """A page whose reply ran away even as plain lines: read it in overlapping bands.
+
+        A dense ruled table (vertical text, rows of repeated numerals) can send the model
+        into a loop that only the output limit ends.  Half a page has half the cells and
+        usually breaks the loop; a band that still runs away is cut again, down to an
+        eighth of the page.  The bands overlap so a line on a cut is read whole at least
+        once, and a repeat of it is dropped when the bands are joined.  Only for truncated
+        replies and tables that came back without cells: other failures are not about the amount
+        of content.
+        """
+        if str(first.get('error_code') or '') not in TILE_ERROR_CODES:
+            return None
+        try:
+            import io
+            from PIL import Image
+            image = Image.open(io.BytesIO(page.image))
+            image.load()
+        except Exception:  # noqa: BLE001 - an unreadable image is just not tiled
+            return None
+        width, height = image.size
+        config, client, cancel_check = self._init_args[0], self._init_args[1], self._init_args[2]
+        fallback = self._make_transport(
+            replace(config, max_retries=min(int(config.max_retries), 1)),
+            client, cancel_check)
+        page_events.emit('retry', attempt=0, attempts=2, http_status=None, code='truncated',
+                         message='整页读不完，分上下两半再读')
+        system = self.system_prompt + PLAIN_PROMPT_SUFFIX
+
+        def read_band(top, bottom, depth):
+            """A band that still runs away is cut in two again, down to an eighth of the page."""
+            buffer = io.BytesIO()
+            image.crop((0, top, width, bottom)).save(buffer, format='PNG')
+            band = replace(page, image=buffer.getvalue(), image_width=width, image_height=bottom - top)
+            blocks, error = self._read(fallback, band, system)
+            if not error:
+                return blocks, None
+            if depth >= TILE_DEPTH or not any(code in str(error) for code in TILE_ERROR_CODES):
+                return [], error
+            return halves(top, bottom, depth)
+
+        def halves(top, bottom, depth):
+            overlap = max((bottom - top) // 14, 1)
+            middle = (top + bottom) // 2
+            first, error = read_band(top, middle + overlap, depth + 1)
+            if error:
+                return [], error
+            second, error = read_band(middle - overlap, bottom, depth + 1)
+            return (first + second, None) if not error else ([], error)
+
+        blocks, error = halves(0, height, 0)   # the whole page was already read as plain lines
+        if error:
+            return [], error, fallback
+        merged, seen = [], set()
+        for block in blocks:
+            if block is None:
+                continue
+            key = (block.type, block.text.strip())
+            if key not in seen:             # a line on the overlap is read twice
+                seen.add(key)
+                merged.append(block)
+        return merged, None, fallback
+
+    def _adopt(self, fallback, first, key, extra=None):
+        """Diagnostics of a fallback read, with what the first read looked like."""
+        diagnostics = dict(fallback._last_request)
+        diagnostics['prompt_version'] = PROMPT_VERSION
+        diagnostics['latency_s'] = fallback._last_timings.get('request_s')
+        diagnostics[key] = {'first_error': first.get('error_code'),
+                            'first_attempts': first.get('attempts'), **(extra or {})}
+        # The caller reads the last request off ``transport`` for its failure record.
+        self.transport._last_request = dict(diagnostics)
+        self.transport._last_timings = dict(fallback._last_timings)
+        return diagnostics
 
     def understand_page(self, page):
-        blocks, error = self.transport.read_image(page.image, system_prompt=self.system_prompt,
-                                                   user_prompt='Read all content on this page.', decoder=decode_semantics)
+        self._dropped_empty_blocks = 0
+        blocks, error = self._read(self.transport, page)
+        dropped = self._dropped_empty_blocks
         diagnostics = dict(self.transport._last_request)
         diagnostics['prompt_version'] = PROMPT_VERSION
+        if dropped and not error:
+            diagnostics['dropped_empty_blocks'] = dropped
         diagnostics['latency_s'] = self.transport._last_timings.get('request_s')
+        if error:
+            retried = self._thinking_fallback(page, diagnostics)
+            if retried is not None:
+                blocks, error, fallback = retried
+                diagnostics = self._adopt(fallback, diagnostics, 'thinking_fallback',
+                                          {'from': str(self._init_args[0].reasoning_mode)})
+        if error:
+            retried = self._plain_fallback(page, diagnostics)
+            if retried is not None:
+                blocks, error, fallback = retried
+                diagnostics = self._adopt(fallback, diagnostics, 'plain_fallback')
+        if error:
+            retried = self._tiled_fallback(page, diagnostics)
+            if retried is not None:
+                blocks, error, fallback = retried
+                diagnostics = self._adopt(fallback, diagnostics, 'tiled_fallback')
         if error:
             raise DocumentUnderstandingError(f'Visual understanding failed for {page.page_id}: {error}',
                                                {**diagnostics, 'page_id':page.page_id, 'provider':'vlm',
@@ -201,8 +457,12 @@ class NativeDocumentProvider:
         return PageUnderstanding(blocks, 'native_pdf')
 
 
-def native_pdf_document(filename, data, paragraphs, *, paragraph_records=None):
-    """Retain hierarchy/styles and multi-block paragraph membership from native PDF."""
+def native_pdf_document(filename, data, paragraphs, *, paragraph_records=None, layouts=None):
+    """Retain hierarchy/styles and multi-block paragraph membership from native PDF.
+
+    Pass ``layouts`` (the result of ``classify_blocks(extract_layout_blocks(data))``)
+    to reuse an already-computed layout and avoid a redundant full-document parse.
+    """
     from folith.pdf_ingestion import extract_layout_blocks, classify_blocks, reconstruct_paragraph_records
     document = new_document(filename, filename)
     with fitz.open(stream=data, filetype='pdf') as pdf:
@@ -212,7 +472,8 @@ def native_pdf_document(filename, data, paragraphs, *, paragraph_records=None):
             document['pages'].append(PageEnvelope(filename, f'p{i+1}', i, page.rect.width,
                                                    page.rect.height, rotation).to_page())
     pages = {p['page_id']: p for p in document['pages']}
-    layouts = classify_blocks(extract_layout_blocks(data))
+    if layouts is None:
+        layouts = classify_blocks(extract_layout_blocks(data))
     for raw in layouts:
         p = pages[f'p{raw["page_number"]}']
         box = normalized_bbox([raw[k] for k in ('x0','y0','x1','y1')], p['width'], p['height'])
@@ -265,8 +526,11 @@ def native_pdf_document(filename, data, paragraphs, *, paragraph_records=None):
 
 #: 同时向视觉模型发出的读页请求数。逐页串行时一本 300 页的书要等半小时才能开始
 #: 翻译；请求之间互不依赖，节流与 429 退避由共享的 request_control 负责。
-VLM_PAGE_WORKERS_DEFAULT = 5
-VLM_PAGE_WORKERS_MAX = 8
+#: 默认值按连接类型分档（官方端点 / relay），见 folith.engine.ocr_config 的
+#: VISION_PAGE_WORKERS_* 与 #220 C1：网关会在客户端超时之前回 502，并发越低越稳。
+VLM_PAGE_WORKERS_DEFAULT = _ocr_config.VISION_PAGE_WORKERS_DEFAULT
+VLM_PAGE_WORKERS_RELAY_DEFAULT = _ocr_config.VISION_PAGE_WORKERS_RELAY_DEFAULT
+VLM_PAGE_WORKERS_MAX = _ocr_config.VISION_PAGE_WORKERS_MAX
 #: 句末标点（含 CJK 与阿拉伯文）。段落以它们之外的字符结束、又恰好落在页尾，
 #: 说明这一段被翻页截断了。
 _PARAGRAPH_TERMINALS = set('.!?…:;。！？；：؟۔')
@@ -277,15 +541,14 @@ _CONTINUABLE_TYPES = frozenset({'paragraph'})
 _UNTRANSLATED_TYPES = frozenset({'header', 'footer', 'page_number', 'figure'})
 
 
-def page_worker_count(workers=None):
-    """读页并发数：显式参数 > 环境变量 FOLIOTHREAD_VLM_PAGE_WORKERS > 默认值。"""
-    for candidate in (workers, os.environ.get('FOLIOTHREAD_VLM_PAGE_WORKERS')):
-        try:
-            value = int(candidate)
-        except (TypeError, ValueError):
-            continue
-        return max(1, min(VLM_PAGE_WORKERS_MAX, value))
-    return VLM_PAGE_WORKERS_DEFAULT
+def page_worker_count(workers=None, provider="", base_url=""):
+    """读页并发数：显式参数 > 环境变量 FOLIOTHREAD_VLM_PAGE_WORKERS > 按连接分档的默认值。
+
+    连接信息只影响「都没给」时的默认值：官方端点 3 路，自定义 relay / 网关 2 路
+    （#220 C1：网关先于客户端超时，并发越高越容易同时撞上它）。
+    """
+    return _ocr_config.vision_page_workers(
+        provider, base_url, workers=workers, environ=os.environ)
 
 
 #: 能续段的末段至少要这么长：书名页的 ``CANONGATE``、题词署名 ``Sylvia Plath``
@@ -377,10 +640,18 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
         try:
             semantic = provider.understand_page(envelope)
         except Exception as exc:
-            failure = {'page_id':envelope.page_id, 'provider':'vlm', 'semantic_result':'failed',
-                       'regions':len(index.regions), 'spatial_available':bool(index.regions),
-                       'error':str(exc), 'latency_s':time.perf_counter()-started,
-                       'request':dict(getattr(getattr(provider, 'transport', None), '_last_request', {}))}
+            if cancel_check and cancel_check():
+                raise RuntimeError('任务已请求取消') from exc   # not a page failure
+            # 页码双记（#220 C3）：`page` 从 1 计，与界面、页面事件、报告一致；
+            # `page_index` 从 0 计，也是 <index>-failure.json 文件名里的那个数。
+            # 文件名保持 0 基不再改：同目录的逐页成功缓存 <index>.json 也是 0 基，
+            # 只改失败文件会撞号（22.json 是第 23 页的缓存、22-failure.json 却是
+            # 第 22 页），一起改则旧缓存全部失配，恢复任务会整本真实重读。
+            failure ={'page': i + 1, 'page_index': i,
+                      'page_id':envelope.page_id, 'provider':'vlm', 'semantic_result':'failed',
+                      'regions':len(index.regions), 'spatial_available':bool(index.regions),
+                      'error':str(exc), 'latency_s':time.perf_counter()-started,
+                      'request':dict(getattr(getattr(provider, 'transport', None), '_last_request', {}))}
             _diag = getattr(exc, 'diagnostics', None) if isinstance(exc, DocumentUnderstandingError) else None
             if _diag:
                 failure['error_code'] = _diag.get('error_code')
@@ -391,6 +662,10 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                 path = Path(checkpoint_dir)/'document_understanding'/f'{i}-failure.json'
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(failure, ensure_ascii=False), encoding='utf-8')
+                # The per-page file is deleted once the page is later read; this log is
+                # append-only so every failure (with its rejected replies) stays for study.
+                # #300 already added ``page``/``page_index`` to ``failure``; spread it as-is.
+                _append_failure_log(path.parent, {'at': time.time(), **failure})
             diagnostics = getattr(exc, 'diagnostics', None) if isinstance(exc, DocumentUnderstandingError) else None
             code = str((diagnostics or {}).get('error_code') or '')
             if skip_failed and diagnostics is not None and code not in FATAL_PAGE_ERROR_CODES \
@@ -398,6 +673,27 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                 return PageFailed(i, envelope.page_id, code,
                                   (diagnostics or {}).get('http_status'), str(exc))
             raise
+        # #231: a page finally read after earlier failures still burnt tokens on
+        # them.  Append a recovered record so a later successful read can never
+        # erase the cost of the attempts (the per-page failure file is deleted).
+        if checkpoint_dir:
+            _diag = dict(getattr(semantic, 'diagnostics', None) or {})
+            _attempts = [a for a in (_diag.get('attempts') or []) if isinstance(a, dict)]
+            _fallbacks = [key for key in _FALLBACK_KEYS if _diag.get(key)]
+            _had_failed_attempt = any(a.get('status') == 'failed' for a in _attempts)
+            if (not _diag.get('cache_hit')
+                    and (_had_failed_attempt or _fallbacks
+                         or int(_diag.get('attempt_count') or 0) > 1)):
+                _append_failure_log(
+                    Path(checkpoint_dir)/'document_understanding',
+                    {'at': time.time(), 'page': i + 1, 'page_index': i,
+                     'page_id': envelope.page_id, 'provider': 'vlm',
+                     'semantic_result': 'recovered', 'recovered': True,
+                     'attempt_count': _diag.get('attempt_count'),
+                     'attempts': _attempts, 'fallbacks': _fallbacks,
+                     'fallback_details': {key: _diag.get(key) for key in _fallbacks},
+                     'usage': _diag.get('usage'),
+                     'latency_s': _diag.get('latency_s')})
         if cache_path:
             cache_path.parent.mkdir(parents=True,exist_ok=True)
             temporary = cache_path.with_suffix(f'.{threading.get_ident()}.tmp')
@@ -427,7 +723,12 @@ def iter_page_understanding(filename, data, provider: DocumentUnderstandingProvi
         # prompt/DPI must never reuse another page's semantic result.
         identity = {'source_sha256':hashlib.sha256(data).hexdigest(),
                     'provider':provider.cache_identity, 'dpi':dpi}
-    worker_count = page_worker_count(workers)
+    _connection = (provider.cache_identity
+                   if isinstance(getattr(provider, 'cache_identity', None), dict) else {})
+    worker_count = page_worker_count(
+        workers,
+        provider=str(_connection.get('provider') or ''),
+        base_url=str(_connection.get('base_url') or ''))
     local = threading.local()
 
     def identity_matches(cached):
@@ -497,7 +798,9 @@ def iter_page_understanding(filename, data, provider: DocumentUnderstandingProvi
         for _, future in pending:
             if future is not None:
                 future.cancel()
-        executor.shutdown(wait=True, cancel_futures=True)
+        # On cancel a page still in local location work is not waited for; its
+        # late cache write is harmless and a resume reads it like any other.
+        executor.shutdown(wait=not (cancel_check and cancel_check()), cancel_futures=True)
 
 
 class VisualDocumentAssembler:
@@ -508,7 +811,11 @@ class VisualDocumentAssembler:
     边翻译用：末段还可能被下一页续上时，它不算定稿。
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename, known_paragraphs=None):
+        # Paragraphs already finalised (and translated) by an earlier run.  A page read
+        # again must not glue onto the previous page where that run left them apart:
+        # pages recovered late were appended and re-sorted into place, never joined.
+        self._known = list(known_paragraphs or [])
         self.document = new_document(filename, filename)
         self.paragraphs = []
         self.paragraph_pages = []  # 与 paragraphs 一一对应：每段起始的页（页序从 0 起）
@@ -566,9 +873,14 @@ class VisualDocumentAssembler:
                                     'prompt_version':semantic.diagnostics.get('prompt_version')}}
             aligned += int(any(s['bbox'] is not None for s in spans))
             translatable = bool(block.text) and block.type not in _UNTRANSLATED_TYPES
-            if (self._tail is not None and translatable and block.type in _CONTINUABLE_TYPES
-                    and order == self._first_translatable(semantic.blocks)
-                    and _continues_across_page(self._tail[0]['text'], self._tail[2], block)):
+            joins = (self._tail is not None and translatable and block.type in _CONTINUABLE_TYPES
+                     and order == self._first_translatable(semantic.blocks)
+                     and _continues_across_page(self._tail[0]['text'], self._tail[2], block))
+            if joins:
+                known_end = self._tail[1] + 1 < len(self._known) and self._known[self._tail[1]] == self._tail[0]['text']
+                if known_end:               # the finalised text ends here: keep them apart
+                    joins, self._tail = False, None
+            if joins:
                 tail, paragraph_index, _ = self._tail
                 for span in spans:
                     span['block_id'] = tail['block_id']
@@ -667,7 +979,10 @@ def understand_mixed_pdf(filename, data, visual_indices, provider, **kwargs):
     for index in native_indices:
         records.extend(r for r in reconstruct_paragraph_records([b for b in layouts if b['page_number']-1==index])
                        if r['text'] and not ORNAMENT_RE.fullmatch(r['text']))
-    document = native_pdf_document(filename,data,[r['text'] for r in records],paragraph_records=records)
+    # Pass the already-computed layouts to avoid a second full-document parse
+    # inside native_pdf_document.
+    document = native_pdf_document(filename, data, [r['text'] for r in records],
+                                   paragraph_records=records, layouts=layouts)
     _, visual = understand_visual_pdf(filename,data,provider,page_indices=visual_indices,**kwargs)
     document['blocks'].extend(visual['blocks'])
     document['assets'].extend(visual['assets'])

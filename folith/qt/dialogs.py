@@ -139,6 +139,7 @@ class EngineDialog(QDialog):
 
     PAGES = (("general", "settings", "通用"), ("models", "sparkles", "模型"),
              ("vision", "image", "视觉与识别"), ("defaults", "package", "任务默认值"),
+             ("reading", "book-open", "阅读"),
              ("storage", "folder", "存储"), ("about", "info", "关于"))
 
     def __init__(self, config: adapter.EngineConfig, runner: TaskRunner,
@@ -169,8 +170,10 @@ class EngineDialog(QDialog):
         self.academic_preference = False
         self._loading = True
 
-        from .settings_pages import AboutPage, StoragePage
+        from .settings_pages import AboutPage, ReadingPage, StoragePage
 
+        # 阅读排版（F6）：行距与阅读字体。默认跟随界面字体，不写死平台字体族。
+        self.reading_page = ReadingPage()
         self.storage_page = StoragePage(runner)
         self.storage_page.revealRequested.connect(self.revealRequested.emit)
         self.about_page = AboutPage(runner, updater=getattr(parent, "updates", None))
@@ -179,6 +182,7 @@ class EngineDialog(QDialog):
                     "models": self._build_connection_tab,
                     "vision": self._build_vision_tab,
                     "defaults": self._build_task_tab,
+                    "reading": lambda: self.reading_page,
                     "storage": lambda: self.storage_page,
                     "about": lambda: self.about_page}
         # 工作模式的复选框在「任务默认值」里，但「通用」页先建：先把它造出来。
@@ -214,16 +218,17 @@ class EngineDialog(QDialog):
             self.stack.addWidget(page)
         bar.addStretch(1)
 
-        body = QVBoxLayout()
-        body.setContentsMargins(20, theme_module.SPACE["sm"], 20, theme_module.SPACE["md"])
-        body.setSpacing(theme_module.SPACE["sm"])
-        body.addWidget(self.stack, 1)
-        body.addWidget(self._status)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(toolbar)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        body = QVBoxLayout()
         layout.addLayout(body, 1)
+        body.setContentsMargins(20, theme_module.SPACE["sm"], 20, theme_module.SPACE["md"])
+        body.setSpacing(theme_module.SPACE["sm"])
+        body.addWidget(self.stack, 1)
+        body.addWidget(self._status)
 
         # 立即生效：改动合并 250 ms 再落盘（拖动、连续输入不会每一下都写一次）。
         self._defaults_timer = QTimer(self)
@@ -289,7 +294,8 @@ class EngineDialog(QDialog):
                     self.cleanup_box, self.report_box, self.academic_box,
                     self.deliver_plain_box, self.deliver_bilingual_box, self.deliver_terms_box,
                     self.deliver_evidence_box, self.deliver_pdf_box,
-                    self.deliver_original_pdf_box, self.deliver_epub_box):
+                    self.deliver_original_pdf_box, self.deliver_original_docx_box,
+                    self.deliver_epub_box):
             box.toggled.connect(self._immediate_changed)
         for combo in (self.theme_box, self.language_box, self.ocr_backend_box,
                       self.ocr_mode_box, self.ocr_language_box, self.default_mode_box, self.accent_box):
@@ -434,6 +440,11 @@ class EngineDialog(QDialog):
         self.base_edit = QLineEdit()
         self.reasoning_box = style_module.ComboBox()
         self.reasoning_row = _field(i18n.tr('推理强度'), self.reasoning_box)
+        self.thinking_box = style_module.ComboBox()
+        self.thinking_row = _field(i18n.tr('思考'), self.thinking_box)
+        self.thinking_hint = QLabel("")
+        self.thinking_hint.setObjectName("hint")
+        self.thinking_hint.setWordWrap(True)
         self.fetch_button = QPushButton(i18n.tr('获取可用模型'))
         self.fetch_button.clicked.connect(self._fetch_models)
         self.test_button = QPushButton(i18n.tr('测试连接'))
@@ -442,8 +453,10 @@ class EngineDialog(QDialog):
         self.test_label.setWordWrap(True)
         self.provider_box.currentTextChanged.connect(self._provider_changed)
         self.model_box.currentTextChanged.connect(self._sync_reasoning)
+        self.model_box.currentTextChanged.connect(self._sync_thinking)
         self._provider_changed(self.provider_box.currentText())
         self._sync_reasoning()
+        self._sync_thinking()
         self.connection_library = ConnectionLibrary(self)
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -538,7 +551,10 @@ class EngineDialog(QDialog):
         self._sync_mode_cards()
         mti = QHBoxLayout()
         mti.setSpacing(theme_module.SPACE["lg"])
-        mti_label = QLabel("MTI")
+        mti_label = QLabel(i18n.tr('MTI（翻译硕士）'))
+        mti_label.setToolTip(i18n.tr(
+            'MTI 是翻译硕士（Master of Translation and Interpreting）专业学位；'
+            '打开后，学术写作、案例与合规页面才会出现。'))
         style_module.set_text_role(mti_label, "label")
         mti.addWidget(mti_label)
         mti.addWidget(self.academic_box)
@@ -589,6 +605,11 @@ class EngineDialog(QDialog):
         # 默认值在选文件之前就定了，不知道源文件类型；导入时非 PDF 任务会去掉这一项。
         self.deliver_original_pdf_box.setToolTip(
             i18n.tr('仅 PDF 任务可用：按原文件的版式重建译文页面。'))
+        self.deliver_original_docx_box, original_docx = fmt(
+            "deliver_original_docx", '原格式译文 DOCX', False, i18n.tr('仅 DOCX'))
+        # 与原排版 PDF 同理：默认值不知道源文件类型，非 DOCX 任务不会产出这一项。
+        self.deliver_original_docx_box.setToolTip(
+            i18n.tr('仅 DOCX 任务可用：在原 DOCX 文件上写回译文，保留样式、表格与页眉页脚。'))
         self.deliver_epub_box, epub = fmt("deliver_epub", 'EPUB 电子书', False)
         self.deliver_terms_box, terms = fmt("deliver_terms_xlsx", '术语表 XLSX', True)
         self.deliver_evidence_box, evidence = fmt("deliver_evidence", '段落证据 JSONL', True)
@@ -596,7 +617,7 @@ class EngineDialog(QDialog):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(theme_module.SPACE["xl"])
         grid.setVerticalSpacing(theme_module.SPACE["sm"])
-        for index, widget in enumerate((plain, bilingual, pdf, original, epub, terms, evidence)):
+        for index, widget in enumerate((plain, bilingual, pdf, original, original_docx, epub, terms, evidence)):
             grid.addWidget(widget, index // 2, index % 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
@@ -658,7 +679,9 @@ class EngineDialog(QDialog):
                 "api_key": profile.get("api_key") or environment_key(profile["provider"]),
                 "base_url": profile.get("base_url", ""),
                 "max_tokens": self._vision_view["max_tokens"],
-                "reasoning_mode": self._vision_view["reasoning_mode"]}
+                "reasoning_mode": self._vision_view["reasoning_mode"],
+                # 读页的推理强度跟这条连接走：连接编辑器里选「低/中/高」，这里原样带上。
+                "reasoning_effort": str(profile.get("reasoning_effort") or "")}
 
     def _vision_changed(self) -> bool:
         form = self._vision_form()
@@ -666,7 +689,7 @@ class EngineDialog(QDialog):
             return bool(self._vision_view["dedicated"])
         stored = adapter.core.load_ocr_online_config() or {}
         return any(form.get(k) != stored.get(k) for k in
-                   ("provider", "model", "api_key", "base_url"))
+                   ("provider", "model", "api_key", "base_url", "reasoning_effort"))
 
     def _vision_problem(self) -> str:
         form = self._vision_form()
@@ -674,7 +697,7 @@ class EngineDialog(QDialog):
             return ""
         return adapter.vision_connection_problem(
             provider=form["provider"], model=form["model"], api_key=form["api_key"],
-            has_saved_key=False)
+            has_saved_key=False, base_url=form.get("base_url", ""))
 
     def _apply_vision(self) -> None:
         if not self._vision_changed():
@@ -915,7 +938,7 @@ class EngineDialog(QDialog):
         "reviewer_provider", "reviewer_model", "reviewer_api_key",
         "reviewer_base_url", "ocr_language", "ocr_mode", "ocr_backend",
         "deliver_plain_docx", "deliver_bilingual_docx", "deliver_terms_xlsx",
-        "deliver_evidence", "deliver_pdf", "deliver_original_pdf",
+        "deliver_evidence", "deliver_pdf", "deliver_original_pdf", "deliver_original_docx",
         "deliver_epub", "connections", "connection_roles", "connection_models", "default_translation_mode",
     })
 
@@ -962,6 +985,7 @@ class EngineDialog(QDialog):
         config.deliver_evidence = self.deliver_evidence_box.isChecked()
         config.deliver_pdf = self.deliver_pdf_box.isChecked()
         config.deliver_original_pdf = self.deliver_original_pdf_box.isChecked()
+        config.deliver_original_docx = self.deliver_original_docx_box.isChecked()
         config.deliver_epub = self.deliver_epub_box.isChecked()
         config.default_translation_mode = str(self.default_mode_box.currentData() or "标准")
         from folith.model_connections import effective_config
@@ -1080,6 +1104,38 @@ class EngineDialog(QDialog):
         self.reasoning_box.blockSignals(False)
         self.reasoning_row.setVisible(bool(options))
 
+    def _thinking_scope_labels(self) -> list[str]:
+        """连接「思考」开关实际作用到的角色，按引擎的真实分支列，不凭印象。
+
+        * ``job_reasoning_modes`` 把连接开关同时喂给翻译与辅助两个角色
+          （审校刻意不在 ``_MODE_ROLE_OF`` 里，不受它影响）；
+        * ``follow_connection_thinking`` 只在视觉沿用翻译连接（没有单独配置
+          视觉连接）时让视觉跟随这个开关。
+        """
+        roles = [i18n.tr('翻译'), i18n.tr('辅助')]
+        if not adapter.core.load_ocr_online_config():
+            roles.append(i18n.tr('视觉'))
+        return roles
+
+    def _sync_thinking(self) -> None:
+        """按当前模型给出可用的思考开关；没实测过的模型不显示这一项，也不会被写入连接。"""
+        options = adapter.thinking_control_options(
+            self.provider_box.currentText().strip(), self.model_box.currentText().strip())
+        current = str(self.thinking_box.currentData() or "")
+        self.thinking_box.blockSignals(True)
+        self.thinking_box.clear()
+        self.thinking_box.addItem(i18n.tr('服务默认'), "provider_default")
+        for value in options:
+            self.thinking_box.addItem(
+                i18n.tr(adapter.THINKING_MODE_LABELS.get(value, value)), value)
+        self.thinking_box.setCurrentIndex(max(self.thinking_box.findData(current), 0))
+        self.thinking_box.blockSignals(False)
+        visible = bool(options)
+        self.thinking_row.setVisible(visible)
+        self.thinking_hint.setText(
+            i18n.tr('作用于：{v0}', v0='、'.join(self._thinking_scope_labels())))
+        self.thinking_hint.setVisible(visible)
+
     def _fetch_models(self) -> None:
         provider = self.provider_box.currentText().strip()
         api_key = self._editor_config().api_key
@@ -1146,6 +1202,8 @@ class DiagnosticsDialog(QDialog):
         heading.setObjectName("cardTitle")
         summary_layout.addWidget(heading)
         facts = QFormLayout()
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        summary_layout.addLayout(facts)
         # 标签左对齐：右对齐的窄标签列会让"版本/运行方式"这些两字标签浮在中间，
         # 值列起点也随标签长度跳动；左对齐后这一栏才像一张事实表。
         facts.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -1196,7 +1254,6 @@ class DiagnosticsDialog(QDialog):
             if label == "支持范围" and support_tip:
                 value_label.setToolTip(support_tip)
             facts.addRow(style_module.field_label(label), value_label)
-        summary_layout.addLayout(facts)
 
         # 状态标签：导出结果与失败原因都要有落点（脚本化运行不弹框）。
         self._status = QLabel("")
@@ -1217,13 +1274,6 @@ class DiagnosticsDialog(QDialog):
         self.copy_button.clicked.connect(self._copy)
         self.close_button.clicked.connect(self.accept)
 
-        buttons = QHBoxLayout()
-        for widget in (self.export_button, self.reveal_button,
-                       self.copy_button):
-            buttons.addWidget(widget)
-        buttons.addStretch(1)
-        buttons.addWidget(self.close_button)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(12)
@@ -1233,7 +1283,14 @@ class DiagnosticsDialog(QDialog):
         layout.addWidget(style_module.SectionLabel(i18n.tr('完整报告（JSON）')))
         layout.addWidget(view, 1)
         layout.addWidget(self._status)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        buttons = QHBoxLayout()
         layout.addLayout(buttons)
+        for widget in (self.export_button, self.reveal_button,
+                       self.copy_button):
+            buttons.addWidget(widget)
+        buttons.addStretch(1)
+        buttons.addWidget(self.close_button)
 
     def _copy(self) -> None:
         import json
@@ -1318,7 +1375,11 @@ class SegmentSplitDialog(QDialog):
         self.source_b = QPlainTextEdit(source_b)
         self.target_a = QPlainTextEdit(target_a)
         self.target_b = QPlainTextEdit(target_b)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         grid = QGridLayout()
+        layout.addLayout(grid, 1)
         grid.setHorizontalSpacing(12)
         for column, (title_a, widget_a, title_b, widget_b) in enumerate((
                 (i18n.tr('第一段原文'), self.source_a, i18n.tr('第二段原文'), self.source_b),
@@ -1333,9 +1394,6 @@ class SegmentSplitDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addWidget(hint)
-        layout.addLayout(grid, 1)
         layout.addWidget(buttons)
 
     def parts(self) -> dict:
@@ -1456,15 +1514,16 @@ class FindReplaceDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('关闭'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        form = QFormLayout()
-        form.addRow(i18n.tr('查找'), self.find_edit)
-        form.addRow(i18n.tr('替换为'), self.replace_edit)
         hint = QLabel(i18n.tr('只查找和替换译文。替换的段落记为人工修改，需要重新审校。'))
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         layout = QVBoxLayout(self)
         layout.addWidget(hint)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        form = QFormLayout()
         layout.addLayout(form)
+        form.addRow(i18n.tr('查找'), self.find_edit)
+        form.addRow(i18n.tr('替换为'), self.replace_edit)
         layout.addWidget(self.case_box)
         layout.addWidget(self.protect_box)
         layout.addWidget(self.summary)
@@ -1553,14 +1612,15 @@ class TermEditDialog(QDialog):
             '可以在下一步逐段确认替换。'))
         hint.setObjectName("hint")
         hint.setWordWrap(True)
-        form = QFormLayout()
-        form.addRow(i18n.tr('首选译名'), self.preferred_edit)
-        form.addRow(i18n.tr('禁用译名'), self.forbidden_edit)
-        form.addRow(i18n.tr('状态'), self.status_box)
         layout = QVBoxLayout(self)
         layout.addWidget(hint)
         layout.addWidget(source_label)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        form = QFormLayout()
         layout.addLayout(form)
+        form.addRow(i18n.tr('首选译名'), self.preferred_edit)
+        form.addRow(i18n.tr('禁用译名'), self.forbidden_edit)
+        form.addRow(i18n.tr('状态'), self.status_box)
         layout.addWidget(self.preview_box)
         layout.addWidget(buttons)
         self.preferred_edit.textChanged.connect(self._sync)
@@ -1641,7 +1701,17 @@ class TermReplaceDialog(QDialog):
                                            | Qt.ItemFlag.ItemIsEnabled))
             self.preview.addItem(item)
         self.preview.itemChanged.connect(self._sync)
+        hint = QLabel(i18n.tr('替换的段落记为人工修改，需要重新审校；人工改写或人工确认过的段落不会被替换。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        layout = QVBoxLayout(self)
+        layout.addWidget(heading)
+        layout.addWidget(self.summary)
+        layout.addWidget(hint)
+        layout.addWidget(self.preview, 1)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         select_row = QHBoxLayout()
+        layout.addLayout(select_row)
         self.all_button = QPushButton(i18n.tr('全选'))
         self.none_button = QPushButton(i18n.tr('全不选'))
         select_row.addWidget(self.all_button)
@@ -1655,15 +1725,6 @@ class TermReplaceDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('关闭'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        hint = QLabel(i18n.tr('替换的段落记为人工修改，需要重新审校；人工改写或人工确认过的段落不会被替换。'))
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
-        layout = QVBoxLayout(self)
-        layout.addWidget(heading)
-        layout.addWidget(self.summary)
-        layout.addWidget(hint)
-        layout.addWidget(self.preview, 1)
-        layout.addLayout(select_row)
         layout.addWidget(buttons)
         self.ok_button.clicked.connect(lambda: self.accept())
         buttons.accepted.connect(self.accept)
@@ -1727,7 +1788,11 @@ class DocumentProfileDialog(QDialog):
                       else i18n.tr('开始翻译前保存，翻译会直接使用这里的画像。'))
         hint.setObjectName("hint")
         hint.setWordWrap(True)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         form = QFormLayout()
+        layout.addLayout(form)
         self.fields: dict[str, QWidget] = {}
         for key, label in adapter.PROFILE_FIELDS:
             if key == "style_constraints":
@@ -1743,9 +1808,6 @@ class DocumentProfileDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addWidget(hint)
-        layout.addLayout(form)
         layout.addWidget(buttons)
 
     def values(self) -> dict:
@@ -1799,3 +1861,32 @@ class RiskAcceptanceDialog(QDialog):
         return self.note_edit.toPlainText().strip()
 
 
+
+
+class TerminologyReplacementPreview(QDialog):
+    """Display every proposed segment before the operator authorizes a batch."""
+
+    def __init__(self, preview: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr('确认术语替换'))
+        self.resize(850, 600)
+        layout = QVBoxLayout(self)
+        changes = preview.get('changes') or []
+        label = QLabel(i18n.tr('将修改 {v0} 段。请逐项检查；应用后这些段需要重新审校。', v0=len(changes)))
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        text = QPlainTextEdit()
+        text.setReadOnly(True)
+        text.setPlainText('\n\n'.join(
+            i18n.tr('第 {v0} 段', v0=change['index'] + 1) + '\n'
+            + i18n.tr('原文') + ': ' + change['source'] + '\n'
+            + i18n.tr('修改前') + ': ' + change['before'] + '\n'
+            + i18n.tr('修改后') + ': ' + change['after']
+            for change in changes))
+        layout.addWidget(text, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(i18n.tr('确认应用'))
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(changes))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)

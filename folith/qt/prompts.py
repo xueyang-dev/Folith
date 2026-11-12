@@ -3,7 +3,7 @@
 为什么不用 `QMessageBox` / `QInputDialog` / `QProgressDialog`：
 
 * 它们是系统外观，按钮文字、危险语义、详情区都只能靠 `SetStandardButtons` 拼，
-  与产品三套主题（日间/夜间/纸面）割裂——同一个"确认冻结交付"在深色主题下是
+  与产品主题（日间/夜间）割裂——同一个"确认冻结交付"在深色主题下是
   一块系统灰；
 * 危险动作（永久删除）需要**实心的危险色主按钮**，系统对话框给不了；
 * 详情（诊断 JSON、异常堆栈）需要一个默认收起、可切换的只读区；
@@ -58,7 +58,9 @@ class _BaseDialog(QDialog):
         self._icon = icons.IconLabel(TONES.get(tone, TONES["info"])[0], 20, TONES.get(tone, TONES["info"])[1])
         self._title = QLabel(title)
         self._title.setObjectName("sectionTitle")
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         head = QHBoxLayout()
+        card_layout.addLayout(head)
         head.setSpacing(theme_module.SPACE["sm"])
         head.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignTop)
         head.addWidget(self._title, 1)
@@ -71,9 +73,8 @@ class _BaseDialog(QDialog):
         # 正文区：子类要插入自己的控件（例如文本输入框）时插在这里，
         # 而不是卡片最后——否则输入框会落在按钮**下面**。
         self._body = QVBoxLayout()
-        self._body.setSpacing(theme_module.SPACE["sm"])
-        card_layout.addLayout(head)
         card_layout.addLayout(self._body)
+        self._body.setSpacing(theme_module.SPACE["sm"])
         self._body.addWidget(self._message)
 
         self._detail_view = QTextBrowser()
@@ -271,6 +272,7 @@ class BusyDialog(QDialog):
                                   theme_module.SPACE["xl"], theme_module.SPACE["lg"])
         column.setSpacing(theme_module.SPACE["sm"])
         row = QHBoxLayout()
+        column.addLayout(row)
         row.setSpacing(theme_module.SPACE["sm"])
         icon = icons.IconLabel("clock", 18, "accent")
         label = QLabel(message)
@@ -282,11 +284,10 @@ class BusyDialog(QDialog):
         self.progress.setRange(0, 0)          # 不确定进度
         self.run_button = QPushButton(i18n.tr('在后台运行'))
         run_button_row = QHBoxLayout()
+        column.addLayout(run_button_row)
         run_button_row.addStretch(1)
         run_button_row.addWidget(self.run_button)
-        column.addLayout(row)
         column.addWidget(self.progress)
-        column.addLayout(run_button_row)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)

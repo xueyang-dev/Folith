@@ -102,3 +102,49 @@ def test_translator_prompt_no_longer_freezes_citation_digits():
     prompt = core._translator_system("", "", "简体中文")
     assert "[٣] 写作 [3]" in prompt
     assert "引用标注（如 [12]）和其他机器标识符" not in prompt
+
+
+def _unfinished(source, target, lang="简体中文"):
+    return [f for f in core.check_translation_batch([source], [target], [], lang)
+            if f.get("category") == "translation_completion"]
+
+
+def test_source_copied_back_is_flagged_for_any_source_script():
+    # Not tied to one language pair: kana, Cyrillic, Arabic and Latin all count.
+    for source in ("二 戦争と根こそぎ労働動員", "Предисловие автора", "مقدمة المؤلف",
+                   "Introduction to the volume"):
+        assert _unfinished(source, source), source
+    # Lone Latin words (names), digits and dot leaders alone are not text.
+    assert not _unfinished("Tokyo", "Tokyo")
+    assert not _unfinished("..........  7", "..........  7")
+    # A real translation is never flagged.
+    assert not _unfinished("二 戦争と根こそぎ労働動員", "二 战争与彻底的劳动动员")
+
+
+def _leaks(source, target, lang="简体中文"):
+    return [f for f in core.check_translation_batch([source], [target], [], lang)
+            if f.get("kind") == "script_leak"]
+
+
+def test_script_left_over_from_the_source_is_flagged_by_writing_system():
+    # kana in a Chinese translation of Japanese: unfinished, however short the line is
+    assert _leaks("その二 全員蜂起", "その二 全员起义")
+    assert _leaks("説教されたものだ。", "説教されたものだ。")
+    # the same rule for other pairs, no pair is hard-coded
+    assert _leaks("Предисловие автора", "Author's Предисловие", "English")
+    assert _leaks("مقدمة المؤلف", "مقدمة المؤلف", "Español")
+    assert _leaks("전쟁과 노동", "战争与노동", "简体中文")
+
+
+def test_script_check_leaves_legitimate_text_alone():
+    # kanji shared with Chinese, Latin names and abbreviations in a non-Latin target
+    assert not _leaks("加藤恭平の証言", "加藤恭平的证词")
+    assert not _leaks("二 戦争と労働動員", "二 战争与劳动动员 (WWII)")
+    # an unknown target language is not guessed at; a source without that script cannot leak it
+    assert not _leaks("その二 全員蜂起", "その二 全员起义", "Klingon")
+    assert not _leaks("Hello world", "你好 world 世界")
+
+
+def test_script_leak_is_covered_by_the_existing_auto_repair_severity():
+    finding = _leaks("その二 全員蜂起", "その二 全员起义")[0]
+    assert finding["severity"] == "actionable"      # actionable findings go to the repair pass

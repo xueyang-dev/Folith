@@ -12,14 +12,15 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QIntValidator, QPixmap
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QToolButton, QVBoxLayout,
-    QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QScrollArea, QToolButton, QVBoxLayout, QWidget,
 )
 
 from . import adapter
 from . import i18n
 from . import icons
 from . import style as style_module
+from . import theme as theme_module
+from .flow_layout import FlowRow
 
 #: (dpi, label).  0 = fit the panel width (rendered at 150 dpi, scaled locally).
 ZOOMS = ((0, "适合宽度"), (100, "100%"), (150, "150%"), (200, "200%"))
@@ -97,9 +98,14 @@ class PdfPanel(QWidget):
         for dpi, label in ZOOMS:
             self.zoom_box.addItem(i18n.tr(label), dpi)
         self.zoom_box.setCurrentIndex(0)
-        self.locate_button = QPushButton(i18n.tr('定位当前段'))
+        # 定位按钮在审校页的内嵌原页栏里只有约 280 px：西语/俄语的整句会被挤成
+        # 半截字（S3-02）。用可省略按钮 + 折行工具行：放得下显示全句，放不下
+        # 显示 "…" 并在悬停提示里给出全句，而不是硬裁。
+        self.locate_button = style_module.ElideButton(i18n.tr('定位当前段'))
         self.locate_button.setIcon(icons.icon("eye", 16, "text-secondary"))
         self.locate_button.setIconSize(QSize(16, 16))
+        self.locate_button.setToolTip(i18n.tr('定位当前段'))
+        self.locate_button.setAccessibleName(i18n.tr('定位当前段'))
         self.hint = QLabel("")
         self.hint.setObjectName("hint")
         self.hint.setWordWrap(True)
@@ -109,20 +115,38 @@ class PdfPanel(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setWidget(self.image)
 
+        # 先建外层、把子布局挂上去，再往里放控件。反过来（先填后挂）时，PySide 会给
+        # 每个条目留下一个 QWidgetItem 包装器；`_place_tools` 之后在两条工具行之间
+        # 搬控件，Qt 会删掉旧条目，包装器随即变成野指针，等新对象落到同一地址就会在
+        # 不相关的行段错误（tests/qt_layout_item_wrapper_test.py）。
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
+
         head = QHBoxLayout()
+        layout.addLayout(head)
         head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(self.title, 1)
         head.addWidget(self.close_button)
-        bar = QHBoxLayout()
-        bar.setContentsMargins(0, 0, 0, 0)
-        for widget in (self.prev_button, self.page_box, self.total_label, self.next_button,
-                       self.zoom_box, self.locate_button):
-            bar.addWidget(widget)
-        bar.addStretch(1)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.addLayout(head)
-        layout.addLayout(bar)
+        # 翻页与工具（缩放、定位当前段）默认排一行；审校页内嵌的原页栏只有约 280 px，
+        # 一行放不下时工具折到第二行，而不是把下拉框和按钮挤得只剩半截字。
+        self._bar = QHBoxLayout()
+        layout.addLayout(self._bar)
+        self._bar.setContentsMargins(0, 0, 0, 0)
+        for widget in (self.prev_button, self.page_box, self.total_label, self.next_button):
+            self._bar.addWidget(widget)
+        self._tools = (self.zoom_box, self.locate_button)
+        # 折行工具行：缩放下拉与定位按钮各占一整行也能放下。以前这里是
+        # QHBoxLayout——280 px 的栏里两个控件被压成半截，按钮文字直接裁掉
+        # （S3-02）。FlowRow 按控件折行，最小宽度只取最宽的那一个。
+        self._tool_host = QWidget(self)
+        self._tool_host.setObjectName("pdfToolBar")
+        self._tool_layout = FlowRow(spacing=theme_module.SPACE["sm"], fill=False)
+        self._tool_layout.setContentsMargins(0, 0, 0, 0)
+        self._tool_host.setLayout(self._tool_layout)
+        # 外层已建好、head 与 _bar 已挂上；工具行容器也先挂上再填控件（见上）。
+        layout.addWidget(self._tool_host)
+        self._wrapped = True
+        self._place_tools(False)
         layout.addWidget(self.hint)
         layout.addWidget(self.scroll, 1)
 
@@ -266,8 +290,58 @@ class PdfPanel(QWidget):
         else:
             self.image.setPixmap(self._source)
 
+    def _place_tools(self, wrapped: bool) -> None:
+        """把缩放与定位放在翻页那一行末尾，或折到下面单独一行。"""
+        if wrapped == self._wrapped:
+            return
+        self._wrapped = wrapped
+        if wrapped:
+            # 行尾的弹簧先拿掉；工具控件从翻页行移到折行容器。
+            while self._bar.count():
+                item = self._bar.itemAt(self._bar.count() - 1)
+                if item is not None and item.widget() is None:
+                    self._bar.takeAt(self._bar.count() - 1)
+                    continue
+                break
+            for widget in self._tools:
+                self._detach(widget)
+                self._tool_layout.addWidget(widget)
+        else:
+            for widget in self._tools:
+                self._detach(widget)
+                self._bar.addWidget(widget)
+            self._bar.addStretch(1)
+        self._sync_tool_height()
+
+    def _detach(self, widget) -> None:
+        """把控件从两个布局里摘掉（同一个控件不能同时被两个布局摆放）。"""
+        for layout in (self._bar, self._tool_layout):
+            index = layout.indexOf(widget)
+            if index >= 0:
+                layout.takeAt(index)
+
+    def _sync_tool_height(self) -> None:
+        """折行工具行的高度随宽度变：两行时不能只按一行的 sizeHint 摆。"""
+        if not self._wrapped:
+            self._tool_host.setVisible(False)
+            return
+        self._tool_host.setVisible(True)
+        width = max(1, self.width())
+        height = int(self._tool_layout.heightForWidth(width))
+        if height <= 0:
+            height = self._tool_layout.sizeHint().height()
+        if self._tool_host.height() != height:
+            self._tool_host.setFixedHeight(height)
+
+    def _one_row_width(self) -> int:
+        widgets = (self.prev_button, self.page_box, self.total_label, self.next_button, *self._tools)
+        spacing = max(0, self._bar.spacing()) * (len(widgets) - 1)
+        return sum(widget.sizeHint().width() for widget in widgets) + spacing
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
+        self._place_tools(self.width() < self._one_row_width())
+        self._sync_tool_height()
         if int(self.zoom_box.currentData() or 0) == 0:
             self._apply_zoom()
 

@@ -1,0 +1,534 @@
+"""Incremental workbench polling (issue #324, A1 P2).
+
+The contract these tests pin down:
+
+* one committed journal record is applied to the grid **without** reading the
+  task state, rebuilding rows or recounting the document;
+* only the rows the batch names are repainted;
+* a sequence gap / external snapshot falls back to the whole-state path;
+* ``FOLITH_WORKBENCH_DELTA=0`` is exactly the old behaviour;
+* an older read can never replace a newer one (the #92/#94 "stale read" rule).
+
+Fixtures reuse ``qt_client_window_test`` (the real client, offscreen).
+"""
+from __future__ import annotations
+
+import json
+import time
+import uuid
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+import sys
+
+sys.path.insert(0, str(ROOT / "tests"))
+
+from folith.qt.selftest import open_job_and_wait  # noqa: E402
+
+from qt_client_window_test import (  # noqa: E402,F401
+    _make_docx, _pump, client, qt_app, )
+
+SEGMENTS = 900
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+def _book_job(client, segments: int = SEGMENTS) -> str:
+    adapter, core, tmp = client["adapter"], client["core"], client["tmp"]
+    source = tmp / "book.docx"
+    source.write_bytes(_make_docx(["x"]))
+    job_id = adapter.import_documents(
+        [source], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
+    state = core.load_job_state(job_id) or {}
+    texts = [f"Synthetic paragraph {i}. " + "Lorem ipsum dolor sit amet " * (1 + i % 5)
+             for i in range(segments)]
+    state["paras"] = texts
+    state["pairs"] = [
+        {"source": text, "target": f"合成译文{i}" if i < segments // 2 else "",
+         "reviewed": False, "segment_uid": f"u{i}"} for i, text in enumerate(texts)]
+    core.save_job_state(job_id, state)
+    return job_id
+
+
+def _journal_path(core, job_id: str) -> Path:
+    return core._state_journal.journal_path(job_id)
+
+
+def _append_record(core, job_id: str, *, seq: int, offset: int, pairs: list[dict],
+                   batch: int = 0) -> None:
+    record = {
+        "schema": core._state_journal.JOURNAL_SCHEMA_VERSION,
+        "mutation": core._state_journal.MUTATION_TRANSLATION_BATCH,
+        "mutation_id": uuid.uuid4().hex,
+        "ts": "2026-01-01T00:00:00+00:00",
+        "batch": int(batch),
+        "offset": int(offset),
+        "segment_ids": [pair.get("segment_uid") or f"seg-{offset + i}"
+                        for i, pair in enumerate(pairs)],
+        "pairs": pairs,
+        "seq": int(seq),
+    }
+    path = _journal_path(core, job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("ab") as stream:
+        stream.write((json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8"))
+
+
+def _changed_pairs(state: dict, indexes, *, suffix: str = "新提交") -> list[dict]:
+    pairs = []
+    for index in indexes:
+        pair = dict(state["pairs"][index])
+        pair["target"] = f"{suffix}{index}"
+        pair["reviewed"] = True
+        pairs.append(pair)
+    return pairs
+
+
+class _Counters:
+    def __init__(self, workbench) -> None:
+        self.repainted = 0
+        self.height_requests: list = []
+        paint, heights = workbench._paint_row, workbench._schedule_row_heights
+
+        def counting_paint(position, row):
+            changed = paint(position, row)
+            self.repainted += bool(changed)
+            return changed
+
+        def counting_heights(*args, **kwargs):
+            self.height_requests.append(kwargs.get("positions", "ALL"))
+            return heights(*args, **kwargs)
+
+        workbench._paint_row = counting_paint
+        workbench._schedule_row_heights = counting_heights
+
+
+def _settle(client, workbench) -> None:
+    app = client["app"]
+    assert _pump(app, 20, lambda: workbench.segment_list.rowCount() == SEGMENTS
+                 and not workbench._height_timer.isActive()
+                 and not workbench._paint_timer.isActive())
+    _pump(app, 0.3)
+
+
+def _open(client) -> str:
+    window, app = client["window"], client["app"]
+    job_id = _book_job(client)
+    open_job_and_wait(window, job_id)
+    window.timer.stop()
+    _settle(client, window.workbench)
+    window.refresh_workbench()
+    _settle(client, window.workbench)
+    return job_id
+
+
+def _pin_slow_projections(window) -> None:
+    """Keep the slow whole-document projections out of an explicit poll.
+
+    The projections refresh on their own wall-clock cadence (5 s for the panels,
+    5 s for the delivery preview) and legitimately read the whole state when
+    they are due -- that is their job (plan D2), not the delta path's.  They are
+    therefore a *separate rhythm* from the incremental contract this file pins
+    down, and a test must not depend on wall-clock time not crossing 5 s:
+    "opening the task -> first delta poll" can take longer than that on a busy
+    machine (the CI failure diagnosed in P0-4, #324), the projection then lands
+    inside the measurement window, and a global counter/flag assertion reads it
+    as "the delta read the whole state".
+
+    Each test here stops ``window.timer``, so ``window._poll_workbench()`` is
+    the only thing that can call ``_maybe_slow_projection``: pinning the anchor
+    forward immediately before that call makes the measured window the delta
+    path by construction -- deterministic, no sleeps.  Same technique as
+    ``pin_slow_cadence`` in ``test_per_batch_delta_touches_only_the_batch``
+    (commit e2a4d5ed).
+
+    Call this *before* resetting the counters, so opening-time work is not
+    counted against the delta path.
+    """
+    now = time.monotonic()
+    window._delta_projection_at = now
+    cache = window._delivery_cache
+    # `due()` also requires the job id to match; the open path primed it with
+    # this job, so moving the timestamp is enough.  The lock is the cache's
+    # documented serialisation point for the worker that owns the field.
+    with cache._lock:
+        cache._at = now
+
+
+# ---------------------------------------------------------------------------
+# the fast path
+# ---------------------------------------------------------------------------
+def test_a_batch_delta_updates_rows_without_reading_the_state(client, monkeypatch):
+    window, adapter, core, app = (client["window"], client["adapter"],
+                                  client["core"], client["app"])
+    job_id = _open(client)
+    # Let anything the open path started settle before the counters exist: a
+    # slow projection left over from opening is not the delta path's cost.
+    assert _pump(app, 30, lambda: not window._delta_projection_in_flight
+                 and not window._state_load_in_flight), (
+        "workbench did not settle after opening: inflight="
+        f"{window._state_load_in_flight} projection="
+        f"{window._delta_projection_in_flight}")
+    state = core.load_job_state(job_id)
+    workbench = window.workbench
+    counters = _Counters(workbench)
+
+    calls = {"load_state": 0, "segment_rows": 0, "document_count": 0}
+    original_load, original_rows = adapter.load_state, adapter.segment_rows
+    from folith import word_count
+
+    original_count = word_count.document_count
+    adapter.load_state = lambda job: (calls.__setitem__("load_state", calls["load_state"] + 1),
+                                      original_load(job))[1]
+    adapter.segment_rows = lambda job, state=None: (
+        calls.__setitem__("segment_rows", calls["segment_rows"] + 1),
+        original_rows(job, state))[1]
+    word_count.document_count = lambda rows: (
+        calls.__setitem__("document_count", calls["document_count"] + 1),
+        original_count(rows))[1]
+
+    indexes = list(range(400, 404))
+    _append_record(core, job_id, seq=1, offset=indexes[0],
+                   pairs=_changed_pairs(state, indexes))
+
+    # The measured window is the delta path itself: the timer is stopped, and
+    # the independent 5 s projection cadence is pinned just before the only
+    # explicit poll.  Counting starts here (opening is not part of the delta).
+    _pin_slow_projections(window)
+    calls.update(load_state=0, segment_rows=0, document_count=0)
+
+    window._poll_workbench()
+    assert _pump(app, 20, lambda: not window._state_load_in_flight
+                 and window._delta_applied_seq == 1
+                 and workbench.segment_row_text(400, 2) == "新提交400")
+
+    # The counterexample: in the measured window (after the cadence was pinned)
+    # the delta path must not have touched any of these.  This is a property of
+    # the delta path, not "no whole-state read happened anywhere in the
+    # process": the slow projections have their own 5 s rhythm.
+    assert calls == {"load_state": 0, "segment_rows": 0, "document_count": 0}, calls
+    # Only the batch's rows were repainted and re-measured.
+    assert counters.repainted == 4, counters.repainted
+    for request in counters.height_requests:
+        assert request != "ALL"
+        assert set(request) <= set(range(400, 404)), request
+    # The incremental count replaced the full recount and still matches it.
+    rows = list(workbench._all_rows)
+    assert workbench._word_count == original_count(rows)
+    assert workbench.segment_row_text(403, 2) == "新提交403"
+
+
+def test_only_the_batch_rows_are_repainted_and_no_heights_for_untouched_rows(client):
+    window, core, app = client["window"], client["core"], client["app"]
+    job_id = _open(client)
+    workbench = window.workbench
+    state = core.load_job_state(job_id)
+    counters = _Counters(workbench)
+    indexes = [5, 6, 7]
+    _append_record(core, job_id, seq=1, offset=5,
+                   pairs=_changed_pairs(state, indexes))
+    window._poll_workbench()
+    assert _pump(app, 20, lambda: window._delta_applied_seq == 1)
+    assert counters.repainted == 3
+    assert all(set(request) <= set(indexes) for request in counters.height_requests)
+
+
+# ---------------------------------------------------------------------------
+# fallbacks: gap, external snapshot, env switch
+# ---------------------------------------------------------------------------
+def test_sequence_gap_falls_back_to_the_whole_state_path(client, monkeypatch):
+    window, adapter, core, app = client["window"], client["adapter"], client["core"], client["app"]
+    job_id = _open(client)
+    state = core.load_job_state(job_id)
+    workbench = window.workbench
+
+    full_calls = {"count": 0}
+    original_full = window._poll_workbench_full
+
+    def counting_full():
+        full_calls["count"] += 1
+        return original_full()
+
+    monkeypatch.setattr(window, "_poll_workbench_full", counting_full)
+    indexes = [10, 11]
+    _append_record(core, job_id, seq=7, offset=10,
+                   pairs=_changed_pairs(state, indexes, suffix="断档重建"))
+
+    window._poll_workbench()
+    assert _pump(app, 20, lambda: full_calls["count"] >= 1
+                 and workbench.segment_row_text(10, 2) == "断档重建10")
+    # The full path rebuilt from the authoritative state (journal replay keeps
+    # the committed pairs), so no delta is claimed as applied.
+    assert window._delta_applied_seq in (0, 7)
+
+
+def test_external_snapshot_falls_back_to_the_whole_state_path(client, monkeypatch):
+    window, core, app = client["window"], client["core"], client["app"]
+    job_id = _open(client)
+    state = core.load_job_state(job_id)
+    state["pairs"][20]["target"] = "落盘后的新译文"
+    core.save_job_state(job_id, state)
+
+    full_calls = {"count": 0}
+    original_full = window._poll_workbench_full
+
+    def counting_full():
+        full_calls["count"] += 1
+        return original_full()
+
+    monkeypatch.setattr(window, "_poll_workbench_full", counting_full)
+    window._poll_workbench()
+    assert _pump(app, 20, lambda: full_calls["count"] >= 1
+                 and window.workbench.segment_row_text(20, 2) == "落盘后的新译文")
+
+
+def test_env_switch_restores_the_old_path_verbatim(client, monkeypatch):
+    window, core, app = client["window"], client["core"], client["app"]
+    job_id = _open(client)
+    monkeypatch.setenv("FOLITH_WORKBENCH_DELTA", "0")
+    assert window._delta_ready(job_id) is False
+
+    state = core.load_job_state(job_id)
+    state["pairs"][30]["target"] = "开关关掉后的译文"
+    core.save_job_state(job_id, state)
+    window._poll_workbench()
+    assert _pump(app, 20, lambda: window.workbench.segment_row_text(30, 2)
+                 == "开关关掉后的译文")
+
+
+# ---------------------------------------------------------------------------
+# stale reads (#92/#94 semantics)
+# ---------------------------------------------------------------------------
+def test_an_older_delta_can_never_replace_a_newer_one(client):
+    window, adapter, core, app = client["window"], client["adapter"], client["core"], client["app"]
+    job_id = _open(client)
+    state = core.load_job_state(job_id)
+    workbench = window.workbench
+    _append_record(core, job_id, seq=1, offset=60,
+                   pairs=_changed_pairs(state, [60], suffix="批一"))
+    _append_record(core, job_id, seq=2, offset=60,
+                   pairs=_changed_pairs(state, [60], suffix="批二"))
+    window._poll_workbench()
+    assert _pump(app, 20, lambda: window._delta_applied_seq == 2
+                 and workbench.segment_row_text(60, 2) == "批二60")
+
+    # A delayed older payload must be dropped, not re-applied.
+    stale = adapter.DeltaBatch(
+        job_id=job_id, from_seq=1, seq=1, batch=0, batches=(0,), offset=60,
+        segments=(adapter.DeltaSegment(
+            index=60, segment_uid="u60",
+            pair={**state["pairs"][60], "target": "过期批一"}, fields=("target",)),))
+    window._apply_feed_result(job_id, stale, {}, {})
+    assert workbench.segment_row_text(60, 2) == "批二60"
+    assert window._delta_applied_seq == 2
+
+
+# ---------------------------------------------------------------------------
+# GUI-thread cost is independent of book length (the acceptance measurement)
+# ---------------------------------------------------------------------------
+def test_per_batch_delta_touches_only_the_batch(client, capsys):
+    """Deterministic proof that one batch costs O(batch).
+
+    Runs at 1,000 segments by default.  A 10,000-segment comparison is available
+    with ``FOLITH_PERF_MEASURE=1`` -- it is the evidence for the issue's 1k/10k
+    table, but opening and laying out a 10k grid is heavy enough to make a CI
+    run take minutes and time out on a busy machine, which is a property of the
+    fixture, not of the delta path.  Numbers are only printed either way.
+
+
+    The assertions are contract-based, never wall-clock: while 20 batches are
+    applied at each size, the whole-state read, the whole-row rebuild and the
+    full word recount must be called **zero** times, and the incremental count
+    index must be updated once per changed row.  Timings are printed for the
+    report and are not part of the pass/fail decision (a machine under load can
+    make any wall-clock assertion flaky).  A deliberately loose 200 ms
+    order-of-magnitude guard is kept for CI; set
+    ``FOLITH_SKIP_TIMING_ASSERTIONS=1`` to skip even that.
+    """
+    import os
+
+    from folith import word_count
+
+    window, adapter, core, app = client["window"], client["adapter"], client["core"], client["app"]
+    calls = {"load_state": 0, "segment_rows": 0, "document_count": 0, "count_update": 0}
+
+    def pin_slow_cadence() -> None:
+        """Keep O(document) projections out of the per-batch measurement.
+
+        Their cadence is 5 s of wall-clock time; waiting for it to elapse is
+        exactly what made this test load-sensitive (a busy machine can push one
+        iteration past 5 s, the projection then legitimately reads the state,
+        and a global "load_state == 0" assertion breaks).  Pinning the cadence
+        forward makes the measured window the delta path, deterministically.
+        """
+        now = time.monotonic()
+        window._delta_projection_at = now
+        window._delivery_cache._at = now
+    original_load, original_rows = adapter.load_state, adapter.segment_rows
+    original_count, original_update = word_count.document_count, word_count.DocumentCountIndex.update
+
+    adapter.load_state = lambda job: (calls.__setitem__("load_state", calls["load_state"] + 1),
+                                      original_load(job))[1]
+    adapter.segment_rows = lambda job, state=None: (
+        calls.__setitem__("segment_rows", calls["segment_rows"] + 1),
+        original_rows(job, state))[1]
+    word_count.document_count = lambda rows: (
+        calls.__setitem__("document_count", calls["document_count"] + 1),
+        original_count(rows))[1]
+    word_count.DocumentCountIndex.update = lambda self, position, row: (
+        calls.__setitem__("count_update", calls["count_update"] + 1),
+        original_update(self, position, row))[1]
+
+    sizes = (1000, 10000) if os.environ.get("FOLITH_PERF_MEASURE") else (1000,)
+    timings = {}
+    rebuild = {}
+    try:
+        for segments in sizes:
+            job_id = _book_job(client, segments)
+            # A previous size in this test may have used the same job id (same
+            # document bytes); start this measurement from an empty journal.
+            _journal_path(core, job_id).unlink(missing_ok=True)
+            window._drop_delta_state()
+            open_job_and_wait(window, job_id)
+            window.timer.stop()
+            window.refresh_workbench()
+            workbench = window.workbench
+            # Event-driven with a generous safety bound; the paint pass may
+            # still be chunking on a large book, which the delta path tolerates
+            # (it repaints its own rows).
+            assert _pump(app, 300, lambda: workbench.segment_list.rowCount() == segments), (
+                f"grid did not reach {segments} rows: "
+                f"{workbench.segment_list.rowCount()}")
+            # Start from a settled workbench: a slow projection or background
+            # read left over from opening must not overlap the measurement.
+            # Event-driven wait with a generous safety bound (not a settle
+            # sleep): opening a 10k grid on a loaded machine can take a while.
+            assert _pump(app, 300, lambda: not window._state_load_in_flight
+                         and not window._delta_projection_in_flight), (
+                "workbench did not settle after opening "
+                f"{segments} segments: inflight="
+                f"{window._state_load_in_flight} projection="
+                f"{window._delta_projection_in_flight}")
+            pin_slow_cadence()
+            state = core.load_job_state(job_id)
+
+            calls.update(load_state=0, segment_rows=0, document_count=0, count_update=0)
+            samples = []
+            original_apply = workbench.apply_delta
+
+            applied_batches = []
+
+            def timed_apply(*args, **kwargs):
+                started = time.perf_counter()
+                try:
+                    result = original_apply(*args, **kwargs)
+                finally:
+                    samples.append((time.perf_counter() - started) * 1000)
+                positions = list(args[2]) if len(args) > 2 else list(kwargs.get("positions") or [])
+                applied_batches.append(len(positions))
+                return result
+
+            workbench.apply_delta = timed_apply
+            try:
+                for batch in range(20):
+                    indexes = list(range(batch * 4, batch * 4 + 4))
+                    _append_record(core, job_id, seq=batch + 1, offset=indexes[0],
+                                   pairs=_changed_pairs(state, indexes, suffix=f"计时{batch}"))
+                    pin_slow_cadence()
+                    # Use the public dispatch: it owns the in-flight hand-off.
+                    window._poll_workbench()
+                    assert _pump(app, 300, lambda: window._delta_applied_seq == batch + 1
+                                 and not window._state_load_in_flight
+                                 and not window._delta_projection_in_flight), (
+                        f"batch {batch} did not apply: seq="
+                        f"{window._delta_applied_seq} inflight="
+                        f"{window._state_load_in_flight} projection="
+                        f"{window._delta_projection_in_flight} "
+                        f"pending={window._pending_poll} repoll={window._repoll_pending}")
+            finally:
+                workbench.apply_delta = original_apply
+
+            # The contract: no whole-state read/rebuild/recount, and exactly one
+            # incremental update per changed row.
+            # The contract: the *delta path itself* never reads the whole state
+            # or recounts the book.  The slow whole-document projections have
+            # their own 5 s cadence; while they are due they would read the
+            # state from a worker (that is their job, not the delta's), so the
+            # measurement pins their cadence forward on every iteration below
+            # instead of depending on elapsed wall-clock time.
+            assert calls == {"load_state": 0, "segment_rows": 0,
+                             "document_count": 0, "count_update": 80}, calls
+            assert applied_batches == [4] * 20, applied_batches
+            samples.sort()
+            timings[segments] = {
+                "p50": samples[len(samples) // 2],
+                "p95": samples[int(len(samples) * 0.95) - 1],
+                "max": samples[-1],
+            }
+
+            started = time.perf_counter()
+            window.refresh_workbench(force=True)
+            rebuild[segments] = (time.perf_counter() - started) * 1000
+            window.timer.stop()
+    finally:
+        adapter.load_state, adapter.segment_rows = original_load, original_rows
+        word_count.document_count = original_count
+        word_count.DocumentCountIndex.update = original_update
+
+    print("\nGUI-thread cost (ms, informational only):")
+    for segments in sizes:
+        value = timings[segments]
+        print(f"  {segments:>6} segments: per-batch apply_delta "
+              f"p50={value['p50']:.2f} p95={value['p95']:.2f} max={value['max']:.2f} | "
+              f"whole rebuild once={rebuild[segments]:.0f}")
+    if not os.environ.get("FOLITH_SKIP_TIMING_ASSERTIONS"):
+        # CI order-of-magnitude guard only; this is not the performance gate.
+        for segments in sizes:
+            assert timings[segments]["p50"] < 200.0, timings
+
+
+def test_one_poll_converges_without_a_settle_window(client):
+    """The old contract: after a state change, ONE poll converges.
+
+    Both paths are exercised -- a journal delta (fast path) and a snapshot write
+    (whole-state path).  The test drives the Qt event loop only; it never waits
+    for a fixed window, so it fails deterministically if the poll does not
+    converge by itself (the window re-polls once when the state moved while a
+    background read was in flight).
+    """
+    window, adapter, core, app = (client["window"], client["adapter"],
+                                  client["core"], client["app"])
+    job_id = _open(client)
+    state = core.load_job_state(job_id)
+
+    # 1) One committed batch: one poll, then the event loop.
+    _append_record(core, job_id, seq=1, offset=700,
+                   pairs=_changed_pairs(state, [700]))
+    _pin_slow_projections(window)
+    window._poll_workbench()
+    assert _pump(app, 60, lambda: window.workbench.segment_row_text(700, 2)
+                 == "新提交700")
+    # "One poll converged" is a fact about the incremental cursor, not about
+    # `_state_load_in_flight`: that flag is shared with the slow projections
+    # (they set it on purpose while a projection is being prepared, see
+    # window.py:2321-2323), so on its own it only means "the workbench is
+    # settled at this instant" -- and that is exactly what the pinned cadence
+    # above makes true and deterministic.
+    assert window._delta_applied_seq == 1
+    assert not window._pending_poll
+    assert not window._delta_projection_in_flight
+    assert not window._state_load_in_flight
+
+    # 2) A snapshot write landing while the window is live: still one poll.
+    state = core.load_job_state(job_id)
+    state["pairs"][700]["target"] = "落盘译文700"
+    core.save_job_state(job_id, state)
+    _pin_slow_projections(window)
+    window._poll_workbench()
+    assert _pump(app, 60, lambda: window.workbench.segment_row_text(700, 2)
+                 == "落盘译文700")
+    assert not window._delta_projection_in_flight
+    assert not window._state_load_in_flight

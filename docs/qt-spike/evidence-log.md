@@ -3114,3 +3114,119 @@ ignore 的同一个事件**吞掉。于是"决定退出"成立、日志写了 `e
 - 交付页（交付状态 + 资产清单 + 已排除段落）本轮只顺手统一了样式，**资产清单与空状态仍是下一轮的活**。
 - 改动都在 Qt 客户端（`folith/qt/*`），**未改 core/adapter**（另一个 session 正在动那里）；
   因此需要重建候选才能在冻结产物里看到新界面——等共享工作区稳定后一并重建。
+
+
+---
+
+## Beta 收口 R72 — macOS AX 崩溃（QTBUG-149612）：9 份用户 `.ips` 定性 + 运行时修复 v2
+
+- 时间：2026-11-06
+- 输入：用户回传的 **9 份 `.ips`**（macOS 27.0.1 / Apple M4，Folith **0.8.1 `git:bdf440a`**）。
+  全部发生在外部 AX 客户端（AI "Computer Use"）读出界面 / 打开任务的路径上。
+- 产出：`folith/qt/macos_accessibility.py`（运行时修复 v2）、`scripts/qt_ax_qtbug_repro.py`（确定性复现器），
+  以及本文这套 A/B 证据。任务链见共享任务板 task-1/task-2/task-3/task-4。
+
+### 一、报告解析：9/9 同一签名（E203）
+
+| # | 场景 | 用例/命令 | 结果 |
+| --- | --- | --- | --- |
+| E203 | 用户回传的 9 份 `.ips` | 解析 `~/Library/Logs/DiagnosticReports/Folith-2026-11-0*.ips` | **9/9 同签名**：faulting thread 全是 `com.apple.main-thread`；主线程崩溃帧链一致：`libqcocoa.dylib` ← AppKit `-[NSAccessibilityAttributeAccessorInfo getAttributeValue:forObject:]` ← `___NSAccessibilityEntryPointValueForAttribute_block_invoke.772` ← `NSAccessibilityPerformEntryPointObject` ← `_NSAccessibilityEntryPointValueForAttribute` ← `accessibilityArrayAttributeCount:` ← `_accessibilityArrayAttributeCount:clientError:` ← `GetAttributeValueCount` ← HIServices `__AXCopyAttributeValueForHierarchy`。**8 份** SIGSEGV / `KERN_INVALID_ADDRESS`（7 份地址 `0x10`，1 份 `0x019922d89c000000` 不在任何已映射区域）；**1 份**（`Folith-2026-11-06-090939.ips`）SIGBUS / `KERN_PROTECTION_FAILURE at 0x0000007020169e70`，该地址落在 **Malloc Tiny** 区（`0x7020000000–0x7020200000`）——已释放的小对象被再次访问，与 use-after-free 一致 |
+
+时间分布：2026-11-05 五份（23:14 / 23:25 / 23:25 / 23:26 / 23:28），2026-11-06 四份（08:21 / 08:36 / 08:37 / 09:09）。
+栈里先出现 `Python:faulthandler_fatal_error` 是因为应用装了 `faulthandler`，它不是崩溃原因；真正崩溃的是
+它下面的 `libqcocoa` 帧。**这不是本项目的业务代码异常**，触发面就是 AX 查询表格选中子元素/属性计数这条链。
+
+### 二、上游缺陷与修复事实（E204）
+
+| # | 场景 | 用例/命令 | 结果 |
+| --- | --- | --- | --- |
+| E204 | 上游缺陷 / 修复 / 版本事实核对 | QTBUG-149612 + qt/qtbase 提交与 PySide6 发布记录 | 缺陷 **QTBUG-149612**「macOS: synthesized table elements can delete their parent accessibility interface」。修复 commit **`8148c48deb8e4345bacb797cb75c011df6f797fa`**（"macOS: Don't let native a11y elements delete accessible interfaces"）**2026-10-27 合入 `dev` 与 `6.12`**；fixVersions **6.8.10（LTS 商业版）/ 6.12.1（计划 2026-11-17）/ 6.13.0**。**没有已发布的 PySide6 含它**：随包 6.11.2；6.11.3 于 2026-10-26 发布（比合入早一天）；6.12.0 于 2026-10-08 发布；6.12.1 尚不可安装 |
+
+机制（与 `folith/qt/macos_accessibility.py` 的注释一致）：Qt 为表格合成的 row/cell 占位元素**故意与父表共用
+同一个 `axid`**（不进入 `QAccessibleCache`，由父表管理）。销毁路径有**两处**会 `deleteInterface(axid)`：
+`-[QMacAccessibilityElement dealloc]` 与 `+[QMacAccessibilityElement removeElementsFromCache:]`。第一处删掉父表的
+interface，第二处删掉 `QAccessibleTable` 缓存里的单元格 interface；下一次 AX 查询（或模型变更触发的
+`QAccessible::updateAccessibility`）读到已释放内存。上游修复就是不再从 native 元素销毁路径删除 interface。
+
+**版本矩阵（E212，ax-repro 用修正后的复现器，每格 3 次试验，macOS 27.0.1 arm64，
+项目 venv Python 3.11.3）**：
+
+| PySide6（发布日期） | 复现器默认顺序 | `--with-workaround` | `--cells-first`（对照） |
+| --- | --- | --- | --- |
+| 6.11.2（2026-08-18） | 崩溃 SIGSEGV exit 139 ×3 | 完成 exit 0 ×3 | 完成 exit 0 ×3 |
+| 6.11.3（2026-10-26） | 崩溃 139 / 139 / 138（SIGSEGV/SIGSEGV/SIGBUS）×3 | 完成 exit 0 ×3 | 完成 exit 0 ×3 |
+| 6.12.0（2026-10-08） | 崩溃 SIGSEGV exit 139 ×3 | 完成 exit 0 ×3 | 完成 exit 0 ×3 |
+
+结论：**三个已发布版本都受影响**（每格 3/3），运行时修复（v2）把三者都翻成完成 3/3；
+`--cells-first` 是不触发缺陷的**对照顺序**（先遍历单元格，而不是先读选中子元素）。
+**6.12.1 目前不可安装**：`pip download PySide6==6.12.1` → `No matching distribution`，
+PyPI 上最高是 6.12.0——所以"升级到含上游修复的版本"现在做不到。这与日期推理一致：
+6.11.3 于 2026-10-26 发布（比 2026-10-27 的修复合入早一天），6.12.0 于 2026-10-08 发布。
+复现器需要 `QAccessible.setActive(True)` 并且按"先读选中子元素"的顺序遍历才能稳定触发
+（`--cells-first` 那 3/3 完成正是这条顺序差异的对照）。
+
+### 三、运行时修复 v2 的设计
+
+用 `ctypes` 调 Objective-C 运行时（打包里没有 pyobjc），把**两处**删除点都变成不删除 interface：
+
+1. `-[QMacAccessibilityElement dealloc]` → 先把私有 32 位 `axid` ivar 清零（写入前校验偏移与 type encoding
+   `I`，只写 ivar 自己的宽度），再调用原实现；`deleteInterface(0)` 是空操作。
+2. `+[QMacAccessibilityElement removeElementsFromCache:]` → 空实现。
+
+**只改第 1 处不够（E209）**：`QAccessibleTable` 缓存的单元格 interface 仍会被第 2 处删掉，下一次
+`QAbstractItemModel::endRemoveRows` → `QAccessible::updateAccessibility` 读已释放内存（实测在首页刷新时
+「项目筛选」下拉框 `QComboBox::clear()`）。v2 与上游 commit `8148c48d` 的做法一致。
+
+安全边界（任何一步不满足就什么都不做，绝不抛异常）：只在 macOS + cocoa 且 Qt ∈ {6.11.x, 6.12.0} 安装；
+安装前校验类 / `axid` ivar 偏移与类型 / 方法存在，安装后回读 IMP 确认换上；arm64e 进程直接放弃；
+`FOLITH_QT_AX_WORKAROUND=0`（也接受 off/false/no）跳过安装，**只用于 A/B 复现**，不是给用户的
+「关闭辅助功能」开关（那种开关在 Qt 6.11 上无效，R62 已删除）；退出前恢复原实现，避免解释器收尾时回调被回收。
+
+**删除时机**：PySide6 升到含上游修复的 6.12.1+ 后，版本门自动不再安装；确认确定性复现器与 AX 扫描探针回归后，
+删除 `folith/qt/macos_accessibility.py` 与 `folith/qt/app.py` 里的调用点。
+
+### 四、A/B 证据（E205–E212）
+
+| # | 场景 | 用例/命令 | 结果 |
+| --- | --- | --- | --- |
+| E205 | **因果证据**：进程内确定性复现器 A/B（上游 QTBUG-149612 附件 MRE，PySide6/Qt **6.11.2**，macOS 27.0.1 arm64） | `scripts/qt_ax_qtbug_repro.py`（ax-repro；临时副本 `/tmp/axfix/mre.py`） | **无修复**：子进程 SIGSEGV，shell **exit 139**；**v2**：完成，**exit 0**，`accessibilitySelectedChildren` 仍返回 **7 个**选中子元素，父表 `QAccessibleInterface` 仍可解析（AX 语义没有被改坏） |
+| E206 | **因果证据**：25 次 create/traverse/destroy 循环（同一复现器加压） | `/tmp/axfix/stress.py` | **无修复：cycle 0 即死**（exit 139）；**v2：25/25 全部完成** |
+| E207 | 真实应用内 AX 扫描探针（`scripts/qt_ax_scan_probe.py`，连续扫描、隔离数据 `tmp/ax-verify/data`，源码 app build `git:b38f1a2b`） | v2 生效：① 无用户动作 20 秒；② 动作路线 `press:继续 -> open job`；③ 重建冻结 `.app` 同路线。对照：`FOLITH_QT_AX_WORKAROUND=0`（关闭修复） | **v2：源码无动作 3/3 ALIVE**（34/32/35 轮扫描通过）、**源码动作路线 3/3 ALIVE**、**冻结 `.app` 2/2 ALIVE**，**所有 v2 臂都没有新 `.ips`**；每轮日志都有 `macOS AX workaround: installed (installed); Qt 6.11.2; upstream QTBUG-149612`。**但对照臂 `FOLITH_QT_AX_WORKAROUND=0` 也 4/4 ALIVE**（源码 2/2、冻结 2/2、无 `.ips`）——**本环境没有复现出用户报告的那条 `libqcocoa`/AppKit 崩溃**，所以这组真实 app A/B 只能算**支持性证据**（没有反证），既不是因果证明，也不能用来声称"已修好" |
+| E208 | 重建冻结 `.app` 的启动日志（`/tmp/axbuild/dist/Folith.app`，built_at `2026-11-06T06:44:03Z`，build_id `git:b38f1a2b`，worktree_dirty=true，PySide6/Qt 6.11.2，`--no-ocr`） | 启动并读日志 | **修复随 .app 一起生效**：启动日志出现同一条安装行，隔离数据目录启动正常。**这是源码重建产物，不是 DMG；未签名/未公证，未用 Finder 安装验证** |
+| E209 | 只改 `dealloc` 的中间版本 v1（**partial-patch artefact**） | `scripts/qt_ax_scan_probe.py`，连续扫描无用户动作 | **3/3 DIED** SIGSEGV，主线程 `QAccessible::updateAccessibility ← QAbstractItemModel::endRemoveRows ← QStandardItemModel::removeRows ← QComboBox::clear()`；新报告 `Python-2026-11-06-092944.ips` / `093201` / `094157`。**这是"只修一半"造成的人为缺陷，不是用户报告的那种崩溃模式**；保留它只为了证明两处删除点都必须处理，**不能**当成应用级 A/B 或用户缺陷的复现 |
+| E210 | AX 表格 / 行 / 单元格是否仍对辅助功能可见 | 探针读 AX 树 | **未验证**：`表格` 切换是 `AXCheckBox`，`AXPress` 被接受，但卡片视图路线上**从未出现 `AXTable`**（当前界面是卡片视图）。因此"修复后 AX 结构仍然可见"这一点没有证据 |
+| E211 | **剩余验证**：在重建候选上用真实 Computer Use 跑一遍完整验收路径 | 待办 | **待办**（本轮没有跑；这是唯一还能直接回答"用户那条路径是否安全"的验证） |
+| E212 | **版本矩阵**：确定性复现器 × 3 个已发布 PySide6（每格 3 次试验） | `scripts/qt_ax_qtbug_repro.py`（ax-repro） | **6.11.2 / 6.11.3 / 6.12.0 默认顺序各 3/3 崩溃**（6.11.2 与 6.12.0 为 SIGSEGV exit 139 ×3；6.11.3 为 139/139/138 = SIGSEGV/SIGSEGV/SIGBUS）；`--with-workaround` 与 `--cells-first` **各 3/3 完成（exit 0）**。**6.12.1 不可安装**（`pip download PySide6==6.12.1` 无匹配，PyPI 最高 6.12.0）。复现需要 `QAccessible.setActive(True)` 且先读选中子元素 |
+
+**可以说的与不能说的**：因果证据是确定性复现器（E205/E206，139 → 0、25 次循环全过）与版本矩阵（E212，三个已发布版本各 3/3 崩溃、修复后各 3/3 完成）加上游版本事实（E204）；
+真实 app 的 AX 扫描 A/B **没有复现用户崩溃**（连关掉修复的对照臂也 ALIVE），只能算"没有反证"的支持性证据。
+**不能**说"所有 AX 客户端在所有场景都安全"，**不能**说"冻结 DMG 已验证"（没有构建新 DMG），
+**不能**说"AX 表格/行/单元格仍可见"（E210 未验证）。
+
+### 五、文档与生成器同步（本次一起改）
+
+- 旧口径「验收必须用人工键鼠、不挂 AX 代理」从下列位置删除或标注作废：`acceptance-quickstart.md` 第四点五、
+  `manual-acceptance.md` 开头与 P7/P10 签收、`acceptance-matrix.md` 平台级风险行、`release-notes.md` 已知限制、
+  `status.md` §4/§5、`release-plan.md` 第 4 步、`handoff-loop-prompt.md` §0/§2/下一步、
+  `acceptance-feedback-2026-10-14.md`、`motion-audit-2026-10-14.md`、`ui-audit/45-p4-motion-slice/verification.md`、
+  `ui-audit/46-p4-motion/verification.md`、`ui-audit/49-p6-notifications/verification.md`。
+  `acceptance-quickstart.md` 里保留「不要挂载 AX 代理」字样，但只作为"这条旧要求已作废"的引用。
+- 生成器：`scripts/qt_release_checks.py` 的「已知限制」bullet 与 `scripts/qt_acceptance_bundle.py` 的 README 段落
+  同步改写，生成文本与 `docs/qt-beta/release-notes.md` 一致；`QTBUG-149612` 字符串保留
+  （`tests/qt_release_plumbing_test.py` 断言它）。
+- **修正过一版措辞**：初稿曾把 v1 的 3/3 DIED 与 v2 的 3/3 ALIVE 写成应用级 A/B；收到最终数据后已改为
+  「v1 是 partial-patch artefact（E209）」「真实 app A/B 的支持性定位（E207）」，并把 `FOLITH_QT_AX_WORKAROUND=0`
+  也 ALIVE 这一反直觉结果写进文档，避免读者误以为应用级 A/B 已证明修复有效。
+
+### 六、诚实说明
+
+- **没有**构建/公证新 DMG，**没有**用 Finder 安装验证；E208 的冻结 `.app` 是从当前 worktree 重建的
+  （`/tmp/axbuild/dist/Folith.app`，build record `git:b38f1a2b`、dirty、`2026-11-06T06:44:03Z`、`--no-ocr`），
+  只证明"修复会被打进冻结产物并在启动时安装"。
+- 用户报告的 `libqcocoa`/AppKit 崩溃（E203）在本轮真实 app 环境**没有被复现**；确定性复现器通过上游 MRE
+  触发同一缺陷语义，它是本轮的因果证据，但它证明的是"这条上游缺陷语义被修掉了"，不等于"用户那条路径已在
+  本机重演并修好"。
+- 文档身份审计（`scripts/qt_docs_audit.py`、`scripts/qt_acceptance_kit.py --check`）在本工作区**跑不起来**：
+  没有 `build/qt-desktop/` 下的构建记录（`dmg_record.json` / `desktop_build_info.json`）——这是预先存在的环境缺口，
+  与本次改动无关；因此三份文档的候选身份块仍指向旧候选，没有伪造刷新。
+- 本轮的 `.ips` 里 `faulthandler` 帧会让人误以为崩溃发生在 Python 层；符号化时请直接看 `libqcocoa` 那一帧。

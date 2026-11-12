@@ -66,7 +66,7 @@ def test_opencode_go_provider_route():
     # keep-alive 连接池，客户端池就没有意义。释放池时才关闭底层绕过代理的连接。
     assert not calls[0]["http_client"].is_closed
     assert calls[1]["model"] == "deepseek-v4-flash"
-    assert calls[1]["extra_headers"]["User-Agent"] == "Folith/0.7.2"
+    assert calls[1]["extra_headers"]["User-Agent"] == "Folith/0.8.1"
     assert calls[1]["extra_headers"]["x-opencode-session"]
     assert calls[1]["extra_headers"] == calls[2]["extra_headers"]
     core.reset_llm_clients()
@@ -108,7 +108,8 @@ def test_parse_translation_array():
     assert core.parse_translation_array('```json\n{"1": "甲"}\n```', 1) == ["甲"]
     assert core.parse_translation_array('1. 甲\n2. 乙', 2) == ["甲", "乙"]
     assert core.parse_translation_array('以下是译文：\n1、甲\n2、乙', 2) == ["甲", "乙"]
-    assert core.parse_translation_array('1. “单段译文。”', 1) == ["“单段译文。”"]
+    # A lone numbered line may be the translation itself (a heading), so it is kept.
+    assert core.parse_translation_array('1. “单段译文。”', 1) == ["1. “单段译文。”"]
     assert core.parse_translation_array('裸文本译文', 1) == ["裸文本译文"]
     assert core.parse_translation_array('["a"]', 2) is None
     assert core.parse_translation_array("普通文本", 2) is None
@@ -175,7 +176,7 @@ def test_annotate_stage():
             "findings": [], "review_stats": {},
         }
 
-        def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
+        def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1, base_url=None):
             if "翻译教学专家" in system_prompt:
                 return json.dumps([
                     {"seg": 1, "type": "domain", "src": "Mirage", "tgt": "幻影战斗机",
@@ -477,7 +478,7 @@ def test_annotate_resume_by_offset():
                  "annotations_done_offset": 10}
         calls = {"n": 0}
 
-        def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
+        def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1, base_url=None):
             if "翻译教学专家" in system_prompt:
                 calls["n"] += 1
                 return json.dumps([{"seg": 1, "type": "hard", "src": "The quick brown fox",

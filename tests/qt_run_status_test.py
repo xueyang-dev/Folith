@@ -181,10 +181,14 @@ def test_every_workbench_tool_button_has_a_designed_style(app):
     bench.resize(1400, 900)
     bench.show()
     app.processEvents()
+    designed_kind = {"primary", "secondary", "plain", "danger"}
     plain = [button.text() or button.toolTip() or repr(button)
              for button in bench.findChildren(QToolButton)
              if not isinstance(button.parent(), (QLineEdit, QTabBar))
-             and button.objectName() not in styled]
+             and button.objectName() not in styled
+             # 用 `style.set_button(kind=…)` 定过样的按钮同样算"有设计"（检查器的
+             # 「更多」就是 QToolButton + kind="plain"，样式在 QSS 里按属性匹配）。
+             and str(button.property("kind") or "") not in designed_kind]
     bench.close()
     assert plain == []
 

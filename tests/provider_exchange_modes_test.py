@@ -19,7 +19,9 @@ def test_provider_registry_sane():
     for name, cfg in core.PROVIDERS.items():
         assert cfg["kind"] in ("openai", "openai_compat", "gemini"), name
         if cfg.get("custom_base_url"):
-            assert cfg["base_url"] is None and name == "自定义中转站"
+            # 只有「地址必填、没有注册表默认值」的提供商：自定义中转站与本地网关。
+            assert cfg["base_url"] is None
+            assert name in {"自定义中转站", "Local Gateway"}, name
         if name == "OpenCode Go":
             assert cfg["models"] == [
                 "glm-5.2", "glm-5.1", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash",

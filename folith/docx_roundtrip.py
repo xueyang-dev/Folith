@@ -905,6 +905,93 @@ def _render_tagged_target_to_runs(p: LET._Element, target_text: str,
         p.append(other)
 
 
+
+def _body_paragraph_ordinals(source_bytes: bytes) -> Tuple[List[str], Dict[int, List[int]]]:
+    """The import's paragraph list, and which entries come from each body ``w:p``.
+
+    Import (``core`` and ``epub._docx_source``) reads ``Document.paragraphs``,
+    splits on line breaks and drops one-character and ornament lines.  Repeating
+    that boundary here gives every raw paragraph ordinal its body paragraph
+    index, which is the ``index`` of a ``u:doc:p<N>`` unit anchor.
+    """
+    from docx import Document as _Document
+    from folith.epub import _text
+    from folith.pdf_ingestion import ORNAMENT_RE
+
+    paragraphs: List[str] = []
+    by_body_index: Dict[int, List[int]] = {}
+    document = _Document(io.BytesIO(source_bytes))
+    for p_idx, paragraph in enumerate(document.paragraphs):
+        parts = [_text(part).strip() for part in re.split(r"\n+", paragraph.text)]
+        for part in parts:
+            if len(part) > 1 and not ORNAMENT_RE.fullmatch(part):
+                by_body_index.setdefault(p_idx, []).append(len(paragraphs))
+                paragraphs.append(part)
+    return paragraphs, by_body_index
+
+
+def _assign_targets_by_identity(state: Dict[str, Any], source_bytes: bytes,
+                                units: List[DocxUnit],
+                                untranslated: List[Dict[str, Any]]) -> None:
+    """Give each unit the translation of *its own* source paragraph(s).
+
+    Segments are sentence-level and CAT edits (range/manual exclusion, split,
+    merge) change how many there are, so a unit can never be matched to a pair
+    by position.  Identity comes from ``epub_source_paragraphs`` on each pair
+    (raw import paragraph ordinals, verified against the source by
+    ``folith.epub._translation_groups``): a unit takes every segment that refers
+    to its paragraph, in pair order.  Anything that cannot be tied to the
+    source this way raises; nothing is guessed.
+    """
+    from folith.epub import EpubExportError, _join_targets, _translation_groups
+
+    paragraphs, by_body_index = _body_paragraph_ordinals(source_bytes)
+    try:
+        groups, _by_ref = _translation_groups(state, paragraphs)
+    except EpubExportError as exc:
+        raise InvalidAnchorError(
+            str(exc).replace("EPUB", "原格式 DOCX")
+            + " 原格式回写不会按位置猜测，请重新导入源文件后再交付。") from exc
+
+    unit_of_ordinal: Dict[int, int] = {}
+    for u in units:
+        anchor = u.source_anchor
+        if anchor.get("kind") == "paragraph" and anchor.get("part") == "word/document.xml":
+            for ordinal in by_body_index.get(anchor["index"], []):
+                unit_of_ordinal[ordinal] = anchor["index"]
+
+    covered: Dict[int, List[str]] = {}
+    covered_ordinals: Dict[int, set] = {}
+    for group in groups:
+        owners = {unit_of_ordinal.get(ref) for ref in group["refs"]}
+        if None in owners or len(owners) != 1:
+            raise InvalidAnchorError(
+                "有译文无法对应到原 DOCX 的单个正文段落（跨段落合并，或来源不在正文）："
+                f"{_join_targets(group['targets'])[:40]!r}。原格式回写不会猜测位置；"
+                "请撤销这次合并，或改用重建的 translation.docx。")
+        owner = owners.pop()
+        covered.setdefault(owner, []).extend(group["targets"])
+        covered_ordinals.setdefault(owner, set()).update(group["refs"])
+
+    for u in units:
+        anchor = u.source_anchor
+        body_index = anchor.get("index") if anchor.get("kind") == "paragraph" else None
+        if body_index is None or body_index not in by_body_index:
+            reason = "outside_import_scope"
+        elif body_index not in covered:
+            reason = "excluded"
+        elif not set(by_body_index[body_index]) <= covered_ordinals[body_index]:
+            reason = "partially_excluded"
+        else:
+            target = _join_targets(covered[body_index])
+            if target:
+                u.target = target
+                continue
+            reason = "no_target"
+        u.target = u.source
+        untranslated.append({"instance_id": u.instance_id, "reason": reason})
+
+
 def write_roundtrip_docx(source_bytes: bytes,
                         units_or_state: Any,
                         *,
@@ -919,19 +1006,14 @@ def write_roundtrip_docx(source_bytes: bytes,
     - Corrupt tags, missing anchors, or invalid markup raise an actionable error.
     """
     # 1. Resolve units
+    untranslated_units: List[Dict[str, Any]] = []
     if isinstance(units_or_state, dict):
         # Called with Folith job state
         state = units_or_state
         target_lang = target_lang or state.get("target_lang")
         extracted_units, manifest = extract_roundtrip_units(source_bytes)
-        pairs = state.get("pairs") or []
-        # Match units with pairs
-        for i, u in enumerate(extracted_units):
-            if i < len(pairs):
-                target = pairs[i].get("target") or pairs[i].get("source") or ""
-                u.target = target
-            else:
-                u.target = u.source
+        _assign_targets_by_identity(state, source_bytes, extracted_units,
+                                    untranslated_units)
         units = extracted_units
     elif isinstance(units_or_state, list):
         if units_or_state and isinstance(units_or_state[0], dict):
@@ -1068,6 +1150,7 @@ def write_roundtrip_docx(source_bytes: bytes,
         "supported": manifest["supported"],
         "preserved": manifest["preserved"],
         "rejected": manifest["rejected"],
+        "untranslated_units": untranslated_units,
     }
     return output_bytes, report
 

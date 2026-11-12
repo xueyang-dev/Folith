@@ -64,7 +64,7 @@ def test_qt_export_reads_inside_the_transaction_after_a_concurrent_edit(
     elif operation == "assets":
         written = adapter.export_current_assets("revision", destination)
         jsonl = next(path for path in written if path.suffix == ".jsonl")
-        assert json.loads(jsonl.read_text().splitlines()[0])["target"] == "一句完整的话。"
+        assert json.loads(jsonl.read_text(encoding="utf-8").splitlines()[0])["target"] == "一句完整的话。"
     else:
         from docx import Document
         target = isolated_jobs / "report.docx"
@@ -140,7 +140,7 @@ def test_legacy_snapshot_without_revision_loads_and_saves(isolated_jobs):
     state = core.load_job_state("legacy")
     assert state["snapshot_revision"] == 0
     core.save_job_state("legacy", state)
-    assert json.loads(path.read_text())["snapshot_revision"] == 1
+    assert json.loads(path.read_text(encoding="utf-8"))["snapshot_revision"] == 1
 
 
 def test_directory_loss_recovery_keeps_the_snapshot_generation():
@@ -170,7 +170,7 @@ def test_repeated_local_saves_do_not_reparse_the_snapshot(monkeypatch):
         state["theory"] = value
         core.save_job_state("revision", state)
     assert not reads
-    assert json.loads(core.job_state_path("revision").read_text())["theory"] == "C"
+    assert json.loads(core.job_state_path("revision").read_text(encoding="utf-8"))["theory"] == "C"
 
 
 def test_external_atomic_replace_invalidates_the_written_revision():
@@ -183,4 +183,4 @@ def test_external_atomic_replace_invalidates_the_written_revision():
     replacement.replace(path)
     with pytest.raises(RuntimeError, match="任务状态已更新"):
         core.save_job_state("revision", state)
-    assert json.loads(path.read_text())["theory"] == "external writer"
+    assert json.loads(path.read_text(encoding="utf-8"))["theory"] == "external writer"

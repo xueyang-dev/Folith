@@ -85,6 +85,7 @@ class ScanStream:
                  first_window_pages: int = FIRST_WINDOW_PAGES,
                  late_pages: Optional[Dict[int, dict]] = None,
                  provider_label: str = "",
+                 known_paragraphs: Optional[List[str]] = None,
                  timeout_streak_limit: int = TIMEOUT_STREAK_LIMIT):
         with fitz.open(stream=data, filetype="pdf") as pdf:
             self.pages_total = len(pdf)
@@ -106,7 +107,7 @@ class ScanStream:
         self.error: Optional[BaseException] = None
         # 工作线程里的页级重试 / 失败事件（deque.append 线程安全），主线程在 tick 里取走。
         self._page_events: deque = deque(maxlen=200)
-        self._assembler = VisualDocumentAssembler(filename)
+        self._assembler = VisualDocumentAssembler(filename, known_paragraphs)
         self._result = None
         self._cond = threading.Condition()
         self._stop = threading.Event()
@@ -173,14 +174,18 @@ class ScanStream:
             self._halted.clear()
 
     def failed_pages_info(self) -> List[dict]:
-        """读失败、等待重试的页（页码从 1 起）。"""
+        """读失败、等待重试的页（页码从 1 起），并记下读它时用的连接。"""
         with self._cond:
+            connection = self.provider_label or ""
             rows = {failed.page_index: {"page": failed.page_index + 1, "code": failed.code,
                                         "http_status": failed.http_status,
-                                        "reason": failed.describe()}
+                                        "reason": failed.describe(),
+                                        "connection": connection}
                     for failed in self._assembler.failed_pages.values()}
             for index in self._late_pending:
-                rows.setdefault(index, {**self._late[index], "page": index + 1})
+                rows.setdefault(index, {**self._late[index], "page": index + 1,
+                                        "connection": self._late[index].get("connection")
+                                        or connection})
         return [rows[key] for key in sorted(rows)]
 
     def _run(self) -> None:

@@ -106,8 +106,6 @@ class NameConflictWidget(QWidget):
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
-        actions.addWidget(self.confirm_button)
-        actions.addStretch(1)
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(theme_module.SPACE["sm"])
@@ -115,6 +113,8 @@ class NameConflictWidget(QWidget):
         column.addWidget(self.preview_hint)
         column.addWidget(self.preview_view)
         column.addLayout(actions)
+        actions.addWidget(self.confirm_button)
+        actions.addStretch(1)
         self._rows: list[QWidget] = []
 
     # ================= 数据 =================
@@ -177,12 +177,13 @@ class NameConflictWidget(QWidget):
         radio = style_module.RadioButton(text)
         self.group.addButton(radio, position)
         if kind == CUSTOM:
+            # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
             line = QHBoxLayout()
+            layout.addLayout(line)
             line.setContentsMargins(0, 0, 0, 0)
             line.addWidget(radio)
             line.addWidget(self.custom_edit, 1)
             self.custom_edit.show()
-            layout.addLayout(line)
         else:
             layout.addWidget(radio)
         if kind == VARIANT and option["indexes"]:

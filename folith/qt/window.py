@@ -36,6 +36,7 @@ from folith.desktop import paths as desktop_paths
 from folith.desktop import single_instance
 
 from . import i18n, platform_ui, preferences
+from . import import_wizard
 from . import adapter
 from . import bootstrap
 from . import dialogs
@@ -46,6 +47,7 @@ from . import style as style_module
 from . import theme as theme_module
 from . import views as views_module
 from .dialogs import DiagnosticsDialog, EngineDialog
+from .outline_loader import outline_loader as _outline_loader
 from .project_sheets import BatchAcceptDialog, MoveToProjectSheet
 from .projects_view import NewTermDialog, ProjectsView
 from .scope_dialog import ScopeDialog
@@ -57,6 +59,11 @@ SUSPICIOUS_QUIT_ENV = "FOLITH_EXIT_FORCE_PROMPT"
 HOME_REFRESH_SECONDS = 5
 POLL_MS = 1000
 EDIT_SAVE_IDLE_MS = 400
+
+#: Whole-document projections (review queue, delivery gate, terms, follow-up)
+#: keep their own slower cadence on the incremental path: they are O(document),
+#: the per-batch delta is O(batch).  Delivery already has its own 5 s floor.
+DELTA_PROJECTION_SECONDS = 5.0
 
 
 class _PhaseLog:
@@ -223,6 +230,22 @@ class MainWindow(QMainWindow):
         self._edit_queue: list[tuple[str, int, str]] = []
         self._edit_in_flight = False
         self._state_load_in_flight = False
+        #: Incremental polling state (A1 / #324).  ``_delta_feed`` reads the
+        #: task journal suffix, ``_delta_model`` holds the rows it produced;
+        #: both are dropped whenever the whole-state path has to run.
+        self._delta_feed = None
+        self._delta_model = None
+        self._delta_job_id = ""
+        self._delta_applied_seq = 0
+        self._delta_first_poll = False
+        self._delta_projection_at = 0.0
+        self._delta_projection_in_flight = False
+        #: A poll was requested while a slow projection held the read slot.
+        self._pending_poll = False
+        #: A self-healing re-poll is already scheduled.
+        self._repoll_pending = False
+        #: A job the feed cannot be used for any more (unknown schema/mutation).
+        self._delta_legacy_job = ""
         #: Start writing queued edits once the GUI has been idle this long.  The
         #: writer competes with the GUI thread for the GIL; starting it while the
         #: workbench repaints after ⌘↩ made the move to the next segment take
@@ -281,6 +304,10 @@ class MainWindow(QMainWindow):
         shell_layout.addWidget(self.sheet, 1)
         self.setCentralWidget(shell)
         self._shell_layout = shell_layout
+        # 页面栈的最小宽度取所有页的最大值：打开过一次宽任务，回首页也缩不回去
+        # （实测 en 1410 / ru 1441，合同要求 ≤1280）。`QWidgetItem` 对 `Ignored`
+        # 策略的页面不算最小尺寸，所以只让**当前页**参与窗口下限（F1，第三轮复审）。
+        self.stack.currentChanged.connect(self._sync_page_policies)
         self._extend_shell_under_title_bar()
         # 顶部那条外壳（标题栏 + 页面上方的间隙）任意位置都能拖动窗口。
         self._shell_drag = components.WindowDragArea(
@@ -394,6 +421,7 @@ class MainWindow(QMainWindow):
         self.workbench.backRequested.connect(self.show_home)
         self.workbench.startRequested.connect(self.start_or_resume)
         self.workbench.setupScopeRequested.connect(self.select_translation_scope)
+        self.workbench.setup_panel.source_section.aiRecoveryRequested.connect(self.analyze_outline_recovery)
         self.workbench.setupStartRequested.connect(self.start_from_setup)
         self.workbench.setupCreateProjectRequested.connect(
             self.create_project_from_setup)
@@ -425,6 +453,9 @@ class MainWindow(QMainWindow):
         from .concept_dialog import open_concept_workflow
         self.workbench.review_panel.conceptRequested.connect(
             lambda: open_concept_workflow(self))
+        from .batch_unify_dialog import open_batch_unify_dialog
+        self.workbench.review_panel.batchUnifyRequested.connect(
+            lambda: open_batch_unify_dialog(self))
         self.workbench.rescanRequested.connect(self.rescan_source)
         self.workbench.reportRepairRequested.connect(self.repair_report)
         self.workbench.reportAnswerRequested.connect(self.answer_report_question)
@@ -443,6 +474,9 @@ class MainWindow(QMainWindow):
         self.workbench.revealLogRequested.connect(
             lambda job_id: self.reveal_path(adapter.technical_log_path(job_id)))
         self.workbench.findingResolveRequested.connect(self.resolve_findings)
+        # #289: 审计列表的撤销信号 → 适配器 → 既有核心函数。
+        self.workbench.reviewRevokeRequested.connect(self.revoke_auto_handling)
+        self.workbench.reviewTriageToggleRequested.connect(self.set_auto_handling)
         self.workbench.glossaryDraftRequested.connect(self.save_glossary_draft)
         self.workbench.glossaryFreezeRequested.connect(self.freeze_glossary)
         self.workbench.glossaryUnfreezeRequested.connect(self.unfreeze_glossary)
@@ -451,6 +485,10 @@ class MainWindow(QMainWindow):
         self.workbench.glossaryEntryAddRequested.connect(self.add_glossary_entry)
         self.workbench.glossaryStatusRequested.connect(self.set_terms_status)
         self.workbench.glossaryEntryDeleteRequested.connect(self.delete_glossary_entry)
+        self.workbench.terminologyReplaceRequested.connect(self.preview_terminology_replacement)
+        self.workbench.terminologyUndoRequested.connect(self.undo_terminology_replacement)
+        self.workbench.terminologyMergeRequested.connect(self.merge_terminology_entries)
+        self.workbench.terminologyRevalidateRequested.connect(self.revalidate_terminology_conflicts)
         self.workbench.suggestionApplyRequested.connect(self.apply_suggestion)
         self.workbench.sourceConfirmRequested.connect(self.confirm_source_segment)
         self.workbench.deliverRequested.connect(self.deliver)
@@ -475,8 +513,29 @@ class MainWindow(QMainWindow):
         self.workbench.editSubmitted.connect(self.submit_edit)
         self.workbench.revealRequested.connect(self.reveal_path)
         self.workbench.openAssetRequested.connect(self.open_path)
+        self.workbench.copyPathRequested.connect(self.copy_path)
+        self.workbench.downloadDeliveryZipRequested.connect(self.download_delivery_zip)
+        self.workbench.openDeliveryFolderRequested.connect(self.open_delivery_folder)
+        self.workbench.saveDeliveryAssetRequested.connect(self.save_delivery_asset)
+        self.workbench.showDeliveryAssetInfoRequested.connect(self.show_delivery_asset_info)
         self.workbench.draftSaved.connect(
             lambda *_args: self._mark_dirty_status(i18n.tr('草稿已保存')))
+        # Shared outline loader: when a background parse finishes, update the
+        # workbench outline and re-enable scope controls if the task is still open.
+        _outline_loader().ready.connect(self._on_outline_ready)
+
+    def _on_outline_ready(self, job_id: str) -> None:
+        """Background parse finished: update the workbench outline for the current task."""
+        if not job_id or job_id != self._current_job_id or self._opening_job_id:
+            return
+        state = self._cached_state
+        if state is None:
+            return
+        outline = adapter.task_outline(job_id, state, no_parse=True)
+        if outline.get("pending"):
+            return  # still pending (shouldn't happen, but guard)
+        outline_mapping = adapter.outline_mapping(job_id, state, outline)
+        self.workbench.update_outline(outline, outline_mapping)
 
     def _build_menus(self) -> None:
         self.menuBar().setNativeMenuBar(platform_ui.is_macos())
@@ -508,12 +567,17 @@ class MainWindow(QMainWindow):
         legacy_action = QAction(i18n.tr('接入旧数据目录…'), self)
         legacy_action.triggered.connect(self.import_legacy)
 
+        # #150：导入校验向导（TMX/TBX/XLSX/CSV 一个入口）。与「导入文档」互不
+        # 影响：那一条建任务，这一条只把资产导入项目并给出校验报告。
+        wizard_action = QAction(i18n.tr('导入资产并校验…'), self)
+        wizard_action.triggered.connect(self.open_import_wizard)
+
         quit_action = QAction(i18n.tr('退出 Folith'), self)
         quit_action.setShortcut(platform_ui.shortcut("quit"))
         quit_action.setMenuRole(QAction.MenuRole.QuitRole)
         quit_action.triggered.connect(self.close)
 
-        for action in (import_action, home_action, legacy_action):
+        for action in (import_action, home_action, legacy_action, wizard_action):
             file_menu.addAction(action)
         file_menu.addSeparator()
         file_menu.addAction(close_action)
@@ -589,7 +653,8 @@ class MainWindow(QMainWindow):
     # Delivery defaults are a *client* preference (they are copied into each new
     # task's own delivery_config, which stays the single source of truth).
     DELIVERY_KEYS = ("deliver_plain_docx", "deliver_bilingual_docx",
-                     "deliver_pdf", "deliver_original_pdf", "deliver_epub",
+                     "deliver_pdf", "deliver_original_pdf", "deliver_original_docx",
+                     "deliver_epub",
                      "deliver_terms_xlsx",
                      "deliver_evidence", "deliver_review_report")
     ACADEMIC_KEY = "workspace/academic_mode"
@@ -977,7 +1042,7 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr_dynamic(message), task=False)
             self.refresh_projects()
 
-        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+        self._run_with_busy(i18n.tr('确认候选'), i18n.tr('正在记录确认决定…'),
                             adapter.accept_review_item, item, target, on_done=done)
 
     def decide_review_item(self, item: dict, decision: str) -> None:
@@ -985,7 +1050,7 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr_dynamic(message), task=False)
             self.refresh_projects()
 
-        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+        self._run_with_busy(i18n.tr('确认候选'), i18n.tr('正在记录确认决定…'),
                             adapter.decide_review_item, item, decision, on_done=done)
 
     def batch_accept_items(self, items: list) -> None:
@@ -1011,7 +1076,7 @@ class MainWindow(QMainWindow):
                 self._notice(i18n.tr('已确认 {v0} 条术语。', v0=ok), task=False)
             self.refresh_projects()
 
-        self._run_with_busy(i18n.tr('审核候选'), i18n.tr('正在记录审核决定…'),
+        self._run_with_busy(i18n.tr('确认候选'), i18n.tr('正在记录确认决定…'),
                             adapter.accept_review_items, pick, on_done=done)
 
     def clear_project_memory(self, project_id: str) -> None:
@@ -1028,7 +1093,23 @@ class MainWindow(QMainWindow):
         self.open_job(job_id, after_open=(
             lambda: self.workbench.show_segment_for_edit(index)) if index >= 0 else None)
 
+    def _confirm_leave_unsaved_terms(self) -> bool:
+        if not self._current_job_id or not self.workbench.terms_panel.is_dirty():
+            return True
+        if self.workbench.operation_active(self._current_job_id) and not self.workbench.terms_panel.isEnabled():
+            self._notice(i18n.tr('术语正在保存，请等待完成。'), error=True,
+                         job_id=self._current_job_id)
+            return False
+        if not self._confirm(i18n.tr('术语修改尚未保存'),
+                             i18n.tr('离开会丢弃尚未保存的术语修改。请先保存，或确认丢弃。'),
+                             yes=i18n.tr('丢弃修改'), no=i18n.tr('继续编辑'), tone='danger'):
+            return False
+        self.workbench.terms_panel.discard_unsaved()
+        return True
+
     def show_home(self) -> None:
+        if not self._confirm_leave_unsaved_terms():
+            return
         self._cancel_open_job()
         self.workbench.flush_draft()
         returning = self._current_job_id if self.stack.currentWidget() is self.workbench else ""
@@ -1145,6 +1226,13 @@ class MainWindow(QMainWindow):
             timing = _PhaseLog(self._log, "import_done")
             created = [item for item in results if item.created]
             failed = [item for item in results if not item.ok]
+            # A re-import replaces the source bytes and deletes the sidecar
+            # (commands.import_document).  Drop the old cached outline so the
+            # next open_job triggers a fresh parse instead of returning stale
+            # data from the in-memory OutlineLoader cache.
+            for item in results:
+                if item.ok and not item.created:
+                    _outline_loader().invalidate(item.job_id)
             with timing.phase("refresh_home"):
                 self.refresh_home()
             if on_result is not None:
@@ -1280,6 +1368,8 @@ class MainWindow(QMainWindow):
         """Read a task off-thread, then apply only the latest navigation request."""
         if not job_id:
             return
+        if job_id != self._current_job_id and not self._confirm_leave_unsaved_terms():
+            return
         flight = self._card_document(job_id)
         self.workbench.flush_draft()
         request = object()
@@ -1310,10 +1400,24 @@ class MainWindow(QMainWindow):
             on_progress(4, 5)
             with timing.phase("review_queue"):
                 review = adapter.review_queue(job_id, state)
+            # #187/#0.8.0: read the persisted outline off the GUI thread.  A
+            # warm sidecar is used immediately; a cold or invalidated sidecar
+            # returns a ``pending`` payload so the open never blocks on parsing.
+            # The actual parse (if needed) is scheduled separately by the
+            # shared OutlineLoader, which the prep panel and workbench both
+            # consume.  Scope controls stay disabled until the parse is done.
+            with timing.phase("source_outline"):
+                outline = adapter.task_outline(job_id, state, no_parse=True)
+                if not outline.get("pending"):
+                    # Warm sidecar: pre-compute the mapping off the GUI thread.
+                    outline_mapping = adapter.outline_mapping(job_id, state, outline)
+                else:
+                    outline_mapping = {}
             on_progress(5, 5)
             runtime = adapter.runtime_view(job_id, state)
             return state, signature, rows, snapshots, {
                 "delivery": preview, "review": review, "runtime": runtime,
+                "outline": outline, "outline_mapping": outline_mapping,
                 "drafts_signature": drafts_signature}
 
         def done(payload):
@@ -1359,6 +1463,12 @@ class MainWindow(QMainWindow):
         # 上一次的终态不该影响新任务的"终态变化"判断（节流键已含任务标识，
         # 这里只是让状态本身不跨任务残留）。
         self._last_runtime_status = ""
+        # If the outline was cold at open time, schedule the background parse
+        # now that we have the state in hand.  The loader deduplicates: if the
+        # prep panel or another consumer already queued a parse for this
+        # generation, this is a no-op.
+        if (prepared.get("outline") or {}).get("pending"):
+            _outline_loader().request(job_id, state)
         # Only widget updates remain here; file reads and projections are ready.
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         opening = i18n.tr('正在打开任务…')
@@ -1377,6 +1487,9 @@ class MainWindow(QMainWindow):
             self._cached_models_key = self._workbench_models_key(job_id, signature)
             self._delivery_cache.prime(job_id, prepared["delivery"])
             self.stack.setCurrentWidget(self.workbench)
+            # 页面换过、内容也铺好了：这时重新同步窗口最小尺寸，别让 minimumSize()
+            # 还停在首页那一档（否则缩到"最小"会被 Qt 放大到工作台的真实下限）。
+            self._sync_minimum_size()
             self._log(f"open job {job_id}")
             self.setWindowTitle(i18n.tr('Folith — {v0}', v0=state.get('filename') or job_id))
             self._sync_menu_state()
@@ -1451,6 +1564,9 @@ class MainWindow(QMainWindow):
             except Exception as exc:  # noqa: BLE001
                 refused.append(f"{name}：{type(exc).__name__}: {exc}")
                 continue
+            # Drop the in-memory outline cache so a re-import of the same
+            # filename cannot return stale outline data from a deleted task.
+            _outline_loader().invalidate(item)
             deleted.append(name)
             if self._current_job_id == item:
                 self._current_job_id = ""
@@ -1484,6 +1600,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._failure(i18n.tr('删除失败'), f"{type(exc).__name__}: {exc}", task=False)
             return
+        _outline_loader().invalidate(job_id)
         if self._current_job_id == job_id:
             self.show_home()
         self.refresh_home()
@@ -1550,6 +1667,8 @@ class MainWindow(QMainWindow):
 
     def manage_projects(self) -> None:
         """「项目」：切到项目页（侧栏保持在左侧）。"""
+        if not self._confirm_leave_unsaved_terms():
+            return
         self._cancel_open_job()
         self.workbench.flush_draft()
         self._current_job_id = ""
@@ -1574,6 +1693,80 @@ class MainWindow(QMainWindow):
             return
         self.show_home()
 
+    def _sync_page_policies(self, *_args) -> None:
+        """只让当前页参与窗口最小尺寸，其余页面在切回来时要回自己的下限。"""
+        from PySide6.QtWidgets import QSizePolicy
+
+        current = self.stack.currentWidget()
+        for page in (self.home, self.workbench, self.projects):
+            if page is None:
+                continue
+            policy = page.sizePolicy()
+            horizontal = (QSizePolicy.Policy.Preferred if page is current
+                          else QSizePolicy.Policy.Ignored)
+            vertical = (QSizePolicy.Policy.Preferred if page is current
+                        else QSizePolicy.Policy.Ignored)
+            if (policy.horizontalPolicy(), policy.verticalPolicy()) != (horizontal, vertical):
+                page.setSizePolicy(horizontal, vertical)
+        layout = self.stack.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        self.stack.updateGeometry()
+        self._sync_minimum_size()
+        # 布局在下一个事件循环才真正落定：再同步一次，否则窗口最小尺寸会停在
+        # 上一页的那一档（实测回首页后仍是 1057，于是缩不回去）。
+        # **必须**把 self 传给 singleShot：窗口在定时器到期前被销毁时，Qt 会自己取消，
+        # 否则会调用已析构对象的绑定方法（qt_client_window_test 的
+        # test_destroyed_window_drops_delayed_tips 就是这么崩的）。
+        QTimer.singleShot(0, self, self._sync_minimum_size)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        """Expose the same window minimum to Qt and to callers of minimumSize()."""
+        minimum = self.minimumSize()
+        return minimum if not minimum.isEmpty() else super().minimumSizeHint()
+
+    def _sync_minimum_size(self) -> None:
+        """让窗口的 minimumSize 与当前布局的 minimumSizeHint 一致。
+
+        Qt 只用 hint 去"顶住"手动 resize，不会把它写进 ``minimumSize()``；两边一旦
+        差 1–8px，把窗口缩到 ``minimumSize()`` 就会被悄悄放大一点（实测 870×529 →
+        871×537）。页面内容在这一轮变高（卡片文字行、检查器动作条），这个偏差才显形。
+        """
+        if getattr(self, "_syncing_minimum", False):
+            return
+        # `minimumSizeHint()` 有时比布局的真实下限小（QMainWindow 不算中央部件里
+        # 分数宽度向上取整的那一位），所以两个都问，取较大者。
+        central = self.centralWidget()
+        if central is not None and central.layout() is not None:
+            central.layout().activate()
+        # Read the layout's natural minimum. Including the previous explicit
+        # minimum would prevent the window from shrinking after a page change.
+        hint = super().minimumSizeHint()
+        if central is not None:
+            # 中央部件自己也可能被布局约束写入了一个更大的最小尺寸（Linux 上实测
+            # minimumSizeHint 607、Qt 却按 805 兜底），一并算进去。
+            hint = hint.expandedTo(central.minimumSize())
+            if central.layout() is not None:
+                hint = hint.expandedTo(central.layout().minimumSize())
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+            hint = hint.expandedTo(layout.minimumSize())
+        if not hint.isValid():
+            return
+        if self.minimumSize() == hint:
+            return
+        self._syncing_minimum = True
+        try:
+            self.setMinimumSize(hint)
+        finally:
+            self._syncing_minimum = False
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        self._sync_minimum_size()
+
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
         # A frozen page width belongs to the window size the transition began
@@ -1582,6 +1775,7 @@ class MainWindow(QMainWindow):
         if settle is not None and self._motion.running("sidebar"):
             self._motion.stop("sidebar")
             settle()
+        self._sync_minimum_size()
 
     def _sync_sidebar(self, *_args) -> None:
         current = self.stack.currentWidget()
@@ -1610,6 +1804,7 @@ class MainWindow(QMainWindow):
                 frame(target)
                 self.sidebar_clip.setVisible(visible)
                 self.stack_clip.freeze(None)
+                self._sync_minimum_size()
 
             self._sidebar_settle = settled
             self._motion.animate("sidebar", start, target, frame, kind="view", finished=settled)
@@ -1645,7 +1840,7 @@ class MainWindow(QMainWindow):
             if tm:
                 message += i18n.tr('；并入 {v0} 条翻译记忆', v0=tm)
             if clash:
-                message += i18n.tr('；{v0} 条译名和术语库不一致，已放进待审核', v0=clash)
+                message += i18n.tr('；{v0} 条译名和术语库不一致，已放进待确认', v0=clash)
             if skipped:
                 reasons = "；".join(
                     f"{item.get('job_id')}：{i18n.tr_dynamic(str(item.get('reason') or ''))}"
@@ -1744,6 +1939,20 @@ class MainWindow(QMainWindow):
         self.runner.submit(adapter.quick_style_profile, job_id, self.config,
                            on_done=done, on_error=failed, label="style-profile")
 
+    def open_import_wizard(self) -> None:
+        """#150：打开导入校验向导（TMX/TBX/XLSX/CSV），导入后刷新项目页。
+
+        与 ``add_termbase`` 互不影响：那条把术语挂到当前任务，这条把资产导入
+        项目记忆/术语库并展示校验报告。这里只刷新项目列表（后台读取），不碰
+        工作台的增量刷新路径。
+        """
+        dialog = import_wizard.ImportWizardDialog(self)
+        try:
+            dialog.exec()
+        finally:
+            if dialog.controller.report:
+                self.refresh_projects()
+
     def add_termbase(self, path: str = "") -> None:
         """译前准备里添加术语库（xlsx/csv/tbx）或翻译记忆（tmx）。"""
         job_id = self._current_job_id
@@ -1824,8 +2033,10 @@ class MainWindow(QMainWindow):
         """给工作台准备「译前准备」数据；已开始的任务则收起准备面。
 
         目录（预设 / 交付项 / OCR / 项目 / 目标语言）在进程内只读一次；视图每次
-        按任务状态重建。``set_setup`` 在数据未变时不动面板，所以后台轮询不会把
-        用户正在准备面板上勾选的内容重置掉。
+        按任务状态重建。``WorkbenchView.set_setup`` 在视图数据与上次完全相同时
+        跳过 ``setup_panel.load()``（等数据相等守卫）；``setup_panel.load``
+        在同一任务内对用户已主动修改过的字段组（策略 / 交付）做脏保护——两层守卫
+        共同确保后台轮询不会把用户正在准备面板上勾选的内容重置掉。
         """
         if self._state_started(state):
             self.workbench.set_setup(None)
@@ -1860,7 +2071,323 @@ class MainWindow(QMainWindow):
         return (job_id, signature, runtime_signature, adapter.drafts_signature(job_id),
                 adapter.activity_signature(job_id), self.workbench.terms_open())
 
+    # ================= workbench polling: incremental vs whole-state =================
     def _poll_workbench(self) -> None:
+        """Timer path: apply only the batches committed since the last poll.
+
+        The pipeline appends one record per committed batch to
+        ``state_journal.jsonl`` (A1, #324).  Reading that record and updating
+        the rows it names costs O(batch); reading and rebuilding the whole
+        state cost O(book) and is now reserved for the cases that genuinely
+        need it: opening a task, a structural edit, a sequence gap, an external
+        snapshot, or a permanent feed fallback.  ``FOLITH_WORKBENCH_DELTA=0``
+        puts the window back on the whole-state path exactly as before.
+        """
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if self._state_load_in_flight:
+            # A read (feed suffix, whole state or slow projection) is running.
+            # Remember the request so it is re-issued the moment that read
+            # settles: a poll that arrives while one is in flight must not be
+            # silently dropped, otherwise "one poll after a change converges"
+            # stops being true (the observed flake in the 2026-11-11 A/B).
+            self._pending_poll = True
+            return
+        if self._delta_ready(job_id):
+            self._poll_workbench_delta(job_id)
+            return
+        self._poll_workbench_full()
+
+    # -- incremental path -------------------------------------------------
+    def _delta_ready(self, job_id: str) -> bool:
+        """Whether this job can be polled incrementally right now."""
+        if not adapter.delta_enabled():
+            return False
+        if self._delta_legacy_job == job_id:
+            return False
+        if self._delta_feed is not None and self._delta_job_id == job_id:
+            return True
+        return self._open_delta_state(job_id)
+
+    def _open_delta_state(self, job_id: str) -> bool:
+        """Create the feed/read model from the state the window already holds."""
+        state = self._cached_state
+        if not state:
+            return False
+        try:
+            feed = adapter.new_delta_feed(job_id)
+            model = adapter.new_workbench_model()
+            drafts = adapter.load_drafts(job_id)
+            adapter.reset_workbench_model(model, state, drafts)
+            cursor = int(state.get("journal_cursor") or 0)
+            feed.start(cursor_seq=cursor)
+        except Exception as exc:  # noqa: BLE001 - the legacy path must keep working
+            self._log(f"workbench delta disabled for {job_id}: {type(exc).__name__}: {exc}")
+            self._delta_legacy_job = job_id
+            return False
+        self._delta_feed = feed
+        self._delta_model = model
+        self._delta_job_id = job_id
+        self._delta_applied_seq = cursor
+        self._delta_first_poll = True
+        self._delta_projection_at = time.monotonic()
+        return True
+
+    def _drop_delta_state(self) -> None:
+        """Forget the incremental state; the next tick rebuilds from a full load."""
+        self._delta_feed = None
+        self._delta_model = None
+        self._delta_job_id = ""
+        self._delta_applied_seq = 0
+        self._delta_first_poll = False
+        self._delta_projection_in_flight = False
+
+    def _poll_workbench_delta(self, job_id: str) -> None:
+        """Read the journal suffix on a worker, apply the delta on the GUI."""
+        feed = self._delta_feed
+        model = self._delta_model
+        if feed is None or model is None:
+            self._poll_workbench_full()
+            return
+        if self._delta_first_poll:
+            # The state was just loaded and the feed starts at its journal
+            # cursor, so this read is a stat plus (normally) nothing.  Doing it
+            # inline closes the window where a task opened and the next action
+            # raced a background poll that had not run yet.
+            self._delta_first_poll = False
+            cached_state = self._cached_state
+            try:
+                result = feed.poll(previous_pair=model.previous_pair,
+                                   worker_active=adapter.job_is_alive(job_id))
+                runtime = adapter.runtime_view(job_id, cached_state)
+                drafts = (adapter.load_drafts(job_id)
+                          if isinstance(result, adapter.DeltaBatch) else None)
+            except Exception as exc:  # noqa: BLE001 - fall back, never break the UI
+                self._log(f"workbench delta first poll failed: {type(exc).__name__}: {exc}")
+                self._resync_from_full(job_id)
+                return
+            self._apply_feed_result(job_id, result, runtime, drafts)
+            return
+        self._state_load_in_flight = True
+        worker_active = adapter.job_is_alive(job_id)
+        cached_state = self._cached_state
+
+        def read():
+            result = feed.poll(previous_pair=model.previous_pair,
+                               worker_active=worker_active)
+            runtime = adapter.runtime_view(job_id, cached_state)
+            drafts = (adapter.load_drafts(job_id)
+                      if isinstance(result, adapter.DeltaBatch) else None)
+            return result, runtime, drafts
+
+        def done(payload) -> None:
+            self._state_load_in_flight = False
+            if (job_id != self._current_job_id or self._opening_job_id
+                    or self._closing_accepted or self._delta_feed is not feed):
+                return
+            result, runtime, drafts = payload
+            self._apply_feed_result(job_id, result, runtime, drafts)
+            self._flush_pending_poll()
+
+        def failed(_message: str, _detail: str) -> None:
+            self._state_load_in_flight = False
+            self._flush_pending_poll()
+
+        self.runner.submit(read, on_done=done, on_error=failed,
+                           label="poll-delta")
+
+    def _apply_feed_result(self, job_id: str, result, runtime: dict,
+                           drafts: dict | None) -> None:
+        """React to one fed result: delta, idle tick, or whole-state fallback."""
+        if isinstance(result, adapter.DeltaIdle):
+            self.workbench.apply_runtime(runtime)
+            self._sync_menu_state()
+            self._maybe_slow_projection(job_id, ())
+            return
+        if isinstance(result, adapter.DeltaBatch):
+            if int(result.seq) <= self._delta_applied_seq:
+                return                      # stale read: never go backwards
+            try:
+                applied = adapter.apply_workbench_delta(self._delta_model, result, drafts)
+            except adapter.WorkbenchNeedResync as exc:
+                self._log(f"workbench delta resync ({exc.reason})")
+                self._resync_from_full(job_id)
+                return
+            except Exception as exc:  # noqa: BLE001 - one bad delta must not freeze the view
+                # A delta the read model cannot apply is a correctness problem,
+                # not a reason to keep showing stale rows: fall back to the
+                # authoritative state and keep the reason in the log.
+                self._log(f"workbench delta failed ({type(exc).__name__}: {exc})")
+                self._resync_from_full(job_id)
+                return
+            self._delta_applied_seq = int(result.seq)
+            counts = adapter.document_counts(self._delta_model)
+            changed = self.workbench.apply_delta(
+                job_id, applied.rows, list(applied.positions), counts=counts,
+                runtime=runtime, domains=applied.domains or result.domains,
+                counters=result.counters)
+            if not changed:
+                self._resync_from_full(job_id)
+                return
+            self._sync_menu_state()
+            self._sync_minimum_size()
+            self._maybe_slow_projection(
+                job_id, applied.domains or result.domains,
+                runtime=runtime, force_terminal=True)
+            return
+        if isinstance(result, adapter.DeltaSnapshotChanged):
+            if result.worker_active:
+                # The pipeline still owns the task: its snapshot is its own
+                # compaction of records we have already applied (an external
+                # save is refused while `.worker.lock` is held), so the rows are
+                # current and the journal cursor keeps moving.  Rebuilding the
+                # whole state here would freeze the workbench once per snapshot
+                # cadence for no new information.
+                #
+                # A write that never reaches the journal (stage switch, glossary
+                # freeze) is not lost by returning: the slow projection reloads
+                # the authoritative state on its own cadence, so it lands within
+                # DELTA_PROJECTION_SECONDS.  See _maybe_slow_projection().
+                return
+            self._log("workbench snapshot resync (no live worker)")
+            self._resync_from_full(job_id)
+            return
+        if isinstance(result, adapter.DeltaResyncRequired):
+            if result.permanent:
+                self._delta_legacy_job = job_id
+                self._log(f"workbench delta permanently disabled: {result.reason}")
+            else:
+                self._log(f"workbench delta resync: {result.reason}")
+            self._resync_from_full(job_id)
+            return
+        if isinstance(result, adapter.DeltaLegacyMode):
+            self._delta_legacy_job = job_id
+            self._resync_from_full(job_id)
+            return
+
+    def _flush_pending_poll(self) -> None:
+        """Re-issue a poll that arrived while a read was in flight."""
+        if not self._pending_poll or self._state_load_in_flight:
+            return
+        self._pending_poll = False
+        self._poll_workbench()
+
+    def _repoll_if_changed(self, job_id: str, signature: str) -> None:
+        """Re-poll once when the state advanced while a read was in flight.
+
+        "One poll after a change converges" is the workbench contract the old
+        synchronous path had.  With background reads a second writer can land
+        between the read and its `done` callback; instead of leaving the window
+        stale until the next 1 s tick, schedule one follow-up poll.  This is
+        event/state driven, not a sleep-based settle window.
+        """
+        if self._repoll_pending:
+            return
+        try:
+            current = adapter.state_signature(job_id)
+        except Exception:  # noqa: BLE001 - a failed stat must not break the UI
+            return
+        if current == signature:
+            return
+        self._repoll_pending = True
+
+        def again() -> None:
+            self._repoll_pending = False
+            if (job_id == self._current_job_id and not self._state_load_in_flight
+                    and not self._opening_job_id and not self._closing_accepted):
+                self._poll_workbench()
+
+        self._later(0, again)
+
+    def _resync_from_full(self, job_id: str) -> None:
+        """Drop the incremental state and reload the authoritative one."""
+        self._drop_delta_state()
+        if job_id == self._current_job_id:
+            self._poll_workbench_full()
+
+    # -- slow, whole-document projections ---------------------------------
+    def _maybe_slow_projection(self, job_id: str, domains, *, runtime=None,
+                               force_terminal: bool = False) -> None:
+        """Refresh the O(document) panels on their own cadence (not per batch)."""
+        if self._delta_projection_in_flight:
+            return
+        status = str((runtime or self.workbench._last_runtime or {}).get("status") or "")
+        terminal = status in ("completed", "failed", "cancelled", "interrupted",
+                              "stalled", "idle_incomplete")
+        terminal_change = bool(force_terminal and terminal
+                               and status != self._last_runtime_status)
+        slow = {"review", "delivery", "followup", "terms", "academic",
+                "details", "activity"}
+        due = (bool(slow & set(domains or ())) or terminal_change
+               or self._delivery_cache.due(job_id)
+               or time.monotonic() - self._delta_projection_at >= DELTA_PROJECTION_SECONDS)
+        if not due:
+            return
+        self._delta_projection_in_flight = True
+        # The old poll made "a projection is being prepared" observable through
+        # _state_load_in_flight; keep that contract so callers (and tests) that
+        # wait for a settled workbench wait for the projections too.
+        self._state_load_in_flight = True
+        count_occurrences = self.workbench.terms_open()
+        refresh_delivery = terminal_change
+
+        def read():
+            state = adapter.load_state(job_id)
+            if not state:
+                return None
+            models = adapter.workbench_models(
+                job_id, state, count_occurrences=count_occurrences)
+            models["delivery"] = self._delivery_cache.refresh(
+                job_id, self.config, state)
+            # Signature observed *with* the state, so a write that lands while
+            # the projection is being prepared is detected on `done`.
+            return state, models, adapter.state_signature(job_id)
+
+        def done(payload) -> None:
+            self._delta_projection_in_flight = False
+            self._state_load_in_flight = False
+            if (job_id != self._current_job_id or self._opening_job_id
+                    or self._closing_accepted or payload is None):
+                return
+            state, models, signature = payload
+            self._cached_state = state
+            self._cached_signature = signature
+            self._cached_models = (state, models)
+            self._cached_models_key = self._workbench_models_key(
+                job_id, self._cached_signature)
+            runtime_view = models.get("runtime") or adapter.runtime_view(job_id, state)
+            snapshots = models.get("snapshots") or []
+            self._last_runtime_status = str(runtime_view.get("status") or "")
+            # A start that only exists in state.json (``p1_done``,
+            # ``source_paras``: neither reaches the journal) lands here and
+            # nowhere else, and ``_task_started()`` reads the setup view.  Only a
+            # real transition pays for this: the slow cadence must not rebuild
+            # the prepare sheet every DELTA_PROJECTION_SECONDS.
+            if self._state_started(state) != self.workbench.task_started():
+                self._load_setup(job_id, state)
+            self.workbench.apply_projection(
+                job_id, state, runtime_view, snapshots, models=models,
+                refresh_delivery=refresh_delivery)
+            self._sync_menu_state()
+            self._delta_projection_at = time.monotonic()
+            self._repoll_if_changed(job_id, signature)
+            self._flush_pending_poll()
+
+        def failed(_message: str, _detail: str) -> None:
+            self._delta_projection_in_flight = False
+            self._state_load_in_flight = False
+            # A poll that arrived while this projection was in flight must still
+            # run: the other two read paths (poll-state, poll-delta) re-issue it
+            # here as well.  Without it a failed projection swallowed that tick
+            # and the workbench waited out the next 1 s timer for nothing.
+            self._flush_pending_poll()
+
+        self.runner.submit(read, on_done=done, on_error=failed,
+                           label="poll-projections")
+
+    # -- legacy path ------------------------------------------------------
+    def _poll_workbench_full(self) -> None:
         """Timer path: read a changed state off the GUI thread, then refresh.
 
         Every batch the pipeline writes changes the state; parsing and copying it
@@ -1923,9 +2450,12 @@ class MainWindow(QMainWindow):
             self._cached_models = (state, models)
             self._cached_models_key = models_key
             self.refresh_workbench(preloaded=True, models=models)
+            self._repoll_if_changed(job_id, signature)
+            self._flush_pending_poll()
 
         def failed(_message: str, _detail: str) -> None:
             self._state_load_in_flight = False
+            self._flush_pending_poll()
 
         self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-state")
@@ -1956,6 +2486,10 @@ class MainWindow(QMainWindow):
         signature = adapter.state_signature(job_id)
         changed = preloaded or signature != self._cached_signature
         if (changed or force) and not preloaded:
+            # An explicit refresh reads the authoritative state; the incremental
+            # cursor must restart from that snapshot, otherwise the next delta
+            # would be applied on top of rows the refresh already replaced.
+            self._drop_delta_state()
             with timing.phase("load_state"):
                 state = adapter.load_state(job_id)
             if not state:
@@ -2010,6 +2544,10 @@ class MainWindow(QMainWindow):
                                  refresh_delivery=force or terminal_change, prepared=prepared,
                                  models=models)
         self._sync_menu_state()
+        # 内容变了，布局的最小尺寸也可能跟着变（标题、阶段条、检查器动作条）。
+        # 每次刷新同步一次，窗口的 minimumSize() 才不会比真实下限小 1–8px——
+        # 否则「缩到最小尺寸」会被 Qt 悄悄放大（resize(870,463) → 871×463）。
+        self._sync_minimum_size()
         # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
         self._later(600, lambda: self._offer_tips(runtime))
 
@@ -2149,8 +2687,15 @@ class MainWindow(QMainWindow):
             self._notice(i18n.tr('任务当前不可暂停。'), error=True)
 
     def continue_job(self) -> None:
-        """恢复一个被暂停的任务（由"继续翻译"按钮/菜单承担）。"""
-        if self._current_job_id and adapter.continue_job(self._current_job_id):
+        """恢复一个被暂停的任务（由"继续翻译"按钮/菜单承担）。
+
+        若暂停期间连接（API Key / 服务商 / 模型 / 推理模式）改过，核心会用当前
+        连接透明地重新启动 worker：已识别的页面与译文保留，改动立即生效。
+        """
+        job_id = self._current_job_id
+        if job_id and adapter.continue_job(
+                job_id, self.config,
+                user_defaults=dict(self.stored_task_defaults)):
             self._notice(i18n.tr('正在继续任务。'))
             self.refresh_workbench(force=True)
         else:
@@ -2968,19 +3513,93 @@ class MainWindow(QMainWindow):
         job_id = self._current_job_id
         if not job_id:
             return False
-        try:
-            result = fn(job_id, *args, **kwargs)
-        except adapter.AdapterError as exc:
-            self._failure(failure or i18n.tr('无法修改术语'), str(exc))
+        if self.workbench.operation_active(job_id):
+            self._notice(i18n.tr('上一个操作还在进行，请等它完成。'), error=True, job_id=job_id)
             return False
-        message = done_message or (result if isinstance(result, str) else "")
-        if message:
-            self._notice(message)
-        self.refresh_workbench(force=True)
-        self.workbench.refresh_terms()
-        if after is not None:
-            after()
+        self.workbench.begin_operation(job_id, i18n.tr('正在保存术语…'), None)
+        self.workbench.terms_panel.setEnabled(False)
+
+        def finished():
+            self.workbench.end_operation(job_id)
+            self.workbench.terms_panel.setEnabled(True)
+
+        def done(result):
+            finished()
+            message = done_message or (result if isinstance(result, str) else '')
+            if message:
+                self._notice(message, job_id=job_id)
+            if self._current_job_id == job_id:
+                self.refresh_workbench(force=True)
+                self.workbench.refresh_terms()
+                if after is not None:
+                    after()
+
+        def failed(message, detail):
+            finished()
+            self._failure(failure or i18n.tr('无法修改术语'), message, detail, job_id=job_id)
+
+        self.runner.submit(fn, job_id, *args, on_done=done, on_error=failed,
+                           label='glossary-save', **kwargs)
         return True
+
+    def merge_terminology_entries(self, keep_id: str, remove_id: str, expected: list) -> None:
+        self._glossary_action(adapter.merge_glossary_entries, keep_id, remove_id, expected,
+                              failure=i18n.tr('无法合并术语'))
+
+    def revalidate_terminology_conflicts(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if self.workbench.terms_panel.is_dirty():
+            self._failure(i18n.tr('无法重新验证术语表'), i18n.tr('请先保存或撤销尚未保存的术语修改。'))
+            return
+        self._run_with_busy(i18n.tr('重新验证术语表'), i18n.tr('正在验证术语冲突…'),
+                            adapter.revalidate_terminology_conflicts, job_id,
+                            on_done=lambda _state: self._notice(i18n.tr('术语表验证完成。'), job_id=job_id))
+
+    def preview_terminology_replacement(self, entry_id: str, old: str, indexes) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if self.workbench.has_unsaved_editor_text() or self.edits_pending():
+            self._failure(i18n.tr('无法替换术语'), i18n.tr('请先保存或放弃正在编辑的译文。'))
+            return
+
+        def ready(preview):
+            # Let the preview operation finish before starting another operation.
+            QTimer.singleShot(0, self,
+                              lambda: self._confirm_terminology_replacement(job_id, preview))
+
+        self._run_with_busy(i18n.tr('术语替换预览'), i18n.tr('正在计算替换预览…'),
+                            adapter.preview_terminology_replacement, job_id, entry_id, old,
+                            indexes, on_done=ready)
+
+    def _confirm_terminology_replacement(self, job_id: str, preview: dict) -> None:
+        if job_id != self._current_job_id:
+            return
+        parent = self.workbench.terms_panel.window()
+        dialog = dialogs.TerminologyReplacementPreview(preview, parent)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if self.workbench.has_unsaved_editor_text() or self.edits_pending():
+            self._failure(i18n.tr('无法替换术语'), i18n.tr('请先保存或放弃正在编辑的译文。'))
+            return
+        self._run_with_busy(i18n.tr('术语替换'), i18n.tr('正在应用术语替换…'),
+                            adapter.apply_terminology_replacement, job_id, preview,
+                            on_done=lambda count: self._notice(
+                                i18n.tr('已修改 {v0} 段，可在术语管理中撤销。', v0=count), job_id=job_id))
+
+    def undo_terminology_replacement(self) -> None:
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        if self.workbench.has_unsaved_editor_text() or self.edits_pending():
+            self._failure(i18n.tr('无法撤销术语替换'), i18n.tr('请先保存或放弃正在编辑的译文。'))
+            return
+        self._run_with_busy(i18n.tr('撤销术语替换'), i18n.tr('正在撤销术语替换…'),
+                            adapter.undo_terminology_replacement, job_id,
+                            on_done=lambda count: self._notice(
+                                i18n.tr('已恢复 {v0} 段；审校状态需要重新确认。', v0=count), job_id=job_id))
 
     def _continue_after_freeze(self) -> None:
         """冻结后顺手继续翻译（旧界面也是这样）；已开始或正在运行的任务不动。"""
@@ -3002,24 +3621,24 @@ class MainWindow(QMainWindow):
 
     def freeze_glossary(self, rows: list) -> None:
         self._glossary_action(adapter.freeze_glossary, rows,
-                              done_message=i18n.tr('术语已冻结。'),
-                              failure=i18n.tr('无法冻结术语'),
+                              done_message=i18n.tr('术语已锁定。'),
+                              failure=i18n.tr('无法锁定术语'),
                               after=self._continue_after_freeze)
 
     def unfreeze_glossary(self) -> None:
         self._glossary_action(adapter.unfreeze_glossary,
-                              done_message=i18n.tr('已解除冻结，可以继续修改术语。'),
-                              failure=i18n.tr('无法解除冻结'))
+                              done_message=i18n.tr('已解除锁定，可以继续修改术语。'),
+                              failure=i18n.tr('无法解除锁定'))
 
     def bypass_glossary_freeze(self) -> None:
         if not self._confirm(
-                i18n.tr('跳过术语冻结'),
+                i18n.tr('跳过术语锁定'),
                 i18n.tr('跳过后将直接使用暂定术语继续翻译；这个决定会被记录，之后术语变化不会自动保证全文一致。\n\n确定跳过吗？'),
-                yes=i18n.tr('跳过冻结'), no=i18n.tr('取消')):
+                yes=i18n.tr('跳过锁定'), no=i18n.tr('取消')):
             return
         self._glossary_action(adapter.bypass_glossary_freeze,
-                              done_message=i18n.tr('已跳过冻结，使用暂定术语。'),
-                              failure=i18n.tr('无法跳过冻结'),
+                              done_message=i18n.tr('已跳过锁定，使用暂定术语。'),
+                              failure=i18n.tr('无法跳过锁定'),
                               after=self._continue_after_freeze)
 
     def update_glossary_entry(self, entry_id: str, fields: dict) -> None:
@@ -3028,7 +3647,8 @@ class MainWindow(QMainWindow):
             preferred=fields.get("preferred", ""), status=fields.get("status", ""),
             domain=fields.get("domain", ""), note=fields.get("note", ""),
             forbidden=fields.get("forbidden"),
-            failure=i18n.tr('无法保存术语'))
+            failure=i18n.tr('无法保存术语'),
+            after=lambda: self.workbench.terms_panel.mark_form_saved(entry_id))
 
     def set_terms_status(self, entry_ids: list, status: str) -> None:
         self._glossary_action(adapter.set_terms_status, entry_ids, status,
@@ -3071,6 +3691,40 @@ class MainWindow(QMainWindow):
         # 连续处理（#98）：只有动作**成功**才前进到下一项；失败时提示留在
         # 队列里，未处理的发现项不会被跳过。
         self.workbench.review_panel.consume_advance_hint()
+
+    def set_auto_handling(self, enabled: bool) -> None:
+        """打开或关闭本任务的自动处理；失败时刷新页面，让勾选状态回到实际值。"""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            result = adapter.set_auto_handling(job_id, enabled)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法切换自动处理'), str(exc))
+        else:
+            self._notice(
+                i18n.tr('已开启自动处理：{v0} 条发现有确定依据，已移入审计组。',
+                        v0=result["verified_safe"])
+                if enabled else i18n.tr('已关闭自动处理：所有发现回到人工队列。'))
+        self.refresh_workbench(force=True)
+
+    def revoke_auto_handling(self, record_key: str) -> None:
+        """#289: 撤销一条自动处理结论——窗口层是唯一写状态的地方。
+
+        面板只发信号；这里经适配器调用既有核心函数（已提交的修复走
+        ``revert_auto_resolution`` 只暂存撤回候选、不改译文，其余走
+        ``finding_triage.revoke``），然后刷新页面：这一项回到人工队列。
+        """
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            adapter.revoke_auto_handling(job_id, record_key)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法撤销这条自动处理'), str(exc))
+            return
+        self._notice(i18n.tr('已撤销这条自动处理结论；这一项回到人工队列。'))
+        self.refresh_workbench(force=True)
 
     def apply_suggestion(self, item: dict, note: str) -> None:
         """把审校建议暂存为候选；正文和发现项都不动，采用是另一个动作。"""
@@ -3349,6 +4003,24 @@ class MainWindow(QMainWindow):
         self.add_glossary_entry({"source": values["source"], "preferred": values["target"],
                                  "domain": values["domain"], "status": "locked"})
 
+    def analyze_outline_recovery(self, fingerprint: str) -> None:
+        job_id = self._current_job_id
+        section = self.workbench.setup_panel.source_section
+        if not job_id:
+            section.ai_recovery_finished(i18n.tr('找不到任务。'))
+            return
+
+        def done(_result) -> None:
+            if self._current_job_id == job_id:
+                section.ai_recovery_finished()
+
+        def failed(message: str, _detail: str) -> None:
+            if self._current_job_id == job_id:
+                section.ai_recovery_finished(i18n.tr_dynamic(message))
+
+        self.runner.submit(adapter.analyze_outline_recovery, job_id, self.config, fingerprint,
+                           on_done=done, on_error=failed, label="outline-recovery")
+
     def analyze_segment(self, index: int) -> None:
         """进一步审视本段：后台一次模型调用，结果缓存在这一段上（只说明，不改写）。"""
         job_id = self._current_job_id
@@ -3506,6 +4178,132 @@ class MainWindow(QMainWindow):
             on_done=lambda written: self._notice(
                 i18n.tr('已保存 {v0} 个文件到 {v1}', v0=len(written), v1=target)))
 
+    # ================= 交付工作区的文件操作 =================
+    def _ask_save_file(self, title: str, default_name: str) -> str:
+        """保存对话框；脚本化运行不弹系统面板（与 ``_choose_directory`` 同一条约定）。"""
+        if _automation():
+            self._notice(i18n.tr(
+                '{v0}：自动化运行不打开系统面板，交付文件由调用方直接写出。', v0=title))
+            return ""
+        target, _selected = QFileDialog.getSaveFileName(
+            self, title, str(Path.home() / "Documents" / default_name))
+        return target
+
+    def _info(self, title: str, message: str, detail: str = "") -> None:
+        """信息窗口；脚本化运行只记一条瞬时消息，不阻塞。"""
+        self._last_notice = message
+        if _automation():
+            self._notice(f"{title} · {message}", task=False, detail=detail)
+            return
+        prompts.NoticeDialog.notify(self, title, message, detail=detail)
+
+    def download_delivery_zip(self, version: int, job_id: str | None = None) -> None:
+        """把当前冻结版本的全部交付文件打包成 ZIP 并保存到用户选择的位置。
+
+        只读冻结快照：打包不会改动、也不会重新生成任何交付文件；快照里有文件
+        缺失或校验不过时，适配器会拒绝并给出是哪一个，不产生"看起来成功"的半套包。
+        """
+        job_id = job_id or self._current_job_id
+        if not job_id:
+            return
+        try:
+            default_name = adapter.delivery_archive_name(job_id, int(version))
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法打包冻结交付'), str(exc), job_id=job_id)
+            return
+        target = self._ask_save_file(i18n.tr('保存交付包（ZIP）'), default_name)
+        if not target:
+            self._notice(i18n.tr('已取消下载。'), job_id=job_id)
+            return
+        self._run_with_busy(
+            i18n.tr('下载全部（ZIP）'), i18n.tr('正在打包冻结交付…'),
+            adapter.save_delivery_archive, job_id, int(version), target,
+            for_job=job_id,
+            on_done=lambda path: self._notice(
+                i18n.tr('已保存交付包：{v0}', v0=str(path)), job_id=job_id))
+
+    def open_delivery_folder(self, version: int, job_id: str | None = None) -> None:
+        """在系统文件管理器里打开冻结交付目录（不存在就报错，不假装打开过）。"""
+        job_id = job_id or self._current_job_id
+        if not job_id:
+            return
+        try:
+            result = adapter.open_delivery_folder(job_id, int(version))
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法打开交付文件夹'), str(exc), job_id=job_id)
+            return
+        if not result.get("ok"):
+            self._failure(i18n.tr('无法打开交付文件夹'),
+                          str(result.get("detail") or i18n.tr('系统未返回原因。')),
+                          job_id=job_id)
+            return
+        self._notice(i18n.tr('已打开交付文件夹：{v0}', v0=str(result.get("path") or "")),
+                     job_id=job_id)
+
+    def save_delivery_asset(self, name: str, version: int,
+                            job_id: str | None = None) -> None:
+        """另存单个交付文件的副本（源文件只读；目标已存在时由保存对话框确认）。"""
+        job_id = job_id or self._current_job_id
+        if not job_id or not name:
+            return
+        try:
+            default_name = adapter.delivery_default_asset_name(
+                job_id, int(version), name)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法另存文件'), str(exc), job_id=job_id)
+            return
+        target = self._ask_save_file(i18n.tr('另存文件副本'), default_name)
+        if not target:
+            self._notice(i18n.tr('已取消另存。'), job_id=job_id)
+            return
+        self._run_with_busy(
+            i18n.tr('另存文件副本'), i18n.tr('正在复制交付文件…'),
+            adapter.save_delivery_asset_copy, job_id, int(version), name, target,
+            for_job=job_id, overwrite=True,
+            on_done=lambda path: self._notice(
+                i18n.tr('已保存文件副本：{v0}', v0=str(path)), job_id=job_id))
+
+    def show_delivery_asset_info(self, name: str, version: int,
+                                 job_id: str | None = None) -> None:
+        """文件信息：名称、格式、大小、校验值与所属交付版本（全部来自真实文件）。"""
+        job_id = job_id or self._current_job_id
+        if not job_id or not name:
+            return
+        try:
+            info = adapter.delivery_asset_info(job_id, int(version), name)
+        except adapter.AdapterError as exc:
+            self._failure(i18n.tr('无法读取文件信息'), str(exc), job_id=job_id)
+            return
+        from . import delivery_panel
+
+        lines = [
+            i18n.tr('文件名：{v0}', v0=str(info.get("name") or "")),
+            i18n.tr('格式：{v0}', v0=delivery_panel.format_label(str(info.get("name") or ""))),
+            i18n.tr('大小：{v0}', v0=delivery_panel.human_size(info.get("size"))),
+            i18n.tr('交付版本：v{v0}', v0=info.get("version")),
+            i18n.tr('所属文档：{v0}', v0=str(info.get("source_name") or i18n.tr('未命名任务'))),
+            i18n.tr('位置：{v0}', v0=str(info.get("path") or "")),
+        ]
+        created = str(info.get("created_at") or "")
+        if created:
+            lines.append(i18n.tr('交付时间：{v0}', v0=created))
+        sha = str(info.get("sha256") or "")
+        if sha:
+            lines.append(i18n.tr('校验（sha256）：{v0}…', v0=sha[:16]))
+        if not info.get("exists"):
+            lines.append(i18n.tr('状态：文件在磁盘上找不到。'))
+        elif info.get("size") is not None and info.get("actual_size") not in (None, info.get("size")):
+            lines.append(i18n.tr('状态：磁盘上的大小与交付记录不一致。'))
+        self._info(i18n.tr('文件信息'), "\n".join(lines))
+
+    def copy_path(self, path: str) -> None:
+        """把文件路径写进系统剪贴板。"""
+        text = str(path or "")
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self._notice(i18n.tr('已复制文件路径：{v0}', v0=text), task=False)
+
     def reveal_path(self, path: str) -> None:
         result = adapter.reveal_in_finder(path)
         self._notice(result.get("detail") or i18n.tr('已在{v0}中显示。', v0=platform_ui.file_manager_name()), task=False)
@@ -3533,7 +4331,17 @@ class MainWindow(QMainWindow):
             dialog.revealRequested.connect(self.reveal_path)
             dialog.diagnosticsRequested.connect(self.show_diagnostics)
             dialog.shortcutsRequested.connect(self.show_shortcuts)
-            dialog.destroyed.connect(lambda *_: setattr(self, "_settings_window", None))
+            # A lambda that captures `self` on a WA_DeleteOnClose dialog keeps a
+            # reference cycle alive across Qt-side destruction (stale PySide
+            # wrappers -> SIGSEGV).  Close over a weakref instead.
+            window_ref = weakref.ref(self)
+
+            def _forget_settings(*_args, _ref=window_ref):
+                target = _ref()
+                if target is not None:
+                    target._settings_window = None
+
+            dialog.destroyed.connect(_forget_settings)
             self._settings_window = dialog
         if page:
             dialog.show_page(page)
@@ -3574,7 +4382,12 @@ class MainWindow(QMainWindow):
         """首次启动：全新用户看欢迎窗口，老用户只看一页「新变化」。返回显示了哪一种。"""
         from . import onboarding
 
-        if onboarding._automatic():
+        import os as _os
+
+        # 脚本化 / 开发环境：显式跳过，别再让"新手指南/新变化"挡住每一次启动。
+        # `FOLITH_SKIP_ONBOARDING=1` 优先于一切；offline/offscreen 与
+        # `FOLITH_QT_NONINTERACTIVE=1` 走 `_automatic()`。
+        if _os.environ.get("FOLITH_SKIP_ONBOARDING") == "1" or onboarding._automatic():
             return ""
         try:
             has_jobs = bool(adapter.list_jobs())
@@ -3587,7 +4400,8 @@ class MainWindow(QMainWindow):
         if kind == "welcome":
             self.show_onboarding()
         elif kind == "whatsnew":
-            onboarding.WhatsNewDialog(version, self).exec()
+            if not _automation():
+                onboarding.WhatsNewDialog(version, self).exec()
             onboarding.mark_completed(self.settings, version)
         return kind
 
@@ -3832,6 +4646,8 @@ class MainWindow(QMainWindow):
     def _begin_exit(self) -> None:
         if self._exit_in_progress:
             return
+        if not self._confirm_leave_unsaved_terms():
+            return
         self._exit_in_progress = True
         non_interactive = _non_interactive_exit()
 
@@ -3975,23 +4791,28 @@ class MainWindow(QMainWindow):
         self.close()
 
 
-#: 平台级缺陷（**应用侧无法根治，也没有可用的开关**）：在 macOS 26/27 上，外部辅助功能
-#: 客户端（AI "Computer Use" / VoiceOver / 窗口管理器的 AX 扫描）遍历界面时，Qt 的 Cocoa
-#: 可访问性桥会崩溃（SIGSEGV/SIGBUS，栈顶 `libqcocoa` +
+#: 平台级缺陷 **QTBUG-149612**（上游已修复，但随包 PySide6 还没有）：在 macOS 26/27 上，
+#: 外部辅助功能客户端（AI "Computer Use" / VoiceOver / 窗口管理器的 AX 扫描）遍历界面时，
+#: Qt 的 Cocoa 可访问性桥会崩溃（SIGSEGV/SIGBUS，栈顶 `libqcocoa` +
 #: `NSAccessibilityAttributeAccessorInfo getAttributeValue:forObject:`）。
 #:
-#: 上游根因：QTBUG-149612 —— "macOS: synthesized table elements can delete their parent
-#: accessibility interface"（影响 6.11.0–6.11.2；截至 2026-10-05 状态 Reported、无 fixVersion，
-#: Gerrit 765434 仍在评审）。同一个签名见于 calibre（PyQt6）、Qt Creator、Anki、FreeCAD。
+#: 根因：`-[QMacAccessibilityElement dealloc]` 会用元素共享的 `axid` 调用
+#: `QAccessibleCache::deleteInterface`；表格合成的 row/cell 占位元素与父表共用 id，
+#: 它们析构时删掉了父表的 `QAccessibleInterface`，`QAccessibleTable` 缓存的指针随后
+#: 变成悬垂指针，下一次 AX 查询（选中子元素）即读已释放内存。
 #:
-#: R62 实测（本仓库 `scripts/qt_ax_scan_probe.py`，证据 E163–E168）：
-#:   - 复现 3/3 + 对照 2/2：表格里选中一行 + 外部 AX 扫描 + 打开任务 → 进程 SIGSEGV/SIGBUS；
-#:   - `QT_ACCESSIBILITY=0` 在 Qt 6.11 **完全无效**（随包 Qt 二进制里没有这个字符串）；
-#:   - `QAccessible.setActive(False)` 会被 OS 在 AX 客户端接入时重新激活，即使每 100ms 重申
-#:     一次，崩溃依旧发生。
-#: 因此这里**不再提供任何"关掉辅助功能"的开关**（R61 曾提供的
-#: `FOLITH_QT_DISABLE_ACCESSIBILITY=1` 是无效的，已删除）：不要给测试者一个不存在的安全感。
-#: 唯一可靠做法是**验收时不挂外部 AX 代理**（人工键鼠不受影响），并等上游修复后升级 PySide6。
+#: 处置（2026-11-06，R64）：
+#:   - 上游 commit `8148c48d`（"macOS: Don't let native a11y elements delete accessible
+#:     interfaces"）2026-10-27 已合入 Qt `dev`/`6.12`，但 6.11.2（随包）、6.11.3、
+#:     6.12.0 都早于它，带修复的 6.12.1 计划 2026-11-17 发布；
+#:   - 因此由 :mod:`folith.qt.macos_accessibility` 在启动时把 `-dealloc` 换成
+#:     "先清零 `axid` 再调原实现"，等价于上游修复的语义；
+#:   - `QT_ACCESSIBILITY=0` 在 Qt 6.11 无效、`QAccessible.setActive(False)` 会被系统
+#:     重新激活（R62 实测），所以**不再提供任何"关掉辅助功能"的开关**——那种开关只会
+#:     给测试者一个不存在的安全感。诊断用的 `FOLITH_QT_AX_WORKAROUND=0` 关掉的是
+#:     **本修复**（用来复现上游缺陷做 A/B），不是辅助功能；
+#:   - PySide6 升到 6.12.1+ 后修复不再安装（版本门），届时删除该模块与调用点。
+
 
 
 def file_open_path(event) -> str:

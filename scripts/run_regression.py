@@ -67,6 +67,9 @@ LOGS = ROOT / ".regression-logs"
 PYTEST_STYLE = "pytest"
 SCRIPT_STYLE = "script"
 # 有墙钟/性能断言或独占资源的文件：并行模式下放到并行池之后串行执行。
+#: 单个测试超过这么久，pytest 会把所有线程的栈打印出来（不会杀掉它）。
+FAULTHANDLER_SECONDS = 600
+
 EXCLUSIVE = frozenset({
     "app_boot_test.py",
     "desktop_single_instance_test.py",
@@ -102,6 +105,9 @@ def _command(path: Path, kind: str, scratch: Path,
     targets = nodes if nodes else [str(path)]
     return [sys.executable, "-m", "pytest", *targets,
             "-q", "--no-header", "-p", "no:cacheprovider",
+            # A test that hangs prints every thread's stack after this long, so a
+            # cancelled CI job leaves evidence of where it was stuck.
+            "-o", f"faulthandler_timeout={FAULTHANDLER_SECONDS}",
             "--basetemp", str(scratch / "pytest-base")]
 
 
@@ -151,6 +157,9 @@ def main() -> int:
     parser.add_argument("--split", action="append", default=[], metavar="FILE=N",
                         help="把一个特别慢的 pytest 文件按收集顺序切成 N 个独立进程"
                              "（需要 --jobs > 1），可重复")
+    parser.add_argument("--file-timeout", type=int, default=0, metavar="SECONDS",
+                        help="单个进程的墙钟上限，超时即杀掉并记为失败；0 = 自动"
+                             "（并行 1200 秒，串行 3000 秒，都高于最慢的合法单元）")
     args = parser.parse_args()
 
     files = sorted(TESTS.glob("*_test.py"))
@@ -162,6 +171,7 @@ def main() -> int:
         return 1
 
     jobs = max(1, args.jobs)
+    file_timeout = args.file_timeout or (1200 if jobs > 1 else 3000)
     if jobs > 1 and not sys.platform.startswith("linux"):
         print(f"--jobs {jobs} 只在 Linux 上可用：{sys.platform} 的 QSettings 无法按进程"
               "隔离，并行会让 Qt 测试互相污染。改用 --jobs 1。", file=sys.stderr)
@@ -196,8 +206,18 @@ def main() -> int:
                        XDG_DATA_HOME=str(home / ".local/share"),
                        XDG_CACHE_HOME=str(home / ".cache"))
         begin = time.time()
-        proc = subprocess.run(_command(path, kind, scratch, nodes), cwd=ROOT,
-                              capture_output=True, text=True, env=env)
+        try:
+            proc = subprocess.run(_command(path, kind, scratch, nodes), cwd=ROOT,
+                                  capture_output=True, text=True, env=env,
+                                  timeout=file_timeout)
+        except subprocess.TimeoutExpired as exc:
+            # 一个卡死的文件不能拖到整个 CI 任务被取消：记为失败并保留它的输出。
+            def _text(value) -> str:
+                return value.decode("utf-8", "replace") if isinstance(value, bytes) else (value or "")
+            output = (_text(exc.stdout) + _text(exc.stderr)
+                      + f"\nTIMEOUT: killed after {file_timeout}s\n")
+            return (124, kind, name, int(time.time() - begin),
+                    f"TIMEOUT after {file_timeout}s", output)
         elapsed = int(time.time() - begin)
         output = (proc.stdout or "") + (proc.stderr or "")
         return (proc.returncode, kind, name, elapsed,

@@ -13,6 +13,7 @@ from folith import ocr_backends as _ocr_backends
 from folith import ocr_language as _ocr_language
 from folith import ocr_models as _ocr_models
 from folith import ocr_online as _ocr_online
+from folith.ocr_online import default_vision_effort, default_vision_reasoning
 from folith.textual import has_textual_content
 from pathlib import Path
 from folith.engine._link import core as _c
@@ -32,6 +33,66 @@ OCR_CHECKPOINT_VERSION = 1
 
 # Fixed 220 DPI stays the production baseline for scanned-page OCR.
 OCR_DPI_BASELINE = 220
+
+
+#: 视觉读页并发（每条连接）。#220 C1 的实测：思考开启时「读一页」在约 110 s 后
+#: 被网关回 502，而客户端超时是 180 s——**网关比客户端先放弃**，多路请求同时
+#: 排在网关后面时更容易一起撞上限（首批 5 页里 4 页失败、任务 5 分钟没进展）。
+#: 因此默认值按连接类型分档：官方端点 3 路；自定义 relay / 网关 2 路。
+#: 显式参数与既有的页并发环境变量仍然优先（语义不变），上限 8 路。
+VISION_PAGE_WORKERS_DEFAULT = 3
+VISION_PAGE_WORKERS_RELAY_DEFAULT = 2
+VISION_PAGE_WORKERS_MAX = 8
+#: 既有的页并发环境变量名（与 folith.document_understanding 的历史行为一致）。
+VISION_PAGE_WORKERS_ENV = "FOLIOTHREAD_VLM_PAGE_WORKERS"
+
+#: 「网关超时早于客户端超时」的诊断提示。放在配置层而不是某条 UI 路径里：
+#: 它是连接属性，不是某一页的偶发错误（原有超时值不变，见 #220 C1）。
+VISION_GATEWAY_TIMEOUT_HINT = (
+    "视觉读页的网关超时早于客户端超时：思考开启时读一页约 110 s 就返回 HTTP 502，"
+    "而客户端超时是 180 s。遇到 502 不要先加大客户端超时——自定义 relay / 网关建议"
+    "把视觉并发降到 2 路，或关闭思考后重试；官方端点可用默认 3 路。")
+
+
+def _vision_endpoint(value: str) -> str:
+    return str(value or "").strip().rstrip("/").casefold()
+
+
+def vision_connection_is_relay(provider="", base_url="", providers=None):
+    """连接是否经由自定义 relay / 网关（而非服务商官方端点）。
+
+    判定只看已登记的服务商与 base_url：未登记的服务商按 relay 处理（那是用户
+    自己填的端点）；已登记服务商但 base_url 被改到别处，同样算 relay。
+    """
+    table = providers if providers is not None else (_c.PROVIDERS or {})
+    name = str(provider or "").strip()
+    entry = table.get(name)
+    if not isinstance(entry, dict):
+        return True
+    official = _vision_endpoint(entry.get("base_url") or "")
+    current = _vision_endpoint(base_url or "")
+    if not current or not official:
+        # 没有自定义 base_url 就是服务商的官方端点。
+        return False
+    return current != official
+
+
+def vision_page_workers(provider="", base_url="", *, workers=None, environ=None):
+    """视觉读页并发：显式参数 > 环境变量 > 按连接类型的默认值。
+
+    ``workers`` / :data:`VISION_PAGE_WORKERS_ENV` 的语义与以前一致（1..8 夹紧），
+    只有「都没给」时的默认值按官方端点 / relay 分档（#220 C1）。
+    """
+    env = os.environ if environ is None else environ
+    for candidate in (workers, (env or {}).get(VISION_PAGE_WORKERS_ENV)):
+        try:
+            value = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        return max(1, min(VISION_PAGE_WORKERS_MAX, value))
+    if vision_connection_is_relay(provider, base_url):
+        return VISION_PAGE_WORKERS_RELAY_DEFAULT
+    return VISION_PAGE_WORKERS_DEFAULT
 
 
 _OCR_PAGE_NUMBER_RE = re.compile(
@@ -369,6 +430,9 @@ OCR_ONLINE_MAX_MAX_TOKENS = _ocr_online.MAX_MAX_TOKENS
 OCR_ONLINE_REASONING_MODES = tuple(_ocr_online.REASONING_MODES)
 
 
+OCR_ONLINE_REASONING_EFFORTS = tuple(_ocr_online.REASONING_EFFORTS)
+
+
 OCR_ONLINE_CREDENTIAL_LABELS = {
     "ocr_profile": "使用 OCR 专用凭据",
     "translation_profile": "引用已保存的翻译模型凭据",
@@ -382,6 +446,7 @@ def ocr_online_config_path():
 def save_ocr_online_config(*, provider="", model="", api_key="", base_url=None,
                            max_tokens=_ocr_online.DEFAULT_MAX_TOKENS,
                            temperature=0.0, reasoning_mode="provider_default",
+                           reasoning_effort="",
                            timeout_s=_ocr_online.DEFAULT_TIMEOUT_S,
                            max_retries=_ocr_online.DEFAULT_MAX_RETRIES):
     """Persist the OCR-only connection (0600), mirroring provider_config.json."""
@@ -389,7 +454,8 @@ def save_ocr_online_config(*, provider="", model="", api_key="", base_url=None,
     normalized = _ocr_online.OnlineOCRConfig(
         provider=provider, model=model, api_key=api_key, base_url=base_url or "",
         max_tokens=max_tokens, temperature=temperature,
-        reasoning_mode=reasoning_mode, timeout_s=timeout_s,
+        reasoning_mode=reasoning_mode, reasoning_effort=reasoning_effort,
+        timeout_s=timeout_s,
         max_retries=max_retries).normalized()
     payload = {
         "provider": normalized.provider,
@@ -399,6 +465,7 @@ def save_ocr_online_config(*, provider="", model="", api_key="", base_url=None,
         "max_tokens": normalized.max_tokens,
         "temperature": normalized.temperature,
         "reasoning_mode": normalized.reasoning_mode,
+        "reasoning_effort": normalized.reasoning_effort,
         "timeout_s": normalized.timeout_s,
         "max_retries": normalized.max_retries,
     }
@@ -468,6 +535,59 @@ def credential_for_endpoint(provider, resolved_base, prefer=""):
     return (rows[0][4], rows[0][3]) if rows else None
 
 
+def _vision_reasoning_mode(source, provider, model, recorded):
+    """Recorded mode, else the model's default.  When vision simply follows the
+    translation connection there is no vision-side setting, so a recorded
+    ``provider_default`` is only an earlier default, not a choice."""
+    fallback = default_vision_reasoning(provider, model)
+    recorded = str(recorded or "").strip()
+    if not recorded or (source == "translation_profile" and recorded == "provider_default"):
+        return fallback
+    return recorded
+
+
+def follow_connection_thinking(source, provider, model, recorded):
+    """Vision reasoning mode when it rides on the translation connection.
+
+    The switch is live user intent on that connection, so it beats the mode a
+    task snapshot recorded earlier; it only applies to a model whose endpoint
+    was verified to honour it, and "服务默认" can undo a recorded opt-in.
+    """
+    if source != "translation_profile":
+        return recorded
+    live = _c._connection_thinking_mode()
+    if live in _c.thinking_control_options(provider, model):
+        return live
+    if live == "provider_default" and recorded in _c.thinking_control_options(provider, model):
+        return live
+    return recorded
+
+
+def _vision_reasoning_effort(provider, model, recorded):
+    """Recorded level, else the model's default.
+
+    An empty value is "nobody chose", so the model's default applies — the same
+    rule as the thinking mode above.
+    """
+    fallback = default_vision_effort(provider, model)
+    recorded = str(recorded or "").strip().lower()
+    if recorded not in OCR_ONLINE_REASONING_EFFORTS:
+        recorded = ""
+    return recorded or fallback
+
+
+def follow_connection_effort(source, provider, model, recorded):
+    """Vision reasoning level when it rides on the translation connection.
+
+    The level is live user intent on that connection, so it beats what an
+    earlier task recorded; a connection that records no level leaves the
+    model's default in place.
+    """
+    if source != "translation_profile":
+        return recorded
+    return _c._connection_reasoning_effort() or recorded
+
+
 def resolve_ocr_online_config(saved=None, *, descriptor=None):
     """Build the runtime online OCR config from a task descriptor + credentials.
 
@@ -506,19 +626,34 @@ def resolve_ocr_online_config(saved=None, *, descriptor=None):
                                       "已不在已保存的连接里，无法取得它的访问凭据。")}
         api_key = found[0] if found else api_key
         owner = found[1] if found else owner
+    effort = follow_connection_effort(
+        source, provider, model,
+        _vision_reasoning_effort(
+            provider, model,
+            str(snapshot.get("reasoning_effort") or profile.get("reasoning_effort") or "")))
+    budget = int(snapshot.get("max_tokens") or profile.get("max_tokens")
+                 or _ocr_online.DEFAULT_MAX_TOKENS)
+    if effort:
+        # A reasoning endpoint pays for thinking out of the same budget, and a
+        # task recorded before the page-read budget was raised still carries the
+        # old 8,192 — which is exactly what a dense page cannot fit.  Giving
+        # such a task the current floor keeps it from failing on the old value.
+        budget = max(budget, _ocr_online.DEFAULT_MAX_TOKENS)
     config = _ocr_online.OnlineOCRConfig(
         provider=provider,
         base_url=resolved_base,
         model=model,
         api_key=api_key,
-        max_tokens=int(snapshot.get("max_tokens") or profile.get("max_tokens")
-                       or _ocr_online.DEFAULT_MAX_TOKENS),
+        max_tokens=budget,
         temperature=float(snapshot.get("temperature")
                           if snapshot.get("temperature") is not None
                           else profile.get("temperature") or 0.0),
-        reasoning_mode=str(snapshot.get("reasoning_mode") or profile.get("reasoning_mode")
-                           or ("thinking_disabled" if provider == "OpenCode Go"
-                               and model == "deepseek-v4.1-flash" else "provider_default")),
+        reasoning_mode=follow_connection_thinking(
+            source, provider, model,
+            _vision_reasoning_mode(
+                source, provider, model,
+                str(snapshot.get("reasoning_mode") or profile.get("reasoning_mode") or ""))),
+        reasoning_effort=effort,
         prompt_version=str(snapshot.get("prompt_version")
                            or _ocr_online.ONLINE_PROMPT_VERSION),
         timeout_s=float(snapshot.get("timeout_s") or profile.get("timeout_s")

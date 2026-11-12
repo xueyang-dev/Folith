@@ -214,6 +214,28 @@ def test_scope_restore_puts_segments_back_in_original_order(
         core.OUTPUT_DIR = old_output
 
 
+
+def test_scope_exclusion_and_restore_preserves_position_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "scope-position-metadata"
+    state = _state(translated=True)
+    state["segment_source_spans"] = [[{"page_id": f"p{i}"}] for i in range(4)]
+    state["segment_source_marks"] = [[{"id": i}] for i in range(4)]
+    state["segmentation"] = {"output_segment_count": 4, "paragraph_ranges": [
+        {"paragraph_index": i, "start": i, "end": i + 1} for i in range(4)]}
+    core.save_job_state(job_id, state)
+    core.exclude_translation_scope(job_id, ["chapter:0000"])
+    excluded = core.load_job_state(job_id)
+    assert len(excluded["segment_source_spans"]) == len(excluded["paras"]) == 2
+    ids = [item["excluded_id"] for item in excluded["excluded_segments"]]
+    restored = core.restore_translation_scope(job_id, ids)["state"]
+    assert restored["paras"] == _sources()
+    assert restored["segment_source_spans"] == state["segment_source_spans"]
+    assert restored["segment_source_marks"] == state["segment_source_marks"]
+    assert restored["segmentation"]["paragraph_ranges"] == state["segmentation"]["paragraph_ranges"]
+    assert restored["segmentation"]["output_segment_count"] == 4
+
+
 def test_scope_restore_rejects_unknown_ids(tmp_path):
     job_id = "scope-restore-guard"
     old_output = _persist(tmp_path, job_id, _state())
@@ -343,6 +365,54 @@ def test_pre_start_scope_tree_comes_from_source_outline(tmp_path):
                                      "第一章 缘起", "Alpha body one.",
                                      "Alpha body two.", "第二章 争论",
                                      "Beta body one.", "Beta body two."])}
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_renamed_outline_keeps_pre_start_exclusion_anchors(tmp_path):
+    from folith import outline_corrections
+
+    job_id = "scope-corrected-name"
+    state = _docx_outline_state(job_id)
+    outline = state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        outline_corrections.save(job_id, outline, "n0001", title="新标题")
+        core.exclude_translation_scope(job_id, ["outline:n0001"])
+        state = core.load_job_state(job_id)
+        entry = state["scope_exclusion_plan"]["entries"][0]
+        assert entry["label"] == "新标题"
+        assert entry["anchor_first"] == "第二章 争论"
+        state["paras"] = list(outline["paragraphs"])
+        state["source_paras"] = list(state["paras"])
+        state["source_paragraphs"] = list(state["paras"])
+        state["source_cleanup"] = {"output_input_indices": [[i] for i in range(6)]}
+        state["segmentation"] = {"paragraph_ranges": [
+            {"paragraph_index": i, "start": i, "end": i + 1} for i in range(6)]}
+        result = core.apply_scope_exclusion_plan(job_id, state)
+        assert not result["unapplied"]
+        assert state["paras"] == outline["paragraphs"][:3]
+    finally:
+        core.OUTPUT_DIR = old_output
+
+
+def test_pre_start_exclusion_refuses_unreadable_corrections(tmp_path, monkeypatch):
+    from folith import outline_corrections
+    from folith.qt import adapter
+    job_id = "scope-corrupt-corrections"
+    state = _docx_outline_state(job_id)
+    state["source_outline"] = _two_chapter_outline()
+    old_output = _persist(tmp_path, job_id, state)
+    try:
+        path = core.job_dir(job_id) / outline_corrections.FILENAME
+        damaged = b'{"entries": [broken'
+        path.write_bytes(damaged)
+        monkeypatch.setattr(core, "ensure_source_outline", lambda *_: state)
+        assert adapter.translation_scope(job_id, state)["available"] is False
+        with pytest.raises(ValueError, match="无法读取结构修正文件"):
+            core.exclude_translation_scope(job_id, ["outline:n0001"])
+        assert not core.load_job_state(job_id).get("scope_exclusion_plan")
+        assert path.read_bytes() == damaged
     finally:
         core.OUTPUT_DIR = old_output
 

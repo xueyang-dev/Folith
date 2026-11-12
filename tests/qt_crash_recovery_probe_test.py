@@ -5,7 +5,30 @@ import pytest
 
 from folith.storage import state_journal as journal
 from scripts.qt_crash_recovery_probe import (
-    _assert_committed_prefix_preserved, _durable_state, _resume_finished, _engine_config)
+    _assert_committed_prefix_preserved, _durable_state, _resume_finished, _engine_config,
+    _read_runtime_with_retry)
+
+
+def test_runtime_checkpoint_retries_transient_read_failure():
+    from unittest.mock import Mock
+    path = Mock()
+    path.read_text.side_effect = [PermissionError("busy"), '{', '{"status":"running"}']
+    assert _read_runtime_with_retry(path, timeout=1)["status"] == "running"
+
+
+def test_runtime_checkpoint_does_not_treat_unreadable_status_as_complete():
+    from unittest.mock import Mock
+    path = Mock()
+    path.read_text.side_effect = PermissionError("busy")
+    with pytest.raises(AssertionError, match="unreadable"):
+        _read_runtime_with_retry(path, timeout=0)
+
+
+def test_runtime_checkpoint_keeps_terminal_status():
+    from unittest.mock import Mock
+    path = Mock()
+    path.read_text.return_value = '{"status":"completed"}'
+    assert _read_runtime_with_retry(path, timeout=0)["status"] == "completed"
 
 
 def test_saved_connection_is_read_without_changing_data_target_or_credentials(tmp_path, monkeypatch):

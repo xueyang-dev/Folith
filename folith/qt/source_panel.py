@@ -19,8 +19,16 @@ from . import adapter
 from . import i18n
 from . import icons
 
-#: 与 PDF 原页高亮同一种暖黄，两个面板的「找到了」是同一种颜色。
-_HIGHLIGHT_STYLE = "background-color:#ffe08a;color:#202124;"
+def _highlight_style() -> str:
+    """与 PDF 原页高亮同一种暖黄，两个面板的「找到了」是同一种颜色。
+
+    色值走 token（`highlight-bg` / `highlight-ink`），主题切换与夜间都跟着变。
+    """
+    from . import style as _style
+    from . import theme as _theme
+    tokens = _theme.tokens(_style.current_theme())
+    return (f"background-color:{tokens['highlight-bg']};"
+            f"color:{tokens['highlight-ink']};")
 
 
 class _LoadSignals(QObject):
@@ -85,18 +93,19 @@ class SourcePanel(QWidget):
         self.view.setFrameShape(QFrame.Shape.NoFrame)
         self.view.setAccessibleName(i18n.tr('原文上下文'))
 
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
         head = QHBoxLayout()
+        layout.addLayout(head)
         head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(self.title, 1)
         head.addWidget(self.close_button)
         bar = QHBoxLayout()
+        layout.addLayout(bar)
         bar.setContentsMargins(0, 0, 0, 0)
         bar.addWidget(self.locate_button)
         bar.addStretch(1)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.addLayout(head)
-        layout.addLayout(bar)
         layout.addWidget(self.location)
         layout.addWidget(self.hint)
         layout.addWidget(self.view, 1)
@@ -172,7 +181,7 @@ class SourcePanel(QWidget):
         for offset, block in enumerate(blocks):
             text = escape(str(block.get("text") or ""))
             if block.get("highlight"):
-                text = f'<span style="{_HIGHLIGHT_STYLE}">{text}</span>'
+                text = f'<span style="{_highlight_style()}">{text}</span>'
                 anchor = anchor or f"blk{offset}"
             tag = "h3" if block.get("role") == "heading" else "p"
             parts.append(f'<a name="blk{offset}"></a><{tag}>{text}</{tag}>')

@@ -225,6 +225,150 @@ def test_route_and_cache_key_separate_thinking_modes():
         translation_cache.prompt_fingerprint(**kw, route=off)
 
 
+# ---- 3b. chat-template thinking switch (dots3 family) ---------------------------
+
+def _relay_body(model, **call_kwargs):
+    _FakeOpenAI.requests.clear()
+    core.call_llm("自定义中转站", "sk-x", model, "s", "u",
+                  base_url="http://127.0.0.1:9/v1", **call_kwargs)
+    return _FakeOpenAI.requests[-1]
+
+
+def test_vllm_mode_sends_chat_template_body():
+    assert _relay_body("dots3-note-prev",
+                       reasoning_mode="thinking_disabled_vllm")["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}}
+    assert "extra_body" not in _relay_body("dots3-note-prev",
+                                           reasoning_mode="provider_default")
+
+
+@pytest.mark.parametrize("model,expected", [
+    ("dots3-note-prev", ("thinking_disabled_vllm",)),
+    ("Dots3-Note-Prev", ("thinking_disabled_vllm",)),      # gate is case-insensitive
+    ("dots-something", ("thinking_disabled_vllm",)),
+    ("deepseek-v4.1-flash", ()),      # never measured against that relay
+    ("gpt-4o", ()),
+    ("", ()),
+])
+def test_thinking_control_is_offered_only_for_verified_models(model, expected):
+    assert core.thinking_control_options("自定义中转站", model) == expected
+
+
+def test_thinking_control_needs_an_openai_compatible_kind():
+    assert core.thinking_control_options("Gemini", "dots3-note-prev") == ()
+
+
+def test_each_thinking_wire_shape_gets_its_own_cache_key():
+    default = core.effective_request_route("自定义中转站", "dots3-note-prev",
+                                           role="translation")
+    assert "reasoning_mode" not in default
+    seen = [default]
+    for mode in ("thinking_disabled", "thinking_disabled_vllm"):
+        core.set_llm_reasoning_modes(mode, mode)
+        try:
+            route = core.effective_request_route("自定义中转站", "dots3-note-prev",
+                                                 role="translation")
+        finally:
+            core.set_llm_reasoning_modes(None, None)
+        assert route["reasoning_mode"] == mode
+        seen.append(route)
+    # A DeepSeek-style "off" answer and a chat-template "off" answer must never
+    # be served for each other, even though both mean "thinking disabled".
+    assert len({json.dumps(r, sort_keys=True) for r in seen}) == 3
+
+
+def _profile_config(tmp_path, monkeypatch, profile):
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+
+    def persist():
+        core.save_provider_config(profile["provider"], profile["model"],
+                                  profile["api_key"], base_url=profile["base_url"],
+                                  connections=[profile],
+                                  connection_roles={"translation": profile["id"]})
+    persist()
+    return persist
+
+
+def test_connection_switch_reads_the_translation_profile(tmp_path, monkeypatch):
+    profile = {
+        "id": "c1", "provider": "自定义中转站", "model": "dots3-note-prev",
+        "api_key": "sk-x", "base_url": "http://127.0.0.1:9/v1",
+        "reasoning_mode": "thinking_disabled_vllm"}
+    persist = _profile_config(tmp_path, monkeypatch, profile)
+    assert core._connection_thinking_mode() == "thinking_disabled_vllm"
+    # An explicit "服务默认" is a choice, not an absence of one: it has to be
+    # able to undo a mode an earlier run already recorded in the task snapshot.
+    profile["reasoning_mode"] = "provider_default"
+    persist()
+    assert core._connection_thinking_mode() == "provider_default"
+    profile["reasoning_mode"] = ""          # what the connection editor writes
+    persist()
+    assert core._connection_thinking_mode() == "provider_default"
+
+
+def test_connection_switch_is_dropped_when_it_no_longer_applies(tmp_path, monkeypatch):
+    profile = {
+        "id": "c1", "provider": "自定义中转站", "model": "dots3-note-prev",
+        "api_key": "sk-x", "base_url": "http://127.0.0.1:9/v1",
+        "reasoning_mode": "thinking_disabled_vllm"}
+    persist = _profile_config(tmp_path, monkeypatch, profile)
+    # The same connection now points at a model the control was never verified on.
+    profile["model"] = "some-other-relay-model"
+    persist()
+    assert core._connection_thinking_mode() is None
+    # A profile that never recorded the key also reports "no choice".
+    profile["model"] = "dots3-note-prev"
+    del profile["reasoning_mode"]
+    persist()
+    assert core._connection_thinking_mode() is None
+
+
+# ---- 3c. the switch also covers the auxiliary role ----------------------------
+
+def _modes(**kwargs):
+    """job_reasoning_modes with a clean environment: only what the test passes."""
+    from folith.engine.llm_provider import job_reasoning_modes
+    return job_reasoning_modes(env={}, **kwargs)
+
+
+def test_connection_switch_feeds_both_roles():
+    # 辅助角色跟着一起关：只加速正文的话，墙上时间会挪到辅助调用上等着。
+    assert _modes(connection_mode="thinking_disabled_vllm", saved={},
+                  auxiliary_target=("自定义中转站", "dots3-note-prev")) == (
+        "thinking_disabled_vllm", "thinking_disabled_vllm")
+
+
+def test_connection_switch_does_not_cross_to_an_unverified_auxiliary_model():
+    # 开关是在正文连接的那个模型上实测的；换了一个不认这个参数的辅助模型就不能带过去。
+    assert _modes(connection_mode="thinking_disabled_vllm", saved={},
+                  auxiliary_target=("OpenAI", "gpt-4o")) == (
+        "thinking_disabled_vllm", "provider_default")
+    # 辅助角色自己的快照/环境变量仍然优先于「不继承」。
+    assert _modes(connection_mode="thinking_disabled_vllm",
+                  saved={"auxiliary_reasoning_mode": "thinking_disabled"},
+                  auxiliary_target=("OpenAI", "gpt-4o"))[1] == "thinking_disabled"
+    # 显式参数不被继承覆盖；服务默认也是一种明确选择。
+    assert _modes(connection_mode="provider_default", saved={},
+                  auxiliary_target=("自定义中转站", "dots3-note-prev")) == (
+        "provider_default", "provider_default")
+    assert _modes(auxiliary="provider_default",
+                  connection_mode="thinking_disabled_vllm", saved={},
+                  auxiliary_target=("自定义中转站", "dots3-note-prev"))[1] == "provider_default"
+
+
+def test_auxiliary_request_carries_the_inherited_switch():
+    from folith import usage as _usage
+    core.set_llm_reasoning_modes(
+        *_modes(connection_mode="thinking_disabled_vllm", saved={},
+                auxiliary_target=("自定义中转站", "dots3-note-prev")))
+    token = _usage.CURRENT_ROLE.set("auxiliary")
+    try:
+        assert _body_for()["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    finally:
+        _usage.CURRENT_ROLE.reset(token)
+    assert core._resolve_reasoning_mode(role="review") == "provider_default"
+
+
 def test_run_configuration_records_mode(tmp_path):
     run = trace.start_run("t-cfg", output_dir=tmp_path)
     try:
@@ -238,3 +382,31 @@ def test_run_configuration_records_mode(tmp_path):
         assert cfg["auxiliary_reasoning_mode"] == "provider_default"
     finally:
         trace.finish_run("t-cfg")
+
+
+def test_mode_carried_over_from_another_connection_is_dropped_for_a_model_that_ignores_it():
+    # 任务在 vLLM 中转站上记下的开关，换到官方 DeepSeek 后既不被认也不该再发出去。
+    deepseek = ("DeepSeek", "deepseek-flash")
+    modes = _modes(connection_mode=None,
+                   saved={"reasoning_mode": "thinking_disabled_vllm",
+                          "auxiliary_reasoning_mode": "thinking_disabled_vllm"},
+                   translator_target=deepseek, auxiliary_target=deepseek)
+    assert modes == ("thinking_disabled", "thinking_disabled")
+
+
+def test_deepseek_family_defaults_to_thinking_off_but_an_explicit_default_is_kept():
+    deepseek = ("DeepSeek", "deepseek-flash")
+    assert _modes(connection_mode=None, saved={}, translator_target=deepseek,
+                  auxiliary_target=deepseek) == ("thinking_disabled", "thinking_disabled")
+    # A recorded provider_default is not a choice; the connection's own switch is.
+    assert _modes(connection_mode=None, saved={"reasoning_mode": "provider_default"},
+                  translator_target=deepseek, auxiliary_target=deepseek)[0] == "thinking_disabled"
+    assert _modes(connection_mode="provider_default", saved={}, translator_target=deepseek,
+                  auxiliary_target=deepseek) == ("provider_default", "provider_default")
+    # Models without a verified switch are left alone, and a valid recorded mode is kept.
+    other = ("OpenAI", "gpt-4o")
+    assert _modes(connection_mode=None, saved={}, translator_target=other,
+                  auxiliary_target=other) == ("provider_default", "provider_default")
+    dots = ("自定义中转站", "dots3-note-prev")
+    assert _modes(connection_mode=None, saved={"reasoning_mode": "thinking_disabled_vllm"},
+                  translator_target=dots, auxiliary_target=dots)[0] == "thinking_disabled_vllm"

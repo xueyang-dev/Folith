@@ -238,6 +238,7 @@ def validate_evidence(ev: Optional[TermEvidence]) -> List[str]:
 class GlossaryEntry(TypedDict, total=False):
     id: str
     source: str
+    source_aliases: List[str]
     proposed_target: str
     target: str
     preferred: str
@@ -297,7 +298,7 @@ def normalize_glossary_entry(raw: Any) -> Optional[GlossaryEntry]:
             if norm is not None:
                 evidence.append(norm)
 
-    return {
+    result = {
         "id": clean_str(raw.get("id"), default=entry_id(source, target, behavior)),
         "source": source,
         "proposed_target": proposed_target,
@@ -313,6 +314,10 @@ def normalize_glossary_entry(raw: Any) -> Optional[GlossaryEntry]:
         "occurrences": occurrences,
         "evidence": evidence,
     }
+    aliases = [value for value in clean_str_list(raw.get('source_aliases')) if value != source]
+    if aliases:
+        result['source_aliases'] = list(dict.fromkeys(aliases))
+    return result
 
 
 def normalize_glossary(entries: Any) -> List[GlossaryEntry]:
@@ -376,6 +381,8 @@ def _canonical_entry_json(entry: Any) -> Optional[str]:
     if norm is None:
         return None
     norm = dict(norm)
+    if 'source_aliases' in norm:
+        norm['source_aliases'] = sorted(norm['source_aliases'])
     norm["forbidden"] = sorted(norm["forbidden"])
     norm["evidence"] = sorted(
         json.dumps(ev, ensure_ascii=False, sort_keys=True)

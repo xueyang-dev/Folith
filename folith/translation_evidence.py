@@ -270,6 +270,7 @@ def reconcile_runtime_review_truth(state: Dict[str, Any]) -> Dict[str, int]:
         (state.get("glossary_frozen") or {}).get("entries")
         or state.get("glossary") or [])
     current_glossary_hash = models.glossary_hash(glossary)
+    changes_by_hash = {}
     for event in state.get("review_evidence") or []:
         if not isinstance(event, dict) or not _current_translation_review(event) \
                 or event.get("freshness_status") == "stale":
@@ -279,7 +280,12 @@ def reconcile_runtime_review_truth(state: Dict[str, Any]) -> Dict[str, int]:
             translation_core.get("glossary_hash") or event.get("glossary_hash") or "")
         if event_glossary_hash and event_glossary_hash != current_glossary_hash \
                 and event.get("review_event_id"):
-            stale_event_ids.add(str(event["review_event_id"]))
+            if event_glossary_hash not in changes_by_hash:
+                changes_by_hash[event_glossary_hash] = terminology.glossary_changes_since(
+                    state, event_glossary_hash)
+            if terminology.glossary_changes_affect_segments(
+                    state, changes_by_hash[event_glossary_hash], _review_dependency_segment_ids(event)):
+                stale_event_ids.add(str(event["review_event_id"]))
         truths = list(translation_core.get("dependency_truth") or [])
         truths.extend(translation_core.get("review_truth") or [])
         for truth in truths:
@@ -524,11 +530,26 @@ def record_runtime_human_decision(
     if segment_id is None:
         raise ValueError("finding has no global segment_id")
     event = current_review_event(state, segment_id)
-    if event is None or event.get("review_event_id") != finding.get("review_event_id"):
-        raise ValueError("cannot decide a stale finding")
-    current_fingerprint = str(
-        (event.get("translation_core") or {}).get(
-            "final_consumed_input_fingerprint") or "")
+    finding_event = str(finding.get("review_event_id") or "")
+    if not finding_event:
+        # 旧式发现项：它在 state["findings"] 里，但没有审校收据可对，因此不存在
+        # "被后续审校取代"的判定依据；而交付门禁仍然认它。允许人工处置，指纹用
+        # 发现项自己的（复核的人看到的就是这条记录本身）。
+        # 旧版本写的阻断项没有 `requires_human_confirmation`；核心的死板校验会因此
+        # 拒绝任何人工决定。它既然被当作"人要处理的阻断项"展示出来，就必须可处置，
+        # 这里补上标志（随决定一起落盘，语义也更正确）。
+        if not finding.get("requires_human_confirmation"):
+            finding["requires_human_confirmation"] = True
+        current_fingerprint = str(finding.get("input_fingerprint") or "")
+        if not current_fingerprint and event is not None:
+            current_fingerprint = str((event.get("translation_core") or {}).get(
+                "final_consumed_input_fingerprint") or "")
+    else:
+        if event is None or event.get("review_event_id") != finding_event:
+            raise ValueError("cannot decide a stale finding")
+        current_fingerprint = str(
+            (event.get("translation_core") or {}).get(
+                "final_consumed_input_fingerprint") or "")
     if not current_fingerprint:
         raise ValueError("current review has no input fingerprint")
     updated, record = translation_core.record_human_decision(
@@ -556,7 +577,9 @@ def record_runtime_human_decision(
         "record_type": "human_decision",
         "action": record["decision"],
         "timestamp": record["decided_at"],
-        "review_event_id": event.get("review_event_id"),
+        # 旧式发现项所在段落可能**没有**审校记录（event 为 None）；审计记录里
+        # 如实留空，不要让界面在处置最后一步抛 AttributeError。
+        "review_event_id": (event or {}).get("review_event_id"),
     }
     state.setdefault("human_actions", []).append(audit)
     return state, finding, audit
@@ -650,7 +673,7 @@ def _review_glossary_scope(
         relevant_glossary = [
             entry for entry in entries
             if ids.intersection(entry.get("occurrences") or [])
-            or any(matcher.matches(entry["source"], source)
+            or any(terminology.entry_matches(entry, source, matcher)
                    for source in sources)
         ]
     relevant_locked = [
@@ -1509,11 +1532,13 @@ CROSS_SEGMENT_REVIEW_RULE = (
 
 def _call(call_llm: Callable, provider: str, api_key: str, model: str,
           system_prompt: str, user_prompt: str) -> Any:
-    try:
-        return call_llm(provider, api_key, model, system_prompt, user_prompt,
-                        temperature=0.2)
-    except TypeError:
-        return call_llm(provider, api_key, model, system_prompt, user_prompt)
+    import core
+    with core.llm_call_purpose("独立审校", operation_id="review"):
+        try:
+            return call_llm(provider, api_key, model, system_prompt, user_prompt,
+                            temperature=0.2)
+        except TypeError:
+            return call_llm(provider, api_key, model, system_prompt, user_prompt)
 
 
 def review_translation_batch_with_evidence(

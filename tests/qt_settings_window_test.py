@@ -69,14 +69,14 @@ def _config(**extra):
 
 # ---------------------------------------------------------------- 窗口 -------
 
-def test_settings_is_a_non_modal_window_with_six_titled_pages(app):
+def test_settings_is_a_non_modal_window_with_titled_pages(app):
     dialog = dialogs.EngineDialog(_config(), _SyncRunner())
     from PySide6.QtCore import Qt
     from folith.qt import platform_ui
     assert bool(dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) == platform_ui.is_macos()
     assert not dialog.isModal()
     assert [key for key, _icon, _label in dialog.PAGES] == [
-        "general", "models", "vision", "defaults", "storage", "about"]
+        "general", "models", "vision", "defaults", "reading", "storage", "about"]
     for key, _icon, label in dialog.PAGES:
         dialog.show_page(key)
         assert dialog.current_page() == key

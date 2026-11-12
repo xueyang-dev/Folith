@@ -93,6 +93,28 @@ def term_matches(term: str, text: str) -> bool:
     return bool(_term_pattern(term).search(text))
 
 
+def term_spans(term: str, text: str) -> List[Tuple[int, int]]:
+    """Return display spans using exactly the same boundaries as term_matches."""
+    term = (term or '').strip()
+    text = text or ''
+    if not term or not text:
+        return []
+    pattern = re.compile(re.escape(term)) if _CJK_RE.search(term) else _term_pattern(term)
+    return [(match.start(), match.end()) for match in pattern.finditer(text)]
+
+
+def source_forms(entry: Mapping[str, Any]) -> List[str]:
+    return list(dict.fromkeys(str(value).strip() for value in
+                              [entry.get('source'), *(entry.get('source_aliases') or [])]
+                              if value and str(value).strip()))
+
+
+def entry_matches(entry: Mapping[str, Any], text: str,
+                  matcher: Optional['CompiledGlossary'] = None) -> bool:
+    match = matcher.matches if matcher else term_matches
+    return any(match(source, text) for source in source_forms(entry))
+
+
 # ---------------- 已编译术语视图（Performance Phase 8）----------------
 #
 # 问题：`_term_pattern` 是「按 term 键控 + 4096 固定容量」的 LRU，而真实工作集是
@@ -248,6 +270,8 @@ def compiled_glossary(entries: Iterable[Any], *,
         if isinstance(entry, Mapping):
             for name in field_names:
                 sources.append(str(entry.get(name) or ""))
+            if 'source' in field_names:
+                sources.extend(source_forms(entry)[1:])
         else:
             sources.append(str(entry or ""))
     sources.extend(str(value or "") for value in extra_sources)
@@ -583,7 +607,7 @@ def select_glossary_for_segments(
     for e in normalized:
         if e["status"] == "rejected":
             continue
-        if not any(matcher.matches(e["source"], s) for s in segments):
+        if not any(entry_matches(e, s, matcher) for s in segments):
             continue
         # scope 过滤
         scope = (e.get("scope") or "").strip()
@@ -613,16 +637,36 @@ def select_glossary_for_segments(
 
 def glossary_block(entries: List[models.GlossaryEntry]) -> str:
     """把筛选后的条目渲染成注入翻译/审校 prompt 的文本块（含 entry ID 便于审计）。"""
-    locked_translate = [e for e in entries
-                        if e["behavior"] == "translate" and e["status"] == "locked"]
+    translate = [e for e in entries if e["behavior"] == "translate"
+                 and str(e.get("preferred") or e.get("target") or "").strip()]
+    translations_by_source = {}
+    for entry in translate:
+        scope = str(entry.get("scope") or "").strip()
+        scope = "document" if scope in ("", "global", "document") else scope
+        key = (entry["source"].casefold(), scope)
+        translations_by_source.setdefault(key, set()).add(
+            str(entry.get("preferred") or entry.get("target") or "").casefold())
+    # A prompt cannot resolve an ambiguous human decision. Keep affected terms
+    # out of model input until the conflict is resolved; the delivery/review
+    # projections still expose the conflict to the operator.
+    ambiguous = {key for key, translations in translations_by_source.items()
+                 if len(translations) > 1}
+
+    def unambiguous(entry):
+        scope = str(entry.get("scope") or "").strip()
+        scope = "document" if scope in ("", "global", "document") else scope
+        return (entry["source"].casefold(), scope) not in ambiguous
+
+    locked_translate = [e for e in translate
+                        if e["status"] == "locked" and unambiguous(e)]
     preserve = [e for e in entries if e["behavior"] == "preserve"]
-    provisional = [e for e in entries
-                   if e["behavior"] == "translate" and e["status"] != "locked"]
+    provisional = [e for e in translate
+                   if e["status"] != "locked" and unambiguous(e)]
     lines = []
     if locked_translate:
         lines.append("【锁定术语（必须使用首选译名，不得使用禁止译名）】：")
         for e in locked_translate:
-            seg = f"- {e['source']} -> {e['preferred']}（ID: {e['id']}）"
+            seg = f"- {' / '.join(source_forms(e))} -> {e['preferred']}（ID: {e['id']}）"
             if e["forbidden"]:
                 seg += f"（禁止：{'、'.join(e['forbidden'])}）"
             lines.append(seg)
@@ -632,7 +676,7 @@ def glossary_block(entries: List[models.GlossaryEntry]) -> str:
     if provisional:
         lines.append("【建议术语（仅供参考，请优先采用）】：")
         for e in provisional:
-            lines.append(f"- {e['source']} -> {e['target']}（ID: {e['id']}）")
+            lines.append(f"- {' / '.join(source_forms(e))} -> {e['target']}（ID: {e['id']}）")
     return "\n".join(lines)
 
 
@@ -648,11 +692,55 @@ def glossary_to_terms(entries: List[models.GlossaryEntry]) -> Dict[str, str]:
 _SEMANTIC_FIELDS = ("source", "target", "preferred", "behavior", "status")
 
 
+def glossary_changes_since(state: Dict[str, Any], old_hash: str) -> Optional[List[Dict[str, Any]]]:
+    """Return old/new entries whose review inputs changed, or None if unknown."""
+    versions = state.get('glossary_versions') or []
+    previous = next((v for v in versions if isinstance(v, dict)
+                     and v.get('glossary_hash') == old_hash), None)
+    if previous is None:
+        return None
+    current = models.normalize_glossary((state.get('glossary_frozen') or {}).get('entries')
+                                        or state.get('glossary') or [])
+    old = models.normalize_glossary(previous.get('entries') or [])
+    def grouped(entries):
+        result = {}
+        for entry in entries:
+            result.setdefault(entry['source'].casefold(), []).append(entry)
+        return result
+    before, after = grouped(old), grouped(current)
+    changed = []
+    for key in before.keys() | after.keys():
+        old_rows, new_rows = before.get(key, []), after.get(key, [])
+        if sorted(models._canonical_entry_json(e) for e in old_rows) != \
+                sorted(models._canonical_entry_json(e) for e in new_rows):
+            changed.extend(old_rows + new_rows)
+    return changed
+
+
+def glossary_changes_affect_segments(state: Dict[str, Any], changes, indexes) -> bool:
+    """Unknown historic inputs remain conservatively stale."""
+    if changes is None:
+        return True
+    pairs = state.get('pairs') or []
+    paras = state.get('paras') or []
+    if not indexes or any(i < 0 or i >= max(len(pairs), len(paras)) for i in indexes):
+        return True
+    for i in indexes:
+        source = str((pairs[i].get('source') if i < len(pairs) else '')
+                     or (paras[i] if i < len(paras) else '') or '')
+        if any(i in (entry.get('occurrences') or []) or entry_matches(entry, source)
+               for entry in changes):
+            return True
+    return False
+
+
 def _semantic_entry_key(e: models.GlossaryEntry) -> str:
     """术语决策的语义键：source/target/preferred/behavior/status + 排序后的 forbidden。"""
     e = models.normalize_glossary_entry(e) or {}
     payload = {k: e.get(k) for k in _SEMANTIC_FIELDS}
     payload["forbidden"] = sorted(e.get("forbidden") or [])
+    if e.get('source_aliases'):
+        payload['source_aliases'] = sorted(e['source_aliases'])
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
@@ -675,6 +763,16 @@ def stale_segments_for_glossary(state: Dict[str, Any]) -> List[int]:
         v.get("glossary_hash"): models.normalize_glossary(v.get("entries") or [])
         for v in versions
     }
+    # Legacy pairs lack the version used at translation time.  When updating an
+    # existing frozen glossary, compare against the immediately preceding
+    # version instead of treating every unchanged locked entry as newly added.
+    previous = models.normalize_glossary(versions[-2].get('entries') or []) \
+        if len(versions) >= 2 else None
+    previous_by_source = {e['source'].casefold(): e for e in previous or []}
+    legacy_changed = [(old, cur_by_source[key])
+                      for key, old in previous_by_source.items()
+                      if key in cur_by_source and
+                      _semantic_entry_key(old) != _semantic_entry_key(cur_by_source[key])]
     # Phase 8：这里的形状是「每个 pair 重扫整张当前术语表」，是全局最坏的一处扫描
     # （pairs × G）。每张版本表各自一份已编译视图，键是内容修订号，不会串用。
     cur_matcher = compiled_glossary(current)
@@ -682,14 +780,23 @@ def stale_segments_for_glossary(state: Dict[str, Any]) -> List[int]:
         digest: compiled_glossary(entries)
         for digest, entries in ver_by_hash.items()
     }
+    version_source_maps = {digest: {e['source'].casefold(): e for e in entries}
+                           for digest, entries in ver_by_hash.items()}
     stale: List[int] = []
     for i, p in enumerate(pairs):
         used_hash = p.get("glossary_hash_used")
-        used = ver_by_hash.get(used_hash) if used_hash else None
-        used_by_source = {e["source"].casefold(): e for e in used} if used else {}
+        used = ver_by_hash.get(used_hash) if used_hash else previous
+        used_by_source = version_source_maps.get(used_hash, {}) if used_hash else previous_by_source
         used_matcher = ver_matchers.get(used_hash) if used_hash else None
         src = p.get("source") or ""
-        affected = False
+        affected = bool(not used_hash and p.get('stale_due_to_glossary'))
+        if not used_hash and used is not None and not affected:
+            # A changed preference matters for existing translations even when
+            # old jobs did not record individual injected entry IDs.
+            for old_entry, new_entry in legacy_changed:
+                if entry_matches(old_entry, src) or entry_matches(new_entry, src):
+                    affected = True
+                    break
         if used is not None:
             used_id_map = {e["id"]: e for e in used}
             for uid in set(p.get("glossary_entry_ids") or []):
@@ -697,9 +804,13 @@ def stale_segments_for_glossary(state: Dict[str, Any]) -> List[int]:
                 if ue is None:
                     continue
                 if used_matcher is None or \
-                        not used_matcher.matches(ue["source"], src):
+                        not entry_matches(ue, src, used_matcher):
                     continue  # 注入是批次级的；只有本段实际出现该术语才算依赖
                 ce = cur_by_source.get(ue["source"].casefold())
+                if ce is None:
+                    ce = next((entry for entry in current
+                               if ue['source'].casefold() in
+                               {form.casefold() for form in source_forms(entry)}), None)
                 if ce is None:
                     continue  # 约束被移除：不算失效
                 if _semantic_entry_key(ue) != _semantic_entry_key(ce):
@@ -714,7 +825,7 @@ def stale_segments_for_glossary(state: Dict[str, Any]) -> List[int]:
                 new_enforced = ce["behavior"] == "preserve" \
                     or ce["status"] == "locked"
                 if new_enforced and not old_enforced \
-                        and cur_matcher.matches(ce["source"], src):
+                        and entry_matches(ce, src, cur_matcher):
                     affected = True
                     break
         if affected:
@@ -788,14 +899,15 @@ def check_glossary_compliance(
         if not _scope_applies(e, segment_id, section_profile):
             continue
         if e["behavior"] == "preserve":
-            if matcher.matches(e["source"], src) \
-                    and not matcher.matches(e["source"], tgt):
+            matched_forms = [form for form in source_forms(e) if matcher.matches(form, src)]
+            if matched_forms and not all(matcher.matches(form, tgt) for form in matched_forms):
                 findings.append({
                     "type": "glossary", "severity": _preserve_severity(e["source"]),
                     "entry_id": e["id"], "segment_id": segment_id,
                     "category": "terminology_consistency",
                     "summary": f"译文遗漏锁定保留项「{e['source']}」",
                     "source_span": e["source"], "target_span": None,
+                    "preferred_target": e["source"],
                     "explanation": f"项目术语表要求保留项「{e['source']}」原样出现，但当前译文中没有找到它。",
                     "recommendation": "确认该词是否确实需要保留；若需要，请补回原文形式并重新检查格式。",
                     "confidence": None, "detector": "Terminology QA",
@@ -804,7 +916,8 @@ def check_glossary_compliance(
                 })
         else:
             preferred = e.get("preferred") or e.get("target")
-            if matcher.matches(e["source"], src) and preferred \
+            source_hit = entry_matches(e, src, matcher)
+            if source_hit and preferred \
                     and not matcher.matches(preferred, tgt):
                 findings.append({
                     "type": "glossary", "severity": "actionable",
@@ -812,6 +925,7 @@ def check_glossary_compliance(
                     "category": "terminology_consistency",
                     "summary": f"术语「{e['source']}」未使用首选译名",
                     "source_span": e["source"], "target_span": None,
+                    "preferred_target": preferred,
                     "explanation": f"项目术语表将「{e['source']}」锁定为首选译名「{preferred}」，但当前译文中未出现该译名。",
                     "recommendation": "检查当前语境是否有合理例外；如果没有，请统一为项目术语表中的首选译名。",
                     "confidence": None, "detector": "Terminology QA",
@@ -819,13 +933,14 @@ def check_glossary_compliance(
                     "reason": f"锁定术语「{e['source']}」未使用首选译名「{preferred}」",
                 })
             for fb in e.get("forbidden") or []:
-                if fb and fb in tgt:
+                if source_hit and fb and matcher.matches(fb, tgt):
                     findings.append({
                         "type": "glossary", "severity": "actionable",
                         "entry_id": e["id"], "segment_id": segment_id,
                         "category": "terminology_consistency",
                         "summary": f"术语「{e['source']}」使用了禁止译名",
                         "source_span": e["source"], "target_span": fb,
+                        "preferred_target": preferred,
                         "explanation": f"当前译文使用了术语「{e['source']}」的禁止译名「{fb}」，与已锁定术语规则冲突。",
                         "recommendation": "改用项目术语表中的首选译名，并检查同一术语在相邻段落中的译法。",
                         "confidence": None, "detector": "Terminology QA",
@@ -861,7 +976,7 @@ def detect_glossary_conflicts(
         usages: Dict[str, List[int]] = {}
         for i, p in enumerate(pairs):
             src, tgt = (p.get("source") or ""), (p.get("target") or "")
-            if not matcher.matches(e["source"], src):
+            if not entry_matches(e, src, matcher):
                 continue
             if want_section is not None:
                 sec_id = None
@@ -872,10 +987,11 @@ def detect_glossary_conflicts(
                         break
                 if sec_id != want_section:
                     continue
-            if preferred in tgt:
+            if matcher.matches(preferred, tgt):
                 key = f"preferred:{preferred}"
             else:
-                fb_hit = next((fb for fb in e.get("forbidden") or [] if fb and fb in tgt),
+                fb_hit = next((fb for fb in e.get("forbidden") or []
+                               if fb and matcher.matches(fb, tgt)),
                               None)
                 key = f"forbidden:{fb_hit}" if fb_hit else "other:未使用首选译名"
             usages.setdefault(key, []).append(i)
@@ -891,6 +1007,7 @@ def detect_glossary_conflicts(
                         "category": "terminology_consistency",
                         "summary": f"术语「{e['source']}」在同一范围内出现多种译法",
                         "source_span": e["source"], "target_span": label,
+                        "preferred_target": preferred,
                         "explanation": f"同一范围内的术语「{e['source']}」出现了不同译法，可能破坏项目术语的一致性。",
                         "recommendation": "检查这些译法是否由语境差异造成；若无明确理由，请统一为项目术语表中的译法。",
                         "confidence": None, "detector": "Terminology QA",

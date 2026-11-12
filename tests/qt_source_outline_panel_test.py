@@ -75,22 +75,56 @@ def _new_task(data_env) -> str:
 
 def _wait(qt_app):
     panel_module.loader().wait(5000)
+    # Also wait for the shared OutlineLoader (introduced in 0.8.0).
+    # Use panel_module.outline_loader() so tests that monkeypatch it are
+    # correctly handled (the patched version may differ from the global singleton).
+    panel_module.outline_loader().wait(5000)
     qt_app.processEvents()
 
 
 def _patch_loader(monkeypatch):
     """测试任务各自独立输出目录，按需给一个**本测试内稳定**的 loader：
-    既有同进程缓存不串任务，又不至于让 Qt 把无父对象的后台加载器提前回收。"""
-    holder = []
+    既有同进程缓存不串任务，又不至于让 Qt 把无父对象的后台加载器提前回收。
 
-    def factory():
+    Also patches the shared OutlineLoader (0.8.0) so that the two loaders do
+    not race and the legacy PreviewLoader remains the source of truth for these
+    tests.
+    """
+    from folith.qt import outline_loader as ol_module
+    from folith.qt.outline_loader import OutlineLoader
+
+    holder = []
+    ol_holder = []
+
+    def loader_factory():
         if not holder:
             holder.append(panel_module.PreviewLoader(
                 render=panel_module._render_outline))
         return holder[0]
 
-    monkeypatch.setattr(panel_module, "loader", factory)
+    def ol_factory():
+        if not ol_holder:
+            ol_holder.append(OutlineLoader())
+        return ol_holder[0]
+
+    monkeypatch.setattr(panel_module, "loader", loader_factory)
+    # Route outline_loader calls in source_outline_panel through a test-local
+    # instance so the module-level singleton does not absorb cross-test state.
+    monkeypatch.setattr(panel_module, "outline_loader", ol_factory)
     return holder
+
+
+def test_unreadable_corrections_reported_in_preparation(qt_app, data_env):
+    from folith import outline_corrections, source_outline
+    job = _new_task(data_env)
+    path = core.job_dir(job) / outline_corrections.FILENAME
+    path.write_bytes(b'{"entries": [broken')
+    section = SourceOutlineSection()
+    section._job_id = job
+    section._apply_outline(source_outline.parse_source_outline("sample.docx", _make_docx()))
+    assert section.node_list.count() > 0
+    assert "无法读取结构修正文件" in section.status_label.text()
+    assert path.read_bytes() == b'{"entries": [broken'
 
 
 # ---------------------------------------------------------------- 纯函数
@@ -122,6 +156,27 @@ def test_outline_summary_counts_and_scanned_case():
     scanned = {"nodes": [{"kind": "page"}], "total_paragraphs": 0, "scanned": True,
                "pages": 9}
     assert "视觉模型" in outline_summary(scanned)
+
+
+def test_preparation_rename_persists_and_is_used_by_scope(data_env, qt_app, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+    job_id = _new_task(data_env)
+    _patch_loader(monkeypatch)
+    section = SourceOutlineSection()
+    view = adapter.task_setup_view(adapter.EngineConfig(), job_id)
+    section.load(job_id, "sample.docx", view)
+    _wait(qt_app)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("手动名称", True))
+    section._edit_outline("rename")
+    assert section.outline()["nodes"][0]["title"] == "手动名称"
+    reopened = SourceOutlineSection()
+    reopened.load(job_id, "sample.docx", view)
+    _wait(qt_app)
+    assert reopened.outline()["nodes"][0]["title"] == "手动名称"
+    scope = adapter.translation_scope(job_id)
+    assert scope["groups"][0]["nodes"][0]["label"] == "手动名称"
+    section.deleteLater()
+    reopened.deleteLater()
 
 
 # ---------------------------------------------------------------- 区块行为
@@ -157,24 +212,51 @@ def test_section_lists_nodes_readonly_and_shows_preview(
 def test_second_request_hits_cache_without_reparsing(
         data_env, qt_app, monkeypatch):
     job_id = _new_task(data_env)
-    holder = _patch_loader(monkeypatch)
+    _patch_loader(monkeypatch)
     view = adapter.task_setup_view(adapter.EngineConfig(), job_id)
 
     first = SourceOutlineSection()
     first.load(job_id, "sample.docx", view)
     _wait(qt_app)
     assert first.node_list.count() == 2
-    loader = holder[0]
-    parsed = [(key, value) for key, value in loader._cache.items()
-              if key[0] == job_id]
-    assert parsed  # 解析结果按源文件身份进了缓存
+
+    # The outline result is now cached in the shared OutlineLoader
+    # (0.8.0: the legacy PreviewLoader may not receive the parse request when
+    # the OutlineLoader is pending, so we check its cache instead).
+    ol = panel_module.outline_loader()
+    assert not ol.is_pending(job_id), "outline should be ready after _wait"
+    cached = ol.request(job_id)
+    assert cached is not None, "outline must be cached in the OutlineLoader"
 
     # 同一份源文件再开一次（窗口刷新会重建区块）：同步命中缓存，列表立即就绪。
     second = SourceOutlineSection()
     second.load(job_id, "sample.docx", view)
     qt_app.processEvents()
     assert second.node_list.count() == 2
-    assert loader._cache[parsed[0][0]] is parsed[0][1]  # 缓存条目未被重算替换
+    # Same cached object returned (not re-parsed):
+    assert ol.request(job_id) is cached
+
+
+def test_refresh_preserves_selected_node_without_reusing_stale_identity(
+        data_env, qt_app, monkeypatch):
+    job_id = _new_task(data_env)
+    _patch_loader(monkeypatch)
+    view = adapter.task_setup_view(adapter.EngineConfig(), job_id)
+    section = SourceOutlineSection()
+    section.load(job_id, "sample.docx", view)
+    _wait(qt_app)
+    section.node_list.setCurrentRow(1)
+    section.load(job_id, "sample.docx", view)
+    _wait(qt_app)
+    assert section.node_list.currentRow() == 1
+    assert "第二章" in section.preview.toPlainText()
+
+    # An ID can be reused after reparse; do not select a different node by ID.
+    changed = dict(section._base_outline)
+    changed["nodes"] = [dict(node) for node in changed["nodes"]]
+    changed["nodes"][1]["title"] = "不同章节"
+    section._apply_outline(changed)
+    assert section.node_list.currentRow() == 0
 
 
 def test_section_without_source_file_says_so_and_does_not_hang(

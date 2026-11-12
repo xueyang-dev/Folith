@@ -328,7 +328,7 @@ def build_query_profile(
         source = str(entry.get("source") or "").strip()
         if not source or source in terms:
             continue
-        if any(_terminology.term_matches(source, text) for text in texts):
+        if any(_terminology.entry_matches(entry, text) for text in texts):
             terms.append(source)
     entities: List[str] = []
     for record in entity_records or []:
@@ -437,9 +437,8 @@ class DistantIndex:
         return index
 
     def _build(self, document_profile, glossary_entries, entity_records) -> None:
-        terms = [str(entry.get("source") or "").strip()
-                 for entry in glossary_entries or []]
-        terms = [term for term in dict.fromkeys(terms) if term]
+        terms = [(str(entry.get('source') or '').strip(), _terminology.source_forms(entry))
+                 for entry in glossary_entries or [] if entry.get('source')]
         entity_forms: List[Tuple[str, List[str]]] = []
         for record in entity_records or []:
             forms = _term_forms(record)
@@ -454,8 +453,8 @@ class DistantIndex:
             self.section_by_segment[segment_id] = section
             if section:
                 self.section_index.setdefault(section, []).append(segment_id)
-            for term in terms:
-                if _terminology.term_matches(term, text):
+            for term, forms in terms:
+                if any(_terminology.term_matches(form, text) for form in forms):
                     self.term_index.setdefault(term, []).append(segment_id)
             for primary, forms in entity_forms:
                 if _matches_any(forms, [text]):
@@ -656,7 +655,7 @@ def _glossary_candidates(ctx: RetrievalContext) -> List[ContextCandidate]:
         if not locked and not provisional_allowed:
             continue
         mandatory = locked or behavior == "preserve"
-        text = f"{source} -> {preferred or '（保留原文）'}"
+        text = f"{' / '.join(_terminology.source_forms(entry))} -> {preferred or '（保留原文）'}"
         forbidden = [str(item) for item in entry.get("forbidden") or [] if str(item)]
         if forbidden:
             text += f"（禁止：{'、'.join(forbidden)}）"

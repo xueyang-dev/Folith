@@ -17,8 +17,6 @@ APP_ICON = "folith/resources/brand/folith-app-icon-white.png"
 LOGO_BY_THEME = {
     "dark": "folith/resources/brand/folith-lockup-transparent-dark.png",
     "light": "folith/resources/brand/folith-lockup-transparent.png",
-    "paper": "folith/resources/brand/folith-lockup-transparent.png",
-    "green": "folith/resources/brand/folith-lockup-transparent.png",
 }
 LOGO_FALLBACKS = ("folith/resources/brand/folith-lockup-transparent.png",
                   "folith/resources/brand/folith-mark-hires.png")
@@ -120,7 +118,7 @@ def tint_pixmap(pixmap, accent: str):
     if hue < 0:                                   # 纯灰的强调色没有色相：不着色
         return pixmap
     shift = hue - BRAND_HUE
-    # 强调色本身很淡（夜间的 #82acff）或偏灰（纸面的石板色）时，logo 不应该变成灰白，
+    # 强调色本身很淡（夜间的 #82acff）或偏灰（石板色）时，logo 不应该变成灰白，
     # 所以饱和度只在 [0.6, 1.0] 之间随强调色变化。
     scale = max(0.6, min(1.0, saturation))
     if abs(shift) < 0.002 and scale >= 0.999:

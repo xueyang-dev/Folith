@@ -49,6 +49,21 @@ ACTIVE = {"resume_requested", "queued", "starting", "running",
           "waiting_external", "cancelling", "pausing", "paused"}
 
 
+def _read_runtime_with_retry(path: Path, timeout: float = 5.0) -> dict:
+    """Wait for a readable status, without interpreting a transient read as completion."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(value, dict) and value.get("status"):
+                return value
+        except (OSError, ValueError):
+            pass
+        if time.monotonic() >= deadline:
+            raise AssertionError("runtime status was unreadable before the kill checkpoint")
+        time.sleep(0.05)
+
+
 class UiHeartbeat:
     """Measure event-loop gaps; this is evidence, not an input-latency claim."""
 
@@ -449,7 +464,7 @@ def main(argv: list[str] | None = None) -> int:
             raise AssertionError("no durable translation checkpoint before timeout")
         if args.exercise_lifecycle:
             report["lifecycle"] = json.loads((log_dir / "lifecycle.json").read_text())
-        runtime = read_runtime()
+        runtime = _read_runtime_with_retry(runtime_path)
         report["before_kill"] = {
             "status": runtime.get("status"),
             "completed_units": runtime.get("completed_units"),

@@ -223,10 +223,17 @@ def test_clearing_the_editor_is_not_undone_by_the_next_refresh(bench):
 def test_longer_translation_that_arrives_grows_the_open_row(bench):
     """The overlay is synced before the row height is measured, or text gets clipped."""
     view, app = bench
+    # 把译文列压窄：行高是否随文字增长取决于真的换行了几行。宽列 + 缺中文字形的
+    # 环境里，这段文字可能只排一两行，天然高度在"展开行最小高度"以下，就没有
+    # 可增长的余地（CI 上 60 > 60）。压窄列宽让所有平台都真的换行。
+    view.segment_list.setColumnWidth(2, 320)
     view.select_segment(0)
     _pump(app)
     before = view.segment_list.rowHeight(0)
-    longer = "后台返回了一段明显更长的译文，" * 6
+    # 24 次（约 310 字）：译文列在 CI 上会被拉伸到很宽，次数少时只排一两行，天然
+    # 高度仍在"展开行最小高度"（60）以下，行高没有可增长的余地。取足够长，让任何
+    # 列宽下都至少排三行。
+    longer = "后台返回了一段明显更长的译文，" * 24
 
     _apply_targets(view, {0: longer})
     _pump(app)
@@ -306,6 +313,10 @@ def test_save_and_next_skips_confirmed_segments(bench):
     rows = list(view._all_rows)
     import dataclasses
 
+    # 打开任务时的交付门禁对账会把这几段合成的短译文记成确定性发现项
+    # （segments 0-2 的译文只有三个字）。这个用例只验证「已审校的行会被跳过」
+    # 这条行状态规则，先清掉门禁发现项，别让另一条规则决定结果。
+    view._state["findings"] = []
     view._all_rows = [dataclasses.replace(rows[0], status="待审校"),
                       dataclasses.replace(rows[1], status="已审校", reviewed=True),
                       dataclasses.replace(rows[2], status="待审校")]
@@ -391,3 +402,121 @@ def test_changed_prefix_rebuilds_rows_instead_of_reusing_stale_cells(bench):
     assert view.segment_list.rowCount() == 4
     assert view.segment_list.item(0, 1).text() == "Changed source."
     assert view.segment_list.item(0, 2).text() == "Changed target"
+
+
+def test_rebuilding_the_grid_does_not_notify_the_view_once_per_cell(bench):
+    """Opening a big task used to paint every cell with the model's signals live:
+    tens of thousands of ``dataChanged`` notifications, each handled by the view
+    and the accessibility cache (a 27 GB footprint on a ~5.8k-segment task). The
+    model must stay quiet for the batch and the view told once afterwards."""
+    view, app = bench
+    model = view.segment_list.model()
+    changes = []
+    model.dataChanged.connect(lambda *_: changes.append(1))
+    base = view._visible_rows()
+    view._rows = []
+    view._visible_rows = lambda: base * 84          # 252 rows: full synchronous rebuild
+    view._render_segments()
+    app.processEvents()
+    assert view.segment_list.rowCount() == len(base) * 84
+    assert len(changes) < 50, f"{len(changes)} dataChanged notifications for one rebuild"
+    assert view.segment_list.item(5, 2).text()      # and the cells really are painted
+
+
+def test_chunked_rebuild_does_not_notify_the_view_once_per_cell(bench):
+    """The large-task path paints off-screen rows in 4 ms slices with the model
+    kept quiet; only the visible batch tells the view, once for its range."""
+    view, app = bench
+    model = view.segment_list.model()
+    changes = []
+    model.dataChanged.connect(lambda *_: changes.append(1))
+    base = view._visible_rows()
+    total = len(base) * 400                          # 1,200 rows: forces the chunked path
+    view._rows = []
+    view._visible_rows = lambda: base * 400
+    view._render_segments()
+    _pump(app, 1.0)
+    assert view.segment_list.rowCount() == total
+    assert view.segment_list.item(total - 1, 2).text()   # every row was painted
+    assert 0 < len(changes) < 10, (
+        f"{len(changes)} dataChanged notifications for {total} rows and "
+        f"{total * 3} cells: still notifying per cell")
+
+
+# ---- 撤销：键盘输入走 Qt 原生栈；整段程序化替换（AX/辅助功能）走本地快照 ----------
+def _press_undo(edit, *, shift=False):
+    from PySide6.QtTest import QTest
+
+    modifiers = Qt.KeyboardModifier.ControlModifier
+    if shift:
+        modifiers |= Qt.KeyboardModifier.ShiftModifier
+    QTest.keyClick(edit, Qt.Key.Key_Z, modifiers)
+
+
+def test_cmd_z_undoes_typed_text(bench):
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    edit = view.target_edit
+    edit.setFocus()
+    edit.insertPlainText("改")
+    _pump(app)
+    assert edit.toPlainText() == "改译文0"
+    _press_undo(edit)
+    _pump(app)
+    assert edit.toPlainText() == "译文0"
+
+
+def test_cmd_z_undoes_a_programmatic_value_replacement(bench):
+    """AX/assistive clients may replace the whole value without a keystroke.
+
+    Qt does not put that on its undo stack, so before this fix ⌘Z did nothing and
+    the acceptance run kept seeing ``x[2]`` after pressing ⌘Z. The editor keeps a
+    small text history for exactly that path, while typed changes still use Qt's
+    native undo.
+    """
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    edit = view.target_edit
+    assert edit.toPlainText() == "译文0"
+    # Explicit base-class call = the same non-undoable whole-value replacement a
+    # native accessibility client performs (our Python override is bypassed).
+    QPlainTextEdit.setPlainText(edit, "x译文0")
+    _pump(app)
+    assert edit.toPlainText() == "x译文0"
+    assert not edit.document().isUndoAvailable()
+    _press_undo(edit)
+    _pump(app)
+    assert edit.toPlainText() == "译文0"
+
+
+def test_programmatic_undo_can_be_redone(bench):
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    edit = view.target_edit
+    QPlainTextEdit.setPlainText(edit, "x译文0")
+    _pump(app)
+    _press_undo(edit)
+    _pump(app)
+    assert edit.toPlainText() == "译文0"
+    _press_undo(edit, shift=True)
+    _pump(app)
+    assert edit.toPlainText() == "x译文0"
+
+
+def test_loading_another_segment_starts_a_fresh_undo_history(bench):
+    view, app = bench
+    view.select_segment(0)
+    _pump(app)
+    edit = view.target_edit
+    QPlainTextEdit.setPlainText(edit, "x译文0")
+    _pump(app)
+    view.select_segment(2)
+    _pump(app)
+    assert edit.toPlainText() == "译文2"
+    _press_undo(edit)
+    _pump(app)
+    # Nothing from segment 0 may come back after moving to segment 2.
+    assert edit.toPlainText() == "译文2"

@@ -24,6 +24,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
+from folith import request_control
+from folith.performance import ActiveTimeTracker, DEFAULT_HEARTBEAT_INTERVAL_S
+
 
 try:
     import resource  # POSIX only; absent on Windows.
@@ -91,6 +94,33 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
+def _epoch(iso_value: Any) -> Optional[float]:
+    """Unix seconds for an ISO timestamp, or None when it cannot be read."""
+    text = str(iso_value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _active_heartbeat_interval() -> float:
+    """Heartbeat period for the active-time tracker (#320).
+
+    The default is short enough that a suspend is detected quickly and long
+    enough to be free on an idle run.  The environment override exists so a
+    long baseline run can trade resolution for a cheaper heartbeat; it is
+    clamped so a typo cannot disable interruption detection.
+    """
+    raw = os.environ.get("FOLITH_ACTIVE_HEARTBEAT_S", "")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_HEARTBEAT_INTERVAL_S
+    return min(60.0, max(0.5, value))
+
+
 def _safe_float(val: Any, decimals: int = 4) -> float:
     try:
         return round(float(val or 0.0), decimals)
@@ -136,6 +166,37 @@ def _fmt_optional_total(agg: Dict[str, Any]) -> str:
     if agg["complete"]:
         return f"{agg['total']:,}"
     return f"≥{agg['total']:,} (partial: {agg['calls_reported']}/{agg['calls_total']} calls reported)"
+
+
+#: Exception-class fragments that mark a malformed *reply* rather than a fault in
+#: the transport.  ``TranslationProtocolError`` is the translation parser's own
+#: class; the others keep older/alternate call sites classified sensibly.
+_RETRY_PROTOCOL_MARKERS = ("Protocol", "Parse", "Decode")
+#: Exception-class fragments that mark a transport/framework fault.
+_RETRY_TRANSPORT_MARKERS = ("Connection", "Timeout", "RateLimit", "Status", "Transport",
+                            "HTTP", "Proxy", "SSL", "Server")
+
+
+def classify_retry_error(error_type: str, hint: str = "") -> str:
+    """Classify a retried request error as ``protocol`` / ``transport`` / ``other``.
+
+    #220 B1: the text path records ``type(error).__name__``.  The response
+    parser raises ``TranslationProtocolError`` while the transport surfaces the
+    SDK's own exception classes (``APIConnectionError``, ``APITimeoutError``,
+    ``RateLimitError``...), so the class name already separates a broken reply
+    from a network fault.  A caller that still has the exception object can pass
+    an explicit ``hint``.  Anything unrecognised stays ``unknown`` instead of
+    being guessed into one of the two buckets.
+    """
+    kind = str(hint or "").strip().lower()
+    if kind in {"protocol", "transport", "other", "unknown"}:
+        return kind
+    name = str(error_type or "")
+    if any(marker in name for marker in _RETRY_PROTOCOL_MARKERS):
+        return "protocol"
+    if any(marker in name for marker in _RETRY_TRANSPORT_MARKERS):
+        return "transport"
+    return "unknown"
 
 
 def generate_run_id() -> str:
@@ -203,6 +264,80 @@ def compute_percentiles(values: List[float]) -> Dict[str, float]:
     }
 
 
+def _is_active_time_definition(row: Any) -> bool:
+    """Whether *row* was written under the #320 active-seconds definition."""
+    if not isinstance(row, dict):
+        return False
+    if row.get("definition") == "active_seconds":
+        return True
+    # A run summary from this version always embeds the active_time block.
+    # Older history entries (wall-clock wall_time_s) carry neither marker.
+    return isinstance(row.get("active_time"), dict)
+
+
+def sum_active_time(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Task total of active work time across resumed run segments (#320).
+
+    A resumed task opens a new run.  The gap between runs (app closed, machine
+    shut down) belongs to no segment, so the task total is the sum of the
+    segments' active seconds; ``wall_span_s`` is the naive first-start →
+    last-finish difference kept only to show what the old definition claimed.
+
+    Entries written before #320 are wall-clock durations and are **not** added
+    to the active total: they are counted in ``legacy_entries`` so a reader can
+    see that part of the history used the old definition.
+
+    ``history.json`` keeps only the last 50 runs.  Each entry also stores the
+    running task total (``task_active_seconds``), and the newest one wins, so a
+    task resumed more than 50 times does not silently lose its first segments.
+    ``source`` says which rule produced the number.
+    """
+    rows = [row for row in list(entries or []) if isinstance(row, dict)]
+    counted = [row for row in rows if _is_active_time_definition(row)]
+    active = interrupted = 0.0
+    interruptions = segments = 0
+    for row in counted:
+        block = row.get("active_time") if isinstance(row.get("active_time"), dict) else row
+        active += float(block.get("active_seconds") or 0.0)
+        interrupted += float(block.get("interrupted_seconds") or 0.0)
+        interruptions += int(block.get("interruption_count") or 0)
+        segments += 1
+    source = "segments_sum"
+    cumulative = next((row for row in reversed(counted)
+                       if row.get("task_active_seconds") is not None), None)
+    if cumulative is not None:
+        active = float(cumulative.get("task_active_seconds") or 0.0)
+        interrupted = float(cumulative.get("task_interrupted_seconds") or 0.0)
+        interruptions = int(cumulative.get("task_interruption_count") or 0)
+        segments = int(cumulative.get("task_segments") or segments)
+        source = "history_cumulative"
+    starts = [str(row["started_at"]) for row in counted if row.get("started_at")]
+    finishes = [str(row["finished_at"]) for row in counted if row.get("finished_at")]
+    wall_span: Optional[float] = None
+    first = _epoch(starts[0]) if starts else None
+    last = _epoch(finishes[-1]) if finishes else None
+    if first is not None and last is not None and last >= first:
+        wall_span = round(last - first, 3)
+    trimmed = cumulative is not None and segments > len(counted)
+    return {
+        "segments": segments,
+        "active_seconds": round(active, 3),
+        "interrupted_seconds": round(interrupted, 3),
+        "interruption_count": interruptions,
+        "source": source,
+        "definition": "active_seconds",
+        "legacy_entries": len(rows) - len(counted),
+        "wall_span_s": wall_span,
+        "wall_span_covers": "retained_segments_only" if trimmed else "retained_segments",
+        "excluded_between_segments_s": (round(max(0.0, wall_span - active), 3)
+                                        if wall_span is not None else None),
+        "note": ("task total comes from the newest history entry's running total; "
+                 "history.json is trimmed to the last 50 runs"
+                 if trimmed else
+                 "task total is the sum of the segments supplied"),
+    }
+
+
 def _probe_gpu() -> Dict[str, Any]:
     """Gracefully probe GPU metrics without introducing heavy required dependencies."""
     try:
@@ -230,6 +365,30 @@ def _probe_gpu() -> Dict[str, Any]:
     except Exception:
         pass
     return {"gpu_available": False}
+
+
+# ---------------------------------------------------------------------------
+# GUI stall source registry (#323)
+#
+# The main-thread stall sampler lives in the Qt layer
+# (``folith.qt.jank_monitor``) and must not be imported from here: the trace
+# engine also runs headless, where Qt is not installed.  The Qt layer registers
+# itself at start-up; a RunContext snapshots every registered source when a run
+# begins and asks for that window when the run finishes.  A source only has to
+# provide ``checkpoint()`` and ``summary_since(marker)``.
+_GUI_STALL_SOURCES: List[Any] = []
+_GUI_STALL_LOCK = threading.RLock()
+
+
+def register_gui_stall_source(source: Any) -> None:
+    with _GUI_STALL_LOCK:
+        if source not in _GUI_STALL_SOURCES:
+            _GUI_STALL_SOURCES.append(source)
+
+
+def unregister_gui_stall_source(source: Any) -> None:
+    with _GUI_STALL_LOCK, contextlib.suppress(ValueError):
+        _GUI_STALL_SOURCES.remove(source)
 
 
 class ResourceSampler:
@@ -489,6 +648,7 @@ class RunContext:
         target_lang: str = "",
         output_dir: Optional[Path] = None,
         level: Optional[TraceLevel] = None,
+        active_tracker: Optional[Any] = None,
     ):
         self.job_id = str(job_id)
         self.run_id = str(run_id or generate_run_id())
@@ -507,10 +667,19 @@ class RunContext:
 
         # Timestamps
         self.started_at = _now_iso()
+        self.started_epoch = time.time()
         self.started_monotonic = time.perf_counter()
         self.started_cpu_time = time.process_time()
         self.finished_at: Optional[str] = None
+        self.finished_epoch: Optional[float] = None
+        # Monotonic reference only: it is platform-dependent while the machine
+        # sleeps, so it never defines the reported duration (#320).
         self.total_wall_time_s: float = 0.0
+        # #320: wall-clock heartbeat; active time excludes suspend, hibernation,
+        # frozen-process and shutdown gaps on every platform.
+        self._active_time: Any = (active_tracker if active_tracker is not None
+                                  else ActiveTimeTracker(_active_heartbeat_interval()))
+        self._active_time_snapshot: Optional[Dict[str, Any]] = None
         self.total_cpu_time_s: float = 0.0
         self.status = "running"
         self.failure_reason: Optional[str] = None
@@ -524,6 +693,9 @@ class RunContext:
         self.summary_path = self.run_dir / "summary.json"
         self.stages_path = self.run_dir / "stages.json"
         self.report_path = self.run_dir / "performance.md"
+        # GUI-thread stall window for this run (#323).  Written next to
+        # summary.json and also embedded there, never in a parallel record.
+        self.jank_path = self.run_dir / "gui_jank.json"
         self.legacy_perf_path = self.output_dir / "performance.json"
         self.history_path = self.perf_root / "history.json"
 
@@ -599,12 +771,26 @@ class RunContext:
         # Concurrency observation
         self.concurrency_stats: Dict[str, Dict[str, int]] = {}
 
+        # GUI stall sources snapshotted when this run began (#323) and the
+        # run-window view materialised when it finishes.
+        self._gui_stall_tokens: List[Tuple[Any, Any]] = []
+        self.gui_jank: Dict[str, Any] = {}
+
         # Start sampler if tracing is enabled
         if self.level != TraceLevel.OFF:
             self.run_dir.mkdir(parents=True, exist_ok=True)
             self._events_file = self.events_path.open("a", encoding="utf-8")
             self._requests_file = self.requests_path.open("a", encoding="utf-8")
             self._sampler.start()
+            self._active_time.start_sampling()
+            with _GUI_STALL_LOCK:
+                sources = list(_GUI_STALL_SOURCES)
+            for source in sources:
+                try:
+                    self._gui_stall_tokens.append((source, source.checkpoint()))
+                except Exception:
+                    # A measurement must never make a task unrunnable.
+                    continue
 
     def set_dataset_info(self, **kwargs: Any) -> None:
         with self._lock:
@@ -742,7 +928,8 @@ class RunContext:
 
     def begin_http_attempt(self, request: Any) -> None:
         with self._lock:
-            active = self._active_requests.get(threading.get_ident())
+            # A cancellable request sends from a helper thread on behalf of its caller.
+            active = self._active_requests.get(request_control.request_owner_thread())
             if active is None:
                 return
             attempt = active.get("http_attempts", 0) + 1
@@ -757,15 +944,20 @@ class RunContext:
             self.record_point("http_response_headers", logical_request_id=identity[0],
                               attempt=identity[1], status_code=response.status_code)
 
-    def begin_model_request(self, provider: str, model: str, *, role: str = "unknown", batch_id: Any = None, prompt_cost: Optional[Dict[str, Any]] = None, system_chars: Optional[int] = None,
-                            user_chars: Optional[int] = None, segment_count: Optional[int] = None) -> None:
+    def begin_model_request(self, provider: str, model: str, *, role: str = "unknown",
+                            operation_id: Optional[str] = None, purpose: Optional[str] = None,
+                            batch_id: Any = None, prompt_cost: Optional[Dict[str, Any]] = None,
+                            system_chars: Optional[int] = None, user_chars: Optional[int] = None,
+                            segment_count: Optional[int] = None) -> None:
         if self._requests_file is None:
             return
         with self._lock:
             self._request_sequence += 1
+            effective_op = operation_id or role
             rec = {"logical_request_id": f"{self.run_id}/request/{self._request_sequence}", "started_at": _now_iso(),
                    "started_monotonic": time.perf_counter(), "provider": provider,
-                   "model": model, "role": role, "batch_id": batch_id,
+                   "model": model, "role": role, "operation_id": effective_op,
+                   "purpose": purpose, "batch_id": batch_id,
                    "system_chars": system_chars, "user_chars": user_chars,
                    "segment_count": segment_count}
             if prompt_cost is not None:
@@ -834,6 +1026,10 @@ class RunContext:
         }
         with self._lock:
             rec.update(self._active_requests.get(threading.get_ident(), {}))
+            if "operation_id" not in rec or not rec["operation_id"]:
+                rec["operation_id"] = (metadata or {}).get("operation_id") or rec.get("role") or "unknown"
+            if "purpose" not in rec or not rec["purpose"]:
+                rec["purpose"] = (metadata or {}).get("purpose")
             self.model_calls.append(rec)
             self._write_request_event({"event": "model_call", **rec})
 
@@ -936,7 +1132,8 @@ class RunContext:
         with self._lock:
             self.errors.append(rec)
 
-    def record_retry(self, stage: str, operation: str, attempt: int, backoff_s: float, error_type: str) -> None:
+    def record_retry(self, stage: str, operation: str, attempt: int, backoff_s: float,
+                     error_type: str, error_kind: str = "") -> None:
         rec = {
             "timestamp": _now_iso(),
             "stage": str(stage),
@@ -944,6 +1141,9 @@ class RunContext:
             "attempt": int(attempt),
             "backoff_s": _safe_float(backoff_s, 2),
             "error_type": str(error_type),
+            # #220 B1: keep protocol vs transport on the record itself, so the
+            # summary does not have to re-derive it from a class name.
+            "error_kind": classify_retry_error(error_type, error_kind),
         }
         with self._lock:
             self.retries.append(rec)
@@ -956,8 +1156,11 @@ class RunContext:
             self.status = status
             self.failure_reason = failure_reason
             self.finished_at = _now_iso()
+            self.finished_epoch = time.time()
             self.total_wall_time_s = round(time.perf_counter() - self.started_monotonic, 4)
             self.total_cpu_time_s = round(time.process_time() - self.started_cpu_time, 4)
+            # Freeze the heartbeat before anything derives a duration from it.
+            self._active_time_snapshot = self._active_time.stop_sampling()
 
             # Stop sampler
             resource_summary = self._sampler.stop()
@@ -985,6 +1188,7 @@ class RunContext:
 
             # Generate summaries & reports
             summary = self.generate_summary(resource_summary)
+            summary["gui_jank"] = self._gui_jank_window()
             stages_doc = self.generate_stages_doc()
             perf_md = self.generate_performance_report_md(summary, stages_doc, resource_summary)
 
@@ -995,6 +1199,10 @@ class RunContext:
                     self.summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
                     self.stages_path.write_text(json.dumps(stages_doc, ensure_ascii=False, indent=2), encoding="utf-8")
                     self.report_path.write_text(perf_md, encoding="utf-8")
+                    if self.gui_jank:
+                        self.jank_path.write_text(
+                            json.dumps(self.gui_jank, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
 
                     # Also update history.json
                     self._update_history(summary)
@@ -1006,6 +1214,97 @@ class RunContext:
 
             return summary
 
+    # -- active work time (#320) -------------------------------------------
+    # One definition for the report and every UI surface: wall-clock time the
+    # task actually worked, with suspend / hibernation / frozen-process /
+    # shutdown gaps excluded.  Anything that shows "任务耗时" must read these,
+    # never ``finished_at - started_at``.
+
+    def active_seconds(self) -> float:
+        """Seconds actually worked in this run; frozen once the run finished.
+
+        Returns the *committed* heartbeat value — the same number written to
+        ``summary.json`` — and never interpolates to "now".  Two calls at the
+        same instant therefore return the same number, which is what lets a
+        caller compare a UI reading with the report without timing drift.
+        While the run is live the value advances one heartbeat at a time.
+        """
+        with self._lock:
+            if self._active_time_snapshot is not None:
+                return float(self._active_time_snapshot.get("active_seconds") or 0.0)
+            return float(self._active_time.snapshot().get("active_seconds") or 0.0)
+
+    def interrupted_spans(self) -> List[Dict[str, Any]]:
+        """Interruption spans detected in this run, oldest first."""
+        with self._lock:
+            if self._active_time_snapshot is not None:
+                return [dict(span) for span in self._active_time_snapshot.get("spans", [])]
+            return [dict(span) for span in self._active_time.snapshot().get("spans", [])]
+
+    def active_time_summary(self) -> Dict[str, Any]:
+        """The active-time block embedded in ``summary.json`` and the report.
+
+        ``wall_clock_elapsed_s`` is the naive start→finish difference kept for
+        comparison; it is *not* the duration to display.
+        """
+        with self._lock:
+            block = (dict(self._active_time_snapshot) if self._active_time_snapshot is not None
+                     else dict(self._active_time.snapshot()))
+            block["running"] = self.finished_at is None
+        # The heartbeat window is the window active + interrupted seconds are
+        # summed over, so use it when it exists; the run's own timestamps are the
+        # fallback for a tracker that never sampled (trace level OFF).
+        elapsed = float(block.get("elapsed_wall_clock_s") or 0.0)
+        if elapsed <= 0.0:
+            elapsed = (self.finished_epoch if self.finished_epoch is not None
+                       else time.time()) - self.started_epoch
+        elapsed = round(max(0.0, elapsed), 3)
+        interrupted = float(block.get("interrupted_seconds") or 0.0)
+        block["wall_clock_elapsed_s"] = elapsed
+        block["interrupted_pct_of_elapsed"] = (round(interrupted * 100.0 / elapsed, 2)
+                                               if elapsed > 0 else 0.0)
+        block["definition"] = ("active_seconds = sum of heartbeat gaps <= interruption_factor x "
+                               "heartbeat_interval; longer gaps are listed in spans and excluded")
+        return block
+
+    def _exclusive_stage_times(self) -> Dict[str, float]:
+        """Seconds each stage spent as the *only* stage in flight (#220 E2).
+
+        ``wall_time_s`` is each stage's own union; stages that ran concurrently
+        each claim the same seconds, so their percentages can sum past 100%.
+        This sweep walks every start/end boundary of the root-span intervals and
+        attributes a slice only while exactly one stage is active.  The slices
+        are therefore disjoint: they can never double-count an overlapping
+        interval and always sum to at most the run wall time.
+        """
+        events: List[Tuple[float, int, str]] = []
+        for stage_name, intervals in self._stage_intervals.items():
+            for start, end in intervals:
+                if end > start:
+                    # end (-1) sorts before start (+1) on an identical timestamp.
+                    events.append((start, 1, stage_name))
+                    events.append((end, -1, stage_name))
+        if not events:
+            return {}
+        events.sort(key=lambda item: (item[0], item[1]))
+        exclusive: Dict[str, float] = {stage: 0.0 for stage in self._stage_intervals}
+        active: Dict[str, int] = {}
+        previous = events[0][0]
+        for timestamp, delta, stage_name in events:
+            if timestamp > previous and len(active) == 1:
+                (only_stage,) = active
+                exclusive[only_stage] += timestamp - previous
+            if delta == 1:
+                active[stage_name] = active.get(stage_name, 0) + 1
+            else:
+                remaining = active.get(stage_name, 0) - 1
+                if remaining > 0:
+                    active[stage_name] = remaining
+                else:
+                    active.pop(stage_name, None)
+            previous = timestamp
+        return {stage: round(value, 4) for stage, value in exclusive.items()}
+
     def _finalize_stage_times(self) -> None:
         """Make ``wall_time_s`` mean work time, never the stage's lifetime.
 
@@ -1013,8 +1312,10 @@ class RunContext:
         0 plus ``no_work`` and keeps its first-start→last-finish span as
         ``lifetime_s``.  Stages built from spans report the union of their
         root-span intervals (concurrent spans are not double counted) and keep
-        the plain sum as ``busy_time_s``.
+        the plain sum as ``busy_time_s``.  ``exclusive_time_s`` is the separate,
+        non-overlapping share measured while no other stage was in flight.
         """
+        exclusive_times = self._exclusive_stage_times()
         for stage_name, rec in self.stages.items():
             if "lifetime_s" not in rec:
                 rec["lifetime_s"] = rec.get("wall_time_s", 0.0)
@@ -1022,8 +1323,10 @@ class RunContext:
                 rec["no_work"] = True
                 rec["wall_time_s"] = 0.0
                 rec["busy_time_s"] = 0.0
+                rec["exclusive_time_s"] = 0.0
                 continue
             rec["no_work"] = False
+            rec["exclusive_time_s"] = round(exclusive_times.get(stage_name, 0.0), 4)
             intervals = sorted(self._stage_intervals.get(stage_name, ()))
             if intervals:
                 union = 0.0
@@ -1064,22 +1367,42 @@ class RunContext:
 
     def generate_summary(self, resource_summary: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         res_summary = resource_summary or {}
-        # Effective wall time (finished or currently running)
-        current_wall = self.total_wall_time_s
+        # #320: the reported duration is active work time, not the start→finish
+        # wall difference.  A run whose tracker never started (trace level OFF,
+        # or a unit test that sets total_wall_time_s directly) keeps the old
+        # monotonic reference.
+        active_block = self.active_time_summary()
+        active_seconds = float(active_block.get("active_seconds") or 0.0)
+        current_wall = active_seconds if active_seconds > 0.0 else self.total_wall_time_s
+        monotonic_elapsed = self.total_wall_time_s
+        if monotonic_elapsed <= 0.0:
+            monotonic_elapsed = max(0.001, time.perf_counter() - self.started_monotonic)
         if current_wall <= 0.0:
-            current_wall = max(0.001, time.perf_counter() - self.started_monotonic)
+            current_wall = monotonic_elapsed
 
-        # Unaccounted time: wall time minus top-level stage sum
+        # Unaccounted time: active work time minus top-level stage sum.  When no
+        # stage times were recorded a percentage would be meaningless — the old
+        # "100% unaccounted" line said nothing except that instrumentation was
+        # missing (and read like the run did no work).
         top_level_sum = sum(
             self.stages[s]["wall_time_s"]
             for s in self.top_level_stages
             if s in self.stages
         )
-        unaccounted_s = max(0.0, current_wall - top_level_sum)
-        if current_wall > 0.05:
-            unaccounted_pct = min(100.0, max(0.0, round((unaccounted_s / current_wall) * 100.0, 1)))
-        else:
+        unaccounted_note = ""
+        if top_level_sum <= 0.0:
+            unaccounted_s = 0.0
             unaccounted_pct = 0.0
+            unaccounted_note = ("no top-level stage times were recorded for this run, "
+                                "so a gap percentage is not meaningful")
+        else:
+            unaccounted_s = max(0.0, current_wall - top_level_sum)
+            if current_wall > 0.05:
+                unaccounted_pct = min(100.0, max(0.0, round((unaccounted_s / current_wall) * 100.0, 1)))
+            else:
+                unaccounted_pct = 0.0
+            if unaccounted_s <= 0.0:
+                unaccounted_note = "recorded stage time already covers the active work time"
 
         # Segment & batch latency distributions
         batch_durations = [b["duration_ms"] / 1000.0 for b in self.batch_records]
@@ -1118,10 +1441,16 @@ class RunContext:
         stage_breakdown = {}
         for s_name, s_data in self.stages.items():
             w = s_data["wall_time_s"]
+            exclusive = float(s_data.get("exclusive_time_s") or 0.0)
             if current_wall > 0.05:
                 pct = min(100.0, max(0.0, round((w / current_wall) * 100.0, 2)))
+                # Floored, not rounded: a page of stages each rounds up by <0.01,
+                # so only flooring keeps the displayed exclusive shares from
+                # adding up past 100% through rounding alone.
+                exclusive_pct = min(100.0, int(exclusive / current_wall * 10000.0) / 100.0)
             else:
                 pct = 0.0
+                exclusive_pct = 0.0
             cpu = s_data["cpu_time_s"]
             stage_breakdown[s_name] = {
                 "wall_time_s": w,
@@ -1130,6 +1459,11 @@ class RunContext:
                 "busy_time_s": s_data.get("busy_time_s"),
                 "lifetime_s": s_data.get("lifetime_s"),
                 "pct_of_total": pct,
+                # #220 E2: seconds this stage was the only one in flight, and its
+                # share of the run.  Unlike pct_of_total these are disjoint and
+                # sum to at most 100%.
+                "exclusive_time_s": round(exclusive, 4),
+                "exclusive_pct_of_total": exclusive_pct,
                 "cpu_time_s": cpu,
                 "cpu_wall_ratio": round(cpu / max(0.001, w), 2),
                 "throughput": s_data.get("throughput", {}),
@@ -1141,6 +1475,50 @@ class RunContext:
         ocr_pcts = compute_percentiles(ocr_durations)
         slowest_ocr_pages = sorted(self.ocr_page_records, key=lambda p: p.get("total_ms", 0.0), reverse=True)[:5]
 
+        # Retry observation (#220 B1): protocol vs transport, whole run and for
+        # the text path per 100 recorded requests.  The denominator is what the
+        # run actually recorded; when nothing was recorded the rate stays
+        # ``None`` instead of inventing a number.
+        retry_kinds = {"protocol": 0, "transport": 0, "other": 0, "unknown": 0}
+        retry_by_stage: Dict[str, int] = {}
+        text_path_kinds = {"protocol": 0, "transport": 0, "other": 0, "unknown": 0}
+        text_path_retry_count = 0
+        for retry in self.retries:
+            kind = classify_retry_error(retry.get("error_type", ""), retry.get("error_kind", ""))
+            retry_kinds[kind] = retry_kinds.get(kind, 0) + 1
+            stage_key = str(retry.get("stage") or "unknown")
+            retry_by_stage[stage_key] = retry_by_stage.get(stage_key, 0) + 1
+            if stage_key in {"translation", "annotation"}:
+                text_path_kinds[kind] += 1
+                text_path_retry_count += 1
+        text_path_requests = sum(
+            1 for call in self.model_calls
+            if str(call.get("role") or "") in {"translation", "annotation"})
+
+        def _per_100(count: int) -> Optional[float]:
+            if not text_path_requests:
+                return None
+            return round(100.0 * count / text_path_requests, 2)
+
+        retry_observation = {
+            "total_retries": len(self.retries),
+            "by_kind": dict(retry_kinds),
+            "by_stage": dict(sorted(retry_by_stage.items())),
+            "text_path": {
+                "requests": text_path_requests,
+                "retries": text_path_retry_count,
+                "protocol": text_path_kinds["protocol"],
+                "transport": text_path_kinds["transport"],
+                "other": text_path_kinds["other"],
+                "unknown": text_path_kinds["unknown"],
+                # None = nothing was recorded, not "0 retries per 100".
+                "protocol_per_100_requests": _per_100(text_path_kinds["protocol"]),
+                "transport_per_100_requests": _per_100(text_path_kinds["transport"]),
+                "all_per_100_requests": _per_100(text_path_retry_count),
+            },
+            "denominator": "recorded model requests whose role is translation or annotation",
+        }
+
         summary = {
             "version": 2,
             "run_id": self.run_id,
@@ -1150,11 +1528,20 @@ class RunContext:
             "trace_level": self.level.value if hasattr(self.level, "value") else str(self.level),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            # Active work time (#320).  Same definition for the report and UI.
             "wall_time_s": round(current_wall, 4),
+            "elapsed_wall_clock_s": active_block.get("wall_clock_elapsed_s", 0.0),
+            "interrupted_time_s": round(float(active_block.get("interrupted_seconds") or 0.0), 3),
+            "interrupted_pct_of_elapsed": active_block.get("interrupted_pct_of_elapsed", 0.0),
+            "active_time": active_block,
+            # Kept for diagnostics only: this clock may or may not pause while
+            # the machine sleeps, which is exactly why it is not the duration.
+            "monotonic_elapsed_s": round(monotonic_elapsed, 4),
             "process_cpu_time_s": self.total_cpu_time_s if self.total_cpu_time_s > 0 else round(time.process_time() - self.started_cpu_time, 4),
             "cpu_wall_ratio": round(self.total_cpu_time_s / max(0.001, current_wall), 2),
             "unaccounted_time_s": round(unaccounted_s, 2),
             "unaccounted_pct": unaccounted_pct,
+            "unaccounted_note": unaccounted_note,
             "dataset": dict(self.dataset_meta),
             "stages": stage_breakdown,
             "latency_percentiles": {
@@ -1215,8 +1602,56 @@ class RunContext:
                 "error_list": self.errors[-10:],
                 "retry_list": self.retries[-10:],
             },
+            "retry_observation": retry_observation,
         }
         return summary
+
+    def _gui_jank_window(self) -> Dict[str, Any]:
+        """Run-scoped GUI stall block from every registered source (#323).
+
+        The sampler is process-wide; this narrows it to the run by diffing the
+        counters against the checkpoint taken in ``__init__``.  Sources that
+        raise are skipped: a diagnostic must never fail a run.
+
+        One monitor per process is the normal case and its window is returned
+        flat.  If more than one is ever registered, each keeps its own record
+        under ``sources`` — updating one shared dict would let the last source
+        silently overwrite the others.
+
+        ``measured`` is always present: a run that never had a sampler must not
+        read like a run with zero stalls.
+        """
+        windows: List[Dict[str, Any]] = []
+        for source, token in list(self._gui_stall_tokens):
+            try:
+                window = source.summary_since(token)
+            except Exception:
+                continue
+            if not isinstance(window, dict):
+                continue
+            window = dict(window)
+            window["source"] = f"{type(source).__module__}.{type(source).__qualname__}"
+            if window.get("enabled") is False:
+                window["measured"] = False
+                window["reason"] = "stall sampler disabled (FOLITH_JANK_MONITOR=0)"
+            else:
+                window["measured"] = True
+            windows.append(window)
+        if not windows:
+            result: Dict[str, Any] = {
+                "measured": False,
+                "reason": ("no GUI stall source was registered for this run "
+                           "(headless run, or the UI health monitor never started)"),
+            }
+        elif len(windows) == 1:
+            result = windows[0]
+        else:
+            result = {
+                "measured": any(window.get("measured") for window in windows),
+                "sources": windows,
+            }
+        self.gui_jank = result
+        return result
 
     def generate_stages_doc(self) -> Dict[str, Any]:
         return {
@@ -1242,6 +1677,30 @@ class RunContext:
         r = summary.get("resources", {})
         lp = summary.get("latency_percentiles", {})
         err = summary.get("errors_and_retries", {})
+        ro = summary.get("retry_observation", {})
+
+        def _rate_text(value) -> str:
+            return "n/a (no requests recorded)" if value is None else f"{value} per 100 requests"
+
+        ro_by_kind = ro.get("by_kind") or {}
+        ro_by_stage = ro.get("by_stage") or {}
+        ro_text_path = ro.get("text_path") or {}
+        retry_observation_text = (
+            f"- **Retries (whole run)**: {ro.get('total_retries', 0)} "
+            f"(protocol: {ro_by_kind.get('protocol', 0)}, transport: {ro_by_kind.get('transport', 0)}, "
+            f"other: {ro_by_kind.get('other', 0)}, unknown: {ro_by_kind.get('unknown', 0)})\n"
+            f"- **By Stage**: {', '.join(f'{name}: {count}' for name, count in ro_by_stage.items()) or '—'}\n"
+            f"- **Text-path Requests Recorded**: {ro_text_path.get('requests', 0)}\n"
+            f"- **Text-path Protocol Retries**: {ro_text_path.get('protocol', 0)} "
+            f"({_rate_text(ro_text_path.get('protocol_per_100_requests'))})\n"
+            f"- **Text-path Transport Retries**: {ro_text_path.get('transport', 0)} "
+            f"({_rate_text(ro_text_path.get('transport_per_100_requests'))})\n"
+            f"- **Text-path All Retries**: {ro_text_path.get('retries', 0)} "
+            f"({_rate_text(ro_text_path.get('all_per_100_requests'))})\n"
+            f"- **Limitation**: these are this run's observed counts only. The protocol-retry rate on real "
+            f"body text still has to be re-measured with a live connection; this report defines the "
+            f"measurement, it does not assert a rate."
+        )
         _empty = {"total": None, "calls_reported": 0, "calls_total": 0, "complete": False}
         tu = {k: (m.get("token_usage") or {}).get(k, _empty) for k in (
             "prompt_tokens", "completion_tokens", "cached_tokens", "total_tokens",
@@ -1257,7 +1716,7 @@ class RunContext:
         for s_name, s_info in stages.items():
             pct = s_info.get("pct_of_total", 0.0)
             if pct >= 50.0:
-                bottlenecks.append(f"- **Dominant Stage**: Stage `{s_name}` consumed **{s_info.get('wall_time_s')}s** ({pct}% of total runtime).")
+                bottlenecks.append(f"- **Dominant Stage**: Stage `{s_name}` consumed **{s_info.get('wall_time_s')}s** ({pct}% of active work time).")
 
         # CPU bound vs IO bound
         cpu_wall = summary.get("cpu_wall_ratio", 0.0)
@@ -1277,7 +1736,7 @@ class RunContext:
         unacc = summary.get("unaccounted_time_s", 0.0)
         unacc_pct = summary.get("unaccounted_pct", 0.0)
         if unacc_pct >= 15.0 and unacc >= 5.0:
-            bottlenecks.append(f"- **Unaccounted Idle Gap**: **{unacc}s** ({unacc_pct}%) of runtime is outside recorded pipeline stages (potential queueing, UI reruns, or lock waits).")
+            bottlenecks.append(f"- **Unaccounted Idle Gap**: **{unacc}s** ({unacc_pct}%) of active work time is outside recorded pipeline stages (potential queueing, UI reruns, or lock waits).")
 
         # Model retries
         if err.get("retries", 0) > 0:
@@ -1312,17 +1771,44 @@ class RunContext:
             tp_str = ", ".join(f"{v} {k}" for k, v in s_info.get("throughput", {}).items()) or "—"
             if s_info.get("no_work"):
                 stage_rows.append(
-                    f"| `{s_name}` | — (not run / no work recorded) | — | — | — | — | {s_info.get('status')} |")
+                    f"| `{s_name}` | — (not run / no work recorded) | — | — | — | — | — | — | {s_info.get('status')} |")
                 continue
             stage_rows.append(
-                f"| `{s_name}` | {s_info.get('wall_time_s')} s | {s_info.get('pct_of_total')}% | {s_info.get('cpu_time_s')} s | {s_info.get('cpu_wall_ratio')} | {tp_str} | {s_info.get('status')} |"
+                f"| `{s_name}` | {s_info.get('wall_time_s')} s | {s_info.get('pct_of_total')}% | "
+                f"{s_info.get('exclusive_time_s')} s | {s_info.get('exclusive_pct_of_total')}% | "
+                f"{s_info.get('cpu_time_s')} s | {s_info.get('cpu_wall_ratio')} | {tp_str} | {s_info.get('status')} |"
             )
         stages_table = (
-            "| Stage | Work Time (union of spans) | % Total | CPU Time | CPU/Wall Ratio | Throughput | Status |\n"
-            "|---|---|---|---|---|---|---|\n" + "\n".join(stage_rows)
+            "| Stage | Work Time (union of spans) | % Total (union) | Exclusive Time (only stage in flight) | % Total (exclusive) | CPU Time | CPU/Wall Ratio | Throughput | Status |\n"
+            "|---|---|---|---|---|---|---|---|---|\n" + "\n".join(stage_rows)
             if stage_rows
             else "_No stages recorded._"
         )
+        stages_note = (
+            "> **Why the union column can exceed 100%:** *Work Time (union of spans)* is each "
+            "stage's own union of root spans. When stages run concurrently, each claims the same "
+            "wall-clock seconds, so the union percentages legitimately add up past 100%. "
+            "*Exclusive Time* attributes a second to a stage only while it is the **only** stage "
+            "in flight, so those slices never overlap and sum to at most 100%."
+        )
+
+        active_block = summary.get("active_time") or {}
+        interrupted_rows = [
+            f"| {span.get('started_at')} | {span.get('duration_s')} s | {span.get('reason')} |"
+            for span in (active_block.get("spans") or [])[-5:]
+        ]
+        interrupted_table = (
+            "| Interruption start (UTC) | Duration | Reason |\n|---|---|---|\n"
+            + "\n".join(interrupted_rows)
+            if interrupted_rows
+            else "_No interruptions were detected in this run._"
+        )
+        interrupted_count = active_block.get("interruption_count", 0)
+        interrupted_seconds = summary.get("interrupted_time_s", 0.0)
+        interrupted_pct = summary.get("interrupted_pct_of_elapsed", 0.0)
+        heartbeat_s = active_block.get("heartbeat_interval_s")
+        heartbeat_factor = active_block.get("interruption_factor")
+        unaccounted_note = summary.get("unaccounted_note", "")
 
         md = f"""# Run Performance Report
 
@@ -1333,7 +1819,10 @@ class RunContext:
 - **Trace Mode**: `{summary.get('trace_level')}`
 - **Started At**: {summary.get('started_at')}
 - **Finished At**: {summary.get('finished_at')}
-- **Wall Clock Duration**: **{summary.get('wall_time_s')} s**
+- **Active Work Time**: **{summary.get('wall_time_s')} s** (excludes interruptions — the duration to report or display)
+- **Elapsed Wall Clock**: **{summary.get('elapsed_wall_clock_s')} s** (start→finish, includes interruptions)
+- **Interrupted (excluded)**: **{interrupted_seconds} s** in {interrupted_count} span(s) — see below
+- **Monotonic Clock Duration (diagnostic only)**: {summary.get('monotonic_elapsed_s')} s (this clock may pause while the machine sleeps; it is never the reported duration)
 - **Process CPU Time**: **{summary.get('process_cpu_time_s')} s** (Ratio: {summary.get('cpu_wall_ratio')})
 
 ## Dataset Characteristics
@@ -1344,6 +1833,8 @@ class RunContext:
 
 ## Pipeline Timing & Stage Breakdown
 {stages_table}
+
+{stages_note}
 
 ## Resource Utilization
 - **Process CPU**: Avg {r.get('process_cpu_avg_pct')}% · Peak {r.get('process_cpu_peak_pct')}%
@@ -1380,9 +1871,21 @@ class RunContext:
 - **Errors**: {err.get('errors', 0)} (Recovered: {err.get('recovered_errors', 0)})
 - **Retries**: {err.get('retries', 0)}
 
+## Retry Observability (Text Path)
+{retry_observation_text}
+
+## Interrupted Time (excluded)
+- **Interruptions**: **{interrupted_count}** — total **{interrupted_seconds} s** ({interrupted_pct}% of the elapsed wall clock)
+- A gap between two heartbeats longer than **{heartbeat_factor} × {heartbeat_s} s** is treated as an interruption (machine suspend/hibernation, a frozen process, or the gap before a resume) and contributes zero active work time. A *detected* interruption understates a real suspend by at most one heartbeat period; pauses shorter than the threshold cannot be distinguished from work (a 10 s sleep is counted as active time), and real work longer than the threshold is dropped (an 18 s stop-the-world GC pause is counted as an interruption). The final stretch before the run ends follows the same rule.
+- Gaps between separate runs of the same task (app closed, machine shut down) are excluded too: each resumed run starts a new segment, and the task total is the sum of the segments' active seconds.
+- Network outages are **not** included in this definition yet — see the active-time contract document for the agreed condition and why it is not implemented.
+
+{interrupted_table}
+
 ## Unaccounted Time
-- **Unaccounted Gap**: **{summary.get('unaccounted_time_s', 0.0)} s** ({summary.get('unaccounted_pct', 0.0)}% of total runtime)
-- Represents gap between top-level stage instrumentation and total wall clock.
+- **Unaccounted gap inside active work time**: **{summary.get('unaccounted_time_s', 0.0)} s** ({summary.get('unaccounted_pct', 0.0)}% of active work time)
+- {unaccounted_note or "Represents the gap between top-level stage instrumentation and active work time."}
+- Interrupted time is reported separately above and is never part of active work time.
 
 ## Potential Bottlenecks
 {bottlenecks_text}
@@ -1400,12 +1903,55 @@ class RunContext:
                         history = []
                 except Exception:
                     history = []
+            # Older entries in this file predate #320 and their wall_time_s is
+            # a wall-clock duration.  Every new entry carries ``definition`` so
+            # a reader can never add the two definitions together.
+            prior_active = 0.0
+            prior_interrupted = 0.0
+            prior_interruptions = 0
+            prior_segments = 0
+            cumulative_found = False
+            for prior in reversed(history):
+                if not isinstance(prior, dict) or prior.get("definition") != "active_seconds":
+                    continue
+                if prior.get("task_active_seconds") is not None:
+                    prior_active = float(prior.get("task_active_seconds") or 0.0)
+                    prior_interrupted = float(prior.get("task_interrupted_seconds") or 0.0)
+                    prior_interruptions = int(prior.get("task_interruption_count") or 0)
+                    prior_segments = int(prior.get("task_segments") or 0)
+                    cumulative_found = True
+                    break
+            if not cumulative_found:
+                for prior in history:
+                    if not isinstance(prior, dict) or prior.get("definition") != "active_seconds":
+                        continue
+                    prior_active += float(prior.get("active_seconds") or 0.0)
+                    prior_interrupted += float(prior.get("interrupted_seconds") or 0.0)
+                    prior_interruptions += int(prior.get("interruption_count") or 0)
+                    prior_segments += 1
+            run_active = float(summary.get("wall_time_s") or 0.0)
+            run_interrupted = float(summary.get("interrupted_time_s") or 0.0)
+            run_interruptions = int((summary.get("active_time") or {}).get("interruption_count") or 0)
             entry = {
                 "run_id": summary.get("run_id"),
                 "task_id": summary.get("task_id"),
                 "started_at": summary.get("started_at"),
                 "finished_at": summary.get("finished_at"),
                 "wall_time_s": summary.get("wall_time_s"),
+                # #320: active-seconds and interruption totals travel with the
+                # history entry so a task total can be summed across resumed
+                # segments without re-deriving the definition.
+                "definition": "active_seconds",
+                "active_seconds": summary.get("wall_time_s"),
+                "interrupted_seconds": summary.get("interrupted_time_s"),
+                "interruption_count": run_interruptions,
+                "elapsed_wall_clock_s": summary.get("elapsed_wall_clock_s"),
+                # Running task total: survives the 50-entry trim below, so a
+                # long resumed task cannot silently lose its first segments.
+                "task_active_seconds": round(prior_active + run_active, 3),
+                "task_interrupted_seconds": round(prior_interrupted + run_interrupted, 3),
+                "task_interruption_count": prior_interruptions + run_interruptions,
+                "task_segments": prior_segments + 1,
                 "status": summary.get("status"),
                 "segment_count": summary.get("dataset", {}).get("segment_count", 0),
                 "peak_ram_mb": summary.get("resources", {}).get("process_rss_peak_mb", 0.0),
@@ -1458,7 +2004,13 @@ class RunContext:
                 "run_id": self.run_id,
                 "started_at": self.started_at,
                 "finished_at": self.finished_at,
-                "wall_time_s": self.total_wall_time_s,
+                # #320: one definition everywhere, including the legacy viewer.
+                "wall_time_s": summary.get("wall_time_s"),
+                "active_seconds": summary.get("wall_time_s"),
+                "elapsed_wall_clock_s": summary.get("elapsed_wall_clock_s"),
+                "interrupted_seconds": summary.get("interrupted_time_s"),
+                "interruption_count": (summary.get("active_time") or {}).get("interruption_count", 0),
+                "monotonic_elapsed_s": self.total_wall_time_s,
                 "stages": legacy_stages,
             }
             self.legacy_perf_path.write_text(json.dumps(legacy, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1520,6 +2072,16 @@ class TraceManager:
                 if run:
                     return run
         return _RUN_CONTEXT_VAR.get()
+
+    def active_seconds(self, job_id: Optional[str] = None) -> Optional[float]:
+        """Active work seconds of the run currently tracked (#320)."""
+        run = self.get_active_run(job_id)
+        return run.active_seconds() if run is not None else None
+
+    def active_time(self, job_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The full active-time block (definition, interruptions, elapsed)."""
+        run = self.get_active_run(job_id)
+        return run.active_time_summary() if run is not None else None
 
     def finish_run(self, job_id: Optional[str] = None, status: str = "success", failure_reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
         run = self.get_active_run(job_id)

@@ -4,7 +4,7 @@
 [证据日志](../qt-spike/evidence-log.md)；状态用 **PASS**（机器验证通过）/
 **MANUAL**（必须人工验收）/ **PARTIAL**（部分机器验证，仍需人工）/ **N/A**（本轮不提供该入口）。
 
-- 当前 freeze 支持范围：**macOS 15.7.5+ / Apple Silicon**（2026-10-13 确认）。下列候选身份与证据编号保留历史快照，当前 CI 结论见 [状态清单](status.md)。
+- 当前 freeze 支持范围：**macOS 15.8.1+ / Apple Silicon**（2026-10-31 由 15.7.5 改定）。下列候选身份与证据编号保留历史快照，当前 CI 结论见 [状态清单](status.md)。
 - 历史候选：`.app` built_at `2026-10-04T00:58:15+00:00`；DMG `sha256=a6d453ffe50be4d1f2c2fd1adf753157910fb474e6cec9cc01d6c47f034f43ee`
 - 历史声明最低系统：macOS 15.0（当时实测）；未在 13/14 验收
 - 验证方式代号：**A**=自动化用例（源码进程）｜**F**=冻结 `.app`｜**W**=真实 cocoa 窗口｜**M**=人工
@@ -73,11 +73,11 @@
 | D.8 构建记录、实际依赖版本、可复现命令；构建 ID/时间可区分；app 与 DMG 身份一致 | PASS | E17（清单 9 个发行版版本完整）、`build/qt-desktop/*`、`--check-notes` 非过期 | A |
 | D.9 干净 Mac 普通用户从最终 DMG 完成安装与主流程 | MANUAL | 见人工验收包 A（开发机 env/offscreen 只作补充）。**2026-10-05 computer use 回传：NOT_RUN**（当前机器有开发环境与仓库，没有可访问的干净 Mac） | M |
 
-## 已知平台级风险（非本候选独有，无法从应用侧根治）
+## 平台级风险：上游 AX 崩溃（QTBUG-149612，现已运行时缓解）
 
 | 现象 | 范围 | 现状与缓解 |
 | --- | --- | --- |
-| macOS 26/27 上外部**辅助功能扫描**（AI "Computer Use" / VoiceOver / 窗口管理器的 AX 客户端）遍历界面时，Qt 平台插件崩溃（`EXC_BAD_ACCESS`；栈顶 `libqcocoa` + AppKit `NSAccessibilityAttributeAccessorInfo getAttributeValue:forObject:`） | 上游 Qt 缺陷 **QTBUG-149612**（synthesized table elements 会删掉父级 table 的 accessibility interface；影响 6.11.0–6.11.2，截至 2026-10-05 无修复版本，Gerrit 765434 评审中）；同样见于 calibre（PyQt6）、Qt Creator、Anki、FreeCAD | **R62 已稳定复现 3/3**（`scripts/qt_ax_scan_probe.py`：选中行 + AX 扫描 + 打开任务；栈与用户两份 `.ips` 逐帧一致）。界面结构变更已收敛（打开任务不再"清空再重建"；已排除列表内容不变时不重建），但**实测没有任何可用的应用侧开关**：`QT_ACCESSIBILITY=0` 在 Qt 6.11 无效、`QAccessible.setActive(False)` 会被系统在 AX 客户端接入时重新激活——R61 的 `FOLITH_QT_DISABLE_ACCESSIBILITY=1` 因此**已删除**。**验收必须用人工键鼠、不挂 AX 代理**。详见 [computer-use-acceptance-2026-10-05.md](computer-use-acceptance-2026-10-05.md) 与证据 E163–E168 |
+| macOS 26/27 上外部**辅助功能扫描**（AI "Computer Use" / VoiceOver / 窗口管理器的 AX 客户端）遍历界面时，Qt 平台插件崩溃（`EXC_BAD_ACCESS`；栈顶 `libqcocoa` + AppKit `NSAccessibilityAttributeAccessorInfo getAttributeValue:forObject:` + HIServices `__AXCopyAttributeValueForHierarchy`） | 上游 Qt 缺陷 **QTBUG-149612**（synthesized table elements 会删掉父级 table 的 accessibility interface；同样见于 calibre（PyQt6）、Qt Creator、Anki、FreeCAD）——**不是本候选的业务代码** | **已缓解（运行时修复 v2）**。R62 曾稳定复现 3/3（`scripts/qt_ax_scan_probe.py`；栈与用户 `.ips` 逐帧一致）。上游修复 commit `8148c48deb8e4345bacb797cb75c011df6f797fa` 于 2026-10-27 合入 qt/qtbase `dev` + `6.12`（fixVersions 6.8.10 / 6.12.1 / 6.13.0）；随包 PySide6 6.11.2 不含它，6.11.3 / 6.12.0 也早于合入。应用现于启动时安装 `folith/qt/macos_accessibility.py`，把**两处**删除点都改为不删除 interface（`-[QMacAccessibilityElement dealloc]` 先清零 `axid`，`+[QMacAccessibilityElement removeElementsFromCache:]` 空实现），只对 Qt 6.11.x / 6.12.0 生效，升级到 Qt 6.12.1+ 后自动停用。**因果证据**：9 份用户 `.ips` 逐帧同签名——E203；上游缺陷/修复事实——E204；进程内确定性复现器 A/B（无修复 exit 139、v2 exit 0，`accessibilitySelectedChildren` 仍返回 7 个选中项、父表 interface 仍可解析）——E205；25 次创建/遍历/销毁循环（无修复 cycle 0 即死、v2 25/25）——E206。**支持性证据**：重建 `.app` 启动日志确认已安装（源码重建产物，**不是** DMG 安装）——E208；应用内 AX 扫描探针在 v2 下源码无动作 3/3 ALIVE（34/32/35 轮）、源码动作路线 3/3 ALIVE、冻结 `.app` 2/2 ALIVE，均无新 `.ips`，**但 `FOLITH_QT_AX_WORKAROUND=0` 对照臂也 4/4 ALIVE、无 `.ips`**——本机未复现用户那条 `libqcocoa`/AppKit 崩溃，故只算「没有反证」（只改 `dealloc` 的 v1 3/3 崩溃是 partial-patch artefact，E209，不是用户崩溃模式；E207）。**未验证**：真实 Computer Use 在重建候选上的完整路径（E211）、冻结 DMG 验证、AX 表格/行/单元格是否仍可见（E210：卡片视图路线上从未出现 `AXTable`）；PySide6 6.11.3 / 6.12.0 版本矩阵已回传：三个已发布版本各 3/3 崩溃、修复后各 3/3 完成（E212）。**尚不能声称**：冻结 DMG 已验证、AX 自动化在所有场景安全。旧口径「验收必须用人工键鼠、不挂 AX 代理」自 2026-11-06 起作废。详见 [computer-use-acceptance-2026-10-05.md](computer-use-acceptance-2026-10-05.md) 与证据 E163–E168（历史） |
 
 ## 汇总
 

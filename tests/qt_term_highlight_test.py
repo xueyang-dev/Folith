@@ -18,6 +18,8 @@ def test_spans_follow_the_glossary_matching_rules():
     assert term_highlight.spans("art", "Start the art.") == [(10, 13)], "whole words for Latin"
     assert term_highlight.spans("Pixie", "the pixie and PIXIE") == [(4, 9), (14, 19)]
     assert term_highlight.spans("小精灵", "真相小精灵与小精灵") == [(2, 5), (6, 9)]
+    assert term_highlight.spans("CAT", "CAT2 CAT_ CAT") == [(10, 13)]
+    assert term_highlight.spans("草ABC", "前草ABC后") == [(1, 5)]
     assert term_highlight.spans("", "x") == [] and term_highlight.spans("x", "") == []
 
 

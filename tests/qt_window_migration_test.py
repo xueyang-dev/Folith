@@ -292,7 +292,10 @@ def test_workspace_term_edit_flows_through_the_existing_update_pathway(
     assert state["pairs"][1]["reviewed"] is True
     assert state["pairs"][0]["target"] == "你好世界", "修订术语不自动覆盖已有译文"
     remaining_tm = core.load_tm(core.tm_project_id(state))
-    assert affected_key not in remaining_tm and untouched_key in remaining_tm
+    assert remaining_tm[affected_key]["reviewed"] is False
+    assert remaining_tm[affected_key]["target"] == "你好世界"
+    assert remaining_tm[affected_key]["withdrawn_reason"]
+    assert remaining_tm[untouched_key]["reviewed"] is True
     # 工作台和术语页都读取新值。
     updated = next(c for c in window.workbench.term_list.buttons if c.term["id"] == entry_id)
     assert updated.term["target"] == expected["preferred"]
@@ -338,7 +341,9 @@ def test_workspace_term_edit_failure_leaves_state_unchanged(client, monkeypatch)
     fake._preferred = "  "
     monkeypatch.setattr(window_module.dialogs, "TermEditDialog", fake)
     failures = []
-    monkeypatch.setattr(window, "_failure", lambda title, detail: failures.append((title, detail)))
+    monkeypatch.setattr(
+        window, "_failure",
+        lambda title, message, detail="", **kwargs: failures.append((title, message)))
     chip.edit_button.click()
     _pump(client["app"], 1.0)
     assert failures, "失败必须给出可见错误"
@@ -347,3 +352,103 @@ def test_workspace_term_edit_failure_leaves_state_unchanged(client, monkeypatch)
     entry = next(e for e in state["glossary"] if e["id"] == entry_id)
     assert entry["preferred"] == "你好"
     assert len(state.get("glossary_versions") or []) == 1, "失败不能生成新版本"
+
+
+def test_terminology_preview_apply_and_undo_from_window(client, monkeypatch):
+    from PySide6.QtWidgets import QDialog
+    from folith.qt import dialogs
+    core, adapter = client['core'], client['adapter']
+    glossary = core.normalize_glossary([{'source': '草の墓標', 'target': '草之墓碑',
+                                          'preferred': '草之墓碑', 'status': 'locked'}])
+    state = _plain_state(core, glossary=glossary,
+                         paras=['草の墓標', '別の段'],
+                         pairs=[{'source': '草の墓標', 'target': '旧墓碑', 'reviewed': True},
+                                {'source': '別の段', 'target': '旧墓碑', 'reviewed': True}])
+    _save(core, 'wmtermreplace001', state)
+    window = _open(client, 'wmtermreplace001')
+    seen = []
+    def accept(dialog):
+        seen.append(dialog.findChild(dialogs.QPlainTextEdit).toPlainText())
+        return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(dialogs.TerminologyReplacementPreview, 'exec', accept)
+    window.preview_terminology_replacement(glossary[0]['id'], '旧墓碑', None)
+    assert _pump(client['app'], 15, lambda: adapter.load_state('wmtermreplace001')['pairs'][0]['target'] == '草之墓碑')
+    assert seen and '旧墓碑' in seen[0] and '草之墓碑' in seen[0]
+    assert adapter.load_state('wmtermreplace001')['pairs'][1]['target'] == '旧墓碑'
+    assert _pump(client['app'], 5, lambda: not window.workbench.operation_active('wmtermreplace001'))
+    window.undo_terminology_replacement()
+    assert _pump(client['app'], 15, lambda: adapter.load_state('wmtermreplace001')['pairs'][0]['target'] == '旧墓碑')
+
+
+def test_merge_candidate_from_ui_retains_alias_and_audit(client, monkeypatch):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
+    from folith.workspace_presentation import terminology_duplicates
+    core, adapter = client['core'], client['adapter']
+    glossary = core.normalize_glossary([
+        {'source': 'ＡＢＣ', 'target': '甲', 'status': 'locked', 'scope': 'document'},
+        {'source': 'ABC', 'target': '乙', 'status': 'locked', 'scope': 'document'}])
+    _save(core, 'wmtermmerge001', _plain_state(core, glossary=glossary))
+    window = _open(client, 'wmtermmerge001')
+    panel = window.workbench.terms_panel
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.StandardButton.Yes)
+    def choose():
+        dialog = QApplication.activeModalWidget()
+        button = next(w for w in dialog.findChildren(QPushButton) if w.text() == '合并所选：保留右侧术语')
+        button.click()
+    QTimer.singleShot(0, choose)
+    panel._show_duplicates(terminology_duplicates(panel.rows()))
+    assert _pump(client['app'], 15, lambda: len(adapter.load_state('wmtermmerge001')['glossary']) == 1)
+    state = adapter.load_state('wmtermmerge001')
+    assert state['glossary'][0]['source'] == 'ABC'
+    assert state['glossary'][0]['source_aliases'] == ['ＡＢＣ']
+    assert len(state['human_actions'][-1]['merged_originals']) == 2
+
+
+def test_failed_term_save_preserves_pending_form(client, monkeypatch):
+    core, adapter = client['core'], client['adapter']
+    glossary = core.normalize_glossary([{'source': 'term', 'target': '旧译', 'status': 'locked'}])
+    _save(core, 'wmtermsave001', _plain_state(core, glossary=glossary))
+    window = _open(client, 'wmtermsave001')
+    panel = window.workbench.terms_panel
+    def fail(*args, **kwargs):
+        raise adapter.AdapterError('模拟保存失败')
+    monkeypatch.setattr(adapter, 'update_glossary_entry', fail)
+    panel.preferred_edit.setText('待保存译名')
+    panel.apply_row_button.click()
+    assert _pump(client['app'], 5, lambda: not window.workbench.operation_active('wmtermsave001'))
+    assert panel.preferred_edit.text() == '待保存译名' and panel.is_dirty()
+    assert adapter.load_state('wmtermsave001')['glossary'][0]['preferred'] == '旧译'
+
+
+def test_leaving_with_unsaved_term_requires_discard_or_stays(client, monkeypatch):
+    core = client['core']
+    glossary = core.normalize_glossary([{'source': 'term', 'target': '旧译', 'status': 'locked'}])
+    _save(core, 'wmtermdraft001', _plain_state(core, glossary=glossary))
+    window = _open(client, 'wmtermdraft001')
+    panel = window.workbench.terms_panel
+    panel.preferred_edit.setText('未保存')
+    monkeypatch.setattr(window, '_confirm', lambda *args, **kwargs: False)
+    window.show_home()
+    assert window._current_job_id == 'wmtermdraft001' and panel.preferred_edit.text() == '未保存'
+    monkeypatch.setattr(window, '_confirm', lambda *args, **kwargs: True)
+    window.show_home()
+    assert window._current_job_id == '' and not panel.is_dirty()
+
+
+def test_successful_term_save_clears_only_saved_form(client):
+    core, adapter = client['core'], client['adapter']
+    glossary = core.normalize_glossary([
+        {'source': 'Alpha', 'target': '甲', 'status': 'locked'},
+        {'source': 'Beta', 'target': '乙', 'status': 'locked'}])
+    _save(core, 'wmtermsave002', _plain_state(core, glossary=glossary))
+    window = _open(client, 'wmtermsave002')
+    panel = window.workbench.terms_panel
+    panel.search_edit.setText('Alpha'); panel.preferred_edit.setText('甲新')
+    panel.search_edit.setText('Beta'); panel.preferred_edit.setText('乙新')
+    panel.apply_row_button.click()
+    assert _pump(client['app'], 10, lambda: not window.workbench.operation_active('wmtermsave002'))
+    assert next(x for x in adapter.load_state('wmtermsave002')['glossary'] if x['source'] == 'Beta')['preferred'] == '乙新'
+    assert panel.preferred_edit.text() == '乙新'
+    panel.search_edit.setText('Alpha')
+    assert panel.preferred_edit.text() == '甲新' and panel.is_dirty()

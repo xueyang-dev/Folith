@@ -162,3 +162,41 @@ def test_window_help_menu_and_onboarding_entry(app, tmp_path, monkeypatch):
     finally:
         window.timer.stop()
         window.close()
+
+
+def test_whats_new_never_blocks_a_scripted_run_even_when_onboarding_is_not_automatic(
+        app, tmp_path, monkeypatch):
+    """The 500 ms onboarding timer decides at fire time. A test that turns the
+    "automatic" skip off and already has a task made the old-user branch run
+    ``WhatsNewDialog.exec()``, a modal loop nothing closes: ``qt_pdf_tip_test``
+    hung until the CI job was cancelled whenever the timer lost the race."""
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("FOLITH_DESKTOP_DATA_DIR", str(data))
+    monkeypatch.setenv("FOLITH_OUTPUT_DIR", str(data))
+    monkeypatch.setenv("FOLITH_QT_NONINTERACTIVE", "1")
+    monkeypatch.setattr(core, "OUTPUT_DIR", data)
+    from folith.desktop import paths as desktop_paths
+    from folith.qt import window as window_module
+
+    store_file = str(tmp_path / "w.ini")
+    monkeypatch.setattr(preferences, "settings",
+                        lambda: QSettings(store_file, QSettings.Format.IniFormat))
+    monkeypatch.setattr(onboarding, "_automatic", lambda: False)
+    monkeypatch.setattr(onboarding, "first_run_kind", lambda *a, **k: "whatsnew")
+
+    class Modal:
+        def __init__(self, *a, **k):
+            pass
+
+        def exec(self):
+            raise AssertionError("a scripted run opened the modal What's New dialog")
+
+    monkeypatch.setattr(onboarding, "WhatsNewDialog", Modal)
+    window = window_module.MainWindow(adapter.EngineConfig(), desktop_paths.resolve_paths(), None)
+    try:
+        assert window.maybe_start_onboarding() == "whatsnew"
+        assert str(window.settings.value(onboarding.COMPLETED_KEY) or ""), "still recorded as seen"
+    finally:
+        window.timer.stop()
+        window.close()

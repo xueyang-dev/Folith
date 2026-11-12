@@ -117,7 +117,11 @@ class AttentionList(QWidget):
 
     def _add_finding(self, item: dict) -> None:
         severity = str(item.get("severity") or "informational")
-        summary = str(item.get("summary") or item.get("reason") or "")
+        # 检查项的摘要多数是模型写的自由文本，不能改写；但交付完整性、确定性检查
+        # 这类固定措辞要跟界面语言走。tr_dynamic 只做目录精确匹配，命中不了就
+        # 原样返回——模型文案不会进目录，这就是安全边界。
+        summary = i18n.tr_dynamic(
+            str(item.get("summary") or item.get("reason") or ""))
         card = QWidget()
         card.setObjectName("attentionItem")
         card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -125,7 +129,9 @@ class AttentionList(QWidget):
         layout.setContentsMargins(theme_module.SPACE["sm"], theme_module.SPACE["xs"],
                                   theme_module.SPACE["sm"], theme_module.SPACE["xs"])
         layout.setSpacing(theme_module.SPACE["xs"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         head = QHBoxLayout()
+        layout.addLayout(head)
         head.setSpacing(theme_module.SPACE["xs"])
         tone = "danger" if severity == "blocking" else (
             "warning" if severity == "actionable" else "text-muted")
@@ -133,7 +139,6 @@ class AttentionList(QWidget):
                                        14, tone), 0, Qt.AlignmentFlag.AlignTop)
         label = _wrapped(summary, "attentionText")
         head.addWidget(label, 1)
-        layout.addLayout(head)
         self._texts.append(summary)
         suggestion = str(item.get("suggested_target") or "").strip()
         if suggestion:
@@ -141,6 +146,7 @@ class AttentionList(QWidget):
         decidable = bool(item.get("finding_id")) and item.get("decidable", True)
         if decidable:
             actions = QHBoxLayout()
+            layout.addLayout(actions)
             actions.setSpacing(theme_module.SPACE["xs"])
             actions.addStretch(1)
             keep = QPushButton(i18n.tr('保留译文'))
@@ -155,7 +161,6 @@ class AttentionList(QWidget):
                 accept.clicked.connect(lambda _checked=False, data=dict(item):
                                        self.acceptRequested.emit(data))
                 actions.addWidget(accept)
-            layout.addLayout(actions)
         card.setToolTip(i18n.tr(_SEVERITY_LABELS.get(severity, "提示")))
         self._layout.addWidget(card)
 
@@ -167,12 +172,12 @@ class AttentionList(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(2)
         row = QHBoxLayout()
+        column.addLayout(row)
         row.setSpacing(theme_module.SPACE["xs"])
         row.addWidget(icons.IconLabel("sparkles", 14, "text-muted"), 0,
                       Qt.AlignmentFlag.AlignTop)
         text = f"{label}：{reason}" if reason else label
         row.addWidget(_wrapped(text, "decisionText"), 1)
-        column.addLayout(row)
         # 证据：原文与译文里对应的片段（逐字摘录，模型给不出准确片段的条目已被丢弃）。
         source_span = str(decision.get("source_span") or "")
         target_span = str(decision.get("target_span") or "")
@@ -426,14 +431,15 @@ class AskAgentBox(QWidget):
         self.button.clicked.connect(self._ask)
         self.answer = _wrapped("", "agentAnswer")
         self.answer.setVisible(False)
-        row = QHBoxLayout()
-        row.setSpacing(theme_module.SPACE["xs"])
-        row.addWidget(self.input, 1)
-        row.addWidget(self.button)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme_module.SPACE["xs"])
+        row = QHBoxLayout()
         layout.addLayout(row)
+        row.setSpacing(theme_module.SPACE["xs"])
+        row.addWidget(self.input, 1)
+        row.addWidget(self.button)
         layout.addWidget(self.answer)
 
     def _ask(self) -> None:
@@ -501,11 +507,7 @@ class CandidateBox(QWidget):
             lambda: self.discardRequested.emit(self._candidate_id))
         self._current_heading = QLabel(i18n.tr('当前译文'))
         self._current_heading.setObjectName("hint")
-        actions = QHBoxLayout()
-        actions.setSpacing(theme_module.SPACE["xs"])
-        actions.addStretch(1)
-        actions.addWidget(self.discard_button)
-        actions.addWidget(self.adopt_button)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme_module.SPACE["xs"])
@@ -516,7 +518,12 @@ class CandidateBox(QWidget):
         layout.addWidget(self.proposal)
         layout.addWidget(self.checks)
         layout.addWidget(self.status)
+        actions = QHBoxLayout()
         layout.addLayout(actions)
+        actions.setSpacing(theme_module.SPACE["xs"])
+        actions.addStretch(1)
+        actions.addWidget(self.discard_button)
+        actions.addWidget(self.adopt_button)
         self.setVisible(False)
 
     def set_candidates(self, items: list[dict]) -> None:
@@ -635,14 +642,15 @@ class NoteBox(QWidget):
         self.save_button = QPushButton(i18n.tr('保存批注'))
         self.save_button.clicked.connect(lambda: self.saveRequested.emit(self.edit.toPlainText()))
         self.save_button.setEnabled(False)
-        row = QHBoxLayout()
-        row.addWidget(self.meta, 1)
-        row.addWidget(self.save_button)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme_module.SPACE["xs"])
         layout.addWidget(self.edit)
+        row = QHBoxLayout()
         layout.addLayout(row)
+        row.addWidget(self.meta, 1)
+        row.addWidget(self.save_button)
         self._saved = ""
 
     def set_note(self, note: dict | None) -> None:

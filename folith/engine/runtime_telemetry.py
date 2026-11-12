@@ -39,9 +39,9 @@ class _RuntimeTelemetryCoalescer:
         self._lock = threading.RLock()
         self._pending = {}
         self._active = 0
-        # 在途请求的用途标签（#167）：request_started 压入、request_finished
-        # 按用途摘除。并发请求用途可能不同，展示取"最近一次"的用途。
-        self._active_purposes = []
+        # 在途请求的（用途, 操作）配对（#167 / Phase 3）：request_started 压入、
+        # request_finished 按配对摘除。并发请求可能不同，展示取"最近一次"的配对。
+        self._active_requests: list[tuple] = []
         self._last_flush = None
         self._timer = None
         self._closed = False
@@ -49,39 +49,49 @@ class _RuntimeTelemetryCoalescer:
                        "immediate": 0, "events": 0}
 
     # -- public API -------------------------------------------------------
-    def request_started(self, purpose=None):
+    def request_started(self, purpose=None, *, operation_id=None):
         self.submit(active_delta=1, status="waiting_external",
                     phase="waiting_llm", event_name="llm_request_started",
-                    purpose=purpose)
+                    purpose=purpose, operation_id=operation_id)
 
-    def request_finished(self, purpose=None):
+    def request_finished(self, purpose=None, *, operation_id=None):
         self.submit(active_delta=-1, status="running", phase="running",
-                    event_name="llm_response_received", purpose=purpose)
+                    event_name="llm_response_received", purpose=purpose,
+                    operation_id=operation_id)
 
-    def request_failed(self, error=None, *, purpose=None):
+    def request_failed(self, error=None, *, purpose=None, operation_id=None):
         self.submit(force=True, active_delta=-1, status="running", phase="running",
                     event=str(error)[:240] if error else "模型请求失败",
-                    event_name="llm_request_failed", purpose=purpose)
+                    event_name="llm_request_failed", purpose=purpose,
+                    operation_id=operation_id)
 
-    def submit(self, *, active_delta=0, force=False, purpose=None, **changes):
+    def submit(self, *, active_delta=0, force=False, purpose=None, operation_id=None, **changes):
         """Record one telemetry update; flush on the leading or trailing edge."""
         with self._lock:
             if self._closed:
                 return
             self._stats["submits"] += 1
+            if operation_id is not None:
+                self._pending["operation_id"] = operation_id
             if active_delta:
                 if active_delta > 0 and self._active == 0:
                     changes["model_wait_started_at"] = _c._utc_now_iso()
                 self._active = max(0, self._active + int(active_delta))
                 if active_delta > 0:
-                    self._active_purposes.append(purpose)
-                elif purpose in self._active_purposes:
-                    self._active_purposes.remove(purpose)
-                elif self._active_purposes:
-                    self._active_purposes.pop(0)
+                    self._active_requests.append((purpose, operation_id))
+                elif (purpose, operation_id) in self._active_requests:
+                    self._active_requests.remove((purpose, operation_id))
+                elif any(item[0] == purpose for item in self._active_requests):
+                    for position, item in enumerate(self._active_requests):
+                        if item[0] == purpose:
+                            self._active_requests.pop(position)
+                            break
+                elif self._active_requests:
+                    self._active_requests.pop(0)
                 # 事件属于本次请求；等待状态另从仍在途的请求推导。
-                # None 也要覆盖旧值，避免合并窗口沿用上次事件的用途。
+                # None 也要覆盖旧值，避免合并窗口沿用上次事件的用途/操作。
                 self._pending["purpose"] = purpose
+                self._pending["operation_id"] = operation_id
             for key, value in changes.items():
                 if value is not None:
                     self._pending[key] = value
@@ -139,12 +149,22 @@ class _RuntimeTelemetryCoalescer:
         active = self._active
         event_name = changes.pop("event_name", None)
         event = changes.pop("event", None)
-        active_purpose = self._active_purposes[-1] if self._active_purposes else None
+        active_purpose, active_operation = (
+            self._active_requests[-1] if self._active_requests else (None, None))
         purpose = changes.pop("purpose", None)
+        operation_id = changes.pop("operation_id", None)
         if event_name is None:
+            # No event of its own: both fields describe the same in-flight
+            # request, so they must fall back together.
             purpose = active_purpose
-        if purpose:
-            changes["event_metadata"] = {"purpose": str(purpose)}
+            operation_id = active_operation
+        if purpose or operation_id:
+            meta = dict(changes.get("event_metadata") or {})
+            if purpose:
+                meta["purpose"] = str(purpose)
+            if operation_id:
+                meta["operation_id"] = str(operation_id)
+            changes["event_metadata"] = meta
         if active > 0:
             changes["status"] = "waiting_external"
             changes["phase"] = "waiting_llm"
@@ -194,10 +214,10 @@ def _runtime_telemetry_coalescer(job_id):
         return coalescer
 
 
-def _runtime_telemetry_request_failed(job_id, error=None, *, purpose=None):
+def _runtime_telemetry_request_failed(job_id, error=None, *, purpose=None, operation_id=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_failed(error=error, purpose=purpose)
+        coalescer.request_failed(error=error, purpose=purpose, operation_id=operation_id)
 
 
 def flush_runtime_telemetry(job_id=None):

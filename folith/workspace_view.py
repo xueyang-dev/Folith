@@ -42,10 +42,11 @@ def _connection_state(*, provider: Any, model: Any, api_key: Any,
                       connection_status: Any) -> Dict[str, Any]:
     selected = bool(str(provider or "").strip() and str(model or "").strip())
     credentials = bool(str(api_key or "").strip())
+    credentials_satisfied = credentials or provider == "Local Gateway"
     status = str(connection_status or "unverified")
     if not selected:
         state, label, tone = "not_selected", "尚未选择模型", "neutral"
-    elif not credentials:
+    elif not credentials_satisfied:
         state, label, tone = "credentials_missing", "API 凭据未配置", "warning"
     elif status == "connected":
         state, label, tone = "connected", "连接正常", "success"
@@ -57,6 +58,7 @@ def _connection_state(*, provider: Any, model: Any, api_key: Any,
         "provider_selected": selected,
         "model_selected": bool(str(model or "").strip()),
         "credentials_configured": credentials,
+        "credentials_satisfied": credentials_satisfied,
         "connection_status": status,
         "state": state,
         "label": label,
@@ -123,10 +125,11 @@ def task_ai_ready(view: Mapping[str, Any]) -> bool:
     translator = view.get("translator") or {}
     reviewer = view.get("reviewer") or {}
     return bool(
-        translator.get("credentials_configured") and
+        translator.get("credentials_satisfied", translator.get("credentials_configured")) and
         translator.get("model_selected") and
         (not view.get("review_required") or
-         reviewer.get("credentials_configured") and reviewer.get("model_selected"))
+         reviewer.get("credentials_satisfied", reviewer.get("credentials_configured"))
+         and reviewer.get("model_selected"))
     )
 
 

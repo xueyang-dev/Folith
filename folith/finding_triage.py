@@ -1,0 +1,991 @@
+"""Persisted per-finding triage records (issue #286).
+
+Storage and switch layer only.  A :class:`FindingTriage` record hangs off a
+finding by its ``finding_id``; it never replaces the finding and never changes
+detection, the ``ReviewFinding`` contract, the human-decision writers, the
+review-queue projection or the delivery gate.
+
+Record shape (``state["finding_triage"][finding_id]``)::
+
+    {
+      "finding_id": str,
+      "input_fingerprint": str,
+      "disposition": str,           # one of DISPOSITIONS
+      "evidence": [{"kind": str, "ref": str, "detail": str}],
+      "actor_type": str,            # "rule" | "model" | "human"
+      "candidate_id": str,
+      "committed": bool,
+      "created_at": str,
+      "revoked_at": str,
+      "revoke_reason": str,
+      "snapshot": {"source", "target", "summary", "severity", "detector"},
+    }
+
+Two properties make the record safe:
+
+* **Additive.**  Deleting ``state["finding_triage"]`` restores today's behaviour
+  exactly.  This module never deletes a finding, never writes ``status =
+  "dismissed"``, never writes ``resolved`` and never writes a ``HumanDecision``.
+* **Fail-closed read.**  ``disposition_of`` returns ``human_required`` for every
+  missing, unknown, revoked, stale or broken record.
+
+Scope for #286: this is the storage and switch layer only.  #287 adds the
+evidence allowlist and the read/write constraints: ``verified_safe`` can only be
+recorded from an allowlisted deterministic evidence item, ``blocking`` can never
+be downgraded, and a model actor can reach at most ``needs_investigation``.
+
+Only three kinds can *produce* ``verified_safe`` here — ``concept_decision``,
+``orthographic_equivalence`` and ``retention_policy``.  ``candidate_verification``,
+``structural_repair`` and ``model_escalation`` (#291) are registered in the
+allowlist so a later issue can attach them, but they never justify
+``verified_safe`` in this round.
+"""
+from __future__ import annotations
+
+import os
+from copy import deepcopy
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Mapping, Optional
+
+from . import concept_cards, consistency, terminology_variants
+from .translation_core.evidence import fingerprint, freshness
+
+#: Environment kill switch.  Uses the current brand prefix; unlike the retained
+#: ``finding_groups.ENV_SWITCH`` compatibility variable, this is a new switch and
+#: must not add a new occurrence of the legacy prefix (see
+#: ``tests/brand_regression_test.py``).
+ENV_SWITCH = "FOLITH_QA_TRIAGE"
+
+STATE_KEY = "finding_triage"
+ENABLED_KEY = "qa_triage_enabled"
+
+#: The five dispositions.  There is no sixth state and no free-text fallback.
+VERIFIED_SAFE = "verified_safe"
+AUTO_RESOLVABLE = "auto_resolvable"
+NEEDS_INVESTIGATION = "needs_investigation"
+HUMAN_REQUIRED = "human_required"
+BLOCKING = "blocking"
+DISPOSITIONS = (
+    VERIFIED_SAFE,
+    AUTO_RESOLVABLE,
+    NEEDS_INVESTIGATION,
+    HUMAN_REQUIRED,
+    BLOCKING,
+)
+
+#: Default and failure disposition.  Everything that cannot be proven resolves here.
+DEFAULT_DISPOSITION = HUMAN_REQUIRED
+
+#: Who produced the disposition.  A model may reach at most ``needs_investigation``
+#: (enforced from #287 onward; the vocabulary exists here so records are typed).
+ACTOR_TYPES = ("rule", "model", "human")
+
+#: Closed allowlist of deterministic evidence kinds (#287).  A record whose
+#: evidence kind is outside this set is invalid and reads as ``human_required``.
+CONCEPT_DECISION = "concept_decision"
+ORTHOGRAPHIC_EQUIVALENCE = "orthographic_equivalence"
+RETENTION_POLICY = "retention_policy"
+CANDIDATE_VERIFICATION = "candidate_verification"
+STRUCTURAL_REPAIR = "structural_repair"
+#: Issue #291: the record a batched model escalation writes for a *human* to read.
+#: Registered so the record survives the read-time kind check — and deliberately
+#: kept out of ``PRODUCING_EVIDENCE_KINDS``, exactly like ``candidate_verification``
+#: and ``structural_repair`` above.  A model's narrative can never justify
+#: ``verified_safe``: a judgement is not deterministic evidence (§5.4).
+MODEL_ESCALATION = "model_escalation"
+EVIDENCE_KINDS = frozenset({
+    CONCEPT_DECISION,
+    ORTHOGRAPHIC_EQUIVALENCE,
+    RETENTION_POLICY,
+    CANDIDATE_VERIFICATION,
+    STRUCTURAL_REPAIR,
+    MODEL_ESCALATION,
+})
+
+#: Kinds that can justify ``verified_safe`` in this round.  The other three are
+#: registered for a later issue and never produce ``verified_safe`` here.
+PRODUCING_EVIDENCE_KINDS = frozenset({
+    CONCEPT_DECISION,
+    ORTHOGRAPHIC_EQUIVALENCE,
+    RETENTION_POLICY,
+})
+
+#: Dispositions a model actor may never reach (it caps at ``needs_investigation``).
+_MODEL_FORBIDDEN = frozenset({VERIFIED_SAFE, AUTO_RESOLVABLE, BLOCKING})
+
+#: Bounded growth, mirroring ``translation_candidates.MAX_RECORDS``.
+MAX_RECORDS = 300
+
+#: Every snapshot must carry these keys; a record missing one reads as
+#: ``human_required`` so the audit view can always show what was decided.
+SNAPSHOT_FIELDS = ("source", "target", "summary", "severity", "detector")
+
+_FALSY = {"0", "false", "off", "no"}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def enabled(state: Optional[Mapping[str, Any]] = None) -> bool:
+    """Return whether triage is on for this task.  Default is **off**.
+
+    The environment variable wins over state: any of ``0`` / ``false`` / ``off``
+    / ``no`` disables triage even when ``state["qa_triage_enabled"]`` is true.
+    Unlike ``finding_groups.enabled`` the state value must be explicitly true;
+    an absent key means off.
+    """
+    raw = os.environ.get(ENV_SWITCH)
+    if raw is not None and str(raw).strip().lower() in _FALSY:
+        return False
+    return (state or {}).get(ENABLED_KEY) is True
+
+
+def _segment_index(finding: Mapping[str, Any]) -> Optional[int]:
+    for key in ("segment_index", "segment_id"):
+        value = finding.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _pair_for(state: Optional[Mapping[str, Any]],
+              finding: Mapping[str, Any]) -> Mapping[str, Any]:
+    pairs = (state or {}).get("pairs") or []
+    index = _segment_index(finding)
+    if isinstance(index, int) and 0 <= index < len(pairs) \
+            and isinstance(pairs[index], Mapping):
+        return pairs[index]
+    return {}
+
+
+def _finding_id(finding: Mapping[str, Any]) -> str:
+    return str((finding or {}).get("finding_id")
+               or (finding or {}).get("id") or "").strip()
+
+
+def input_fingerprint(state: Optional[Mapping[str, Any]],
+                      finding: Mapping[str, Any]) -> str:
+    """Fingerprint the disposition depends on.
+
+    The finding's own ``input_fingerprint`` wins when present (independent-review
+    findings carry one).  Otherwise the fingerprint covers exactly the inputs the
+    disposition read: the segment source and target, the finding code, the
+    detector and the sorted evidence refs.  Hashing is delegated to
+    ``translation_core.evidence.fingerprint`` so there is one convention.
+    """
+    own = str((finding or {}).get("input_fingerprint") or "").strip()
+    if own:
+        return own
+    pair = _pair_for(state, finding)
+    refs = sorted({
+        str(ref).strip()
+        for ref in (finding.get("evidence_refs") or finding.get("evidence_ids") or [])
+        if str(ref).strip()
+    })
+    return fingerprint({
+        "source": str(pair.get("source") or ""),
+        "target": str(pair.get("target") or ""),
+        "code": str(finding.get("code") or finding.get("category")
+                    or finding.get("type") or "review"),
+        "detector": str(finding.get("detector") or ""),
+        "evidence_refs": refs,
+    })
+
+
+def _snapshot(state: Optional[Mapping[str, Any]],
+              finding: Mapping[str, Any]) -> Dict[str, str]:
+    pair = _pair_for(state, finding)
+
+    def pick(*keys: str) -> str:
+        for key in keys:
+            value = finding.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return ""
+
+    return {
+        "source": str(pair.get("source") or pick("source_span", "source")),
+        "target": str(pair.get("target") or pick("target_span", "target")),
+        "summary": pick("summary", "reason"),
+        "severity": str(finding.get("severity") or ""),
+        "detector": str(finding.get("detector") or ""),
+    }
+
+
+def normalize_evidence(evidence: Any) -> List[Dict[str, str]]:
+    """Validate and normalize an evidence list into ``{kind, ref, detail}``."""
+    result: List[Dict[str, str]] = []
+    for item in evidence or []:
+        if not isinstance(item, Mapping):
+            raise ValueError("evidence item must be a mapping")
+        kind = str(item.get("kind") or "").strip()
+        if not kind:
+            raise ValueError("evidence item requires a kind")
+        result.append({
+            "kind": kind,
+            "ref": str(item.get("ref") or "").strip(),
+            "detail": str(item.get("detail") or "").strip(),
+        })
+    return result
+
+
+def store(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the mutable triage map, creating it when absent."""
+    current = state.get(STATE_KEY)
+    if not isinstance(current, dict):
+        current = {}
+        state[STATE_KEY] = current
+    return current
+
+
+# ---------------------------------------------------------------------------
+# Outer-bracket comparison (triage side only; the detectors are not touched)
+#
+# Two target forms count as the same text only when they differ by a matched
+# pair of brackets or quotes around the whole form, as in 〈奏谳书〉 / 奏谳书.
+# Character folding is deliberately absent.  河東 / 河东 in a simplified target
+# is a leftover form that should be unified, and Polish / polish are two words,
+# so neither may read as "no action needed".  A bracket inside the form, as in
+# 非十二子》篇, is a typo and keeps the forms different.
+# ---------------------------------------------------------------------------
+
+_OUTER_PAIRS = {
+    "《": "》", "〈": "〉", "「": "」", "『": "』", "〔": "〕", "〖": "〗", "【": "】",
+    "“": "”", "‘": "’", "«": "»", "‹": "›", '"': '"', "'": "'",
+}
+_PAIR_CHARS = frozenset(_OUTER_PAIRS) | frozenset(_OUTER_PAIRS.values())
+
+
+def outer_bracket_key(form: Any) -> str:
+    """The form without matched brackets around the whole of it."""
+    text = str(form or "").strip()
+    while len(text) >= 2 and _OUTER_PAIRS.get(text[0]) == text[-1] \
+            and not _PAIR_CHARS.intersection(text[1:-1]):
+        text = text[1:-1].strip()
+    return text
+
+
+def _variant_forms(finding: Mapping[str, Any]) -> List[str]:
+    """Target-side surface forms of an entity conflict: preferred + observed."""
+    forms: List[str] = []
+    preferred = str(finding.get("preferred_target") or "").strip()
+    if preferred:
+        forms.append(preferred)
+    for value in finding.get("observed_targets") or []:
+        text = str(value or "").strip()
+        if text:
+            forms.append(text)
+    return list(dict.fromkeys(forms))
+
+
+def _finding_span_text(finding: Mapping[str, Any]) -> str:
+    for key in ("detected_text", "source_span", "target_span"):
+        text = str(finding.get(key) or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _span_key(text: Any) -> str:
+    return terminology_variants.punct_key(str(text or ""))
+
+
+def _spell_fold(value: Any) -> str:
+    """The detector's own spelling fold: ``consistency.spelling`` + casefold.
+
+    A concept decision may only prove ``verified_safe`` when it covers the
+    finding under this exact fold.  Using a different (e.g. orthographic) fold
+    here would claim more than the detector actually settled.
+    """
+    return consistency.spelling(value).casefold()
+
+
+def _accepted_variants(state: Optional[Mapping[str, Any]],
+                       finding: Mapping[str, Any]) -> set:
+    """Accepted spellings of this finding's entity, from ``state["entity_registry"]``.
+
+    ``consistency.findings`` folds these in with the same ``spelling`` helper; a
+    human accepting a variant is a real decision, so it belongs in the allowed
+    set.  Absent registry, the set is empty (fail-closed).
+    """
+    records = (state or {}).get("entity_registry")
+    if not isinstance(records, (list, tuple)):
+        return set()
+    wanted = {_spell_fold(finding.get("source") or "")}
+    for alias in finding.get("aliases") or []:
+        wanted.add(_spell_fold(alias))
+    wanted.discard("")
+    if not wanted:
+        return set()
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        forms = [record.get("source_form"), *(record.get("aliases") or [])]
+        if not wanted & {_spell_fold(form) for form in forms if form}:
+            continue
+        return {_spell_fold(value) for value in record.get("accepted_variants") or []
+                if _spell_fold(value)}
+    return set()
+
+
+def _live_entity_view(state: Optional[Mapping[str, Any]],
+                      finding: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """The entity conflict as it reads from the registry and the current text.
+
+    A stored finding keeps the spellings it was detected with, and its
+    fingerprint covers one segment only.  Evidence must not rest on that copy: a
+    wrong spelling that appears later in another occurrence would stay hidden.
+    Returns ``None`` when the finding is no entity conflict, when its registry
+    record is missing or rejected, or when no occurrence is left to check.
+    """
+    if str(finding.get("type") or "") != "entity_conflict":
+        return None
+    records = (state or {}).get("entity_registry")
+    if not isinstance(records, (list, tuple)):
+        return None
+    wanted = {_spell_fold(finding.get("source") or "")}
+    wanted.update(_spell_fold(alias) for alias in finding.get("aliases") or [])
+    wanted.discard("")
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        forms = [record.get("source_form"), *(record.get("aliases") or [])]
+        if not wanted & {_spell_fold(form) for form in forms if form}:
+            continue
+        if record.get("status") == "rejected":
+            return None
+        rows = consistency.current_occurrences(record, (state or {}).get("pairs") or [])
+        if not rows:
+            return None
+        live = dict(finding)
+        live["occurrences"] = rows
+        live["observed_targets"] = sorted(
+            {str(value) for row in rows for value in row.get("variants") or []})
+        live["preferred_target"] = record.get("preferred_target")
+        return live
+    return None
+
+
+def _concept_decision_evidence(state: Optional[Mapping[str, Any]],
+                               finding: Mapping[str, Any]) -> Optional[Dict[str, str]]:
+    """A stored concept decision that actually covers every current spelling.
+
+    A card being present does **not** settle a finding, and ``keep_variants``
+    alone is not evidence.  Each current occurrence is checked on its own: every
+    variant of that row, folded with the detector's own ``consistency.spelling``
+    helper, must be the preferred translation, an accepted variant of the entity,
+    or the exception declared for **that row's** segment.  A segment's exception
+    never excuses a spelling that appears in another segment.
+
+    The evidence ref carries the preferred translation and the concrete observed
+    spellings, not just the card id, so changing the preferred target (which does
+    not change the card id) invalidates any older ``verified_safe`` record.
+    """
+    decisions = (state or {}).get("concept_decisions")
+    if not decisions:
+        return None
+    live = _live_entity_view(state, finding)
+    if live is None:
+        return None
+    probes = []
+    source = str(finding.get("source") or "").strip()
+    if source:
+        probes.append(terminology_variants.casefold_key(source))
+    for alias in finding.get("aliases") or []:
+        probes.append(terminology_variants.casefold_key(alias))
+    probes = [probe for probe in probes if probe]
+    if not probes:
+        return None
+    card = concept_cards.decision_for_keys(decisions, probes)
+    if not card or not str(card.get("card_id") or "").strip():
+        return None
+    # keep_variants-only (a card with no preferred target) settles nothing about
+    # a concrete observed spelling, so it can never produce this evidence.
+    preferred = str(card.get("preferred_target") or "").strip()
+    if not preferred:
+        return None
+
+    preferred_key = _spell_fold(preferred)
+    accepted = _accepted_variants(state, finding)
+    surfaces: List[str] = []
+
+    # Per-occurrence check: the exception of one segment must not vouch for a
+    # spelling that appears in another segment.
+    for row in live["occurrences"]:
+        row_allowed = set(accepted) | {preferred_key}
+        index = row.get("index")
+        if isinstance(index, int) and not isinstance(index, bool):
+            scope = f"segment:{index}"
+            for exception in card.get("exceptions") or []:
+                if isinstance(exception, Mapping) \
+                        and str(exception.get("scope") or "") == scope:
+                    target = str(exception.get("target") or "").strip()
+                    if target:
+                        row_allowed.add(_spell_fold(target))
+        variants = [value for value in row.get("variants") or []
+                    if str(value or "").strip()]
+        for value in variants:
+            key = _spell_fold(value)
+            if not key or key not in row_allowed:
+                return None
+            surfaces.append(consistency.spelling(value))
+    if not surfaces:
+        return None
+
+    spelled = " | ".join(sorted(dict.fromkeys(surfaces)))
+    card_id = str(card["card_id"])
+    return {
+        "kind": CONCEPT_DECISION,
+        "ref": f"{card_id}|preferred={consistency.spelling(preferred)}|observed={spelled}",
+        "detail": f"preferred {consistency.spelling(preferred)}; observed {spelled}",
+    }
+
+
+def _orthographic_equivalence_evidence(
+        state: Optional[Mapping[str, Any]],
+        finding: Mapping[str, Any]) -> Optional[Dict[str, str]]:
+    """The current target forms differ only by brackets around the whole form."""
+    live = _live_entity_view(state, finding)
+    if live is None:
+        return None
+    distinct = sorted(set(_variant_forms(live)))
+    if len(distinct) < 2:
+        return None
+    keys = {outer_bracket_key(form) for form in distinct}
+    if len(keys) != 1:
+        return None
+    canonical = next(iter(keys))
+    ref = " == ".join(distinct)
+    return {"kind": ORTHOGRAPHIC_EQUIVALENCE, "ref": ref,
+            "detail": f"same text as {canonical} apart from outer brackets"}
+
+
+#: Findings that report source text left in the target: the only question a
+#: retention policy can answer.
+_RETENTION_KINDS = frozenset({"source_residue", "script_leak"})
+_RETENTION_CATEGORIES = frozenset({"translation_completion", "source_language_residue"})
+
+
+def _retention_policy_evidence(
+        state: Optional[Mapping[str, Any]],
+        finding: Mapping[str, Any]) -> Optional[Dict[str, str]]:
+    """A frozen ``preserve`` entry covers source text the target really kept.
+
+    The policy only answers "is it fine that this text stayed as it is?".  A
+    finding that reports the opposite, such as a preserve term missing from the
+    target, names the same term and must never read as settled by that entry.
+    """
+    if not (str(finding.get("kind") or "") in _RETENTION_KINDS
+            or str(finding.get("category") or "") in _RETENTION_CATEGORIES):
+        return None
+    frozen = (state or {}).get("glossary_frozen")
+    if not isinstance(frozen, Mapping):
+        return None
+    entries = frozen.get("entries")
+    if not isinstance(entries, (list, tuple)):
+        return None
+    text = _finding_span_text(finding)
+    if not text:
+        return None
+    target_key = _span_key(text)
+    if target_key not in _span_key(_pair_for(state, finding).get("target")):
+        return None
+    version = frozen.get("version")
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        if str(entry.get("behavior") or "").strip() != "preserve":
+            continue
+        forms = (entry.get("target"), entry.get("source"), entry.get("preferred"))
+        if not any(form and _span_key(form) == target_key for form in forms):
+            continue
+        entry_id = str(entry.get("id") or "").strip()
+        if not entry_id:
+            continue
+        return {"kind": RETENTION_POLICY, "ref": f"{entry_id}@v{version}",
+                "detail": f"frozen preserve entry {entry_id}"}
+    return None
+
+
+#: Fixed resolution order: a concept decision outranks a pure character fold.
+_RESOLVERS = (
+    (CONCEPT_DECISION, _concept_decision_evidence),
+    (ORTHOGRAPHIC_EQUIVALENCE, _orthographic_equivalence_evidence),
+    (RETENTION_POLICY, _retention_policy_evidence),
+)
+_RESOLVER_BY_KIND = dict(_RESOLVERS)
+
+
+def _evidence_holds(state: Optional[Mapping[str, Any]],
+                    finding: Mapping[str, Any],
+                    item: Mapping[str, Any]) -> bool:
+    """Whether one evidence item still reproduces from the current state."""
+    resolver = _RESOLVER_BY_KIND.get(str(item.get("kind") or ""))
+    if resolver is None:
+        return False
+    resolved = resolver(state, finding)
+    return bool(resolved) and resolved.get("ref") == str(item.get("ref") or "")
+
+
+def _is_merged_row(finding: Mapping[str, Any]) -> bool:
+    """Whether the queue folded several records into this row.
+
+    The merge key does not include the entity, so one row can stand for two
+    different conflicts in the same segment.  Evidence read from the row describes
+    only the first of them, so a merged row can never be proven safe.
+    """
+    try:
+        return int(finding.get("duplicate_count") or 1) > 1
+    except (TypeError, ValueError):
+        return True
+
+
+def _verified_safe_evidence_valid(state: Optional[Mapping[str, Any]],
+                                  finding: Mapping[str, Any],
+                                  evidence: Any) -> bool:
+    """``verified_safe`` needs one allowlisted, currently-holding producing item."""
+    if not isinstance(evidence, (list, tuple)) or not evidence:
+        return False
+    if _is_merged_row(finding):
+        return False
+    for item in evidence:
+        if not isinstance(item, Mapping):
+            return False
+        kind = str(item.get("kind") or "")
+        if kind not in EVIDENCE_KINDS:
+            return False
+        if kind in PRODUCING_EVIDENCE_KINDS and _evidence_holds(state, finding, item):
+            return True
+    return False
+
+
+def _cap_for_actor(disposition: str, actor_type: Any) -> str:
+    """A model actor may reach at most ``needs_investigation``."""
+    if str(actor_type or "").strip() == "model" and disposition in _MODEL_FORBIDDEN:
+        return NEEDS_INVESTIGATION
+    return disposition
+
+
+def classify(state: Optional[Mapping[str, Any]],
+             finding: Mapping[str, Any]) -> Dict[str, Any]:
+    """Derive a disposition candidate from deterministic evidence.
+
+    ``blocking`` severity short-circuits before any evidence lookup; otherwise the
+    allowlist is tried in a fixed order and the first match yields
+    ``verified_safe``; no match yields ``human_required``.  Pure read.
+    """
+    if str(finding.get("severity") or "").strip() == BLOCKING:
+        return {"disposition": BLOCKING, "evidence": [], "actor_type": "rule"}
+    if _is_merged_row(finding):
+        return {"disposition": HUMAN_REQUIRED, "evidence": [], "actor_type": "rule"}
+    for _kind, resolver in _RESOLVERS:
+        item = resolver(state, finding)
+        if item:
+            return {"disposition": VERIFIED_SAFE, "evidence": [item],
+                    "actor_type": "rule"}
+    return {"disposition": HUMAN_REQUIRED, "evidence": [], "actor_type": "rule"}
+
+
+def record(
+    state: Dict[str, Any],
+    finding: Mapping[str, Any],
+    *,
+    disposition: str,
+    actor_type: str,
+    evidence: Any = None,
+    candidate_id: str = "",
+    committed: bool = False,
+    now: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Write one triage record, or return ``None`` when triage is off.
+
+    Refuses an unknown disposition or actor type, a model actor claiming more
+    than ``needs_investigation``, a ``verified_safe``/``auto_resolvable`` write on
+    a blocking finding, and ``verified_safe`` without at least one allowlisted
+    producing evidence item that currently holds.  Every evidence kind must be on
+    ``EVIDENCE_KINDS``.
+    """
+    if not enabled(state):
+        return None
+    disposition = str(disposition or "").strip()
+    if disposition not in DISPOSITIONS:
+        raise ValueError(f"unknown disposition: {disposition!r}")
+    actor_type = str(actor_type or "").strip()
+    if actor_type not in ACTOR_TYPES:
+        raise ValueError(f"unknown actor_type: {actor_type!r}")
+    if actor_type == "model" and disposition in _MODEL_FORBIDDEN:
+        raise ValueError(
+            f"a model actor may not record {disposition!r}; "
+            "it caps at needs_investigation")
+    finding_id = _finding_id(finding)
+    if not finding_id:
+        raise ValueError("finding has no finding_id")
+    if str(finding.get("severity") or "").strip() == BLOCKING \
+            and disposition in (VERIFIED_SAFE, AUTO_RESOLVABLE):
+        raise ValueError("blocking findings cannot be downgraded")
+
+    items = normalize_evidence(evidence)
+    for item in items:
+        if item["kind"] not in EVIDENCE_KINDS:
+            raise ValueError(f"evidence kind not allowed: {item['kind']!r}")
+    if disposition == VERIFIED_SAFE:
+        if not items:
+            raise ValueError("verified_safe requires at least one evidence item")
+        if not _verified_safe_evidence_valid(state, finding, items):
+            raise ValueError(
+                "verified_safe requires allowlisted evidence that currently holds")
+
+    entry = {
+        "finding_id": finding_id,
+        "input_fingerprint": input_fingerprint(state, finding),
+        "disposition": disposition,
+        "evidence": items,
+        "actor_type": actor_type,
+        "candidate_id": str(candidate_id or "").strip(),
+        "committed": bool(committed),
+        "created_at": now or _now_iso(),
+        "revoked_at": "",
+        "revoke_reason": "",
+        "snapshot": _snapshot(state, finding),
+    }
+    store(state)[finding_id] = entry
+    prune(state)
+    return dict(entry)
+
+
+def revoke(state: Dict[str, Any], finding_id: str, *, reason: str = "",
+           now: Optional[str] = None) -> bool:
+    """Mark one record revoked.  Storage only: it never touches the finding.
+
+    A revoked record reads as ``human_required`` (see ``disposition_of``).  Text
+    is never reverted here; reverting a committed repair is a separate candidate
+    transaction.
+    """
+    if not enabled(state):
+        return False
+    current = state.get(STATE_KEY)
+    if not isinstance(current, dict):
+        return False
+    entry = current.get(str(finding_id or ""))
+    if not isinstance(entry, dict):
+        return False
+    entry["revoked_at"] = now or _now_iso()
+    entry["revoke_reason"] = str(reason or "").strip()
+    return True
+
+
+def disposition_of(state: Optional[Mapping[str, Any]],
+                   finding: Mapping[str, Any]) -> str:
+    """Return the effective disposition for one finding.  Fail-closed.
+
+    A ``blocking`` severity always reads as ``blocking``, whatever is stored and
+    even when triage is off — it is never downgraded.  Otherwise this returns
+    ``human_required`` when triage is off, when no record exists, when the record
+    is malformed, unknown, revoked or stale, when its snapshot is incomplete, or
+    when a ``verified_safe`` record has no allowlisted producing evidence that
+    still holds.  A model actor caps at ``needs_investigation``.
+    """
+    try:
+        if str(finding.get("severity") or "").strip() == BLOCKING:
+            return BLOCKING
+        if not enabled(state):
+            return DEFAULT_DISPOSITION
+        finding_id = _finding_id(finding)
+        if not finding_id:
+            return DEFAULT_DISPOSITION
+        current = state.get(STATE_KEY)
+        if not isinstance(current, Mapping):
+            return DEFAULT_DISPOSITION
+        entry = current.get(finding_id)
+        if not isinstance(entry, Mapping):
+            return DEFAULT_DISPOSITION
+        disposition = str(entry.get("disposition") or "").strip()
+        if disposition not in DISPOSITIONS:
+            return DEFAULT_DISPOSITION
+        if str(entry.get("revoked_at") or "").strip():
+            return DEFAULT_DISPOSITION
+        snapshot = entry.get("snapshot")
+        if not isinstance(snapshot, Mapping) \
+                or not all(field in snapshot for field in SNAPSHOT_FIELDS):
+            return DEFAULT_DISPOSITION
+        stored = str(entry.get("input_fingerprint") or "").strip()
+        if not stored:
+            return DEFAULT_DISPOSITION
+        current_fingerprint = input_fingerprint(state, finding)
+        if freshness(dict(entry), current_fingerprint) != "current":
+            return DEFAULT_DISPOSITION
+        evidence = entry.get("evidence")
+        if evidence is not None and not isinstance(evidence, (list, tuple)):
+            return DEFAULT_DISPOSITION
+        for item in evidence or []:
+            if not isinstance(item, Mapping) \
+                    or str(item.get("kind") or "") not in EVIDENCE_KINDS:
+                return DEFAULT_DISPOSITION
+        if disposition == VERIFIED_SAFE \
+                and not _verified_safe_evidence_valid(state, finding, evidence):
+            return DEFAULT_DISPOSITION
+        return _cap_for_actor(disposition, entry.get("actor_type"))
+    except Exception:  # noqa: BLE001 - a broken record must never read as safe
+        return DEFAULT_DISPOSITION
+
+
+def _ended(entry: Any) -> bool:
+    """A record is finished once its candidate committed or it was revoked."""
+    if not isinstance(entry, Mapping):
+        return False
+    return bool(entry.get("committed")) or bool(str(entry.get("revoked_at") or "").strip())
+
+
+def prune(state: Dict[str, Any]) -> int:
+    """Bound the map to ``MAX_RECORDS`` by dropping the oldest finished records.
+
+    An unfinished record is never dropped, exactly like the pending-candidate
+    policy in ``translation_candidates._prune``.  Returns the number dropped.
+    """
+    current = state.get(STATE_KEY)
+    if not isinstance(current, dict) or len(current) <= MAX_RECORDS:
+        return 0
+    excess = len(current) - MAX_RECORDS
+    ordered = sorted(
+        current.items(),
+        key=lambda item: str((item[1] or {}).get("created_at") or "")
+        if isinstance(item[1], Mapping) else "",
+    )
+    dropped = 0
+    for finding_id, entry in ordered:
+        if dropped >= excess:
+            break
+        if _ended(entry):
+            del current[finding_id]
+            dropped += 1
+    return dropped
+
+
+def records(state: Optional[Mapping[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Read-only projection: ``{finding_id: record copy}`` for well-formed records."""
+    current = (state or {}).get(STATE_KEY)
+    if not isinstance(current, Mapping):
+        return {}
+    return {
+        str(finding_id): deepcopy(dict(entry))
+        for finding_id, entry in current.items()
+        if isinstance(entry, Mapping)
+    }
+
+
+def apply_deterministic(state: Dict[str, Any]) -> Dict[str, int]:
+    """Record ``verified_safe`` for every open finding the allowlist settles.
+
+    This is the runtime entry point of the deterministic round: no model call,
+    no text change, no finding edit.  With the switch off it writes nothing.
+    Findings are read through ``delivery.review_queue_findings`` and keyed the
+    same way as the review queue, so a record reaches the row it describes.
+
+    Idempotent, and it never overrules a human or another writer: a revoked
+    record stays revoked, and a record holding any other disposition (for
+    example a staged repair) is left alone.  ``human_required`` and ``blocking``
+    write nothing, because a missing record already reads as a human decision.
+    A finding that cannot be classified also stays with the human.
+
+    Returns ``{"examined", "recorded", "verified_safe", "failed"}``, where
+    ``verified_safe`` counts every finding currently reading that way.
+    """
+    summary = {"examined": 0, "recorded": 0, "verified_safe": 0, "failed": 0}
+    if not enabled(state):
+        return summary
+    from . import delivery
+
+    for finding in delivery.review_queue_findings(dict(state)):
+        summary["examined"] += 1
+        try:
+            keyed = dict(finding)
+            keyed["finding_id"] = str(
+                finding.get("finding_id") or delivery.finding_id(dict(finding)))
+            if disposition_of(state, keyed) == VERIFIED_SAFE:
+                summary["verified_safe"] += 1
+                continue
+            current = state.get(STATE_KEY)
+            entry = current.get(keyed["finding_id"]) if isinstance(current, Mapping) else None
+            if isinstance(entry, Mapping) and (
+                    str(entry.get("revoked_at") or "").strip()
+                    or str(entry.get("disposition") or "") != VERIFIED_SAFE):
+                continue
+            result = classify(state, keyed)
+            if result["disposition"] != VERIFIED_SAFE:
+                continue
+            record(state, keyed, disposition=VERIFIED_SAFE, actor_type="rule",
+                   evidence=result["evidence"])
+            summary["recorded"] += 1
+            summary["verified_safe"] += 1
+        except Exception:  # noqa: BLE001 - it stays in the human queue; a finished task must not fail here
+            summary["failed"] += 1
+    return summary
+
+
+def annotate(findings: Any,
+             state: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Copy findings with ``triage_disposition`` and ``triage_evidence_count``.
+
+    A read model can then consume triage without importing this module twice.
+    The findings themselves are not modified.
+    """
+    projection = records(state)
+    result: List[Dict[str, Any]] = []
+    for finding in findings or []:
+        if not isinstance(finding, Mapping):
+            continue
+        item = dict(finding)
+        entry = projection.get(_finding_id(finding))
+        item["triage_disposition"] = disposition_of(state, finding)
+        item["triage_evidence_count"] = len(entry.get("evidence") or []) \
+            if isinstance(entry, Mapping) else 0
+        result.append(item)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Read-only record validation (issue #290)
+#
+# These helpers *inspect* stored records; they never write to state, never
+# change what ``disposition_of`` returns and never alter detection, the gate or
+# the queue.  They encode the §7.4 invariants of ``docs/qa-triage-v0.8.1.md``:
+#
+#   1. every stored ``disposition`` is one of ``DISPOSITIONS``;
+#   2. ``verified_safe`` carries non-empty evidence and every evidence kind is
+#      in ``EVIDENCE_KINDS``;
+#   3. an ``actor_type`` of ``model`` may store at most ``needs_investigation``
+#      or ``human_required``;
+#   4. ``verified_safe``/``auto_resolvable`` never sits on a record whose
+#      snapshot severity is ``blocking``;
+#   5. replay: when a conclusion IS recomputable from the current state (the
+#      record is well-formed, not revoked and its fingerprint is current, and
+#      the finding is present), ``disposition_of`` must reproduce the stored
+#      disposition (after the actor cap).  A stale record is *valid by design*
+#      — it fails closed to ``human_required`` at read time — so staleness
+#      alone is never reported as a violation and never re-derives a mismatch.
+# ---------------------------------------------------------------------------
+
+#: Dispositions a stored record may keep under a ``model`` actor (mirror of
+#: ``_MODEL_FORBIDDEN``; spelled positively to match the §7.4 wording).
+MODEL_ALLOWED_DISPOSITIONS = frozenset({NEEDS_INVESTIGATION, HUMAN_REQUIRED})
+
+
+def _snapshot_severity(entry: Mapping[str, Any]) -> str:
+    snapshot = entry.get("snapshot")
+    if not isinstance(snapshot, Mapping):
+        return ""
+    return str(snapshot.get("severity") or "").strip()
+
+
+def _recomputable(state: Mapping[str, Any], entry: Mapping[str, Any],
+                  finding: Mapping[str, Any]) -> bool:
+    """Whether the replay check has enough current input to reproduce a result."""
+    if str(entry.get("disposition") or "").strip() not in DISPOSITIONS:
+        return False
+    if str(entry.get("revoked_at") or "").strip():
+        return False
+    snapshot = entry.get("snapshot")
+    if not isinstance(snapshot, Mapping) \
+            or not all(field in snapshot for field in SNAPSHOT_FIELDS):
+        return False
+    if not str(entry.get("input_fingerprint") or "").strip():
+        return False
+    if str(finding.get("severity") or "").strip() == BLOCKING:
+        # ``disposition_of`` short-circuits on live severity; the stored value
+        # is not the source of the answer, so replay proves nothing here.
+        return False
+    try:
+        current_fingerprint = input_fingerprint(state, finding)
+    except Exception:  # noqa: BLE001 - cannot recompute -> cannot replay
+        return False
+    return freshness(dict(entry), current_fingerprint) == "current"
+
+
+def validate_record(state: Optional[Mapping[str, Any]],
+                    entry: Any,
+                    finding: Optional[Mapping[str, Any]] = None,
+                    ) -> List[Dict[str, str]]:
+    """Return the §7.4 violations for one stored record.  Pure read.
+
+    ``finding`` is the live finding the record belongs to, when it still
+    exists; without it the replay invariant is simply not recomputable and is
+    skipped, exactly as staleness is skipped.
+    """
+    violations: List[Dict[str, str]] = []
+    if not isinstance(entry, Mapping):
+        return violations
+    disposition = str(entry.get("disposition") or "").strip()
+    finding_id = str(entry.get("finding_id") or "").strip()
+
+    def add(code: str, detail: str) -> None:
+        violations.append({
+            "finding_id": finding_id,
+            "code": code,
+            "detail": detail,
+        })
+
+    if disposition not in DISPOSITIONS:
+        add("unknown_disposition",
+            f"stored disposition {disposition!r} is not one of {DISPOSITIONS}")
+
+    evidence = entry.get("evidence")
+    items = list(evidence) if isinstance(evidence, (list, tuple)) else []
+    if disposition == VERIFIED_SAFE:
+        if not items:
+            add("verified_safe_without_evidence",
+                "verified_safe requires at least one evidence item")
+        for item in items:
+            kind = str(item.get("kind") or "") if isinstance(item, Mapping) else ""
+            if kind not in EVIDENCE_KINDS:
+                add("verified_safe_evidence_kind",
+                    f"evidence kind {kind!r} is not in EVIDENCE_KINDS")
+
+    if str(entry.get("actor_type") or "").strip() == "model" \
+            and disposition in DISPOSITIONS \
+            and disposition not in MODEL_ALLOWED_DISPOSITIONS:
+        add("model_actor_overreach",
+            f"a model actor may not hold {disposition!r}; "
+            "it caps at needs_investigation")
+
+    if disposition in (VERIFIED_SAFE, AUTO_RESOLVABLE) \
+            and _snapshot_severity(entry) == BLOCKING:
+        add("blocking_downgraded",
+            f"{disposition!r} on a record whose snapshot severity is blocking")
+
+    if not violations and finding is not None \
+            and _recomputable(state or {}, entry, finding):
+        expected = _cap_for_actor(disposition, entry.get("actor_type"))
+        effective = disposition_of(state, finding)
+        if effective != expected:
+            add("disposition_not_reproducible",
+                f"stored {expected!r} recomputes as {effective!r} from the "
+                "current state; the evidence was not deterministic")
+    return violations
+
+
+def validate_state(state: Optional[Mapping[str, Any]]) -> List[Dict[str, str]]:
+    """Run ``validate_record`` over every record in ``state["finding_triage"]``.
+
+    Records whose finding is still in ``state["findings"]`` get the replay
+    check; the others are checked on their stored shape only.  Returns the
+    violation list (empty when the state is consistent); it never mutates
+    anything.
+    """
+    current = (state or {}).get(STATE_KEY)
+    if not isinstance(current, Mapping):
+        return []
+    findings_by_id: Dict[str, Mapping[str, Any]] = {}
+    for finding in (state or {}).get("findings") or []:
+        if isinstance(finding, Mapping):
+            key = _finding_id(finding)
+            if key:
+                findings_by_id.setdefault(key, finding)
+    violations: List[Dict[str, str]] = []
+    for finding_id, entry in current.items():
+        for violation in validate_record(state, entry,
+                                         findings_by_id.get(str(finding_id))):
+            if not violation["finding_id"]:
+                violation["finding_id"] = str(finding_id)
+            violations.append(violation)
+    return violations

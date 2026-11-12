@@ -391,15 +391,23 @@ def sample_pdf_text_pages(file_bytes, max_pages: int = 3) -> List[Dict[str, Any]
 
 
 def assess_pdf_text_layer(file_bytes, *, source_language: Any = None,
-                          max_pages: int = 3) -> Dict[str, Any]:
-    """Sample a PDF text layer and judge whether it is usable."""
+                          max_pages: int = 3,
+                          _page_dict_cache=None) -> Dict[str, Any]:
+    """Sample a PDF text layer and judge whether it is usable.
+
+    Pass ``_page_dict_cache`` (from
+    :func:`folith.pdf_ingestion.build_page_dict_cache`) to reuse
+    already-parsed page dicts in ``superscript_marker_census`` and avoid a
+    redundant ``fitz.open`` call.
+    """
     samples = sample_pdf_text_pages(file_bytes, max_pages=max_pages)
     report = assess_text_layer_sample(samples, source_language=source_language)
     report["sampled_pages"] = [s.get("page_index") for s in samples]
     if report.get("status") in {"accepted", "uncertain"}:
         try:
             from folith.pdf_ingestion import superscript_marker_census
-            report["superscript_markers"] = superscript_marker_census(file_bytes)
+            report["superscript_markers"] = superscript_marker_census(
+                file_bytes, _page_dict_cache=_page_dict_cache)
         except Exception:  # noqa: BLE001 - reporting must never gate ingestion
             report["superscript_markers"] = {"status": "unavailable"}
     return report

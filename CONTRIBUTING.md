@@ -40,7 +40,7 @@ QT_QPA_PLATFORM=offscreen python -m pytest -q tests/brand_regression_test.py
 
 ## 文档
 
-- 简体中文 `README.md` 是持续维护的版本；`README.en.md`、`README.ru.md`、`README.es.md` 跟随它翻译。改了中文 README，请同步其他三份，`tests/readme_sync_test.py` 会检查结构（标题、图片、链接）是否一致。
+- 英文 `README.md` 是默认展示页；简体中文 `README.zh-CN.md` 是持续维护的编辑基准，英文、俄文和西班牙文页面跟随它翻译。`README.en.md` 保留为旧链接入口。改了中文 README，请同步其他三份，`tests/readme_sync_test.py` 会检查结构（标题、图片、链接）是否一致。
 - README 截图由 `scripts/qt_showcase_screenshots.py` 用合成的演示数据生成，不要使用真实用户文件。
 
 ## 提交与 PR

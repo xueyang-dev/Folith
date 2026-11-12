@@ -1,7 +1,7 @@
 # Folith · 译页
 
 <p align="center">
-  <img src="folith/resources/brand/folith-lockup.png" alt="Folith·译页 — Agentic Translation Workspace" width="840">
+  <img src="folith/resources/brand/folith-lockup.png" alt="Folith · 译页 — Agentic Translation Workspace" width="840">
 </p>
 
 <p align="center">
@@ -11,15 +11,15 @@
 <p align="center">
   <a href="https://github.com/xueyang-dev/Folith/releases/latest"><img src="https://img.shields.io/github/v/release/xueyang-dev/Folith?label=%C3%BAltima%20versi%C3%B3n&color=0052fe" alt="Última versión"></a>
   <img src="https://img.shields.io/badge/Windows-x64-lightgrey.svg" alt="Windows x64">
-  <img src="https://img.shields.io/badge/macOS-15.7.5%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.7.5+ Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-15.8.1%2B%20·%20Apple%20Silicon-lightgrey.svg" alt="macOS 15.8.1+ Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
 <p align="center">
-  <a href="README.md">简体中文</a> | <a href="README.en.md">English</a> | <a href="README.ru.md">Русский</a> | <strong>Español</strong>
+  <a href="README.zh-CN.md">简体中文</a> | <a href="README.md">English</a> | <a href="README.ru.md">Русский</a> | <strong>Español</strong>
 </p>
 
-> La versión que se mantiene es el [README en chino simplificado](README.md). Esta página es una traducción; si difieren, prevalece la china. La interfaz de la aplicación está en chino simplificado por defecto, así que los nombres de los controles se dan como aparecen en la interfaz en español (una configuración regional experimental).
+> La versión que se mantiene es el [README en chino simplificado](README.zh-CN.md). Esta página es una traducción; si difieren, prevalece la china. La interfaz de la aplicación está en chino simplificado por defecto, así que los nombres de los controles se dan como aparecen en la interfaz en español (una configuración regional experimental).
 
 ---
 
@@ -100,7 +100,7 @@ Todos los paquetes de escritorio están en la página de la [última versión](h
 
 Descarga `Folith-Qt-<versión>-macos-arm64.dmg`, ábrelo y arrastra Folith a Aplicaciones.
 
-- Requisitos: macOS 15.7.5 o posterior en Apple silicon (serie M). Los Mac con Intel no son compatibles.
+- Requisitos: macOS 15.8.1 o posterior en Apple silicon (serie M). Los Mac con Intel no son compatibles.
 - El paquete no está firmado ni notarizado. La primera vez, haz clic derecho en Folith dentro de Aplicaciones → Abrir y permítelo una sola vez. **No** desactives Gatekeeper de forma global.
 - Tesseract (inglés, chino simplificado, árabe) viene incluido, así que no hay que instalar nada más.
 - Verificación (opcional): ejecuta `shasum -a 256 Folith-Qt-<versión>-macos-arm64.dmg` en Terminal y compáralo con `SHA256SUMS.txt`.
@@ -213,12 +213,12 @@ Folith es gratuito y de código abierto. Las llamadas a modelos que se hacen al 
 
 ## ⚠️ Limitaciones conocidas
 
-- El paquete de macOS solo es compatible con Apple silicon y macOS 15.7.5 o posterior; no está firmado ni notarizado.
+- El paquete de macOS solo es compatible con Apple silicon y macOS 15.8.1 o posterior; no está firmado ni notarizado.
 - El paquete de Windows no está firmado; no se ha verificado la compatibilidad con Windows 10 x64, Windows en ARM64 ni máquinas virtuales limpias.
-- Algunos elementos de aceptación manual de los paquetes finales (paneles de archivos del sistema, método de entrada chino, suspensión / reactivación, aprobación del primer arranque, un servicio de modelo real, etc.) pueden completarse después de la publicación; lo verificado y lo pendiente de cada versión figura en las [notas de la versión](docs/release-notes-0.7.2.md) (en chino) correspondientes.
+- Algunos elementos de aceptación manual de los paquetes finales (paneles de archivos del sistema, método de entrada chino, suspensión / reactivación, aprobación del primer arranque, un servicio de modelo real, etc.) pueden completarse después de la publicación; lo verificado y lo pendiente de cada versión figura en las [notas de la versión](docs/release-notes-0.8.0.md) (en chino) correspondientes.
 - No se admiten EPUB con DRM.
 - Las imágenes dentro de tablas y cuadros de texto no se conservan en el DOCX traducido; el DOCX bilingüe no contiene imágenes.
-- No se reescribe la maquetación del DOCX original; se generan archivos nuevos.
+- Por defecto se generan archivos nuevos y no se reescribe la maquetación del DOCX original. Con fuente DOCX puede activarse «Traducción en formato original» en las opciones de entrega (`original_format.docx`): escribe la traducción en el archivo original conservando estilos, tablas, notas al pie, encabezados y pies de página. Desactivado por defecto; aún sin aceptación manual nativa en macOS / Windows.
 - Los idiomas de interfaz distintos del chino simplificado son experimentales.
 - Las páginas escaneadas las reconoce el modelo de visión y pueden contener errores; compáralas con la página original.
 
@@ -260,7 +260,7 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 - [ ] Firma de código y notarización
 - [ ] Aceptación en más versiones de Windows y en una VM limpia
-- [ ] Reescritura en el DOCX original conservando maquetación y estilos
+- [x] Reescritura en el DOCX original conservando maquetación y estilos (opcional, desactivada por defecto)
 - [ ] Coincidencias aproximadas en la memoria de traducción
 - [ ] Traducción incremental entre versiones de un documento
 
@@ -270,12 +270,13 @@ La interfaz está en chino simplificado por defecto. English, Español, Русс
 
 (La mayoría de los documentos están en chino.)
 
-- [Notas de la última versión y registro de aceptación](docs/release-notes-0.7.2.md)
+- [Notas de la última versión y registro de aceptación](docs/release-notes-0.8.0.md)
 - [Plan de publicación](docs/release-plan.md)
 - [Proyectos y memoria a largo plazo](docs/project-memory.md)
 - [Exportación de la traducción a EPUB / DOCX](docs/epub-export.md)
 - [OCR y lectura con visión](docs/ocr-subsystem.md)
 - [Arquitectura y límites de capacidad](docs/architecture-boundaries.md)
+- [Diseño del triaje inteligente de QA (v0.8.1, en inglés)](docs/qa-triage-v0.8.1.md)
 - [Registro de cambios](CHANGELOG.md)
 - [Cómo contribuir](CONTRIBUTING.md) (en chino)
 

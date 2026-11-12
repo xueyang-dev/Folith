@@ -56,4 +56,4 @@ Cocoa 真实窗口，3856 段任务的隔离副本，数据、日志、QSettings
 
 已查看浅色 / 深色浮窗、原页、四主题侧栏和阿拉伯语镜像截图；来源均为隔离任务副本。`activity-light.png` / `activity-dark.png` 是浮窗自身截图，主窗口截图不含独立顶层浮窗。`source-open.png` 是最终代码等待原页渲染完成后的截图；`source-render-before-anchor.png` / `.json` 保留补充修复前的定位期记录，最终原页开合后编辑行可见已由探针核对为 true。
 
-仍未代签：DMG 安装后的人工键鼠体验、macOS 系统设置实际切换减少动态效果 / 减少透明度、真实键盘自动重复、VoiceOver 人工朗读；不使用 AX 自动化替代（QTBUG-149612）。Windows 未验证。16 ms 严格间隔与大任务同步导航停顿尚未解决。
+仍未代签：DMG 安装后的人工键鼠体验、macOS 系统设置实际切换减少动态效果 / 减少透明度、真实键盘自动重复、VoiceOver 人工朗读；AX 自动化不能替代人工签收（当时记录的 QTBUG-149612 限制已于 2026-11-06 由运行时修复缓解，见 [验收速览](../../qt-beta/acceptance-quickstart.md) 第四点五节）。Windows 未验证。16 ms 严格间隔与大任务同步导航停顿尚未解决。

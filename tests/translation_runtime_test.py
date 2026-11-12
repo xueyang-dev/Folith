@@ -230,6 +230,55 @@ def test_deterministic_findings_explain_rule_failures_without_fake_confidence():
     assert findings[0]["confidence"] is None
 
 
+def test_dot_leader_heading_lines_count_as_real_text_for_copy_through():
+    """#220 D3：#229 的「任意文字」门槛挡不住简短标题 / 目录行——
+    一个词或一两个字母配上点引导符仍绕过了 copy-through 检查（实测
+    `序論……… 1`、`Index ........ 9` 在 origin/main 上无任何发现）。
+    这类行是真实文本，逐字照抄时应当被拦下。
+    Per-heading expectations (target_lang="简体中文"):
+      序論……… 1: 論 is Traditional/JP → branch (a) han_not_simplified naming 論
+      序……… 1:   序 is shared Han; leader_line blocks informational downgrade →
+                 branch (c) actionable "译文仍保留整段源文"
+      Index/A:   Latin chars → not han_check path → actionable "译文仍保留整段源文"
+    """
+    # --- 序論……… 1 ---
+    # 論 (U+8AD6) is Shift-JIS-only (not GB2312) → branch (a) han_not_simplified.
+    findings_trad = core.check_translation_batch(
+        ["序論……… 1"], ["序論……… 1"], [], "简体中文"
+    )
+    assert any(f.get("kind") == "han_not_simplified" for f in findings_trad), \
+        "序論……… 1 应产生 han_not_simplified 发现"
+    assert any("論" in f.get("reason", "") for f in findings_trad), \
+        "序論……… 1 的 reason 应命名繁体字 論"
+
+    # --- 序……… 1 ---
+    # 序 is shared Han (GB2312-valid, not Shift-JIS-only); leader_line=True must block the informational
+    # downgrade so the finding stays actionable, not demoted to informational.
+    findings_pure = core.check_translation_batch(
+        ["序……… 1"], ["序……… 1"], [], "简体中文"
+    )
+    pure_tc = [f for f in findings_pure if f.get("category") == "translation_completion"]
+    assert pure_tc, "序……… 1 目录行应产生 translation_completion 发现"
+    assert all(f["severity"] == "actionable" for f in pure_tc), \
+        "序……… 1 是引导符行，不得降级为 informational"
+
+    # --- Latin leader lines ---
+    for heading in ("Index ........ 9", "A ......... 3"):
+        findings = core.check_translation_batch([heading], [heading], [], "简体中文")
+        assert any(f.get("summary") == "译文仍保留整段源文" for f in findings), \
+            f"{heading} 拉丁引导符行应产生「译文仍保留整段源文」发现"
+
+    # 真译过（源 ≠ 译）不报「译文仍保留整段源文」；引导符和页码本身没有可翻内容，也不报。
+    assert not any(f["summary"] == "译文仍保留整段源文" for f in
+                   core.check_translation_batch(["序論……… 1"], ["序论……… 1"], [], "简体中文"))
+    for line in ("……… 5", "5"):
+        findings = core.check_translation_batch([line], [line], [], "简体中文")
+        assert not any(f["summary"] == "译文仍保留整段源文" for f in findings), line
+    # 无引导符的单词维持 #229 的既有门槛，不因本改动扩大。
+    findings = core.check_translation_batch(["Introduction"], ["Introduction"], [], "简体中文")
+    assert not any(f["summary"] == "译文仍保留整段源文" for f in findings)
+
+
 def test_incomplete_new_diagnostic_payload_is_not_accepted_as_complete():
     index = TranslationEvidenceIndex(["source"], [{"target": "target"}], [])
     findings, failed, trace = review_translation_batch_with_evidence(

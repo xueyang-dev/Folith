@@ -5,8 +5,11 @@ structure edits; image positions are paragraph boundaries, not target offsets.
 """
 from __future__ import annotations
 
+import base64
 import collections
+import hashlib
 import io
+import posixpath
 import re
 import zipfile
 from copy import deepcopy
@@ -14,8 +17,10 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, unquote_to_bytes, urlsplit
 
 import fitz
+from defusedxml import ElementTree as SafeElementTree
 from docx import Document
 from docx.oxml.ns import qn
 
@@ -42,15 +47,46 @@ def _normal(value: Any) -> str:
     return " ".join(_text(value).split())
 
 
+def _adjacent_text(parts, separators) -> str:
+    """Join a paragraph's segments with the blanks recorded when it was cut.
+
+    ``segment_paragraphs`` stores the exact whitespace between the emitted
+    units (``paragraph_ranges[*]["separators"]``).  A sentence boundary does not
+    always coincide with a space — ``Alpha.Beta.`` is one cleaned paragraph with
+    two segments and no blank between them — so assuming ``" "`` here would make
+    an otherwise intact map look stale.  Ranges recorded by older rules versions
+    have no separators and keep the previous best-effort join.
+    """
+    values = [str(part or "") for part in parts]
+    if isinstance(separators, list) and len(separators) == len(values) - 1 \
+            and all(isinstance(item, str) for item in separators):
+        return segmentation.reconstruct_source_paragraph(values, separators)
+    return " ".join(values)
+
+
+def _same_paragraph(left: str, right: str) -> bool:
+    """Whether two renderings describe the same source paragraph.
+
+    Exact text is preferred.  A whitespace-only difference is still the same
+    paragraph — a wrapped line keeps its two blanks, a cleaned paragraph may
+    carry one — but no other character may differ, so a split, merge or source
+    rewrite still fails closed instead of binding an image to a wrong paragraph.
+    """
+    if _normal(left) == _normal(right):
+        return True
+    return re.sub(r"\s+", "", _text(left)) == re.sub(r"\s+", "", _text(right))
+
+
 def _bind_from_paragraph_ranges(pairs, origins, paragraph_ranges, cleaned) -> bool:
     """Attach raw-paragraph references from the persisted segment→paragraph map.
 
     ``segmentation.paragraph_ranges`` is the same positional contract the CAT
     list itself uses, so an exclusion that maintains it (the segment leaves the
     map with the pair) can still bind images.  The map is only trusted when it
-    still describes the current text: joining a paragraph's segments has to
-    reproduce that cleaned paragraph.  A split or merge breaks that, so those
-    keep failing closed instead of binding an image to the wrong paragraph.
+    still describes the current text: rebuilding a paragraph from its segments
+    and the recorded separators has to reproduce that cleaned paragraph.  A
+    split or merge breaks that, so those keep failing closed instead of binding
+    an image to the wrong paragraph.
     """
     if not isinstance(paragraph_ranges, list) or not paragraph_ranges:
         return False
@@ -73,16 +109,17 @@ def _bind_from_paragraph_ranges(pairs, origins, paragraph_ranges, cleaned) -> bo
                 return False
             owner[index] = paragraph_index
             indexes.append(index)
-        by_paragraph[paragraph_index] = indexes
+        by_paragraph[paragraph_index] = (indexes, row.get("separators"))
     if set(owner) != set(range(len(pairs))):
         return False
-    for paragraph_index, indexes in by_paragraph.items():
+    for paragraph_index, (indexes, separators) in by_paragraph.items():
         if not indexes:
             continue
-        joined = _normal(" ".join(str(pairs[index].get("source") or "")
-                                  for index in indexes))
-        if paragraph_index >= len(cleaned) \
-                or joined != _normal(cleaned[paragraph_index]):
+        if paragraph_index >= len(cleaned):
+            return False
+        parts = [pairs[index].get("source") or "" for index in indexes]
+        if not _same_paragraph(_adjacent_text(parts, separators),
+                               cleaned[paragraph_index]):
             return False
     changed = False
     for index, paragraph_index in owner.items():
@@ -134,13 +171,28 @@ def bind_source_references(state: dict) -> bool:
     ):
         return False
     meta = state.get("segmentation") or {}
-    if state.get("segment_structure_history"):
+    history = state.get("segment_structure_history") or []
+    # Structure edits that only remove or restore whole segments.  Every one of
+    # them keeps ``paragraph_ranges`` positionally valid, which is what the map
+    # is checked against below.
+    exclusion_ops = {"exclude", "include", "scope_exclude", "scope_include"}
+    if state.get("excluded_segments") and all(
+            isinstance(record, dict) and record.get("operation") in exclusion_ops
+            for record in history):
+        # An exclusion is recorded as a structure edit, but its positional map
+        # is maintained and is checked row by row below: an excluded paragraph
+        # has an empty range, and every remaining paragraph must still rebuild
+        # exactly from its segments.  Refusing here (before the check) is what
+        # made a real PDF freeze without any delivery snapshot: the exclusion
+        # was legitimate, the map was intact, and the task still lost every
+        # image/text reference.  A split, merge or source rewrite does not keep
+        # that validity and stays refused.
+        return _bind_from_paragraph_ranges(
+            pairs, origins, meta.get("paragraph_ranges") or [], cleaned)
+    if history:
         # A recorded structure edit (split/merge/source rewrite) means the map
         # below is stale by construction: never backfill from it.
         return False
-    if state.get("excluded_segments"):
-        return _bind_from_paragraph_ranges(
-            pairs, origins, meta.get("paragraph_ranges") or [], cleaned)
     # Re-segmenting the whole document costs ~0.3 s on a book and runs before
     # every saved edit; when the pairs cannot be bound (they do not match the
     # initial segmentation) the answer is the same until one of the inputs
@@ -224,6 +276,539 @@ def _docx_source(source: bytes):
     cover = None
     if nodes and nodes[0]["kind"] == "image":
         cover = nodes.pop(0)["name"]
+    return paragraphs, nodes, media, warnings, cover
+
+
+_IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "png", "image/png"),
+    (b"\xff\xd8", "jpg", "image/jpeg"),
+    (b"GIF87a", "gif", "image/gif"),
+    (b"GIF89a", "gif", "image/gif"),
+    (b"BM", "bmp", "image/bmp"),
+    (b"II*\x00", "tiff", "image/tiff"),
+    (b"MM\x00*", "tiff", "image/tiff"),
+)
+
+_SKIP_IMAGE_LABELS = {
+    "missing": "资源缺失",
+    "encrypted": "资源已加密",
+    "external": "外链图片（未联网下载）",
+    "unreadable": "资源无法读取",
+    "unsupported": "图片格式无法识别",
+    "vector_svg": "无内嵌位图的矢量 SVG",
+    "css_background": "样式表背景图（没有元素实际使用）",
+}
+
+
+def _image_type(data: bytes):
+    """Return ``(extension, media type)`` from the actual bytes, not the manifest."""
+    if not data:
+        return None
+    for signature, extension, mime in _IMAGE_SIGNATURES:
+        if data.startswith(signature):
+            return extension, mime
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    head = data[:2048].lstrip().lower()
+    if b"<svg" in head:
+        return "svg", "image/svg+xml"
+    return None
+
+
+def _register_media(media: dict, seen: dict, data: bytes, extension: str, mime: str) -> str:
+    """One package file per distinct image; repeated references reuse the name."""
+    digest = hashlib.sha256(data).hexdigest()
+    name = seen.get(digest)
+    if name is None:
+        name = f"images/image-{len(media) + 1:04d}.{extension}"
+        media[name] = (data, mime)
+        seen[digest] = name
+    return name
+
+
+def _svg_attributes_href(element) -> str:
+    for key in ("href", "{http://www.w3.org/1999/xlink}href"):
+        value = element.get(key)
+        if value:
+            return str(value)
+    for key, value in element.attrib.items():
+        if str(key).lower().endswith("href") and value:
+            return str(value)
+    return ""
+
+
+def _svg_image_hrefs(data: bytes) -> list[str]:
+    try:
+        root = SafeElementTree.fromstring(data)
+    except Exception:  # noqa: BLE001 - a malformed SVG is reported as broken
+        return []
+    return [_svg_attributes_href(node) for node in root.iter()
+            if str(node.tag).split("}")[-1].split(":")[-1].lower() == "image"]
+
+
+def _zip_target(base_path: str, href) -> str | None:
+    """Resolve a relative image href to a ZIP entry name (POSIX semantics only)."""
+    text = str(href or "").strip()
+    if not text:
+        return None
+    parts = urlsplit(text)
+    if parts.scheme or text.startswith("//"):
+        return None
+    path = unquote(parts.path or "")
+    if not path:
+        return None
+    return posixpath.normpath(posixpath.join(posixpath.dirname(base_path), path))
+
+
+def _svg_embedded_image(book, svg_path: str, data: bytes, encrypted, paths: set):
+    """Unwrap an SVG that only wraps a bitmap (the sample cover does this)."""
+    for href in _svg_image_hrefs(data):
+        target = _zip_target(svg_path, href)
+        if not target or target in encrypted or target not in book.namelist():
+            continue
+        try:
+            inner = book.read(target)
+        except Exception:  # noqa: BLE001 - one unreadable wrapper must not block delivery
+            continue
+        kind = _image_type(inner)
+        if kind is not None and kind[0] != "svg":
+            paths.add(target)
+            return inner, kind
+    return None
+
+
+def _svg_unresolved_reason(book, svg_path: str, hrefs, encrypted) -> str:
+    """Why an SVG that references a bitmap cannot be turned into a bitmap.
+
+    ``_svg_embedded_image`` returns ``None`` for several different failures;
+    the report must name the actual one so a missing resource is not presented
+    as an inline vector graphic.
+    """
+    for href in hrefs:
+        text = str(href or "").strip()
+        if not text:
+            return "missing"
+        if urlsplit(text).scheme or text.startswith("//"):
+            return "external"
+        target = _zip_target(svg_path, text)
+        if target is None:
+            return "missing"
+        if target in encrypted:
+            return "encrypted"
+        if target not in book.namelist():
+            return "missing"
+        try:
+            inner = book.read(target)
+        except Exception:  # noqa: BLE001 - report the package failure instead of a blank image
+            return "unreadable"
+        kind = _image_type(inner)
+        if kind is None or kind[0] == "svg":
+            return "unsupported"
+    return "unsupported"
+
+
+def _epub_cover(book, package_path: str, package, manifest: dict, encrypted,
+                media: dict, seen: dict, warnings: list[str]):
+    """Find the declared cover (EPUB 3 property or EPUB 2 meta) and load it."""
+    item = next((value for value in manifest.values()
+                 if "cover-image" in (value.get("properties") or "").split()), None)
+    if item is None:
+        meta = package.find("./{*}metadata/{*}meta[@name='cover']")
+        if meta is not None:
+            item = manifest.get(str(meta.get("content") or "").strip())
+    if item is None or not item.get("href"):
+        return None, frozenset()
+    from .text_import import epub_item_path
+
+    path = epub_item_path(package_path, item.get("href"))
+    if path in encrypted:
+        warnings.append("EPUB 封面图片已加密，未纳入译文。")
+        return None, frozenset()
+    if path not in book.namelist():
+        warnings.append("EPUB 封面图片缺失，未纳入译文。")
+        return None, frozenset()
+    try:
+        data = book.read(path)
+    except Exception:  # noqa: BLE001 - the cover is optional, never block delivery
+        warnings.append("EPUB 封面图片无法读取，未纳入译文。")
+        return None, frozenset()
+    paths = {path}
+    kind = _image_type(data)
+    if kind is not None and kind[0] == "svg":
+        embedded = _svg_embedded_image(book, path, data, encrypted, paths)
+        if embedded is None:
+            warnings.append("EPUB 封面是无内嵌位图的矢量 SVG，未纳入译文。")
+            return None, frozenset()
+        data, kind = embedded
+    if kind is None:
+        warnings.append("EPUB 封面图片格式无法识别，未纳入译文。")
+        return None, frozenset()
+    return _register_media(media, seen, data, *kind), frozenset(paths)
+
+
+def _decode_data_uri(uri: str) -> bytes | None:
+    try:
+        header, payload = uri.split(",", 1)
+    except ValueError:
+        return None
+    try:
+        if ";base64" in header.lower():
+            return base64.b64decode(payload, validate=False)
+        return unquote_to_bytes(payload)
+    except Exception:  # noqa: BLE001 - a broken data URI is skipped with a warning
+        return None
+
+
+# --- CSS background images -------------------------------------------------
+#
+# A real book can carry a picture only as a CSS background (``table.rabbithole
+# { background: url(...) }``).  The image is in the package manifest and must
+# reach the delivery, or at least the report — before this the export claimed
+# "skipped 0" while quietly dropping it.  Only statically decidable selectors
+# are honoured; anything ambiguous is left alone and reported instead.
+
+_CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_CSS_BLOCK_RE = re.compile(r"(?s)(?P<selector>[^{}]+)\{(?P<body>[^{}]*)\}")
+_CSS_URL_RE = re.compile(
+    r"url\(\s*(?P<quote>['\"]?)(?P<href>[^'\")]+)(?P=quote)\s*\)", re.IGNORECASE)
+_CSS_BACKGROUND_RE = re.compile(
+    r"\bbackground(?:-image)?\s*:", re.IGNORECASE)
+_CSS_INLINE_BACKGROUND_RE = re.compile(
+    r"background(?:-image)?\s*:[^;{}]*?url\(\s*(?P<quote>['\"]?)"
+    r"(?P<href>[^'\")]+)(?P=quote)\s*\)", re.IGNORECASE)
+_CSS_LINK_RE = re.compile(
+    r"<link\b[^>]*\brel\s*=\s*['\"]?[^'\">]*stylesheet[^>]*>", re.IGNORECASE)
+_CSS_HREF_ATTR_RE = re.compile(
+    r"\bhref\s*=\s*(?P<quote>['\"])(?P<href>.*?)(?P=quote)",
+    re.IGNORECASE | re.DOTALL)
+_INLINE_STYLE_RE = re.compile(
+    r"<style\b[^>]*>(?P<css>.*?)</style>", re.IGNORECASE | re.DOTALL)
+_INLINE_STYLE_TYPE_RE = re.compile(
+    r"\btype\s*=\s*['\"](?P<type>[^'\"]*)['\"]", re.IGNORECASE)
+
+
+def _element_tag(element) -> str:
+    return str(getattr(element, "tag", "")).split("}")[-1].split(":")[-1].lower()
+
+
+def _flatten_at_rules(css: str, depth: int = 0) -> str:
+    """Drop at-rule wrappers but keep the style rules inside them.
+
+    ``@media``/``@supports`` bodies contain ordinary rules; ``@font-face`` and
+    ``@import`` do not carry a usable background.  Keeping the inner text lets
+    one flat rule scan see a media-specific background instead of losing it.
+    """
+    if depth > 6:
+        return ""
+    text = str(css or "")
+    out: list[str] = []
+    index = 0
+    while index < len(text):
+        match = re.search(r"@[-\w]+\s*[^{;]*", text[index:])
+        if match is None:
+            out.append(text[index:])
+            break
+        start = index + match.start()
+        out.append(text[index:start])
+        opening = text.find("{", start)
+        semicolon = text.find(";", start)
+        if opening < 0 or (0 <= semicolon < opening):
+            index = (semicolon + 1) if semicolon >= 0 else len(text)
+            continue
+        level = 0
+        end = opening
+        while end < len(text):
+            if text[end] == "{":
+                level += 1
+            elif text[end] == "}":
+                level -= 1
+                if level == 0:
+                    break
+            end += 1
+        out.append(_flatten_at_rules(text[opening + 1:end], depth + 1))
+        index = end + 1
+    return "".join(out)
+
+
+def _simple_selector(selector: str):
+    """Reduce one CSS selector to a compound that can be matched statically.
+
+    Only the rightmost compound of a descendant/child selector is used, with
+    attribute selectors and pseudo-classes removed.  Anything that cannot be
+    decided without a layout engine returns ``None``, so a decorative picture
+    is never attached to a guessed element.
+    """
+    text = str(selector or "").strip()
+    if not text or "|" in text:
+        return None
+    tokens = re.findall(r"[^\s>+~]+", text)
+    if not tokens:
+        return None
+    compound = re.sub(r"\[[^\]]*\]", "", tokens[-1])
+    compound = compound.split(":", 1)[0]
+    if not compound or any(char in compound for char in "()[]"):
+        return None
+    match = re.fullmatch(r"(?P<tag>[A-Za-z][\w-]*)?(?P<rest>(?:[.#][\w-]+)*)",
+                         compound)
+    if match is None:
+        return None
+    tag = (match.group("tag") or "").casefold()
+    rest = match.group("rest") or ""
+    if not tag and not rest:
+        return None
+    classes = frozenset(part[1:] for part in re.findall(r"\.[\w-]+", rest))
+    ids = re.findall(r"#([\w-]+)", rest)
+    if len(ids) > 1:
+        return None
+    return tag, classes, (ids[0] if ids else "")
+
+
+def _css_background_rules(text: str):
+    """``[((tag, classes, id), href), ...]`` for every background image."""
+    css = _flatten_at_rules(_CSS_COMMENT_RE.sub("", str(text or "")))
+    rules = []
+    for block in _CSS_BLOCK_RE.finditer(css):
+        body = block.group("body")
+        if not _CSS_BACKGROUND_RE.search(body):
+            continue
+        hrefs = [match.group("href").strip() for match in _CSS_URL_RE.finditer(body)]
+        hrefs = [href for href in hrefs
+                 if href and not href.casefold().startswith(("data:", "var("))]
+        if not hrefs:
+            continue
+        for selector in block.group("selector").split(","):
+            compound = _simple_selector(selector)
+            if compound is None:
+                continue
+            for href in hrefs:
+                rules.append((compound, href))
+    return rules
+
+
+def _epub_background_rules(book, path: str, content, encrypted: set,
+                           cache: dict) -> tuple[list, set[str]]:
+    """Stylesheet backgrounds reaching one spine document, and their targets."""
+    from .text_import import decode_text
+
+    rules: list = []
+    targets: set[str] = set()
+    base = posixpath.dirname(path) or "."
+
+    def add(css_text: str, document_path: str) -> None:
+        for compound, href in _css_background_rules(css_text):
+            resolved = _zip_target(document_path, href)
+            if resolved is None:
+                continue
+            targets.add(resolved)
+            rules.append((compound, posixpath.relpath(resolved, base)))
+
+    for tag in _CSS_LINK_RE.finditer(content or ""):
+        match = _CSS_HREF_ATTR_RE.search(tag.group(0))
+        if match is None:
+            continue
+        sheet = _zip_target(path, match.group("href"))
+        if sheet is None or sheet in encrypted or sheet not in book.namelist():
+            continue
+        if sheet not in cache:
+            try:
+                cache[sheet] = _css_background_rules(decode_text(book.read(sheet)))
+            except Exception:  # noqa: BLE001 - an unreadable sheet is not a picture
+                cache[sheet] = []
+        for compound, href in cache[sheet]:
+            resolved = _zip_target(sheet, href)
+            if resolved is None:
+                continue
+            targets.add(resolved)
+            rules.append((compound, posixpath.relpath(resolved, base)))
+    # A document may also carry the declarations inline; those URLs resolve
+    # against the document itself, not against a stylesheet.
+    for block in _INLINE_STYLE_RE.finditer(content or ""):
+        header = block.group(0).split(">", 1)[0]
+        match = _INLINE_STYLE_TYPE_RE.search(header)
+        if match and match.group("type").strip().lower() not in ("", "text/css"):
+            continue
+        add(block.group("css"), path)
+    return rules, targets
+
+
+def _background_resolver(rules: list, document_path: str):
+    """Return the background image one element inherits from document styles."""
+    base = posixpath.dirname(document_path) or "."
+
+    def resolve(element) -> str:
+        style = str(element.get("style") or "")
+        if style:
+            match = _CSS_INLINE_BACKGROUND_RE.search(style)
+            if match:
+                target = _zip_target(document_path, match.group("href").strip())
+                if target is not None:
+                    return posixpath.relpath(target, base)
+        tag = _element_tag(element)
+        classes = frozenset(str(element.get("class") or "").split())
+        ident = str(element.get("id") or "")
+        for (rule_tag, rule_classes, rule_id), href in reversed(rules):
+            if rule_tag and rule_tag != tag:
+                continue
+            if rule_id and rule_id != ident:
+                continue
+            if rule_classes and not rule_classes <= classes:
+                continue
+            return href
+        return ""
+
+    return resolve
+
+
+def _epub_source(source: bytes, *, stats: dict | None = None):
+    """Read source order, paragraph breaks and images from an EPUB payload.
+
+    Returns the same five-tuple as :func:`_docx_source`.  Image positions are
+    source paragraph boundaries (independent blocks sit between paragraphs,
+    inline images follow their complete paragraph), never offsets inside a
+    translated paragraph.  Every reference is kept even when the package stores
+    one file; the cover is returned separately and is not repeated in the body.
+    """
+    from .text_import import _html_paragraphs, epub_spine_entries, open_epub
+
+    if stats is None:
+        stats = {}
+    stats.setdefault("reference_count", 0)
+    stats.setdefault("cover_reference_count", 0)
+    skipped = stats.setdefault("skipped_reasons", {})
+    paragraphs: list[str] = []
+    media: dict[str, tuple[bytes, str]] = {}
+    positions: dict[int, list[str]] = collections.defaultdict(list)
+    warnings: list[str] = []
+    seen: dict[str, str] = {}
+    heading_levels: dict[int, int] = {}
+    document_starts: set[int] = set()
+    css_cache: dict[str, list] = {}
+    css_targets_all: set[str] = set()
+    used_targets: set[str] = set()
+
+    def skip(reason: str) -> None:
+        skipped[reason] = int(skipped.get(reason, 0)) + 1
+
+    with open_epub(source) as (book, package_path, package, manifest, spine, encrypted):
+        cover, cover_paths = _epub_cover(
+            book, package_path, package, manifest, encrypted, media, seen, warnings)
+        for _item, path, content in epub_spine_entries(
+                book, package_path, manifest, spine, encrypted):
+            if content is None:
+                continue
+            images: list[dict] = []
+            headings: list[dict] = []
+            rules, css_targets = _epub_background_rules(
+                book, path, content, encrypted, css_cache)
+            css_targets_all |= css_targets
+            # Always resolve inline ``style`` declarations too; linked rules may
+            # be absent while one element carries its own background.
+            decorations = _background_resolver(rules, path)
+            chapter, _omitted = _html_paragraphs(
+                content, headings=headings, images=images,
+                decorations=decorations)
+            offset = len(paragraphs)
+            if chapter:
+                # The source package's spine is the structure a reader sees as
+                # "chapters"; keep each document's start as a chapter boundary.
+                document_starts.add(offset)
+            paragraphs.extend(chapter)
+            for item in headings:
+                index = offset + int(item["index"])
+                if 0 <= index < len(paragraphs):
+                    heading_levels[index] = int(item["level"])
+            for record in images:
+                stats["reference_count"] += 1
+                if record.get("tag") == "vector-svg":
+                    skip("vector_svg")
+                    continue
+                href = str(record.get("href") or "").strip()
+                if href.lower().startswith("data:"):
+                    data = _decode_data_uri(href)
+                    kind = _image_type(data or b"")
+                    if kind is None:
+                        skip("unsupported")
+                        continue
+                    name = _register_media(media, seen, data, *kind)
+                    positions[offset + int(record["at"])].append(name)
+                    continue
+                target = _zip_target(path, href)
+                if target is None:
+                    skip("external" if href else "missing")
+                    continue
+                if cover and target in cover_paths:
+                    stats["cover_reference_count"] += 1
+                    continue
+                if target in encrypted:
+                    skip("encrypted")
+                    continue
+                if target not in book.namelist():
+                    skip("missing")
+                    continue
+                try:
+                    data = book.read(target)
+                except Exception:  # noqa: BLE001 - one bad package entry must not block delivery
+                    skip("unreadable")
+                    continue
+                kind = _image_type(data)
+                if kind is None:
+                    skip("unsupported")
+                    continue
+                if kind[0] == "svg":
+                    hrefs = _svg_image_hrefs(data)
+                    if hrefs:
+                        # An SVG wrapper around an in-package bitmap is
+                        # unwrapped so the EPUB carries the actual image.  A
+                        # wrapper whose only references are missing/external
+                        # must not become a blank SVG picture.
+                        embedded = _svg_embedded_image(
+                            book, target, data, encrypted, set())
+                        if embedded is None:
+                            skip(_svg_unresolved_reason(
+                                book, target, hrefs, encrypted))
+                            continue
+                        data, kind = embedded
+                    # A pure vector SVG (no <image>) stays as-is: it is a core
+                    # EPUB media type. The DOCX rebuild rasterizes it and skips
+                    # + reports the one it cannot convert.
+                name = _register_media(media, seen, data, *kind)
+                positions[offset + int(record["at"])].append(name)
+                used_targets.add(target)
+        # A stylesheet is shared by every chapter it reaches, so "the picture
+        # was not used" can only be decided once the whole book is read.
+        for target in sorted(css_targets_all - used_targets):
+            if cover and target in cover_paths:
+                continue
+            # The stylesheet references the picture but no element in the book
+            # carries that selector: it is not in the body, so report it
+            # instead of claiming that nothing was left out.
+            skip("css_background")
+
+    warnings.append("EPUB 译文按阅读顺序重建，不保留源书排版；目录按源书 spine 与标题重建。")
+    if media:
+        warnings.append("EPUB 图片按原阅读顺序保留；图片内部文字保持原样。")
+    skipped_count = sum(int(count) for count in skipped.values())
+    if skipped_count:
+        details = "、".join(
+            f"{_SKIP_IMAGE_LABELS.get(reason, reason)} {count} 处"
+            for reason, count in skipped.items())
+        warnings.append(f"EPUB 有 {skipped_count} 处图片未纳入译文：{details}。")
+    nodes: list[dict] = []
+    for index in range(len(paragraphs) + 1):
+        for name in positions.get(index, ()):
+            nodes.append({"kind": "image", "name": name})
+        if index < len(paragraphs):
+            level = heading_levels.get(index)
+            entry = {"kind": "text", "ref": index,
+                     "role": "heading" if level else "body",
+                     "document_start": index in document_starts}
+            if level:
+                entry["level"] = level
+            nodes.append(entry)
+    stats["heading_count"] = len(heading_levels)
+    stats["document_count"] = len(document_starts)
+    stats["body_image_reference_count"] = sum(len(names) for names in positions.values())
+    stats["skipped_image_count"] = skipped_count
     return paragraphs, nodes, media, warnings, cover
 
 
@@ -349,9 +934,21 @@ def _pdf_source(source: bytes):
             for block in images:
                 name = f"images/image-{len(media) + 1:04d}.png"
                 rectangle = fitz.Rect(block["x0"], block["y0"], block["x1"], block["y1"])
+                # A zero-width or zero-height image box (a hairline or a broken
+                # extraction) cannot be rendered: MuPDF fails with "Invalid
+                # bandwriter header" and that one box used to block the whole
+                # delivery. Skip it and say so instead.
+                if rectangle.is_empty or rectangle.width < 1 or rectangle.height < 1:
+                    warnings.append(f"PDF 第 {page_number} 页有一处图片区域尺寸为零，已跳过。")
+                    continue
                 # Rendering the image's rectangle preserves PDF masks, rotation
                 # and clipping instead of exporting an untransformed image blob.
-                data = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=rectangle, alpha=False).tobytes("png")
+                try:
+                    data = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=rectangle,
+                                           alpha=False).tobytes("png")
+                except Exception as exc:  # noqa: BLE001 - one bad picture must not block delivery
+                    warnings.append(f"PDF 第 {page_number} 页有一张图片无法提取（{exc}），已跳过。")
+                    continue
                 media[name] = (data, "image/png")
                 ordered.append((page_number, block["y0"], block["x0"], 1,
                                 {"kind": "image", "name": name, "page": page_number}))
@@ -463,6 +1060,7 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
     if validation["blocking"]:
         raise EpubExportError("EPUB 译文未通过正文格式检查。")
     filename = state.get("filename") or ""
+    stats: dict = {}
     try:
         if filename.lower().endswith(".docx"):
             paragraphs, nodes, media, warnings, cover = _docx_source(source)
@@ -471,14 +1069,17 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
                 paragraphs, nodes, media, warnings, cover = _visual_pdf_source(state, source)
             else:
                 paragraphs, nodes, media, warnings, cover = _pdf_source(source)
-        elif filename.lower().endswith((".epub", ".txt", ".md", ".markdown")):
+        elif filename.lower().endswith(".epub"):
+            paragraphs, nodes, media, warnings, cover = _epub_source(source, stats=stats)
+        elif filename.lower().endswith((".txt", ".md", ".markdown")):
             from .text_import import extract_text_source
             paragraphs, omitted, _facts = extract_text_source(filename, source)
             paragraphs = [_text(text) for text in paragraphs]
             nodes = [{"kind": "text", "ref": index, "role": "body"}
                      for index in range(len(paragraphs))]
             media, cover = {}, None
-            warnings = ["此来源导出为重建的纯文字 EPUB；不保留源书排版、图片或音视频。"]
+            warnings = ["TXT / Markdown 来源导出为重建的纯文字 EPUB；"
+                        "不保留源书排版，Markdown 图片与音视频未纳入译文。"]
             warnings.extend(f'{item["label"]}（{item["count"]}）未纳入译文。' for item in omitted)
         else:
             raise EpubExportError("EPUB 导出不支持此来源格式。")
@@ -517,13 +1118,16 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
                     current_parts.append('<p class="missing" aria-label="尚无译文"></p>')
                     continue
                 heading = node["role"] == "heading"
-                if current_parts and (heading or current_size > 100_000):
+                level = int(node.get("level") or 1)
+                chapter_heading = heading and level <= 1
+                starts_document = bool(node.get("document_start"))
+                if current_parts and (chapter_heading or starts_document or current_size > 100_000):
                     chapters.append((current_title, "".join(current_parts)))
                     current_parts, current_size = [], 0
                     current_title = target if heading else f"正文 {len(chapters) + 1}"
                 elif heading:
                     current_title = target
-                tag = "h1" if heading else "p"
+                tag = ("h1" if level <= 1 else f"h{min(level, 6)}") if heading else "p"
                 unit_locations[index] = f"chapter-{len(chapters) + 1:04d}.xhtml#unit-{index}"
                 markup = _markup(target)
                 if index in group_links:
@@ -547,15 +1151,29 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
     warnings = list(dict.fromkeys(warnings))
     if caption_count:
         warnings.append(f"{caption_count} 条 PDF 图注保留原文；图片内部文字保持原样。")
-    elif media:
+    elif media and not filename.lower().endswith(".epub"):
         warnings.append("图片内部文字保持原样。")
     missing = sum(bool(str(pair.get("source") or "").strip()) and not str(pair.get("target") or "").strip() for pair in pairs)
     if missing:
         warnings.append(f"{missing} 个翻译单元尚无译文，正文中留空。")
+    body_image_count = sum(node["kind"] == "image" for node in nodes)
+    heading_node_count = sum(node["kind"] == "text" and node["role"] == "heading"
+                             for node in nodes)
+    source_image_count = int(stats.get("reference_count") or 0) or len(media)
     report = {"format": "EPUB 3", "layout": "reflowable", "source_filename": filename,
-              "image_count": len(media), "has_cover": bool(cover), "original_caption_count": caption_count,
+              "image_count": len(media), "image_reference_count": body_image_count,
+              "source_image_reference_count": source_image_count,
+              "cover_reference_count": int(stats.get("cover_reference_count") or 0),
+              "skipped_image_count": int(stats.get("skipped_image_count") or 0),
+              "skipped_image_reasons": {str(key): int(value)
+                                        for key, value in (stats.get("skipped_reasons") or {}).items()},
+              "has_cover": bool(cover), "original_caption_count": caption_count,
               "chapter_count": len(chapters), "linked_toc_count": len(group_links), "missing_translation_count": missing,
-              "placement": "图片位于对应完整段落之后；跨图片合并的译文整体位于图片之前。",
+              "source_document_count": int(stats.get("document_count") or 0),
+              "source_heading_count": int(
+                  stats.get("heading_count") or heading_node_count),
+              "placement": "图片位于原文段落边界（独立图片块在前后段落之间，段内图片在该完整段落之后）；"
+                           "跨图片合并的译文整体位于图片之前。",
               "language": language, "direction": direction,
               "warnings": warnings}
     identifier = "urn:folith:" + (job_id or "translation")

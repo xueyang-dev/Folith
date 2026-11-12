@@ -4,7 +4,8 @@ from __future__ import annotations
 import uuid
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
+                               QListWidgetItem, QPushButton, QSizePolicy, QVBoxLayout,
+                               QWidget)
 from . import adapter, components, connection_status, i18n, icons, style
 from . import theme as theme_module
 from folith.model_connections import effective_config
@@ -35,6 +36,8 @@ class ConnectionLibrary(QWidget):
         self.editing = ""
         #: 编辑区里尚未保存的那条连接的 id：多次读取编辑区时保持不变。
         self._pending_id = ""
+        #: 编辑区当前这条连接已保存的思考开关；模型不支持该控件时按它原样写回。
+        self._thinking_mode = ""
         #: 模型目录声明过的输入模态（#48）：来自「获取可用模型」或正在编辑的
         #: 已保存连接。换提供商即作废——声明是跟着目录走的。
         self._catalog_modalities = {}
@@ -57,6 +60,8 @@ class ConnectionLibrary(QWidget):
         dialog._vision_view = adapter.vision_connection_view()
         dialog.vision_connection_box = style.ComboBox()
         self.selectors = {}
+        #: 翻译 / 审校行：所选模型不匹配该角色时显示一行警告（#258）。保存仍然允许。
+        self.capability_warnings: dict[str, components.StatusLabel] = {}
         self.role_group = components.FormGroup()
         self.role_group.add_row(self._group_header(i18n.tr('用途')))
         for role, label in self.ROLES:
@@ -68,17 +73,21 @@ class ConnectionLibrary(QWidget):
             model_box = self.make_model_selector(role)
             if role != "vision":
                 self.selectors[role] = box
-            self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box))
+                self.role_group.add_row(
+                    self._role_row_with_warning(role, i18n.tr(label), box, model_box))
+            else:
+                self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box))
             if role == "vision":
-                # #48：所选视觉模型若是「已知仅文本」给出警告；未知如实说未知。
-                hint = components.StatusLabel("", "idle")
+                # #48 / #258：所选视觉模型的能力提示——OCR 专用、仅文本或未知，如实显示。
+                # 能力警告可能不止一行（别的语言更长），所以折行显示，不省略。
+                hint = components.StatusLabel("", "idle", wrap=True)
                 hint.dot.hide()
                 hint.setVisible(False)
                 holder = QWidget()
                 holder_row = QHBoxLayout(holder)
                 holder_row.setContentsMargins(theme_module.SPACE["lg"], 0,
                                                theme_module.SPACE["md"], 0)
-                holder_row.addWidget(hint)
+                holder_row.addWidget(hint, 1)
                 self.role_group.add_row(holder)
                 self.vision_modality_hint = hint
         layout.addWidget(self.role_group)
@@ -102,6 +111,36 @@ class ConnectionLibrary(QWidget):
         for control in controls:
             row.addWidget(control)
         return holder
+
+    def _role_row_with_warning(self, role, title, *controls):
+        """用途行（翻译 / 审校）：选择器在上，模型不匹配该角色时下面跟一行警告（#258）。
+
+        警告放在同一行内（而不是另起 FormGroup 行），隐藏时不占高度、也不留多余的发丝线。
+        """
+        from .dialogs import SETTING_LABEL_WIDTH
+
+        holder = QWidget()
+        holder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(theme_module.SPACE["xxs"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        line = QHBoxLayout()
+        column.addLayout(line)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(theme_module.SPACE["md"])
+        for control in controls:
+            line.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+        line.addStretch(1)
+        warning = components.StatusLabel("", "attention", wrap=True)
+        warning.dot.hide()
+        warning.setVisible(False)
+        column.addWidget(warning)
+        self.capability_warnings[role] = warning
+        row = components.FormRow(title, value=holder)
+        row.title_label.setFixedWidth(SETTING_LABEL_WIDTH)
+        row.title_label.setWordWrap(True)
+        return row
 
     # ---- 添加 / 编辑连接的面板 ------------------------------------------------------
     def _build_editor(self):
@@ -158,6 +197,7 @@ class ConnectionLibrary(QWidget):
         # 每个模型后面跟输入类型（文本 / 文本 + 视觉 / 未知，#48）：服务商目录声明过的
         # 标来源；没声明的显式「未知」，可点「测试视觉」花一次小图请求实测。
         models_head = QHBoxLayout()
+        body.addLayout(models_head)
         models_label = QLabel(i18n.tr('模型'))
         style.set_text_role(models_label, "section")
         models_head.addWidget(models_label, 1)
@@ -171,13 +211,13 @@ class ConnectionLibrary(QWidget):
         self.vision_probe_button.setEnabled(False)
         self.vision_probe_button.clicked.connect(self._test_vision)
         models_head.addWidget(self.vision_probe_button)
-        body.addLayout(models_head)
         self.model_list = QListWidget()
         self.model_list.setObjectName("modelCatalog")
         self.model_list.setMinimumHeight(132)
         self.model_list.currentItemChanged.connect(self._pick_model)
         body.addWidget(self.model_list)
         manual = QHBoxLayout()
+        body.addLayout(manual)
         self.models = QLineEdit()
         self.models.setPlaceholderText(i18n.tr('手动添加模型（多个用逗号分隔）'))
         self.models.returnPressed.connect(self.add_model)
@@ -186,8 +226,9 @@ class ConnectionLibrary(QWidget):
         add.clicked.connect(self.add_model)
         manual.addWidget(self.models, 1)
         manual.addWidget(add)
-        body.addLayout(manual)
         body.addWidget(dialog.reasoning_row)
+        body.addWidget(dialog.thinking_row)
+        body.addWidget(dialog.thinking_hint)
         dialog.model_box.setParent(self.editor)
         dialog.model_box.hide()          # 数据模型：列表里看到的就是它的条目
         model = dialog.model_box.model()
@@ -204,6 +245,7 @@ class ConnectionLibrary(QWidget):
         body.addWidget(dialog.test_label)
 
         footer = QHBoxLayout()
+        body.addLayout(footer)
         footer.addStretch(1)
         cancel = QPushButton(i18n.tr('取消'))
         cancel.clicked.connect(self.close_editor)
@@ -217,7 +259,6 @@ class ConnectionLibrary(QWidget):
         footer.addWidget(cancel)
         footer.addWidget(self.force_save_button)
         footer.addWidget(self.save_button)
-        body.addLayout(footer)
 
     # ---- 模型输入类型（#48）--------------------------------------------------------
     #: kind → 列表里跟在模型名后面的短语。未知是显式状态，不是省略。
@@ -266,6 +307,11 @@ class ConnectionLibrary(QWidget):
     def _provider_changed(self, _text) -> None:
         """换了提供商：上一家目录声明过的输入模态不再可信，清掉重画。"""
         self._catalog_modalities = {}
+        # 本地网关不校验密钥：占位提示不能还写着「留空则用环境变量」。
+        provider = self.dialog.provider_box.currentText().strip()
+        self.dialog.key_edit.setPlaceholderText(
+            i18n.tr('可选（本地网关不校验密钥）') if provider == "Local Gateway"
+            else i18n.tr('留空则用环境变量'))
         self._sync_model_list()
 
     def _pick_model(self, current, _previous) -> None:
@@ -422,7 +468,9 @@ class ConnectionLibrary(QWidget):
     def reset(self):
         self.editing = ""
         self._pending_id = ""
+        self._thinking_mode = ""
         self._catalog_modalities = {}
+        self.dialog.thinking_box.setCurrentIndex(0)
         self.editor_title.setText(i18n.tr('添加连接'))
         self.save_button.setText(i18n.tr('测试并添加'))
         self.name.clear()
@@ -467,8 +515,11 @@ class ConnectionLibrary(QWidget):
         row.addWidget(components.StatusDot(theme_module.STATUS_TONES[tone]), 0,
                       Qt.AlignmentFlag.AlignVCenter)
         column = QVBoxLayout()
+        row.addLayout(column, 1)
         column.setSpacing(0)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         title = QHBoxLayout()
+        column.addLayout(title)
         title.setSpacing(theme_module.SPACE["sm"])
         name = QLabel(p["name"])
         style.set_text_role(name, "name")
@@ -476,7 +527,6 @@ class ConnectionLibrary(QWidget):
         if p.get("custom"):
             title.addWidget(style.Chip(i18n.tr('自定义'), "muted"))
         title.addStretch(1)
-        column.addLayout(title)
         models = list(dict.fromkeys([p["model"], *p.get("models", [])]))
         provider = i18n.tr('OpenAI 兼容') if p.get("custom") else i18n.tr_dynamic(p["provider"])
         detail = f"{provider} · {p['model']}"
@@ -485,7 +535,6 @@ class ConnectionLibrary(QWidget):
         meta = style.ElideLabel(detail, mode=Qt.TextElideMode.ElideRight)
         style.set_text_role(meta, "meta")
         column.addWidget(meta)
-        row.addLayout(column, 1)
         state = components.StatusLabel(i18n.tr(self.STATE_TEXT.get(status["state"], "")), tone)
         state.dot.hide()
         state.setToolTip(i18n.tr_dynamic(status["message"]))
@@ -524,6 +573,8 @@ class ConnectionLibrary(QWidget):
         if role == "vision":
             # 换的不只是连接（select）时，模型本身变了也要重看输入类型。
             box.currentTextChanged.connect(lambda _v: self._update_vision_hint())
+        # #258：换模型时刷新该用途的能力警告（视觉由 _update_vision_hint 处理）。
+        box.currentTextChanged.connect(lambda _v, r=role: self._update_capability_warning(r))
         self.model_selectors[role] = box
         return box
 
@@ -544,8 +595,7 @@ class ConnectionLibrary(QWidget):
             self.role_models[role] = ""
         box.setVisible(profile is not None)
         box.blockSignals(False)
-        if role == "vision":
-            self._update_vision_hint()
+        self._update_capability_warning(role)
 
     def _update_vision_hint(self):
         """「视觉」用途当前选中的模型：目录声明 / 实测结果 / 未知，三态如实显示。
@@ -559,6 +609,15 @@ class ConnectionLibrary(QWidget):
         model = str(self.role_models.get("vision") or "")
         if not profile or not model:
             hint.setVisible(False)
+            return
+        # #258：OCR 专用 / 翻译专用模型直接给出能力警告——它们能收图也可能「仅文本」未知，
+        # 但都不会按结构化格式回答，比模态提示更该先说。
+        from .model_capability import capability_warning
+        capability = capability_warning("vision", model)
+        if capability:
+            hint.set_status(capability, "attention")
+            hint.setToolTip("")
+            hint.setVisible(True)
             return
         declared = (profile.get("model_modalities") or {}).get(model)
         if isinstance(declared, list) and declared:
@@ -584,6 +643,19 @@ class ConnectionLibrary(QWidget):
         hint.setToolTip("")
         hint.setVisible(True)
 
+    def _update_capability_warning(self, role):
+        """翻译 / 审校：所选模型不匹配该角色时显示一行警告；视觉复用输入类型提示。"""
+        if role == "vision":
+            self._update_vision_hint()
+            return
+        warning = self.capability_warnings.get(role)
+        if warning is None:
+            return
+        from .model_capability import capability_warning
+        text = capability_warning(role, str(self.role_models.get(role) or ""))
+        warning.set_status(text, "attention")
+        warning.setVisible(bool(text))
+
     def select(self, role):
         box = self.selectors.get(role) if role != "vision" else self.dialog.vision_connection_box
         self.roles[role] = str(box.currentData() or "")
@@ -604,6 +676,7 @@ class ConnectionLibrary(QWidget):
     def edit(self, key):
         p = next(p for p in self.profiles if p["id"] == key)
         self.editing = key
+        self._thinking_mode = str(p.get("reasoning_mode") or "")
         self.editor_title.setText(i18n.tr('编辑连接'))
         self.save_button.setText(i18n.tr('测试并保存'))
         self.kind.set_value("custom" if p.get("custom") else "catalog")
@@ -626,6 +699,8 @@ class ConnectionLibrary(QWidget):
         self.custom_settings.setChecked(bool(p.get("base_url")))
         self.dialog.reasoning_box.setCurrentIndex(max(0,
             self.dialog.reasoning_box.findData(p.get("reasoning_effort", ""))))
+        self.dialog.thinking_box.setCurrentIndex(max(0,
+            self.dialog.thinking_box.findData(p.get("reasoning_mode", ""))))
 
     def _editor_profile(self, quiet=False):
         """把编辑区读成一条连接；填得不完整时返回 None（``quiet`` 时不写状态）。"""
@@ -649,6 +724,9 @@ class ConnectionLibrary(QWidget):
              "reasoning_effort": (str(self.dialog.reasoning_box.currentData() or "")
                                   if self.dialog.reasoning_box.count() > 1
                                   else self.dialog.config.reasoning_effort),
+             "reasoning_mode": (str(self.dialog.thinking_box.currentData() or "")
+                                if self.dialog.thinking_box.count() > 1
+                                else self._thinking_mode),
              "provider": self.dialog.provider_box.currentText(),
              "model": self.dialog.model_box.currentText().strip(),
              "api_key": self.dialog.key_edit.text().strip(),
@@ -664,6 +742,11 @@ class ConnectionLibrary(QWidget):
         p["model_modalities"] = {m: [str(x) for x in (v or [])]
                                  for m, v in self._catalog_modalities.items()
                                  if m in p["models"]}
+        if not p["reasoning_mode"]:
+            # 这个模型没有经过验证的思考控件：不写档位，而不是写一个"服务默认"。
+            # 否则任何一次保存都会替连接记下显式默认值，把 FOLITH_REASONING_MODE
+            # 这个出口一起盖掉。
+            del p["reasoning_mode"]
         if not p["model"] or (custom and not p["base_url"]):
             fail(i18n.tr('请填写模型和 API 地址'))
             return None

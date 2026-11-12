@@ -104,7 +104,14 @@ benchmark/*.png
 benchmark/knowledge-feedback/
 benchmark/ocr-sources-verification/
 benchmark/ocr-vision-pilot/
+# The translation-efficiency run outputs stay ignored (issue #290 / D16), but
+# the committed minimal synthetic workload fixture and its README are tracked:
+# three shipped measurement scripts default to that exact path.
 benchmark/translation-efficiency/
+!benchmark/translation-efficiency/
+benchmark/translation-efficiency/*
+!benchmark/translation-efficiency/workload.json
+!benchmark/translation-efficiency/README.md
 benchmark/regression_evidence.txt
 benchmark/results.csv
 

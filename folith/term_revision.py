@@ -47,12 +47,17 @@ def preview_term_revision(
     *,
     forbidden: Sequence[str] = (),
     exclusions: Sequence[int] = (),
+    known_forms: Sequence[str] = (),
 ) -> Dict[str, Any]:
     """一次术语修订的受影响段落预览（纯函数，不写任何状态）。
 
     ``old_target`` 是修订前的首选译名；``forbidden`` 是该术语的禁用译名——
     它们与旧首选译名一样是"已知错误的写法"，命中时给出确定性替换提议
     （每行记录实际命中的写法，UI 逐段勾选后才写入）。
+
+    ``known_forms`` 是任务中所有实体和词汇的已知译名（通过
+    :func:`folith.consistency.collect_known_forms` 一次性收集），用于保护
+    包含某个替换形式作为真子串的较长实体译名，防止被误改。
 
     返回 ``{"source", "old_target", "new_target", "rows", "protected",
     "ambiguous", "already_correct", "source_occurrences", "reason"}``；
@@ -78,6 +83,17 @@ def preview_term_revision(
     replace_pattern = consistency.variant_pattern(replace_forms)
     correct_pattern = consistency.variant_pattern([new_target])
     excluded = set(exclusions or ())
+    # Protected forms: the new target is always protected so a text already
+    # containing it is never corrupted by a replace_forms match inside it.
+    # Additional known_forms from the full entity/glossary registry protect
+    # longer forms that contain one of the replace_forms as a proper substring
+    # (e.g. 艾米莉娜 when replacing 艾米莉 → 艾米丽).  Collect once per
+    # operation with consistency.collect_known_forms(state) before calling.
+    replace_cf = {r.casefold() for r in replace_forms if r}
+    _base_protected = [new_target] + [
+        f for f in (consistency.spelling(kf) for kf in (known_forms or ()))
+        if f and f.casefold() not in replace_cf
+    ]
 
     rows: List[Dict[str, Any]] = []
     for index, pair in enumerate(pairs or []):
@@ -98,8 +114,9 @@ def preview_term_revision(
                                      (replace_pattern.finditer(target)
                                       if replace_pattern else ())))
         if matched:
-            after = (replace_pattern.sub(lambda _match: new_target, target)
-                     if replace_pattern else target)
+            after = (consistency.safe_replace(target, replace_forms, new_target,
+                                              _base_protected)
+                     if replace_forms else target)
             if after != target:
                 rows.append({
                     "segment_index": index,

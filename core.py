@@ -9,9 +9,10 @@ import io
 import json
 import csv
 import inspect
+from collections.abc import MutableMapping
 from functools import wraps
 from contextlib import contextmanager
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FutureTimeoutError
 import base64
 import os
@@ -32,7 +33,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
@@ -53,6 +54,7 @@ from folith import checkpoint as _checkpoint
 from folith import snapshots as _snapshots
 from folith import entity_registry as _entity_registry
 from folith import dynamic_context as _dynamic_context
+from folith import request_control as _request_control
 from folith import model_roles as _model_roles
 from folith import pdf_ingestion as _pdf_ingestion
 from folith import source_cleanup as _source_cleanup
@@ -111,6 +113,7 @@ DELIVERY_CONFIG_DEFAULTS = {
     "deliver_bilingual_docx": True,
     "deliver_pdf": False,
     "deliver_original_pdf": False,
+    "deliver_original_docx": False,
     "deliver_epub": False,
     "deliver_terms_xlsx": True,
     "deliver_tbx": False,
@@ -217,6 +220,14 @@ PROVIDERS = {
         "models": [],
         "model_hint": "填写中转站提供的模型名（OpenAI /chat/completions 兼容）",
     },
+    "Local Gateway": {
+        # 本机/局域网的 OpenAI 兼容网关：地址必填、不校验密钥、不声明推理档位。
+        "kind": "openai_compat",
+        "base_url": None,
+        "custom_base_url": True,
+        "models": [],
+        "model_hint": "OpenAI-compatible model ID",
+    },
 }
 
 # 兼容旧引用：仅保留 模型名 -> 列表 的视图
@@ -237,19 +248,53 @@ _ROLE_PURPOSE_LABELS = {
 
 
 @contextmanager
-def llm_call_purpose(label):
-    """为当前线程随后发起的模型调用标注用途（#167）。
+def llm_call_purpose(label, operation_id=None):
+    """为当前线程随后发起的模型调用标注用途（#167 / Phase 3）。
 
-    标注只影响运行时遥测的展示文案（事件消息、阶段标签、``metadata.purpose``），
-    不进入任何模型请求、缓存键或用量账本。线程本地生效：并发批次工作线程各自
-    设置各自的用途，互不可见。离开作用域恢复外层值，不向下游泄漏。
+    标注只影响运行时遥测的展示文案与机器标识（事件消息、阶段标签、``metadata.purpose``、
+    ``operation_id``），不进入任何模型请求、缓存键或用量账本。线程本地生效：并发批次
+    工作线程各自设置各自的用途，互不可见。离开作用域恢复外层值，不向下游泄漏。
     """
     previous = getattr(_LLM_CTX, "purpose", None)
+    prev_op = getattr(_LLM_CTX, "operation_id", None)
     _LLM_CTX.purpose = str(label or "").strip() or None
+    _LLM_CTX.operation_id = str(operation_id or "").strip() or None
     try:
         yield
     finally:
         _LLM_CTX.purpose = previous
+        _LLM_CTX.operation_id = prev_op
+
+
+def _infer_operation_id(purpose, role):
+    purpose = str(purpose or "").strip()
+    role = str(role or "").strip().lower()
+    if "标注" in purpose:
+        return "annotation"
+    # More specific operations first: "翻译修复" must not be read as translation.
+    if "修复" in purpose:
+        return "repair"
+    if "审校" in purpose:
+        return "review"
+    if "翻译" in purpose:
+        return "translation"
+    if "术语" in purpose:
+        return "terminology"
+    if "画像" in purpose or "理解" in purpose:
+        return "understanding"
+    if "知识" in purpose:
+        return "knowledge"
+    if role in {"annotation", "translation", "review", "auxiliary"}:
+        return role
+    return role or "unknown"
+
+
+def _current_llm_operation_id():
+    """这次模型调用的机器操作标识；无显式标注时从用途和角色推导。"""
+    op = getattr(_LLM_CTX, "operation_id", None)
+    if op:
+        return op
+    return _infer_operation_id(_current_llm_purpose(), _usage.CURRENT_ROLE.get())
 
 
 def _current_llm_purpose():
@@ -260,7 +305,111 @@ def _current_llm_purpose():
 # Runtime status is deliberately file-backed: the UI can poll it while the
 # worker is inside a blocking provider request, and a browser refresh does not
 # erase the last known activity.
-_RUNTIME_CTX = threading.local()
+#
+# The *bindings* below (job id, annotation fail-stop) are carried by a context
+# variable, not by a thread-local.  Provider requests run on a ``folith-request``
+# helper thread created by ``folith/request_control.py``; that thread inherits
+# the caller's context variables through ``contextvars.copy_context()`` and
+# nothing else.  With a ``threading.local`` carrier the fail-stop latch read on
+# that thread was always ``None``, so the "no dispatch after a peer's storage
+# failure" check was a no-op exactly where the SDK retry is sent (P0-2).
+_RUNTIME_STATE: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
+    "folith_runtime_state", default=None)
+
+
+def _runtime_state() -> Dict[str, Any]:
+    """Runtime bindings visible in this context; never mutate the result."""
+    state = _RUNTIME_STATE.get()
+    return state if state is not None else {}
+
+
+class _RuntimeStateView(MutableMapping):
+    """``_RUNTIME_CTX.__dict__`` — live mapping over this context's bindings.
+
+    The carrier used to be a ``threading.local`` whose ``__dict__`` was a real
+    dict and cleanup code pops/clears keys through it.  Storage is a context
+    variable now, so the view applies the same copy-on-write rule as the
+    attribute API instead of handing out the stored dict.
+    """
+
+    __slots__ = ()
+
+    def __getitem__(self, name):
+        return _runtime_state()[name]
+
+    def __setitem__(self, name, value):
+        _RUNTIME_STATE.set({**_runtime_state(), name: value})
+
+    def __delitem__(self, name):
+        state = dict(_runtime_state())
+        del state[name]
+        _RUNTIME_STATE.set(state)
+
+    def __iter__(self):
+        return iter(_runtime_state())
+
+    def __len__(self):
+        return len(_runtime_state())
+
+    def __repr__(self):
+        return repr(dict(_runtime_state()))
+
+    def copy(self):
+        return dict(_runtime_state())
+
+    def clear(self):
+        _RUNTIME_STATE.set(None)
+
+
+class _RuntimeContext:
+    """Attribute-style runtime bindings carried by a context variable.
+
+    Inside one thread this is indistinguishable from the ``threading.local`` it
+    replaces: set/get/delete and ``__dict__`` see the bindings made on that
+    thread, and a freshly started thread begins empty.  Across threads it
+    differs in the one way that matters: a context copied with
+    ``contextvars.copy_context()`` carries the bindings to the helper thread
+    that issues provider requests, so the annotation fail-stop latch is read
+    there instead of silently disabling the dispatch guard.
+
+    Writes are copy-on-write *within the current context*: a helper thread's
+    ``set`` never reaches back into its caller.  State that must be visible on
+    another thread has to be bound on that thread's own context, or shared as a
+    thread-safe object — which is what ``AnnotationFailStop`` already is.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        try:
+            return _runtime_state()[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def __setattr__(self, name, value):
+        _RUNTIME_STATE.set({**_runtime_state(), name: value})
+
+    def __delattr__(self, name):
+        state = dict(_runtime_state())
+        try:
+            del state[name]
+        except KeyError:
+            raise AttributeError(name) from None
+        _RUNTIME_STATE.set(state)
+
+    @property
+    def __dict__(self):
+        return _RuntimeStateView()
+
+    def clear(self):
+        """Drop every binding in this context (worker cleanup, test isolation)."""
+        _RUNTIME_STATE.set(None)
+
+    def __repr__(self):
+        return f"<runtime context {dict(_runtime_state())!r}>"
+
+
+_RUNTIME_CTX = _RuntimeContext()
 _RUNTIME_LOCK = threading.RLock()
 _RUNTIME_WORKERS = {}
 _RUNTIME_WORKERS_LOCK = threading.RLock()
@@ -300,7 +449,14 @@ def _runtime_worker_job_id():
 
 
 
+def _annotation_fail_stop_check():
+    failure = getattr(_RUNTIME_CTX, "annotation_fail_stop", None)
+    if failure is not None:
+        failure.check()
+
+
 def _runtime_cancel_requested(job_id):
+    _annotation_fail_stop_check()
     _workflow_errors.check(job_id)
     return bool((load_runtime_state(job_id) or {}).get("cancel_requested"))
 
@@ -317,15 +473,133 @@ def _runtime_exit_requested(job_id):
     return bool((load_runtime_state(job_id) or {}).get("exit_requested"))
 
 
+class _WorkerRestartRequested(BaseException):
+    """Internal signal: a paused worker was asked to restart on a new connection.
+
+    Derives from ``BaseException`` (not ``Exception``) on purpose: the pipeline
+    body has many broad ``except Exception`` blocks for provider/parse failures,
+    and none of them may swallow this control-flow signal.  It is caught and
+    handled inside :func:`_run_job_worker`, which re-enters the pipeline with the
+    new connection while keeping the committed pages/translations.
+    """
+
+
+#: job_id -> {"filename", "kwargs", "base_url"} for a pause-then-continue that
+#: must restart the live worker because the connection changed.  Kept in memory
+#: only: the resolved kwargs carry the API key, which must never be persisted.
+_RUNTIME_PENDING_RESTART = {}
+_RUNTIME_PENDING_RESTART_LOCK = threading.RLock()
+
+
+def _conn_text(value):
+    return "" if value is None else str(value).strip()
+
+
+def _conn_base(value):
+    return _conn_text(value).rstrip("/")
+
+
+def _connection_role_signature(provider, model, base_url):
+    return {"provider": _conn_text(provider), "model": _conn_text(model),
+            "base_url": _conn_base(base_url)}
+
+
+def _api_key_fingerprint(value):
+    """A comparable, non-reversible marker for a credential (never the key)."""
+    if not value:
+        return ""
+    try:
+        return str(_llm_transport.api_key_fingerprint(value) or "")
+    except Exception:  # noqa: BLE001 - a hashing failure must not block a restart
+        return "present"
+
+
+def _connection_signature_from_kwargs(kwargs):
+    """The public connection identity of one resolved pipeline configuration.
+
+    Includes provider/model/endpoint, a credential *fingerprint* and the
+    reasoning mode/effort, so an API-key-only change is detected without ever
+    persisting the key itself.
+    """
+    kwargs = kwargs if isinstance(kwargs, dict) else {}
+    separate = bool(kwargs.get("reviewer_provider") and kwargs.get("reviewer_model"))
+    translator = _connection_role_signature(
+        kwargs.get("provider"), kwargs.get("model"), kwargs.get("translator_base_url"))
+    translator["api_key_fp"] = _api_key_fingerprint(kwargs.get("api_key"))
+    if separate:
+        reviewer = _connection_role_signature(
+            kwargs.get("reviewer_provider"), kwargs.get("reviewer_model"),
+            kwargs.get("reviewer_base_url"))
+        reviewer["api_key_fp"] = _api_key_fingerprint(kwargs.get("reviewer_api_key"))
+    else:
+        reviewer = _connection_role_signature("", "", "")
+        reviewer["api_key_fp"] = ""
+    return {
+        "translator": translator,
+        "reviewer": reviewer,
+        "reasoning_effort": _conn_text(kwargs.get("reasoning_effort")).lower(),
+    }
+
+
+def _connection_label_from_kwargs(kwargs):
+    """A short human label ("Provider · model") for one resolved configuration."""
+    kwargs = kwargs if isinstance(kwargs, dict) else {}
+    translator = " · ".join(x for x in (_conn_text(kwargs.get("provider")),
+                                        _conn_text(kwargs.get("model"))) if x)
+    reviewer = ""
+    if kwargs.get("reviewer_provider") and kwargs.get("reviewer_model"):
+        reviewer = " · ".join(x for x in (_conn_text(kwargs.get("reviewer_provider")),
+                                          _conn_text(kwargs.get("reviewer_model"))) if x)
+    parts = [p for p in (translator, f"审校 {reviewer}" if reviewer else "") if p]
+    return "；".join(parts)
+
+
+def _worker_connection_changed(job_id, kwargs):
+    """True when ``kwargs`` differs from the connection the live worker started with.
+
+    ``None``/missing recorded signature means "cannot prove a change" (a task
+    started before this feature existed), and is treated as "no change".
+    """
+    stored = (load_runtime_state(job_id) or {}).get("worker_connection")
+    if not isinstance(stored, dict) or not stored:
+        return False
+    try:
+        return stored != _connection_signature_from_kwargs(kwargs)
+    except Exception:  # noqa: BLE001 - worst case we do a plain continue
+        return False
+
+
+def _take_pending_restart(job_id):
+    with _RUNTIME_PENDING_RESTART_LOCK:
+        return _RUNTIME_PENDING_RESTART.pop(job_id, None)
+
+
+def _pending_restart_exists(job_id):
+    with _RUNTIME_PENDING_RESTART_LOCK:
+        return job_id in _RUNTIME_PENDING_RESTART
+
+
 def _runtime_pause_checkpoint(job_id, paused_message=None):
     """Pause cooperatively between operations; keep in-memory results and lease.
 
     ``paused_message``：暂停的原因（例如连续超时的建议），作为「已暂停」的最新状态；
     缺省是通用的「任务已暂停」。
+
+    A pause request may be paired with a *restart* request (the connection was
+    changed while the task was paused).  When that happens the worker unwinds to
+    :func:`_run_job_worker`, which re-enters the pipeline with the new
+    connection instead of resuming with the old one.
     """
-    if not job_id or not load_runtime_state(job_id).get("pause_requested"):
+    _annotation_fail_stop_check()
+    if not job_id:
         return
-    previous = load_runtime_state(job_id)
+    runtime = load_runtime_state(job_id)
+    if runtime.get("restart_requested") and not runtime.get("cancel_requested") \
+            and _pending_restart_exists(job_id):
+        raise _WorkerRestartRequested("连接已更改，正在用新连接重新启动任务")
+    if not runtime.get("pause_requested"):
+        return
+    previous = runtime
     update_runtime_state(job_id, status="paused", phase="paused",
                          event=paused_message or "任务已暂停，可继续处理",
                          event_name="job_paused",
@@ -333,6 +607,10 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
     while load_runtime_state(job_id).get("pause_requested"):
         if _runtime_cancel_requested(job_id):
             raise RuntimeError("任务已请求取消")
+        current = load_runtime_state(job_id)
+        if current.get("restart_requested") and not current.get("cancel_requested") \
+                and _pending_restart_exists(job_id):
+            raise _WorkerRestartRequested("连接已更改，正在用新连接重新启动任务")
         with _RUNTIME_LOCK:
             current = load_runtime_state(job_id)
             if current.get("pause_requested") and not current.get("cancel_requested") \
@@ -343,6 +621,10 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
                 update_runtime_state(job_id, status="paused", phase="paused",
                                      phase_label=paused_message or "任务已暂停，可继续处理")
         time.sleep(0.25)
+    if load_runtime_state(job_id).get("restart_requested") \
+            and not load_runtime_state(job_id).get("cancel_requested") \
+            and _pending_restart_exists(job_id):
+        raise _WorkerRestartRequested("连接已更改，正在用新连接重新启动任务")
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
     update_runtime_state(job_id, status="running", phase=previous.get("phase") or "running",
@@ -354,16 +636,42 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
 def request_job_pause(job_id):
     if not is_job_worker_alive(job_id):
         return False
+    note = "已请求暂停；当前正在进行的请求会先用原连接完成，随后暂停"
     update_runtime_state(job_id, pause_requested=True, status="pausing",
-                         event="已请求暂停，当前操作结束后暂停", event_name="pause_requested",
+                         event=note, event_name="pause_requested",
                          event_visibility="user", event_category="lifecycle")
     return True
 
 
-def continue_job(job_id):
+def continue_job(job_id, *, restart_kwargs=None, base_url=None, filename=None):
+    """Continue a paused task; restart it transparently if the connection changed.
+
+    ``restart_kwargs`` is the caller's *currently resolved* pipeline configuration
+    (the settings the user has now).  When it differs from the connection the live
+    worker started with, the worker is asked to unwind to its pause boundary and
+    re-enter the pipeline with these kwargs — committed pages and translations are
+    kept, so the change takes effect without cancelling the task.
+    """
     if not is_job_worker_alive(job_id):
         return False
+    if restart_kwargs is not None and _worker_connection_changed(job_id, restart_kwargs):
+        with _RUNTIME_PENDING_RESTART_LOCK:
+            _RUNTIME_PENDING_RESTART[job_id] = {
+                "filename": filename or (load_job_state(job_id) or {}).get("filename")
+                or "当前任务",
+                "kwargs": dict(restart_kwargs),
+                "base_url": base_url,
+            }
+        update_runtime_state(
+            job_id, pause_requested=False, exit_requested=False, restart_requested=True,
+            status="running", phase="running",
+            event="连接已更改，正在用新连接重新启动任务；已识别的页面与译文会保留"
+                  "（换模型后部分页面可能按新模型重新读取）",
+            event_name="connection_changed_restart",
+            event_visibility="user", event_category="lifecycle")
+        return True
     update_runtime_state(job_id, pause_requested=False, exit_requested=False,
+                         restart_requested=False,
                          status="running", phase="running",
                          event="正在继续任务", event_name="continue_requested",
                          event_visibility="user", event_category="lifecycle")
@@ -377,9 +685,14 @@ def continue_job(job_id):
 def _llm_cancel_check():
     """Cancellation probe bound to the job currently running on this thread."""
     job_id = _runtime_worker_job_id()
-    if not job_id:
+    failure = getattr(_RUNTIME_CTX, "annotation_fail_stop", None)
+    if not job_id and failure is None:
         return None
-    return lambda: _runtime_cancel_requested(job_id)
+    def check():
+        if failure is not None:
+            failure.check()
+        return _runtime_cancel_requested(job_id) if job_id else False
+    return check
 
 
 
@@ -411,9 +724,21 @@ _ABBREV_RE = re.compile(
 
 
 
+#: Set by extract_document_paragraphs_with_report for one extraction: the bytes
+#: being read, the page-dict cache, and (filled in below) the layout blocks the
+#: text-layer pass built, so native_pdf_document need not parse the PDF again.
+_PDF_LAYOUT_SHARE = contextvars.ContextVar("folith_pdf_layout_share", default=None)
+
+
 def extract_pdf_paragraphs(file_bytes):
     """Compatibility API backed by the layout-aware PDF ingestion module."""
-    return _pdf_ingestion.extract_pdf_paragraphs(file_bytes)
+    share = _PDF_LAYOUT_SHARE.get()
+    if share is None or share.get("data") is not file_bytes:
+        return _pdf_ingestion.extract_pdf_paragraphs(file_bytes)
+    layouts = _pdf_ingestion.classify_blocks(_pdf_ingestion.extract_layout_blocks(
+        file_bytes, _page_dict_cache=share.get("page_cache")))
+    share["layouts"] = layouts
+    return _pdf_ingestion.extract_pdf_paragraphs(file_bytes, _layouts=layouts)
 
 
 def _find_tesseract():
@@ -560,6 +885,7 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     OCR_ONLINE_DEFAULT_MAX_TOKENS,
     OCR_ONLINE_MAX_MAX_TOKENS,
     OCR_ONLINE_MIN_MAX_TOKENS,
+    OCR_ONLINE_REASONING_EFFORTS,
     OCR_ONLINE_REASONING_MODES,
     OCR_PROFILE_CACHE_DIRNAME,
     OCR_QUEUE_SIZE_DEFAULT,
@@ -596,6 +922,10 @@ from folith.engine.ocr_config import (  # noqa: F401  (re-export: core keeps its
     ocr_source_options,
     paddle_model_options,
     resolve_ocr_online_config,
+    follow_connection_thinking as _follow_connection_thinking,
+    follow_connection_effort as _follow_connection_effort,
+    default_vision_reasoning as _default_vision_reasoning,
+    default_vision_effort as _default_vision_effort,
     vision_connection_conflict,
     vision_connection_label,
     credential_for_endpoint,
@@ -648,13 +978,19 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     set_llm_reasoning_modes,
     resolve_reasoning_mode as _resolve_reasoning_mode,
     normalize_reasoning_mode as _normalize_reasoning_mode,
+    thinking_control_options,
+    connection_thinking_mode as _connection_thinking_mode,
+    connection_reasoning_effort as _connection_reasoning_effort,
+    job_reasoning_modes as _job_reasoning_modes,
 )
+from folith.script_leak import leaked_scripts as _leaked_scripts
 from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keeps its public surface)
     _count_sentences,
     _deterministic_finding,
     _globalize_batch_findings,
     _local_name,
     _termbase_df_to_entries,
+    _SHORT_HAN_THRESHOLD,
     check_glossary_compliance,
     check_token_structure,
     extract_auto_terms,
@@ -664,6 +1000,11 @@ from folith.engine.glossary_checks import (  # noqa: F401  (re-export: core keep
     glossary_to_terms,
     import_tmx,
     is_incomplete_translation,
+    is_no_translation_needed,
+    is_simplified_chinese_target,
+    _qualifies_for_han_check,
+    _non_simplified_chars,
+    _content_len_for_threshold,
     normalize_glossary,
     parse_termbase,
     parse_termbase_csv,
@@ -781,19 +1122,24 @@ from folith.engine.glossary_ops import (  # noqa: F401  (re-export: core keeps i
     accept_entity_variants,
     add_glossary_entry,
     apply_entity_repair,
+    apply_terminology_replacement,
     bypass_freeze,
     confirm_translation_style_rule,
     delete_glossary_entry,
     entity_consistency_queue,
     freeze_glossary,
     load_context_artifacts,
+    merge_glossary_entries,
     preview_entity_repair,
+    revalidate_terminology_conflicts,
+    preview_terminology_replacement,
     review_knowledge_candidate,
     save_document_profile,
     save_glossary_draft,
     set_entity_translation,
     set_glossary_entry_status,
     unfreeze_glossary,
+    undo_terminology_replacement,
     update_glossary_entry,
     write_profile_artifacts,
 )
@@ -813,6 +1159,7 @@ from folith.engine.segments import (  # noqa: F401  (re-export: core keeps its p
     active_pair_indexes,
     assign_missing_segment_uids,
     can_undo_translation_segment_structure,
+    check_positional_invariants,
     clear_translation_drafts,
     excluded_segment_records,
     excluded_segments_manifest,
@@ -821,6 +1168,7 @@ from folith.engine.segments import (  # noqa: F401  (re-export: core keeps its p
     load_translation_drafts,
     mutate_translation_segments,
     next_segment_uid,
+    repair_positional_columns,
     save_translation_drafts,
     segment_uid,
     translation_drafts_path,
@@ -857,6 +1205,7 @@ from folith.engine.delivery_state import (  # noqa: F401  (re-export: core keeps
     delivery_status_label,
     dependency_impact_view,
     list_delivery_snapshots,
+    original_format_docx_applicable,
     original_layout_pdf_applicable,
     progress_label,
     recovery_summary,
@@ -928,6 +1277,7 @@ def load_ocr_online_config():
             "max_tokens": int(data.get("max_tokens") or _ocr_online.DEFAULT_MAX_TOKENS),
             "temperature": float(data.get("temperature") or 0.0),
             "reasoning_mode": str(data.get("reasoning_mode") or "provider_default"),
+            "reasoning_effort": str(data.get("reasoning_effort") or ""),
             "timeout_s": float(data.get("timeout_s") or _ocr_online.DEFAULT_TIMEOUT_S),
             "max_retries": int(data.get("max_retries") or _ocr_online.DEFAULT_MAX_RETRIES),
         }
@@ -1560,10 +1910,14 @@ _NO_TEXT_REASON = ("文档里没有可翻译的文本：可能是空文档，或
 
 def _vlm_runtime(understanding_provider=None, spatial_engine=None, *,
                  ocr_online_config=None, cancel_check=None, source_language=None,
-                 ocr_language=None, ocr_psm=None):
+                 ocr_language=None, ocr_psm=None, trace_job_id=None, usage_ledger=None):
     """视觉理解路径的读页 provider 与本地定位引擎（缺省时按配置构建）。"""
     from folith.document_understanding import VLMDocumentProvider
     from folith.spatial_index import SpatialTextIndex
+    if trace_job_id is None:
+        # Page reads run on worker threads; the job id is how each attempt finds
+        # the task's trace run and usage ledger (#231).
+        trace_job_id = _runtime_worker_job_id()
     if understanding_provider is None:
         config = ocr_online_config
         if config is None or isinstance(config, dict):
@@ -1573,7 +1927,12 @@ def _vlm_runtime(understanding_provider=None, spatial_engine=None, *,
         from folith import source_languages as _source_languages
         understanding_provider = VLMDocumentProvider(
             config, cancel_check=cancel_check,
-            language=_source_languages.english_name(source_language))
+            language=_source_languages.english_name(source_language),
+            trace_job_id=trace_job_id, usage_ledger=usage_ledger)
+    else:
+        attach = getattr(understanding_provider, "attach_trace_context", None)
+        if callable(attach):
+            attach(trace_job_id=trace_job_id, usage_ledger=usage_ledger)
     if spatial_engine is None:
         command = _find_tesseract()
         def spatial_engine(page):
@@ -1594,15 +1953,79 @@ def _vlm_runtime(understanding_provider=None, spatial_engine=None, *,
     return understanding_provider, spatial_engine
 
 
-def _pdf_scan_page_indices(file_bytes, *, include_ocr_overlay=True):
-    """扫描页：带图片且没有文字，或文字是盖在扫描图上的隐形 OCR 层。"""
+class _LazyPDFPageCache:
+    """Call-scoped, lazily-built cache of per-page ``get_text("dict")`` results.
+
+    A single instance is created per extraction call and passed to every
+    consumer.  The underlying :func:`~folith.pdf_ingestion.build_page_dict_cache`
+    call only happens the first time a consumer iterates the cache; for PDFs
+    whose text layer is rejected the census is never called and the cache is
+    never materialised.
+
+    Supports ``bool()``, ``len()``, iteration, and integer indexing so
+    existing consumers can treat it exactly like the plain list it wraps.
+    Call :meth:`release` once the last consumer has finished so the dicts are
+    freed before heavy downstream work starts.
+    """
+    __slots__ = ("_file_bytes", "_data")
+
+    def __init__(self, file_bytes: bytes) -> None:
+        self._file_bytes: Optional[bytes] = file_bytes
+        self._data: Optional[list] = None
+
+    def _ensure(self) -> list:
+        if self._data is None:
+            if self._file_bytes is None:
+                return []
+            self._data = _pdf_ingestion.build_page_dict_cache(self._file_bytes)
+        return self._data
+
+    def __bool__(self) -> bool:
+        # Truthy as long as the holder hasn't been released so that
+        # ``if _page_dict_cache:`` guards in consumers pass correctly.
+        return self._file_bytes is not None
+
+    def __len__(self) -> int:
+        return len(self._ensure())
+
+    def __iter__(self):
+        return iter(self._ensure())
+
+    def __getitem__(self, index: int):
+        return self._ensure()[index]
+
+    def release(self) -> None:
+        """Drop the cache data and the reference to file_bytes."""
+        self._data = None
+        self._file_bytes = None
+
+
+def _pdf_scan_page_indices(file_bytes, *, include_ocr_overlay=True,
+                           _page_dict_cache=None):
+    """扫描页：带图片且没有文字，或文字是盖在扫描图上的隐形 OCR 层。
+
+    Pass ``_page_dict_cache`` (from
+    :func:`folith.pdf_ingestion.build_page_dict_cache`) to reuse
+    already-parsed page dicts and avoid a redundant ``fitz.open`` call.
+    """
+    if _page_dict_cache:
+        result = []
+        for i, (page_dict, w, h, has_images, plain_text) in enumerate(_page_dict_cache):
+            if has_images and (
+                not plain_text.strip()
+                or (include_ocr_overlay
+                    and _pdf_ingestion._page_is_ocr_overlay(page_dict))
+            ):
+                result.append(i)
+        return len(_page_dict_cache), result
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
         return len(pdf), [
             i for i, p in enumerate(pdf)
             if p.get_images() and (
                 not p.get_text().strip()
                 or (include_ocr_overlay
-                    and _pdf_ingestion._page_is_ocr_overlay(p.get_text("dict"))))]
+                    and _pdf_ingestion._page_is_ocr_overlay(
+                        _pdf_ingestion.page_text_dict(p))))]
 
 
 def extract_document_paragraphs_with_report(filename, file_bytes, *,
@@ -1641,6 +2064,7 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
     ocr_used = False
     text_layer_report = {}
     ocr_trigger = ""
+    _pdf_layouts = None  # set during text-layer extraction; reused by native_pdf_document
     name = (filename or "").lower()
     try:
         if name.endswith(".pdf"):
@@ -1655,10 +2079,16 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                     status="completed", text_pages=int(facts.get("text_pages") or 0),
                     empty_pages=int(facts.get("empty_pages") or 0),
                 )
+            # Lazy cache: per-page text dicts built on first consumer access.
+            # For PDFs whose text layer is rejected the census is never called
+            # and the cache is never materialised, so scanned / rejected-layer
+            # PDFs pay zero extra parsing cost.
+            _pdf_page_cache = _LazyPDFPageCache(file_bytes)
             # Text existence is not text quality: judge the layer before
             # trusting it, and let the user's ocr_mode override the verdict.
             text_layer_report = _text_layer_quality.assess_pdf_text_layer(
-                file_bytes, source_language=source_language, max_pages=3)
+                file_bytes, source_language=source_language, max_pages=3,
+                _page_dict_cache=_pdf_page_cache)
             # Sampling is deliberately shallow (first/middle/last).  If those
             # pages are empty but the document does have text pages elsewhere,
             # the layer is partial, not absent — do not silently force OCR on a
@@ -1682,15 +2112,27 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                           "text_layer_quality": text_layer_report.get("status")},
             ) if profiler is not None else None
             paragraphs = []
+            # Computed lazily; stored so native_pdf_document can reuse it.
+            _pdf_layouts = None
             if use_text_layer:
-                paragraphs = [clean_xml_chars(p)
-                              for p in extract_pdf_paragraphs(file_bytes)]
+                # extract_pdf_paragraphs stays the patchable entry point; inside
+                # this call it records the layout it built so native_pdf_document
+                # below does not parse the PDF a second time.
+                share = {"data": file_bytes, "page_cache": _pdf_page_cache}
+                share_token = _PDF_LAYOUT_SHARE.set(share)
+                try:
+                    paragraphs = [clean_xml_chars(p)
+                                  for p in extract_pdf_paragraphs(file_bytes)]
+                finally:
+                    _PDF_LAYOUT_SHARE.reset(share_token)
+                _pdf_layouts = share.get("layouts")
                 if not paragraphs and resolved_ocr_mode != "off":
                     # The gate accepted the layer but extraction produced
                     # nothing usable; fall through to OCR instead of shipping an
                     # empty document.
                     use_text_layer = False
                     ocr_trigger = "text_layer_empty_after_extraction"
+                    _pdf_layouts = None  # discard layout; not needed for OCR path
             if layout_stage is not None:
                 layout_stage.record["item_count"] = len(paragraphs)
                 layout_stage.record["page_count"] = int(facts.get("pages") or 0)
@@ -1705,13 +2147,19 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
                 # 的页（扫描仪 / Internet Archive / OCRmyPDF 自带的识别结果）。
                 # 后者的文字是别人的 OCR，不是原生文本：同样交给视觉理解。
                 page_count, visual_indices = _pdf_scan_page_indices(
-                    file_bytes, include_ocr_overlay=vlm_available)
+                    file_bytes, include_ocr_overlay=vlm_available,
+                    _page_dict_cache=_pdf_page_cache)
                 if visual_indices and len(visual_indices) == page_count:
                     # 整本都是扫描件：走纯视觉路径，不再保留第三方 OCR 文本。
                     visual_indices = []
                     use_text_layer = False
                     ocr_trigger = "scanned_ocr_overlay"
                     warnings.append("PDF 的文字是扫描图上的隐形 OCR 层，已改用视觉理解识别全文。")
+            # Release the page-dict cache: all consumers (census, extract_layout_blocks,
+            # _pdf_scan_page_indices) have finished.  Dropping the reference now keeps
+            # peak RSS low during the remaining heavy work (VLM / OCR / document_ir).
+            _pdf_page_cache.release()
+            _pdf_page_cache = None
             if (not use_text_layer or visual_indices) and vlm_available:
                 from folith.document_understanding import understand_visual_pdf, understand_mixed_pdf
                 understanding_provider, spatial_engine = _vlm_runtime(
@@ -1877,7 +2325,11 @@ def extract_document_paragraphs_with_report(filename, file_bytes, *,
         )
     if name.endswith(".pdf") and not ocr_used and paragraphs and facts.get("pages"):
         from folith.document_understanding import native_pdf_document
-        report["document_ir"] = native_pdf_document(filename, file_bytes, paragraphs)
+        # Pass pre-computed layouts (set during text-layer extraction above)
+        # to avoid a second full-document parse inside native_pdf_document.
+        report["document_ir"] = native_pdf_document(
+            filename, file_bytes, paragraphs,
+            layouts=_pdf_layouts)
         report["semantic_source"] = "native_pdf"
     return paragraphs, warnings, report
 
@@ -2105,7 +2557,7 @@ def _audit_source_quality_for_state(state, *, apply_admissions=True):
 
 def call_llm(provider, api_key, model, system_prompt, user_prompt,
              temperature=0.1, base_url=None, response_format=None,
-             reasoning_effort=None, reasoning_mode=None):
+             reasoning_effort=None, reasoning_mode=None, max_attempts=None):
     """底层大模型统一路由（超时 150 秒，模型可配置）。
 
     支持官方接口与 OpenAI /chat/completions 兼容中转站：
@@ -2116,6 +2568,7 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
     API Key 只以不可逆指纹参与复用键，不进入日志、cache key 明文或性能产物。
     运行时遥测走可合并通道，见 :func:`_runtime_telemetry_request_started`。
     """
+    _annotation_fail_stop_check()
     cfg = PROVIDERS.get(provider)
     if not cfg:
         return ""
@@ -2124,30 +2577,40 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
         _runtime_pause_checkpoint(runtime_job_id)
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
-        _runtime_telemetry_request_started(runtime_job_id,
-                                           purpose=_current_llm_purpose())
+        _runtime_telemetry_request_started(
+            runtime_job_id,
+            purpose=_current_llm_purpose(),
+            operation_id=_current_llm_operation_id(),
+        )
     _llm_started = time.perf_counter()
     _request_run = trace.get_active_run(runtime_job_id)
     if _request_run:
-        _request_run.begin_model_request(provider, model, role=_usage.CURRENT_ROLE.get(),
-                                        batch_id=getattr(_LLM_CTX, "batch_id", None),
-                                        prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
-                                        system_chars=len(system_prompt or ""),
-                                        user_chars=len(user_prompt or ""),
-                                        segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
-                                            "segment_count", getattr(_LLM_CTX, "input_segments", None)))
+        _request_run.begin_model_request(
+            provider, model, role=_usage.CURRENT_ROLE.get(),
+            operation_id=_current_llm_operation_id(),
+            purpose=_current_llm_purpose(),
+            batch_id=getattr(_LLM_CTX, "batch_id", None),
+            prompt_cost=getattr(_LLM_CTX, "prompt_cost", None),
+            system_chars=len(system_prompt or ""),
+            user_chars=len(user_prompt or ""),
+            segment_count=(getattr(_LLM_CTX, "prompt_cost", None) or {}).get(
+                "segment_count", getattr(_LLM_CTX, "input_segments", None)),
+        )
     try:
+        _annotation_fail_stop_check()
         result = _call_llm_transport(
             cfg, provider, api_key, model, system_prompt, user_prompt,
             temperature=temperature, base_url=base_url,
             response_format=response_format, reasoning_effort=reasoning_effort,
             reasoning_mode=reasoning_mode,
-            runtime_job_id=runtime_job_id, started_at=_llm_started)
+            runtime_job_id=runtime_job_id, started_at=_llm_started,
+            **({"max_attempts": max_attempts} if max_attempts is not None else {}))
     except BaseException as exc:
-        try:
-            _workflow_errors.raise_if_fatal(exc, runtime_job_id)
-        except _workflow_errors.WorkflowStopped as stopped:
-            exc = stopped
+        if not isinstance(exc, _workflow_errors.AnnotationStagingError):
+            try:
+                _workflow_errors.raise_if_fatal(exc, runtime_job_id)
+            except _workflow_errors.WorkflowStopped as stopped:
+                exc = stopped
         _llm_dur = time.perf_counter() - _llm_started
         _record_llm_thread_stats(_llm_dur, failed=True)
         run = trace.get_active_run(runtime_job_id)
@@ -2166,15 +2629,21 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
             # 看到的是真实结果而不是一个永远不会结束的在途请求。
             _runtime_telemetry_request_failed(
-                runtime_job_id, purpose=_current_llm_purpose())
+                runtime_job_id,
+                purpose=_current_llm_purpose(),
+                operation_id=_current_llm_operation_id(),
+            )
         raise exc
     finally:
         if _request_run:
             _request_run.end_model_request()
     _record_llm_thread_stats(time.perf_counter() - _llm_started, failed=False)
     if runtime_job_id:
-        _runtime_telemetry_request_finished(runtime_job_id,
-                                            purpose=_current_llm_purpose())
+        _runtime_telemetry_request_finished(
+            runtime_job_id,
+            purpose=_current_llm_purpose(),
+            operation_id=_current_llm_operation_id(),
+        )
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
     return result
@@ -2189,6 +2658,12 @@ def _acquire_openai_compat_client(cfg, provider, api_key, base_url=None):
     """
     kwargs = {"api_key": api_key, "timeout": _llm_transport.OPENAI_TIMEOUT,
               "max_retries": _llm_transport.OPENAI_MAX_RETRIES}
+    if provider == "Local Gateway" and not api_key:
+        from openai import Omit
+        # Some SDK versions require a nonempty constructor key. Omit the
+        # resulting header so unauthenticated gateways receive no credential.
+        kwargs["api_key"] = "local-gateway"
+        kwargs["default_headers"] = {"Authorization": Omit()}
     resolved_base = resolve_openai_base_url(provider, base_url)
     if resolved_base:
         kwargs["base_url"] = resolved_base
@@ -2221,10 +2696,15 @@ def _acquire_openai_compat_client(cfg, provider, api_key, base_url=None):
     return resolved_base, client
 
 
+def _request_cancel_check(job_id):
+    """Cancel probe for one in-flight request: a cancel gives the request up at once."""
+    return (lambda: _runtime_cancel_requested(job_id)) if job_id else None
+
+
 def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_prompt,
                         *, temperature=0.1, base_url=None, response_format=None,
                         reasoning_effort=None, reasoning_mode=None,
-                        runtime_job_id=None, started_at=None):
+                        runtime_job_id=None, started_at=None, max_attempts=None):
     """Perform one provider request on a pooled transport client."""
     if cfg["kind"] == "gemini":
         def _build_gemini_client():
@@ -2240,14 +2720,18 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
             _llm_transport.build_gemini_identity(provider=provider, api_key=api_key),
             _build_gemini_client)
         config_kwargs = {"temperature": temperature, "system_instruction": system_prompt}
+        if max_attempts is not None:
+            config_kwargs["http_options"] = genai.types.HttpOptions(
+                retry_options=genai.types.HttpRetryOptions(attempts=max_attempts))
         if response_format and cfg.get("capabilities", {}).get("supports_response_format"):
             config_kwargs["response_mime_type"] = "application/json"
         try:
-            res = client.models.generate_content(
-                model=model,
-                contents=user_prompt,
-                config=genai.types.GenerateContentConfig(**config_kwargs),
-            )
+            res = _request_control.call_cancellable(
+                lambda: client.models.generate_content(
+                    model=model,
+                    contents=user_prompt,
+                    config=genai.types.GenerateContentConfig(**config_kwargs),
+                ), _request_cancel_check(runtime_job_id))
             out_text = (res.text or "").strip()
             usage = getattr(res, "usage_metadata", None)
             run = trace.get_active_run(runtime_job_id)
@@ -2277,6 +2761,8 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
 
     # OpenAI 官方与所有 OpenAI 兼容接口共用 SDK 路由
     resolved_base, client = _acquire_openai_compat_client(cfg, provider, api_key, base_url)
+    if max_attempts is not None:
+        client = client.with_options(max_retries=max(0, int(max_attempts) - 1))
     resolved_reasoning = (reasoning_effort if reasoning_effort is not None
                           else getattr(_LLM_CTX, "reasoning_effort", None))
     if resolved_reasoning and resolved_reasoning not in reasoning_effort_options(
@@ -2308,20 +2794,31 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
     if response_format and cfg.get("capabilities", {}).get(
             "supports_response_format"):
         request["response_format"] = response_format
+    elif response_format and provider == "Local Gateway":
+        raise ValueError("Local Gateway does not advertise structured-output support")
     if resolved_reasoning_mode == "thinking_disabled":
         # Same DeepSeek-family control the OCR path sends; opt-in only.
         request["extra_body"] = {"thinking": {"type": "disabled"}}
+    elif resolved_reasoning_mode == "thinking_disabled_vllm":
+        # vLLM/SGLang chat-template switch, as dots3-note-prev expects.
+        request["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
     if provider == "OpenCode Go":
         session_id = runtime_job_id or getattr(_LLM_CTX, "opencode_session", None)
         if not session_id:
             session_id = str(uuid.uuid4())
             _LLM_CTX.opencode_session = session_id
         request["extra_headers"] = {
-            "User-Agent": "Folith/0.7.2",
+            "User-Agent": "Folith/0.8.1",
             "x-opencode-session": str(session_id),
         }
+    if provider == "Local Gateway" and not api_key:
+        # 本地网关不校验密钥：逐个请求显式省略 Authorization，而不是编一个假 key。
+        from openai import Omit
+        request.setdefault("extra_headers", {})["Authorization"] = Omit()
     try:
-        res = client.chat.completions.create(**request)
+        res = _request_control.call_cancellable(
+            lambda: client.chat.completions.create(**request),
+            _request_cancel_check(runtime_job_id))
         out_text = (res.choices[0].message.content or "").strip()
         usage = getattr(res, "usage", None)
         pt_details = getattr(usage, "prompt_tokens_details", None) if usage else None
@@ -2456,10 +2953,12 @@ def fetch_provider_models(provider, api_key, base_url=None):
         return _fetch_gemini_models(api_key)
     if cfg.get("kind") not in ("openai", "openai_compat"):
         return False, [], "当前服务商不支持 OpenAI 兼容模型目录", {}
-    if not (api_key or "").strip() and provider not in ("OpenCode Go", "OpenRouter"):
+    if not (api_key or "").strip() and provider not in ("OpenCode Go", "OpenRouter", "Local Gateway"):
         return False, [], "请先填写 API Key", {}
     try:
-        resolved_base = resolve_openai_base_url(provider, base_url)
+        # 本地网关的地址永远来自调用方；不能退回注册表里的默认地址。
+        resolved_base = resolve_openai_base_url(
+            provider, (base_url or "") if provider == "Local Gateway" else base_url)
     except ValueError as exc:
         return False, [], str(exc), {}
     if not resolved_base and provider == "OpenAI":
@@ -2483,6 +2982,10 @@ def fetch_provider_models(provider, api_key, base_url=None):
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPStatusError as exc:
+        if provider == "Local Gateway" and exc.response.status_code in (404, 405):
+            return False, [], "模型目录不受支持或 API 地址不兼容；可手动填写模型。", {}
+        if provider == "Local Gateway" and 300 <= exc.response.status_code < 400:
+            return False, [], "API 地址返回重定向；请直接配置最终地址。", {}
         return False, [], provider_error_message(exc, "获取模型失败"), {}
     except httpx.HTTPError as exc:
         return False, [], provider_error_message(exc, "获取模型失败"), {}
@@ -2551,6 +3054,12 @@ PRESERVE_SEVERITY = {
 #: tokens (citation markers) may write their digits as the target's numerals.
 _VERBATIM_PRESERVE_KINDS = frozenset({"url", "email", "doi"})
 
+# A dot-leader run as it appears in headings and tables of contents: two or
+# more typographic leader characters (… ‥ ⋯), or three or more ASCII or
+# fullwidth dots.  #220 D3 treats such a line as real text for the
+# copy-through check; it deliberately does not try to classify anything else.
+_DOT_LEADER_RUN = re.compile(r"(?:…|‥|⋯){2,}|[.．]{3,}")
+
 
 
 def check_translation_batch(sources, targets, glossary, target_lang,
@@ -2597,22 +3106,86 @@ def check_translation_batch(sources, targets, glossary, target_lang,
                 "对照原文逐句补齐缺失内容，并确认修复后的译文通过完整性复验。",
                 source_span=src, target_span=tgt, reason=reason))
         source_words = re.findall(r"[A-Za-z]+", src or "")
+        # Not tied to a language pair: a Latin source needs two words (a lone
+        # word is often a name), any other script needs a few letters of its
+        # own (kana, hangul, Cyrillic, Arabic... digits and dot leaders do not count).
+        source_letters = sum(1 for ch in (src or "")
+                             if ch.isalpha() and not ("A" <= ch <= "z"))
+        # #220 D3: a short heading / TOC line with dot leaders is real text, so
+        # one word or a couple of letters beside a leader run is enough.  The
+        # leaders themselves carry nothing translatable — digits never did —
+        # so the line still needs at least one letter of its own.
+        leader_line = bool(_DOT_LEADER_RUN.search(src or "")) \
+            and bool(source_words or source_letters)
+        source_has_text = (len(source_words) >= 2 or source_letters >= 4
+                           or leader_line)
         whole_source_preserved = any(
             str(entry.get("behavior") or "") == "preserve"
             and str(entry.get("status") or "") == "locked"
             and re.sub(r"\s+", " ", str(entry.get("source") or "")).strip().casefold()
             == re.sub(r"\s+", " ", src or "").strip().casefold()
             for entry in glossary or [])
-        if target_lang != "English" and len(source_words) >= 2 \
+        if target_lang != "English" and source_has_text \
                 and re.sub(r"\s+", " ", src or "").strip().casefold() \
                 == re.sub(r"\s+", " ", tgt or "").strip().casefold() \
-                and not whole_source_preserved:
+                and not whole_source_preserved \
+                and not is_no_translation_needed(src):
+            src_norm = re.sub(r"\s+", " ", src or "").strip()
+            if is_simplified_chinese_target(target_lang) and _qualifies_for_han_check(src_norm):
+                # Han-aware branch: codec-based non-simplified character detection.
+                non_simp = _non_simplified_chars(src_norm)
+                if non_simp:
+                    # Actionable: specific chars that are not in Simplified Chinese.
+                    char_list = "、".join(non_simp)
+                    findings.append(_deterministic_finding(
+                        i, "actionable", "translation_completion",
+                        "源文包含非简体汉字",
+                        f"译文与源文完全相同，但源文含有非简体中文字符「{char_list}」，"
+                        "可能未完成转换。",
+                        "请将上列非简体字符改为对应简体字后重新检查，"
+                        "或确认为项目规定的保留形式。",
+                        source_span=src, target_span=tgt,
+                        reason=f"非简体汉字「{char_list}」未转换",
+                        kind="han_not_simplified"))
+                elif (
+                    _content_len_for_threshold(src_norm) <= _SHORT_HAN_THRESHOLD
+                    and not leader_line
+                ):
+                    # Informational: short, all chars already valid Simplified/shared,
+                    # and NOT a dot-leader line (those are real text that must be
+                    # flagged even when short).
+                    findings.append(_deterministic_finding(
+                        i, "informational", "translation_completion",
+                        "译文仍保留整段源文",
+                        "当前译文与原文完全相同，字符均为简体字形，"
+                        "但该段可能因汉字共用而与源文字面相同；建议人工确认是否属于保留项。",
+                        "若该段是故意保留的姓名、地名或专有词，可忽略；否则请补译。",
+                        source_span=src, target_span=tgt,
+                        reason="同形汉字段（短），降级为信息性提示"))
+                else:
+                    # Long and unchanged — keep original actionable finding.
+                    findings.append(_deterministic_finding(
+                        i, "actionable", "translation_completion", "译文仍保留整段源文",
+                        "当前译文与原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。",
+                        "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。",
+                        source_span=src, target_span=tgt,
+                        reason="译文与源段完全相同，疑似整段未翻译"))
+            else:
+                findings.append(_deterministic_finding(
+                    i, "actionable", "translation_completion", "译文仍保留整段源文",
+                    "当前译文与原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。",
+                    "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。",
+                    source_span=src, target_span=tgt,
+                    reason="译文与源段完全相同，疑似整段未翻译"))
+        leaked = {} if whole_source_preserved else _leaked_scripts(src, tgt, target_lang)
+        if leaked:
+            names = "、".join(f"{script} {count} 个字" for script, count in sorted(leaked.items()))
             findings.append(_deterministic_finding(
-                i, "actionable", "translation_completion", "译文仍保留整段源文",
-                "当前译文与英文原文完全相同，除非这是明确的保留项，否则可能尚未完成翻译。",
-                "确认该段是否属于项目规定的保留内容；若不是，请重新翻译并保留专有名词的必要形式。",
+                i, "actionable", "translation_completion", "译文里还残留着源文的文字",
+                f"译文中仍有目标语言不使用的文字（{names}），而原文里有这种文字，可能没有翻完。",
+                "把残留的原文文字翻成目标语言；专有名词、引文标题确需保留时再保留。",
                 source_span=src, target_span=tgt,
-                reason="译文与英文源段完全相同，疑似整段未翻译"))
+                reason=f"译文残留源文文字：{names}", kind="script_leak"))
         for token, kind in extract_preserved_tokens(src).items():
             if token in tgt:
                 continue
@@ -3006,6 +3579,72 @@ def _batch_strategy(state=None, explicit=None, default="sentence"):
     return default
 
 
+def _resolve_entry_batch_strategy(saved_strategy=None, explicit_strategy=None,
+                                  has_pairs=False, has_batch_args=False):
+    """任务开跑时组批方式的显式裁决（Phase 3 合同化）。
+
+    优先级固定为：任务已保存的策略 > 入口显式给的策略 > 兼容推断 > 核心新任务
+    默认。兼容推断保留旧行为——已经开译（``has_pairs``）或调用方给了批次大小
+    （``has_batch_args``，桌面合同总会给）的老任务/直接调用沿用每批 4 句。非法
+    的**已保存**值按未提供处理而不是落到新任务默认：一个配置损坏的既有任务不
+    能因此被静默切换到按段组批；显式传入的非法值仍由 :class:`JobConfig` 合同
+    层拒绝。
+    """
+    saved = str(saved_strategy or "").strip().lower()
+    if saved not in BATCH_STRATEGIES:
+        saved = None
+    return _batch_strategy(
+        None,
+        saved or explicit_strategy
+        or ("sentence" if has_pairs or has_batch_args else None),
+        default=DEFAULT_BATCH_STRATEGY)
+
+
+def batch_strategy_diagnostics(state=None):
+    """组批策略的只读诊断读数：``configured``（任务记录）与 ``effective``（实际生效）。
+
+    按段组批的批次计划显式记录 ``strategy``；按句组批的计划沿用历史格式、省略
+    该键，此时以任务配置记录的策略为准（翻译阶段读的正是同一字段）。两者都无
+    法确认时保持 ``None``——诊断不用默认值冒充事实。
+    """
+    state = state if isinstance(state, Mapping) else {}
+    config = state.get("pipeline_config")
+    config = config if isinstance(config, Mapping) else {}
+    configured = str(config.get("batch_strategy") or "").strip().lower()
+    if configured not in BATCH_STRATEGIES:
+        configured = None
+    plan = state.get("batch_plan")
+    plan = plan if isinstance(plan, Mapping) else {}
+    effective = plan.get("strategy")
+    if effective not in BATCH_STRATEGIES:
+        effective = configured if plan.get("batch_count") else None
+    return {"configured": configured, "effective": effective}
+
+
+def workflow_readiness(state=None):
+    """三维就绪读模型聚合（Phase 3）：初译、翻译与增强交付就绪度。"""
+    from folith.readiness import workflow_readiness as _wr
+    return _wr(state)
+
+
+def draft_readiness(state=None):
+    """初译完成度与合法结构读模型（Phase 3）。"""
+    from folith.readiness import draft_readiness as _dr
+    return _dr(state)
+
+
+def translation_readiness(state=None):
+    """翻译质量与审校门禁读模型（Phase 3）。"""
+    from folith.readiness import translation_readiness as _tr
+    return _tr(state)
+
+
+def enhanced_delivery_readiness(state=None):
+    """选定增强产物（标注、报告）读模型（Phase 3）。"""
+    from folith.readiness import enhanced_delivery_readiness as _edr
+    return _edr(state)
+
+
 def _paragraph_labels(segment_count, paragraph_ranges):
     """每个翻译单元所属的自然段编号；不在任何区间里的单元各自成段。"""
     labels = [None] * segment_count
@@ -3304,6 +3943,7 @@ tm_record_language = _tm_scope.tm_record_language
 tm_record = _tm_scope.tm_record
 tm_put = _tm_scope.tm_put
 tm_discard = _tm_scope.tm_discard
+tm_withdraw = _tm_scope.tm_withdraw
 tm_legacy_keys = _tm_scope.tm_legacy_keys
 tm_context_fingerprint = _tm_scope.tm_context_fingerprint
 tm_context_fields = _tm_scope.tm_context_fields
@@ -3402,6 +4042,9 @@ def load_tm(project_id=None):
     `tm_lookup` 命中：证明不了目标语言的记忆不能自动复用。可用
     `tm_legacy_keys` 把它们单独列出来。
 
+    因术语版本变化撤销审校资格的条目也保留原文和译文；只有重新审校后
+    才可再次用于自动匹配。
+
     `project_id=None` 表示默认项目（即历史的全局记忆）。
     """
     p = tm_path(project_id)
@@ -3411,7 +4054,7 @@ def load_tm(project_id=None):
         except Exception:
             return _TranslationMemory()
         return _TranslationMemory({k: v for k, v in raw.items()
-                if isinstance(v, dict) and v.get("reviewed")
+                if isinstance(v, dict) and (v.get("reviewed") or v.get("withdrawn_reason"))
                 and _tm_eligible(tm_unscope_key(k)[1], v.get("target"))})
     return _TranslationMemory()
 
@@ -3545,6 +4188,8 @@ def _translator_system(glossary_text, style_rules, target_lang):
             "临时造词、长句逻辑关系与修辞功能；优先复用已提供的术语、实体和连续性选择，"
             "人工锁定实体/术语优先于审校、TM 和生成式建议；生成式实体提示不得覆盖锁定术语。"
             "避免明显的逐词直译和词典首义机械替换。\n"
+            "输入段落前的序号仅用于对齐，不属于原文，不要把这些序号加进译文；"
+            "原文本身的编号和数字须保留。\n"
             "不要输出分析过程，只输出最终译文。\n"
             "请严格输出合法的 JSON 字符串数组，不要包含任何解释文字。")
 
@@ -3614,6 +4259,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             "source_chars": len(numbered),
         }
     call_fn = call_llm_fn or call_llm
+    request_target = getattr(call_fn, "request_target", {})
     response_format = _native_translation_response_format(
         provider, model, len(segments))
     cache_key = None
@@ -3622,7 +4268,11 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             provider=provider, model=model, system_prompt=sys_prompt,
             user_prompt=user_prompt, temperature=0.3,
             response_format=response_format,
-            route=effective_request_route(provider, model, role="translation"))
+            route={**effective_request_route(provider, model, role="translation"),
+                   # 网关按地址 + 凭据计费与限流：同一模型名换个端点就是另一个服务。
+                   **({"base_url": request_target.get("base_url") or effective_request_route(provider, model, role="translation").get("base_url", ""),
+                       "credential": _llm_transport.api_key_fingerprint(request_target.get("api_key", api_key))}
+                      if provider == "Local Gateway" else {})})
         cached = result_cache.get(cache_key)
         if cached is not None and len(cached) == len(segments):
             if prompt_stats is not None:
@@ -3636,7 +4286,8 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
     # Rate limiting is handled by the shared provider controller: it paces
     # request starts and pushes one cooldown every worker observes, instead of
     # each worker sleeping a fixed 15 s and then stampeding the provider.
-    controller = _llm_request_controller(provider, model)
+    controller = _llm_request_controller(provider, model, request_target.get("api_key", api_key),
+                                         base_url=request_target.get("base_url") or None)
     cancel_check = _llm_cancel_check()
     last_err = None
     for _attempt in range(3):
@@ -3685,7 +4336,9 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             backoff = controller.note_rate_limited() if is_rate_limited(e) else 0.0
             if _attempt < 2:
                 trace.record_retry("translation", "translate_batch", _attempt + 2,
-                                   backoff, type(e).__name__, job_id=_runtime_job_id())
+                                   backoff, type(e).__name__,
+                                   error_kind=_retry_error_kind(e),
+                                   job_id=_runtime_job_id())
 
     if prompt_stats is not None:
         prompt_stats.append(_translation_prompt_cost(
@@ -3861,9 +4514,10 @@ def repair_batch(sources, targets, findings, glossary_text, style_rules, target_
         try:
             with trace.span("model_wait", operation="provider_gate", job_id=_runtime_job_id()):
                 controller.acquire(cancel_check)
-            res = _invoke_llm(
-                call_fn, provider, api_key, model, sys_prompt, user_prompt,
-                temperature=0.2, response_format=response_format)
+            with llm_call_purpose("翻译修复", operation_id="repair"):
+                res = _invoke_llm(
+                    call_fn, provider, api_key, model, sys_prompt, user_prompt,
+                    temperature=0.2, response_format=response_format)
             controller.note_success()
             arr = _translation_protocol.parse_translation_response(
                 res, len(sources))
@@ -3918,6 +4572,7 @@ def review_translation_batch(sources, targets, glossary_text, style_rules, targe
 # ================= 自动标注（三色学习重点）=================
 # 红=生僻词/难词；黄=专业名词（特殊译法）；青绿=翻译难点句（特别译法）。
 ANNOT_BATCH_SIZE = 10
+ANNOTATION_TEMPERATURE = 0.2
 ANNOT_MAX_PER_SEG = {"rare": 3, "domain": 3, "hard": 2}
 
 # 常用英语词表（en_50k 字幕语料前 14000 词），用于把 LLM 滥标的"生僻词"挡回去
@@ -4232,20 +4887,36 @@ class AnnotationBatchResult(list):
         self.error = error
 
 
-def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
-    """标注一个批次，返回 [{seg, type, src, tgt, note}]（seg 为 0 基）；解析失败返回 []。"""
+def _annotation_prompts(pairs_slice, target_lang):
     numbered = "\n\n".join(
         f"--- 段落 {i + 1} ---\n原文：{p['source']}\n译文：{p['target']}"
         for i, p in enumerate(pairs_slice))
-    sys_prompt = _annotator_system(target_lang)
-    user_prompt = f"待标注双语段落：\n{numbered}"
+    return _annotator_system(target_lang), f"待标注双语段落：\n{numbered}"
+
+
+def _annotation_request_fingerprint(pairs, indexes, target_lang, provider, model):
+    from folith.annotation_staging import compute_batch_fingerprint
+    prompts = _annotation_prompts([pairs[i] for i in indexes], target_lang)
+    return compute_batch_fingerprint(
+        pairs, target_lang, model, eligible_indexes=indexes,
+        request_context={"provider": provider,
+                         "route": effective_request_route(provider, model, role="annotation"),
+                         "prompts": prompts, "temperature": ANNOTATION_TEMPERATURE})
+
+
+def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
+    """标注一个批次，返回 [{seg, type, src, tgt, note}]（seg 为 0 基）。"""
+    sys_prompt, user_prompt = _annotation_prompts(pairs_slice, target_lang)
     controller = _llm_request_controller(provider, model)
     cancel_check = _llm_cancel_check()
     for _attempt in range(3):
         try:
             with trace.span("model_wait", operation="provider_gate", job_id=_runtime_job_id()):
                 controller.acquire(cancel_check)
-            res = call_llm(provider, api_key, model, sys_prompt, user_prompt, temperature=0.2)
+            _annotation_fail_stop_check()
+            res = call_llm(provider, api_key, model, sys_prompt, user_prompt,
+                           temperature=ANNOTATION_TEMPERATURE,
+                           base_url=getattr(_LLM_CTX, "annotation_base_url", None))
             controller.note_success()
             arr = parse_json_array(res)
             if arr is None:
@@ -4280,7 +4951,9 @@ def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
                 backoff = controller.note_rate_limited()
                 if _attempt < 2:
                     trace.record_retry("annotation", "annotate_batch", _attempt + 2,
-                                       backoff, type(e).__name__, job_id=_runtime_job_id())
+                                       backoff, type(e).__name__,
+                                       error_kind=_retry_error_kind(e),
+                                       job_id=_runtime_job_id())
                 continue
             return AnnotationBatchResult(status="request_failed", error=str(e)[:500])
     return AnnotationBatchResult(status="request_failed", error="请求限流，重试次数已用尽")
@@ -4331,16 +5004,36 @@ def _release_dead_pool_clients():
         pass
 
 
-def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers):
-    """Bounded requests; shared state is only changed by the ordered consumer."""
+def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers,
+                        *, capacity=4, ordered_refill=False, base_url=None):
+    """Bounded requests with durable ready staging (Phase 3 P1a).
+
+    * Workers are strictly bounded (active workers <= workers <= 2);
+    * Outstanding capacity (active + uncommitted ready) is bounded (default 4);
+    * Completed worker results are durably staged to disk before yielding;
+    * On restart/resume, valid staged results matching current inputs are reused
+      without issuing duplicate LLM calls;
+    * Yields sequentially to the consumer for ordered, durable commit.
+    """
+    from folith.annotation_staging import (
+        AnnotationFailStop,
+        load_staged_annotation,
+        save_staged_annotation,
+    )
+
     inherited_base = getattr(_LLM_CTX, "base_url", None)
     inherited_reasoning = getattr(_LLM_CTX, "reasoning_effort", None)
     inherited_modes = getattr(_LLM_CTX, "reasoning_modes", None)
+    endpoint = (resolve_openai_base_url(provider, base_url) if
+                (PROVIDERS.get(provider) or {}).get("kind") != "gemini" else None)
+    failure = AnnotationFailStop()
 
     def request(task):
         bi, offset, pairs, indexes = task
         _RUNTIME_CTX.job_id = job_id
+        _RUNTIME_CTX.annotation_fail_stop = failure
         _LLM_CTX.base_url = inherited_base
+        _LLM_CTX.annotation_base_url = endpoint
         _LLM_CTX.reasoning_effort = inherited_reasoning
         _LLM_CTX.reasoning_modes = inherited_modes
         _LLM_CTX.batch_id = bi + 1
@@ -4352,49 +5045,157 @@ def _annotation_results(tasks, job_id, provider, api_key, model, target_lang, wo
                 _runtime_pause_checkpoint(job_id)
                 if _runtime_cancel_requested(job_id):
                     raise RuntimeError("任务已请求取消")
+
+            snapshot_pairs = [dict(pair) for pair in pairs]
+            fingerprint = _annotation_request_fingerprint(
+                snapshot_pairs, indexes, target_lang, provider, model)
+            if job_id and indexes:
+                staged = load_staged_annotation(job_id, offset, fingerprint)
+                if staged is not None:
+                    _batch_timing(job_id, "annotation", bi + 1, "result_ready", staged_replay=True)
+                    staged.input_fingerprint = fingerprint
+                    return task, staged
+
             with trace.span("annotation", operation="batch", job_id=job_id,
                             metadata={"batch_id": bi + 1, "offset": offset, "segment_count": len(pairs)}):
-                # 用途标注（#167）：标注批次在事件里与翻译批次区分开。
-                with llm_call_purpose(f"自动标注批次 #{bi + 1}"):
-                    items = annotate_batch([pairs[i] for i in indexes], target_lang, provider, api_key, model) if indexes else None
+                # 用途标注（#167 / Phase 3）：标注批次在事件里与翻译批次区分开。
+                with llm_call_purpose(f"自动标注批次 #{bi + 1}", operation_id="annotation"):
+                    items = annotate_batch([snapshot_pairs[i] for i in indexes], target_lang, provider, api_key, model) if indexes else None
+
+            if items is not None:
+                if not isinstance(items, AnnotationBatchResult):
+                    items = AnnotationBatchResult(items, status="success" if items else "empty")
+                items.input_fingerprint = fingerprint
+                if job_id and indexes and items.status in {"success", "empty"}:
+                    if not save_staged_annotation(job_id, offset, bi, items, fingerprint):
+                        raise _workflow_errors.AnnotationStagingError(
+                            OSError("暂存写入未确认，请检查磁盘后重试"))
+
             _batch_timing(job_id, "annotation", bi + 1, "result_ready")
             return task, items
         except BaseException as exc:
+            if isinstance(exc, _workflow_errors.AnnotationStagingError):
+                failure.fail(exc)
             _batch_timing(job_id, "annotation", bi + 1, "worker_failed", error_type=type(exc).__name__)
+            failure.check()
             raise
         finally:
             _usage.CURRENT_ROLE.reset(token)
             _RUNTIME_CTX.__dict__.clear()
             _LLM_CTX.__dict__.clear()
 
+    workers = max(1, min(2, int(workers or 2)))
+    capacity = max(workers, min(4, int(capacity or 4)))
     pending = {}
+    ready = {}
+    submitted = 0
+    committed = 0
+
+    previous_failure = getattr(_RUNTIME_CTX, "annotation_fail_stop", None)
+    previous_endpoint = getattr(_LLM_CTX, "annotation_base_url", None)
+    _RUNTIME_CTX.annotation_fail_stop = failure
+    _LLM_CTX.annotation_base_url = endpoint
     try:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ft-annot") as executor:
-            try:
-                for i in range(min(workers, len(tasks))):
-                    _batch_timing(job_id, "annotation", tasks[i][0] + 1, "queued")
-                    pending[i] = executor.submit(request, tasks[i])
-                for i in range(len(tasks)):
+            if ordered_refill:
+                # Explicit rollback to the original ordered consumer/refill
+                # algorithm. Staging and commit acknowledgement stay enabled.
+                ordered_pending = {}
+                def submit_ordered(i):
                     if job_id:
                         _runtime_pause_checkpoint(job_id)
                         if _runtime_cancel_requested(job_id):
                             raise RuntimeError("任务已请求取消")
-                    yield pending.pop(i).result()
-                    # Refill only after the consumer has durably committed this result.
-                    next_i = i + workers
-                    if next_i < len(tasks):
-                        _batch_timing(job_id, "annotation", tasks[next_i][0] + 1, "queued")
-                        pending[next_i] = executor.submit(request, tasks[next_i])
+                    _batch_timing(job_id, "annotation", tasks[i][0] + 1, "queued")
+                    ordered_pending[i] = executor.submit(request, tasks[i])
+                try:
+                    for i in range(min(workers, len(tasks))):
+                        submit_ordered(i)
+                    for i in range(len(tasks)):
+                        if job_id:
+                            _runtime_pause_checkpoint(job_id)
+                            if _runtime_cancel_requested(job_id):
+                                raise RuntimeError("任务已请求取消")
+                        yield ordered_pending.pop(i).result()
+                        next_i = i + workers
+                        if next_i < len(tasks):
+                            submit_ordered(next_i)
+                finally:
+                    for future in ordered_pending.values():
+                        future.cancel()
+                return
+
+            def fill():
+                nonlocal submitted
+                while (submitted < len(tasks)
+                       and len(pending) < workers
+                       and (submitted - committed) < capacity):
+                    if job_id:
+                        _runtime_pause_checkpoint(job_id)
+                        if _runtime_cancel_requested(job_id):
+                            raise RuntimeError("任务已请求取消")
+                    t = tasks[submitted]
+                    _batch_timing(job_id, "annotation", t[0] + 1, "queued")
+                    fut = executor.submit(request, t)
+                    pending[fut] = submitted
+                    submitted += 1
+
+            try:
+                fill()
+                while committed < len(tasks):
+                    if job_id:
+                        _runtime_pause_checkpoint(job_id)
+                        if _runtime_cancel_requested(job_id):
+                            raise RuntimeError("任务已请求取消")
+                    if committed in ready:
+                        yield ready.pop(committed)
+                        committed += 1
+                        fill()
+                        continue
+                    done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        idx = pending.pop(future)
+                        ready[idx] = future.result()
+                    fill()
+                    if committed in ready:
+                        yield ready.pop(committed)
+                        committed += 1
+                        fill()
             finally:
-                for future in pending.values():
+                for future in list(pending.keys()):
                     future.cancel()
+    except BaseException:
+        # A user cancel or a secondary peer exception may race the first
+        # storage failure. After executor join, preserve that original failure.
+        failure.check()
+        raise
     finally:
-        _release_dead_pool_clients()
+        try:
+            _release_dead_pool_clients()
+        finally:
+            if previous_failure is None:
+                _RUNTIME_CTX.__dict__.pop("annotation_fail_stop", None)
+            else:
+                _RUNTIME_CTX.annotation_fail_stop = previous_failure
+            if previous_endpoint is None:
+                _LLM_CTX.__dict__.pop("annotation_base_url", None)
+            else:
+                _LLM_CTX.annotation_base_url = previous_endpoint
+
+
+def _normalize_annotation_scheduler(value):
+    mode = str(value or "c2").strip().lower()
+    if mode not in {"ordered", "c2", "c4"}:
+        raise ValueError("annotation_scheduler 必须是 ordered、c2 或 c4")
+    return mode
 
 
 def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
-                   on_caption=None):
+                   on_caption=None, *, base_url=None):
     """三色自动标注：LLM 识别 + 术语表确定性覆盖（专业名词=黄色必标）。"""
+    from folith.annotation_staging import cleanup_staged_temporaries
+    if job_id:
+        cleanup_staged_temporaries(job_id)
     pairs = state["pairs"]
     quality_report = _audit_source_quality_for_state(state)
     state["source_quality_gate"] = quality_report
@@ -4441,11 +5242,24 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
         indexes = [i for i in range(len(slice_pairs)) if batch_offset + i not in blocked_source_indexes]
         tasks.append((bi, batch_offset, slice_pairs, indexes))
     workers = min(2, max(1, int((state.get("pipeline_config") or {}).get("translation_concurrency", 2))))
+    scheduler = _normalize_annotation_scheduler(
+        (state.get("pipeline_config") or {}).get("annotation_scheduler"))
+    capacity = 4 if scheduler == "c4" else workers
     run = trace.get_active_run(job_id)
     if run:
-        run.record_point("annotation_plan", concurrency=workers, batch_count=len(batches),
+        run.record_point("annotation_plan", concurrency=workers, capacity=capacity,
+                         scheduler=scheduler, batch_count=len(batches),
                          pending_batch_count=len(tasks), segment_count=len(pairs), batch_size=ANNOT_BATCH_SIZE)
-    results = _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers)
+    try:
+        options = {"capacity": capacity}
+        if base_url is not None:
+            options["base_url"] = base_url
+        if scheduler == "ordered":
+            options["ordered_refill"] = True
+        results = _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers,
+                                      **options)
+    except TypeError:
+        results = _annotation_results(tasks, job_id, provider, api_key, model, target_lang, workers)
     # 1) LLM 标注：请求有界并发，按原批次顺序保存。
     try:
         for (bi, offset, slice_pairs, eligible_local_indexes), items in results:
@@ -4456,6 +5270,14 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
             if on_caption and bi % 10 == 0:
                 on_caption(f"自动标注第 {offset + 1}-{offset + len(slice_pairs)} 段"
                            f"（共 {len(pairs)} 段，批次 {bi + 1}/{len(batches)}）...")
+            # The pipeline owns the job lifetime lock. Revalidate the exact
+            # request immediately before mutating authoritative annotation state.
+            if items is not None and getattr(items, "input_fingerprint", None):
+                current_pairs = state["pairs"][offset:offset + len(slice_pairs)]
+                current_fingerprint = _annotation_request_fingerprint(
+                    current_pairs, eligible_local_indexes, target_lang, provider, model)
+                if current_fingerprint != items.input_fingerprint:
+                    raise RuntimeError("标注输入已改变，请重新生成当前批次")
             _batch_timing(job_id, "annotation", bi + 1, "commit_started")
             if items is None:
                 state["annotations"] = annotations
@@ -4492,6 +5314,8 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
             save_job_state(job_id, state)
             _batch_timing(job_id, "annotation", bi + 1, "commit_finished")
             if job_id:
+                from folith.annotation_staging import confirm_staged_annotation
+                confirm_staged_annotation(job_id, offset)
                 update_runtime_state(
                     job_id, heartbeat=True,
                     stage_progress={"completed": min(offset + len(slice_pairs), len(pairs)),
@@ -4539,6 +5363,9 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
     state["annotations_status"] = "partial" if failed_batches else "success"
     state["annotations_failed_batches"] = failed_batches
     save_job_state(job_id, state)
+    if state.get("annotations_done") and job_id:
+        from folith.annotation_staging import clear_all_staged_annotations
+        clear_all_staged_annotations(job_id)
     run = trace.get_active_run(job_id)
     if run:
         run.record_point("milestone", phase="annotation_complete")
@@ -5814,7 +6641,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                 try:
                     # 用途标注（#167）：事件里"已发送模型请求"要能对上这批段。
                     with llm_call_purpose(
-                            f"正在翻译第 {offset + 1}–{offset + len(batch)} 段"):
+                            f"正在翻译第 {offset + 1}–{offset + len(batch)} 段", operation_id="translation"):
                         targets = translate_batch(texts, ctx_prev, ctx_next, glossary_text, style_rules,
                                                   target_lang, translator_config["provider"],
                                                   translator_config["api_key"],
@@ -6327,7 +7154,7 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         if inherited_job_id is not None:
             _RUNTIME_CTX.job_id = inherited_job_id
         # 用途标注（#167）：知识抽取与翻译/标注在事件里区分开。
-        with llm_call_purpose("提取术语与知识"):
+        with llm_call_purpose("提取术语与知识", operation_id="knowledge"):
             return _knowledge.extract_batch(
                 sources, targets, auxiliary_config["provider"],
                 auxiliary_config["api_key"], auxiliary_config["model"],
@@ -7927,16 +8754,16 @@ def _submit_runtime_status(job_id, **changes):
     return writer.submit(**changes)
 
 
-def _runtime_telemetry_request_started(job_id, *, purpose=None):
+def _runtime_telemetry_request_started(job_id, *, purpose=None, operation_id=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_started(purpose=purpose)
+        coalescer.request_started(purpose=purpose, operation_id=operation_id)
 
 
-def _runtime_telemetry_request_finished(job_id, *, purpose=None):
+def _runtime_telemetry_request_finished(job_id, *, purpose=None, operation_id=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_finished(purpose=purpose)
+        coalescer.request_finished(purpose=purpose, operation_id=operation_id)
 
 
 
@@ -8282,6 +9109,44 @@ def runtime_actions_for_job(job_id, status):
     return actions
 
 
+def _active_connection_view(state):
+    """The connection the task is actually running on, for the run header.
+
+    Reads the task's own ``pipeline_config`` (written when the worker started),
+    so it shows what the running worker is talking to — not what the settings
+    dialog merely has selected now.  Returns ``None`` for a task that never
+    started, or whose connection was not recorded.
+    """
+    state = state if isinstance(state, dict) else {}
+    config = state.get("pipeline_config")
+    config = config if isinstance(config, dict) else {}
+    translator = config.get("translator")
+    translator = translator if isinstance(translator, dict) else {}
+    reviewer = config.get("reviewer")
+    reviewer = reviewer if isinstance(reviewer, dict) else {}
+    provider = _conn_text(translator.get("provider") or state.get("provider"))
+    model = _conn_text(translator.get("model") or state.get("model"))
+    if not (provider or model):
+        return None
+    label = " · ".join(part for part in (provider, model) if part)
+    reviewer_label = ""
+    if reviewer.get("provider") and reviewer.get("model"):
+        reviewer_label = " · ".join(
+            part for part in (_conn_text(reviewer.get("provider")),
+                              _conn_text(reviewer.get("model"))) if part)
+    roles = ["翻译"]
+    if reviewer_label:
+        roles.append("审校")
+    return {
+        "label": label,
+        "provider": provider,
+        "model": model,
+        "reviewer_label": reviewer_label,
+        "roles": roles,
+        "reasoning_effort": _conn_text(config.get("reasoning_effort")),
+    }
+
+
 def build_job_runtime_view(job_id, state=None):
     """Canonical user-facing runtime view shared by every product surface."""
     state = state if isinstance(state, dict) else load_job_state(job_id)
@@ -8329,6 +9194,9 @@ def build_job_runtime_view(job_id, state=None):
                 else "正在从最近进度继续处理"
     elif status == "waiting_external":
         detail = "正在等待模型响应"
+    elif status == "pausing":
+        # 暂停请求的理由（例如"在途请求会先用原连接完成"）比一句"正在暂停"更有用。
+        detail = runtime.get("last_event") or "正在暂停"
     elif status == "running":
         detail = runtime.get("phase_label") or "已恢复 · 正在执行"
     elif status == "interrupted":
@@ -8366,6 +9234,7 @@ def build_job_runtime_view(job_id, state=None):
         "progress_completed": completed,
         "progress_total": total,
         "stage_progress": runtime.get("stage_progress") or {},
+        "active_connection": _active_connection_view(state),
         "available_actions": actions,
         "primary_action": primary_action,
         "show_no_worker_warning": status in {
@@ -8698,6 +9567,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         kwargs.pop("on_caption", None)
         state = load_job_state(job_id) or new_job_state(filename)
         queued = load_runtime_state(job_id)
+        _take_pending_restart(job_id)  # a new worker never inherits an old request
         update_runtime_state(
             job_id, status="starting", phase="starting",
             phase_label="正在读取最近检查点", heartbeat=True, progress=True,
@@ -8705,42 +9575,74 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             event_visibility="technical", event_category="orchestration",
             pipeline=("segment_operation" if segment_operation else
                       "academic_writing" if kwargs.get("enable_report")
-                      else "document_pipeline"))
+                      else "document_pipeline"),
+            restart_requested=False,
+            worker_connection=_connection_signature_from_kwargs(kwargs))
         update_runtime_state(
             job_id, status="running", phase="running",
             phase_label="已恢复 · 正在执行" if queued.get("resume_request_id")
             else "正在执行", heartbeat=True)
-        if segment_operation:
-            kind = segment_operation["kind"]
-            indexes = segment_operation["indexes"]
-            kwargs.pop("reasoning_effort", None)
-            if kind == "review":
-                result = review_translation_segments(job_id, indexes, **kwargs)
-                failed = result[1].get("failed_segment_ids") or []
-                if failed:
-                    raise RuntimeError(f"{len(failed)} 个段落审校未完成，请在审校队列中重试。")
-            else:
-                result = retranslate_segments(
-                    job_id, indexes, **kwargs,
-                    on_caption=lambda text: _runtime_caption_callback(job_id, text))
-                if len(result[1]) != len(indexes):
-                    raise RuntimeError("部分段落未完成重译，请查看段落状态后重试。")
-                readiness = _translation_evidence.translation_review_readiness(result[0])
-                if set(indexes) & set(readiness.get("failed_segment_ids") or []):
-                    raise RuntimeError("重译已保存，但部分段落审校未完成，请在审校队列中重试。")
-            if not _runtime_cancel_requested(job_id):
+        while True:
+            if segment_operation:
+                kind = segment_operation["kind"]
+                indexes = segment_operation["indexes"]
+                kwargs.pop("reasoning_effort", None)
+                if kind == "review":
+                    result = review_translation_segments(job_id, indexes, **kwargs)
+                    failed = result[1].get("failed_segment_ids") or []
+                    if failed:
+                        raise RuntimeError(f"{len(failed)} 个段落审校未完成，请在审校队列中重试。")
+                else:
+                    result = retranslate_segments(
+                        job_id, indexes, **kwargs,
+                        on_caption=lambda text: _runtime_caption_callback(job_id, text))
+                    if len(result[1]) != len(indexes):
+                        raise RuntimeError("部分段落未完成重译，请查看段落状态后重试。")
+                    readiness = _translation_evidence.translation_review_readiness(result[0])
+                    if set(indexes) & set(readiness.get("failed_segment_ids") or []):
+                        raise RuntimeError("重译已保存，但部分段落审校未完成，请在审校队列中重试。")
+                if not _runtime_cancel_requested(job_id):
+                    update_runtime_state(
+                        job_id, segment_operation_result="completed",
+                        completed_units=len(indexes), progress=True,
+                        event="所选段落审校已完成" if kind == "review" else "所选段落重译已完成",
+                        event_name="segment_operation_completed", event_visibility="user",
+                        event_category="progress")
+                break
+            try:
+                result = run_job_pipeline(
+                    job_id, filename, file_bytes, **kwargs,
+                    on_status=lambda label: _runtime_status_callback(job_id, state, label),
+                    on_caption=lambda text: _runtime_caption_callback(job_id, text),
+                )
+            except _WorkerRestartRequested:
+                # The connection changed while the task was paused.  Keep the
+                # same worker thread and task lock, but re-enter the pipeline
+                # from the last checkpoint with the newly resolved settings.
+                pending = _take_pending_restart(job_id)
+                if not pending:
+                    raise
+                trace.finish_run(job_id=job_id, status="interrupted")
+                filename = pending.get("filename") or filename
+                kwargs = dict(pending.get("kwargs") or {})
+                kwargs.pop("on_status", None)
+                kwargs.pop("on_caption", None)
+                base_url = pending.get("base_url")
+                set_llm_base_url(base_url)
+                set_llm_reasoning_effort(kwargs.get("reasoning_effort"))
+                state = load_job_state(job_id) or state
+                flush_runtime_status(job_id)
+                reset_runtime_status(job_id)
                 update_runtime_state(
-                    job_id, segment_operation_result="completed",
-                    completed_units=len(indexes), progress=True,
-                    event="所选段落审校已完成" if kind == "review" else "所选段落重译已完成",
-                    event_name="segment_operation_completed", event_visibility="user",
-                    event_category="progress")
-        else:
-            result = run_job_pipeline(
-                job_id, filename, file_bytes, **kwargs,
-                on_status=lambda label: _runtime_status_callback(job_id, state, label),
-                on_caption=lambda text: _runtime_caption_callback(job_id, text),
-            )
+                    job_id, pause_requested=False, restart_requested=False,
+                    cancel_requested=False, exit_requested=False,
+                    worker_connection=_connection_signature_from_kwargs(kwargs),
+                    event="已用新连接重新启动任务；已识别的页面与译文会保留。",
+                    event_name="connection_restart_applied",
+                    event_visibility="technical", event_category="lifecycle")
+                result = None
+                continue
+            break
         result_state = load_job_state(job_id) or state
         # 终态之前先把合并中的批次进度写掉并关闭这条通道：否则一次迟到的状态写
         # 会把 "completed" 覆盖回 "running"。
@@ -8799,8 +9701,11 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         reset_runtime_status(job_id)
         runtime_after = load_runtime_state(job_id)
         exit_requested = bool(runtime_after.get("exit_requested"))
-        cancelled = (not exit_requested) and (
+        storage_failed = isinstance(exc, _workflow_errors.AnnotationStagingError)
+        cancelled = (not exit_requested) and not storage_failed and (
             bool(runtime_after.get("cancel_requested")) or "请求取消" in str(exc))
+        if storage_failed:
+            exit_requested = False
         final_status = "interrupted" if exit_requested else (
             "cancelled" if cancelled else "failed")
         if not segment_operation:
@@ -8821,9 +9726,13 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             "message": user_error_message,
             "stage": current.get("stage_id") or current.get("stage"),
             "operation": current.get("operation_id") or current.get("operation"),
+            "connection": _connection_label_from_kwargs(kwargs),
             "timestamp": _utc_now_iso(),
             "technical_log": RUNTIME_TECHNICAL_LOG,
         }
+        if storage_failed:
+            error["errno"] = exc.errno
+            error["storage_error_type"] = type(exc.storage_error).__name__
         try:
             update_runtime_state(
                 job_id, status=final_status,
@@ -8838,6 +9747,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                 event_visibility="user",
                 event_category="lifecycle" if (cancelled or exit_requested) else "error",
                 progress=True, heartbeat=True,
+                **({"pause_requested": False} if storage_failed else {}),
                 worker={"owner_pid": None, "worker_id": None,
                         "lease_expires_at": None})
         except _workflow_errors.WorkflowStopped as stopped:
@@ -8845,6 +9755,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                 raise
         return None
     finally:
+        _take_pending_restart(job_id)
         _append_runtime_technical_log(
             job_id, f"worker released pid={os.getpid()}"
                     f" thread={threading.current_thread().name}")
@@ -8945,7 +9856,8 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
                 **context, started_at=runtime.get("started_at") if matching_resume
                 else started_at,
                 operation_started_at=started_at, last_progress_at=started_at,
-                last_heartbeat_at=started_at, cancel_requested=False, pause_requested=False, error=None,
+                last_heartbeat_at=started_at, cancel_requested=False, pause_requested=False,
+                restart_requested=False, error=None,
                 exit_requested=False,
                 attempt=attempt, resume_request_id=resume_request_id or "",
                 segment_operation=segment_operation or {}, segment_operation_result="pending",
@@ -8995,7 +9907,11 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
     with _RUNTIME_WORKERS_LOCK:
         runtime = get_job_runtime_status(job_id)
         if runtime.get("status") in {"paused", "pausing"} and is_job_worker_alive(job_id):
-            return continue_job(job_id)
+            # A paused worker is still alive: continue it.  Passing the freshly
+            # resolved kwargs lets the core restart the worker transparently if
+            # the connection changed while it was paused (issue #222).
+            return continue_job(job_id, restart_kwargs=dict(pipeline_kwargs or {}),
+                                base_url=base_url, filename=filename)
         if _job_execution_alive(job_id):
             return False
         if runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
@@ -9710,6 +10626,82 @@ def new_job_state(filename):
     return state
 
 
+def _dataset_info_from_state(state, file_bytes=None):
+    """The run's real dataset numbers for ``performance.md`` (#220 E1).
+
+    The trace recorder starts with ``page_count``/``source_chars``/``…`` at 0
+    and only ``file_size_bytes`` was ever passed, so real tasks showed
+    "0 bytes, 0 source chars, 0 segments".  This derives the numbers the report
+    prints from what the job already recorded:
+
+    * the importer's own extraction report (``extracted.characters`` /
+      ``extracted.paragraphs`` / ``extracted.pages``) when present;
+    * otherwise the paragraph list in the state (``source_paragraphs`` / ``paras``).
+
+    ``segment_count`` is the translation-unit count: the committed pairs once
+    translation started, else the segments built by segmentation.  ``source_words``
+    counts whitespace-separated tokens of the source paragraphs.  Unknowns are
+    left out rather than written as a guessed number.
+    """
+    state = state or {}
+    report = state.get("extraction_report") or {}
+    extracted = report.get("extracted") if isinstance(report, dict) else None
+    extracted = extracted if isinstance(extracted, dict) else {}
+    paragraphs = state.get("source_paragraphs") or state.get("paras") or []
+    paragraphs = [str(item or "") for item in paragraphs]
+
+    source_chars = _safe_positive_int(extracted.get("characters"))
+    if source_chars is None:
+        source_chars = sum(len(text) for text in paragraphs)
+    paragraph_count = _safe_positive_int(extracted.get("paragraphs"))
+    if paragraph_count is None:
+        paragraph_count = len(paragraphs)
+
+    pairs = state.get("pairs") or []
+    segments = pairs if pairs else (state.get("paras") or [])
+    info = {
+        "source_chars": int(source_chars),
+        "source_words": sum(len(text.split()) for text in paragraphs),
+        "paragraph_count": int(paragraph_count),
+        "segment_count": len(segments),
+    }
+    pages = _safe_positive_int(extracted.get("pages"))
+    if pages is not None:
+        info["page_count"] = int(pages)
+    if file_bytes is not None:
+        info["file_size_bytes"] = len(file_bytes) if file_bytes else 0
+    return info
+
+
+def _safe_positive_int(value):
+    """Positive integer, else ``None`` (a zero/unknown stays unknown)."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _retry_error_kind(error):
+    """``protocol`` / ``transport`` / ``other`` for a text-path retry (#220 B1).
+
+    The retry record already keeps ``type(error).__name__``; this makes the
+    split explicit at the call site while the exception object is still at hand.
+    A malformed reply raises :class:`TranslationProtocolError`; anything that
+    came out of the transport keeps the SDK's own class name.
+    """
+    if isinstance(error, _translation_protocol.TranslationProtocolError):
+        return "protocol"
+    name = type(error).__name__
+    module = str(type(error).__module__ or "")
+    if module.startswith(("openai", "httpx", "httpcore")):
+        return "transport"
+    if any(marker in name for marker in ("Connection", "Timeout", "RateLimit",
+                                         "Status", "Transport", "HTTP", "Proxy")):
+        return "transport"
+    return "other"
+
+
 def load_job_state(job_id):
     """加载任务状态。使用文件签名缓存（mtime/size）消除重复反序列化，并返回安全深拷贝。"""
     return _job_repo.load_job_state_cached(job_id)
@@ -9872,6 +10864,8 @@ def save_translation_edit(job_id, index, target, actor="user"):
         job_id, state, [index], "人工修改 CURRENT_TRANSLATION；相关案例与学术下游需要重建",
         actor=actor, action="translation_edit")
     _recheck_delivery_invariants_for_segments(state, [index], actor=actor)
+    from folith.engine.glossary_ops import _refresh_segment_term_conflicts
+    _refresh_segment_term_conflicts(state, indexes=[index])
     save_job_state(job_id, state)
     return state
 
@@ -10117,10 +11111,12 @@ def ensure_source_outline(job_id, state=None):
     data = load_source(job_id)
     if not data:
         return state
+    from folith import outline_anchor
     from folith.source_outline import parse_source_outline
     parsed = parse_source_outline(str(state.get("filename") or ""), data)
     if not parsed.get("nodes"):
         return state
+    outline_anchor.store_outline(job_id, parsed, data=data)
     state["source_outline"] = parsed
     save_job_state(job_id, state)
     return state
@@ -10332,6 +11328,31 @@ def _original_layout_notes(report) -> list:
     return notes
 
 
+def _original_format_docx_notes(report):
+    """Content the write-back kept but did not translate, in plain words.
+
+    Preserved objects (text boxes, comments, formulas, ...) and units that had
+    no translation are shown in the delivery manifest and freeze notice rather
+    than left for the user to discover in Word.
+    """
+    notes = []
+    for item in report.get("preserved") or []:
+        if item.get("kind") in ("textbox", "comment", "formula"):
+            notes.append(
+                f"原格式 DOCX：{item.get('count')} 处{item.get('label')}原样保留、"
+                "未翻译（详见 original_format_report.json 的 preserved）。")
+    untranslated = report.get("untranslated_units") or []
+    if untranslated:
+        notes.append(
+            f"原格式 DOCX：{len(untranslated)} 个单元没有译文，保留了原文"
+            "（详见 original_format_report.json 的 untranslated_units）。")
+    for item in report.get("rejected") or []:
+        notes.append(
+            f"原格式 DOCX：{item.get('label') or item.get('kind')}未处理"
+            "（详见 original_format_report.json 的 rejected）。")
+    return notes
+
+
 def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
     """Build the configured delivery set used by both preview and snapshots."""
     from folith import assets as _assets
@@ -10393,16 +11414,25 @@ def _delivery_asset_bundle(job_id, state, target_lang, provider, model):
                     json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
                 ).encode("utf-8")
             if config.get("deliver_original_docx"):
-                if not (filename.endswith(".docx") and source):
+                # Original-format DOCX (Contract v1): the source package is the
+                # write-back base.  Failure is surfaced with its reason, never
+                # replaced by the rebuilt translation.docx.
+                if not original_format_docx_applicable(filename, source):
                     skipped_assets["original_format.docx"] = (
                         "original-format DOCX requires a DOCX source")
                 else:
                     from folith.docx_roundtrip import build_roundtrip_docx
-                    docx_bytes, docx_report = build_roundtrip_docx(state, source)
+                    try:
+                        docx_bytes, docx_report = build_roundtrip_docx(state, source)
+                    except Exception as exc:
+                        raise RuntimeError(
+                            "原格式 DOCX 回写失败，未用重建文档代替："
+                            f"{type(exc).__name__}: {exc}") from exc
                     bundle["original_format.docx"] = _bytes(docx_bytes)
                     bundle["original_format_report.json"] = (
                         json.dumps(docx_report, ensure_ascii=False, indent=2) + "\n"
                     ).encode("utf-8")
+                    renderer_notes.extend(_original_format_docx_notes(docx_report))
             if config["deliver_bilingual_docx"]:
                 bundle["bilingual.docx"] = _bytes(pairs_to_word(
                     pairs, source_lang=state.get("source_lang"),
@@ -10573,8 +11603,18 @@ def build_delivery_assets(job_id, state=None, target_lang="", provider="", model
             model or state.get("model") or "")
 
 
-def _reset_source_dependent_state(state):
-    """Invalidate artifacts derived from source paragraphs after cleanup."""
+def _reset_source_dependent_state(state, *, job_id=None):
+    """Invalidate artifacts derived from source paragraphs after cleanup.
+
+    ``job_id`` also drops the persisted outline *mapping*: the source bytes did
+    not change, so the parsed outline stays valid, but every cached node
+    position describes the previous segmentation (#186/#204).  The in-state
+    outline is stale for the same reason and is removed with it.
+    """
+    if job_id:
+        from folith import outline_anchor as _outline_anchor
+        _outline_anchor.invalidate_mapping(job_id)
+    state.pop("source_outline", None)
     state.update({
         "profile_done": False,
         "document_profile": None,
@@ -10880,7 +11920,11 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
                 warnings.append(warning)
             _append_runtime_technical_log(job_id, f"source cleanup: {warning}")
 
-        _reset_source_dependent_state(state)
+        _reset_source_dependent_state(state, job_id=job_id)
+        # The rescan replaced the source bytes; a persisted outline belongs to
+        # the previous source (see #186).
+        from folith import outline_anchor as _outline_anchor
+        _outline_anchor.delete_outline_sidecar(job_id)
         state.update({
             "filename": resolved_filename,
             "source_paras": list(raw_paragraphs),
@@ -11898,6 +12942,21 @@ def _streaming_scan_eligible(filename, file_bytes, *, ocr_mode, ocr_backend,
     return total > 0 and len(scanned) == total
 
 
+def _explicit_ocr_online(ocr_online, saved_runtime_config):
+    """The visual connection a caller really chose, as opposed to one merely replayed.
+
+    Resuming a task rebuilds its settings from the saved task config, so the
+    connection the task was pinned to arrives here as if it were an explicit
+    argument.  Treating it as explicit skipped the pinned-vs-current decision
+    for good: the user's "use the current connection" choice never applied.  A
+    descriptor identical to the pinned one is a replay and counts as no choice.
+    """
+    pinned = (saved_runtime_config or {}).get("ocr_online")
+    if isinstance(ocr_online, dict) and ocr_online and ocr_online == pinned:
+        return None
+    return ocr_online
+
+
 def _reconcile_vision_connection(job_id, state):
     """续跑时，任务钉住的视觉连接与当前视觉连接不同：决定用哪个，并留痕。
 
@@ -11962,9 +13021,13 @@ def _refresh_scan_provider(job_id, stream, state):
 
 def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
                        source_language=None, ocr_language=None, ocr_psm=None,
-                       failed_pages=None, online_config_resolver=None):
+                       failed_pages=None, online_config_resolver=None,
+                       committed_paragraphs=None):
     from folith.streaming_ingest import ScanStream
     cancel_check = lambda: _runtime_cancel_requested(job_id)  # noqa: E731
+    # 读页是并发线程：用量先记在这本线程安全的小账本里，由主线程并入任务账本
+    # （state 只允许主线程写）。见 folith.usage.merge_ledger 与 #231。
+    vision_usage = _usage.empty_usage()
 
     def page_gate():
         # 读每一页之前：任务暂停时后台识别也停下，不在暂停期间继续花钱。
@@ -11976,22 +13039,24 @@ def _start_scan_stream(job_id, filename, file_bytes, *, online_config=None,
     provider, spatial_engine = _vlm_runtime(
         ocr_online_config=online_config, cancel_check=cancel_check,
         source_language=source_language, ocr_language=ocr_language,
-        ocr_psm=ocr_psm)
+        ocr_psm=ocr_psm, trace_job_id=job_id, usage_ledger=vision_usage)
     label = _vlm_label(provider)
     # 上次没读成的页：这次读完全书后补读（文字接在末尾，已翻译的前文不动）。
     late = {int(row["page"]) - 1: row for row in failed_pages or []
             if isinstance(row, dict) and row.get("page")}
     stream = ScanStream(filename, file_bytes, provider, spatial_engine=spatial_engine,
                         checkpoint_dir=job_dir(job_id), cancel_check=cancel_check,
-                        page_gate=page_gate, late_pages=late, provider_label=label)
+                        page_gate=page_gate, late_pages=late, provider_label=label,
+                        known_paragraphs=committed_paragraphs)
     stream.facts = _pdf_extraction_facts(file_bytes)
+    stream.vision_usage = vision_usage
 
     def refresh_provider(state):
         config = online_config_resolver(state) if online_config_resolver else online_config
         return _vlm_runtime(
             ocr_online_config=config, cancel_check=cancel_check,
             source_language=source_language, ocr_language=ocr_language,
-            ocr_psm=ocr_psm)[0]
+            ocr_psm=ocr_psm, trace_job_id=job_id, usage_ledger=vision_usage)[0]
 
     stream.refresh_provider = refresh_provider
     return stream
@@ -12043,8 +13108,11 @@ def _commit_scan_stream(state, snapshot, *, filename, facts, segmentation_mode,
     document = snapshot["document"]
     failed_pages = list(snapshot.get("failed_pages") or [])
     warnings = list(warnings) + [
-        f"第 {row['page']} 页识别失败（{row.get('reason') or row.get('code') or '请求失败'}），"
-        "原文缺失；继续任务时会补读" for row in failed_pages]
+        "第 {page} 页识别失败（{reason}）{conn}，原文缺失；继续任务时会补读".format(
+            page=row["page"],
+            reason=row.get("reason") or row.get("code") or "请求失败",
+            conn=(f"（连接：{row.get('connection')}）" if row.get("connection") else ""))
+        for row in failed_pages]
     report = _build_extraction_report(filename, paragraphs, facts=facts,
                                       warnings=list(warnings))
     report.update({
@@ -12126,8 +13194,18 @@ def _apply_scan_page_order(job_id, state):
             break
         cursor = int(row["end"])
     pairs = list(state.get("pairs") or [])
+    # #233: name the drifted column instead of the old generic message.  A
+    # positional list running ahead of the work list used to slip through here
+    # (`permute` below silently keeps a wrong-length list unchanged).
+    report = check_positional_invariants(state)
     if not contiguous or cursor != len(paras) or (pairs and len(pairs) != len(paras)):
-        raise RuntimeError("补读的页无法按原页序排回：分段区间与译文数量不一致，请重新导入任务。")
+        raise RuntimeError(
+            "补读的页无法按原页序排回：分段区间与译文数量不一致，请重新导入任务。"
+            f"（{report['summary']}）")
+    if not report["ok"]:
+        raise RuntimeError(
+            "补读的页无法按原页序排回：段落位置数据已脱节，请重新导入任务。"
+            f"（{report['summary']}）")
 
     segment_order, new_ranges, new_paragraph_of = [], [], {}
     for new_index, old_index in enumerate(order):
@@ -12227,12 +13305,26 @@ def _scan_page_event_text(event):
     return f"第 {page} 页识别失败（{reason}），已跳过，可稍后重试"
 
 
+def _merge_vision_usage(state, stream):
+    """主线程把后台读页线程累计的视觉用量并入任务账本（#231）。
+
+    Page-check threads cannot touch ``state``; they keep their own accumulator.
+    Folding it in here (on the owner thread) keeps state single-threaded, and the
+    accumulator is reset so a later window cannot double-count.
+    """
+    accumulator = getattr(stream, "vision_usage", None)
+    if isinstance(accumulator, dict):
+        _usage.merge_ledger(state.setdefault("llm_usage", _usage.empty_usage()),
+                            accumulator)
+
+
 def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
     """等窗口期间主线程的逐页钩子：更新进度，并在暂停时到达暂停检查点。
 
     必须在 ScanStream 的锁外调用：暂停会阻塞在这里，识别线程要能继续把
     已在途的页存下来。工作线程里的重试 / 失败事件也在这里由主线程写进运行状态。
     """
+    _merge_vision_usage(state, stream)
     if done != tracker["done"] or retried != tracker["retried"]:
         tracker["done"], tracker["retried"] = done, retried
         detail = f"视觉识别 {done}/{total} 页"
@@ -12255,10 +13347,16 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
         # 重试 / 失败不算进展（停滞提示照旧），但要让用户看到正在发生什么。
         failed = [item for item in page_events if item.get("kind") == "failed"]
         message = _scan_page_event_text((failed or page_events)[-1])
+        # 记下这一页实际使用的视觉连接，否则切换连接后失败会被误当成新连接出错
+        # （issue #222：日志里看不出这一页发往了哪个连接）。
+        if stream.provider_label:
+            message = f"{message}（连接：{stream.provider_label}）"
         update_runtime_state(
             job_id, phase_label=message, event=message,
             event_name="scan_page_failed" if failed else "scan_page_retry",
-            event_visibility="user", event_category="progress")
+            event_visibility="user", event_category="progress",
+            event_metadata=({"connection": stream.provider_label}
+                            if stream.provider_label else None))
     pause_message = None
     if stream.streak_tripped and not tracker.get("streak"):
         # 连续几页都超时：自动暂停（走同一条暂停路径，最终是「已暂停」），建议换模型。
@@ -12314,6 +13412,8 @@ def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
     stream.wait_for_pages(
         target, on_tick=lambda done, total, retried: _scan_stream_tick(
             job_id, state, stream, tracker, done, total, retried))
+    # The last window's usage can land after the final tick; fold it in once more.
+    _merge_vision_usage(state, stream)
     snapshot = stream.snapshot()
     start, end = _commit_scan_stream(
         state, snapshot, filename=filename, facts=stream.facts,
@@ -12398,6 +13498,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                      strict_terminology_governance=False, mode=None,
                      research_settings=None, literature_sources=None,
                      delivery_config=None, batch_size=None, max_batch_chars=None,
+                     batch_strategy=None, annotation_scheduler=None,
                      enable_understanding=None, reviewer_provider=None,
                      reviewer_api_key=None, reviewer_model=None,
                      reviewer_base_url=None, translator_base_url=None,
@@ -12439,20 +13540,12 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state, segmentation_mode)
     previous_performance = state.get("performance")
     saved_runtime_config = state.get("pipeline_config") or {}
+    ocr_online = _explicit_ocr_online(ocr_online, saved_runtime_config)
     if ocr_online is None and saved_runtime_config:
         _reconcile_vision_connection(job_id, state)
         saved_runtime_config = state.get("pipeline_config") or {}
-    # Text-path thinking control, default OFF (nothing sent).  Precedence:
-    # explicit argument > saved task config > FOLITH_*REASONING_MODE env var.
-    effective_reasoning_mode = _normalize_reasoning_mode(
-        reasoning_mode if reasoning_mode is not None
-        else saved_runtime_config.get("reasoning_mode")
-        or os.environ.get("FOLITH_REASONING_MODE"))
-    effective_aux_reasoning_mode = _normalize_reasoning_mode(
-        auxiliary_reasoning_mode if auxiliary_reasoning_mode is not None
-        else saved_runtime_config.get("auxiliary_reasoning_mode")
-        or os.environ.get("FOLITH_AUXILIARY_REASONING_MODE"))
-    set_llm_reasoning_modes(effective_reasoning_mode, effective_aux_reasoning_mode)
+    # Text-path thinking control, default OFF (nothing sent).  Resolved once the
+    # auxiliary role's own model is known, below.
     effective_ocr_language, effective_ocr_dpi, effective_ocr_psm, \
         effective_ocr_quality, resolved_ocr = _effective_ocr_config(
             ocr_language, ocr_dpi, ocr_psm, saved_runtime_config, ocr_quality)
@@ -12469,8 +13562,12 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 provider=provider, model=model, api_key=api_key, base_url=visual_base,
                 credential_source="translation_profile",
                 credential_owner=f"{provider}|{visual_base.rstrip('/')}",
-                reasoning_mode=("thinking_disabled" if provider == "OpenCode Go"
-                                and model == "deepseek-v4.1-flash" else "provider_default"))
+                reasoning_mode=_follow_connection_thinking(
+                    "translation_profile", provider, model,
+                    _default_vision_reasoning(provider, model)),
+                reasoning_effort=_follow_connection_effort(
+                    "translation_profile", provider, model,
+                    _default_vision_effort(provider, model)))
             effective_online_descriptor = effective_online_config.describe()
         except ValueError:
             pass  # A native document does not require a valid visual endpoint.
@@ -12511,6 +13608,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         target_lang=target_lang,
         output_dir=job_dir(job_id),
     )
+    # #220 E1: a resumed task already knows its dataset; feed the real numbers
+    # now instead of leaving the report at "0 bytes, 0 source chars, 0 segments".
+    # A fresh run is updated again right after segmentation.
+    active_run.set_dataset_info(**_dataset_info_from_state(state, file_bytes=file_bytes))
     profiler = PipelineProfiler(
         job_dir(job_id) / "performance.json", run_id=active_run.run_id
     )
@@ -12648,6 +13749,17 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         fallback_api_key=api_key,
         fallback_base_url=(primary_base_url
                            if resolved_auxiliary_provider == provider else ""))
+    # Text-path thinking control, default OFF (nothing sent).  The connection's
+    # switch feeds both roles: leaving auxiliary on its provider default just
+    # moves the wall clock from the translator to the auxiliary calls.  It only
+    # crosses over when the auxiliary model is the same kind, which is why this
+    # waits for auxiliary_config above.
+    effective_reasoning_mode, effective_aux_reasoning_mode = _job_reasoning_modes(
+        reasoning_mode, auxiliary_reasoning_mode, _connection_thinking_mode(),
+        saved_runtime_config,
+        auxiliary_target=(auxiliary_config["provider"], auxiliary_config["model"]),
+        translator_target=(provider, model))
+    set_llm_reasoning_modes(effective_reasoning_mode, effective_aux_reasoning_mode)
     understanding_runtime_config = _model_roles.public_role_config(auxiliary_config)
     has_fallback_digests = any(
         isinstance(item, dict) and item.get("status") == "deterministic_fallback"
@@ -12711,13 +13823,18 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         )
     if segmentation_mode is not None or "segmentation_mode" in saved_runtime_config:
         pipeline_config["segmentation_mode"] = effective_segmentation_mode
-    # 组批方式随任务保存：已经开译、却没有记录过组批方式的老任务沿用每批 4 句，
-    # 恢复时不换批次划分；显式给了批次大小的调用方要的是按句数组批；其余新任务
-    # 用当前默认（按自然段）。
-    pipeline_config["batch_strategy"] = _batch_strategy(
-        None, saved_runtime_config.get("batch_strategy")
-        or ("sentence" if state.get("pairs") or batch_size or max_batch_chars else None),
-        default=DEFAULT_BATCH_STRATEGY)
+    # 组批方式随任务保存（Phase 3 显式合同）：已经开译、却没有记录过组批方式的
+    # 老任务沿用每批 4 句，恢复时不换批次划分；桌面合同现在显式给出策略（与旧
+    # 推断一致）；其余新任务用当前默认（按自然段）。
+    pipeline_config["batch_strategy"] = _resolve_entry_batch_strategy(
+        saved_runtime_config.get("batch_strategy"), batch_strategy,
+        has_pairs=bool(state.get("pairs")),
+        has_batch_args=bool(batch_size or max_batch_chars))
+    # Runtime rollout control: an explicit per-run choice can roll a saved C4
+    # task back to C2 or the ordered refill algorithm without losing its cursor.
+    pipeline_config["annotation_scheduler"] = _normalize_annotation_scheduler(
+        annotation_scheduler if annotation_scheduler is not None
+        else saved_runtime_config.get("annotation_scheduler"))
     state["pipeline_config"] = pipeline_config
     state.setdefault("llm_usage", _usage.empty_usage())
     auxiliary_call = _model_roles.make_role_call(
@@ -12894,7 +14011,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             # when the OCR cleanup text itself is byte-for-byte unchanged.
             if cleaned != legacy_source or segments != legacy_segments:
                 cleanup_meta["previous_pair_count"] = len(state.get("pairs") or [])
-                _reset_source_dependent_state(state)
+                _reset_source_dependent_state(state, job_id=job_id)
                 state["paras"] = segments
                 state["source_paras"] = legacy_source
                 state["source_paragraphs"] = list(cleaned)
@@ -12975,6 +14092,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 source_language=effective_source_language,
                 ocr_language=effective_ocr_language, ocr_psm=effective_ocr_psm,
                 failed_pages=(state.get("streaming_ingest") or {}).get("failed_pages"),
+                committed_paragraphs=state.get("source_paragraphs"),
                 online_config_resolver=_current_vision_config)
             registry = _SCAN_STREAMS.get()
             if registry is not None:
@@ -13120,6 +14238,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             "paragraph_count": len(cleaned_paragraphs),
             "segment_count": len(segments),
         })
+        # #220 E1: this is the first point a fresh run knows the real volume;
+        # update the recorder so the report is not left with placeholder zeros.
+        active_run.set_dataset_info(**_dataset_info_from_state(state, file_bytes=file_bytes))
         if on_status:
             on_status(f"【阶段一】按句构建翻译单元（0/{len(segments)} 句）…")
         segment_stage = profiler.start_stage(
@@ -13180,7 +14301,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             on_status("【阶段1.2】文档画像（分布式采样 + 结构化校验）...")
         from folith.document_profile import profile_document
         # 用途标注（#167）：画像阶段的模型调用在事件里说清自己。
-        with llm_call_purpose("文档画像"):
+        with llm_call_purpose("文档画像", operation_id="understanding"):
             profile, profile_warnings = profile_document(
                 state["paras"], auxiliary_config["provider"],
                 auxiliary_config["api_key"], auxiliary_config["model"], target_lang,
@@ -13258,7 +14379,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             on_caption("正在从全文分布式样本中提取专业术语...")
         from folith.terminology import extract_auto_terms_v2
         # 用途标注（#167）：术语抽取的模型调用在事件里说清自己。
-        with llm_call_purpose("抽取全文核心术语"):
+        with llm_call_purpose("抽取全文核心术语", operation_id="terminology"):
             entries, extract_warnings = extract_auto_terms_v2(
                 state["paras"], target_lang, auxiliary_config["provider"],
                 auxiliary_config["api_key"], auxiliary_config["model"],
@@ -13385,6 +14506,10 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         attach_pair_spans(state)
         from folith import delivery as _delivery
         state["delivery_status"] = _delivery.compute_delivery_status(state)
+        from folith import finding_triage as _finding_triage
+        _finding_triage.apply_deterministic(state)
+        from folith.readiness import record_readiness_milestone
+        record_readiness_milestone(job_id, state, "draft_ready")
         save_job_state(job_id, state)
 
     if _runtime_cancel_requested(job_id):
@@ -13395,6 +14520,9 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             job_id, state, reviewer_config, target_lang, style_rules,
             enable_review=enable_review, on_status=on_status)
         active_run.record_point("milestone", phase="translation_review_complete")
+        from folith.readiness import record_readiness_milestone
+        if record_readiness_milestone(job_id, state, "translation_ready"):
+            save_job_state(job_id, state)
 
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
@@ -13406,7 +14534,7 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         if on_status:
             on_status("【阶段 2.5】自动标注学习重点（红=生僻词 / 黄=专业名词 / 青绿=难点句）...")
         annotate_stage(state, job_id, glossary, provider, api_key, model, target_lang,
-                       on_caption=on_caption)
+                       on_caption=on_caption, base_url=translator_config["base_url"] or None)
 
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
@@ -13433,6 +14561,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
         state["p3_done"] = True
         save_job_state(job_id, state)
 
+    from folith.readiness import record_readiness_milestone
+    record_readiness_milestone(job_id, state, "enhanced_delivery_ready")
     state["stage"] = _state_migration.derive_stage(state)
     state["performance"] = persist_performance()
     save_job_state(job_id, state)

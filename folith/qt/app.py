@@ -75,6 +75,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--diagnostics-report", action="store_true",
                         help="打印诊断信息（版本/构建/运行时/位置/schema/工具）后退出")
     parser.add_argument("--result", default=None, help="把摘要 JSON 写到这个路径")
+    parser.add_argument("--ui-watchdog", nargs=4, help=argparse.SUPPRESS)
     parser.add_argument("--allow-second-instance", action="store_true",
                         help="跳过单实例锁（仅用于隔离测试）")
     parser.add_argument("files", nargs="*", default=[],
@@ -84,6 +85,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.ui_watchdog:
+        from folith.desktop.ui_watchdog import run
+        pid, directory, data_dir, timeout = args.ui_watchdog
+        return run(int(pid), Path(directory), Path(data_dir), float(timeout))
     # The translation worker runs in-process and does CPU-bound work (JSON,
     # python-docx, hashing).  With the default 5 ms GIL switch interval a large
     # job can starve the GUI thread for up to a second, which the Beta
@@ -122,6 +127,13 @@ def main(argv: list[str] | None = None) -> int:
     from . import window as window_module
 
     app = window_module.build_application(sys.argv[:1])
+    if sys.platform == "darwin":
+        # 外部 AX 扫描会让 Qt 的 Cocoa 无障碍桥读到已释放的 interface
+        # （上游 QTBUG-149612）；随包 PySide6 还没有修复，这里装上运行时修复。
+        # 细节、证据与删除时机见 folith/qt/macos_accessibility.py。
+        from . import macos_accessibility
+
+        macos_accessibility.install(log=log)
     # macOS 的"用本应用打开文件"事件可能在窗口建好之前到达：先排队，窗口就绪后再导入。
     external_files = ExternalFileQueue(
         lambda window, files: window.open_external_files(files))
@@ -240,6 +252,18 @@ def main(argv: list[str] | None = None) -> int:
     log(f"qt client started: data_dir={paths.data_dir} "
         f"build={adapter.app_identity().get('build_id')}")
 
+    # Start the UI health monitor for every scripted flow, not only for the
+    # interactive client: a run whose responsiveness was never measured must not
+    # look like a run with zero stalls in its performance record (#323 F3).
+    from .ui_health import UiHealthMonitor
+
+    monitor = UiHealthMonitor(app, main_window, paths, identity=adapter.app_identity())
+    try:
+        monitor.start()
+    except OSError as exc:
+        monitor.stop()
+        log(f"UI watchdog unavailable: {type(exc).__name__}")
+
     if args.selftest:
         from . import selftest
 
@@ -264,8 +288,18 @@ def main(argv: list[str] | None = None) -> int:
         report = flow.run(adapter, adapter.core, fixtures)
         report["identity"] = adapter.app_identity()
         report["engine"] = {"provider": config.provider, "model": config.model}
+        # The flow's own run record carries the measured window; this copy makes
+        # the selftest report say "measured / not measured" in one glance.
+        sampler = monitor.jank
+        report["gui_jank"] = (
+            {"measured": True, **sampler.snapshot()}
+            if sampler is not None and sampler.enabled
+            else {"measured": False,
+                  "reason": ("stall sampler disabled" if sampler is not None
+                             else "UI health monitor unavailable")})
         selftest.write_report(report, args.result)
         main_window.timer.stop()
+        monitor.stop()
         if lock is not None:
             lock.release()
         return 0 if report.get("ok") else 1
@@ -273,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         code = app.exec()
     finally:
+        monitor.stop()
         log("qt client exited")
     return int(code)
 

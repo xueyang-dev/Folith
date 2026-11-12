@@ -97,9 +97,11 @@ def split(job_id, expected, form_a, form_b):
 
 
 def _preview(state, card):
+    from folith import consistency as _consistency
     preview = cr.preview_concept_revision(
         card, state.get("entity_registry") or [], state.get("pairs") or [],
-        state.get("concept_decisions"))
+        state.get("concept_decisions"),
+        known_forms=_consistency.collect_known_forms(state))
     # Include pair identity/protection/review baselines, not only visible text.
     baselines = [{"index": r["segment_index"],
                   "pair": candidates.pair_signature(state["pairs"][r["segment_index"]])}

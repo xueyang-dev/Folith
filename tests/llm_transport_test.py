@@ -59,6 +59,10 @@ class _FakeOpenAI:
     def close(self):
         self.closed = True
 
+    def with_options(self, **kwargs):
+        self.request_options = kwargs
+        return self
+
 
 @pytest.fixture(autouse=True)
 def _clean_transport(tmp_path, monkeypatch):
@@ -113,6 +117,29 @@ def test_client_is_reused_within_thread():
     stats = llm_transport.client_registry_stats()
     assert stats["created"] == 1
     assert stats["reused"] == 2
+
+
+def test_explicit_single_attempt_disables_sdk_retries(monkeypatch):
+    seen = []
+    original = _FakeOpenAI.with_options
+    def capture(self, **kwargs):
+        seen.append(kwargs)
+        return original(self, **kwargs)
+    monkeypatch.setattr(_FakeOpenAI, "with_options", capture)
+    assert _call(max_attempts=1) == "OK"
+    assert seen == [{"max_retries": 0}]
+
+
+def test_gemini_single_attempt_is_passed_to_request(monkeypatch):
+    seen = []
+    def generate_content(**kwargs):
+        seen.append(kwargs["config"].http_options.retry_options.attempts)
+        return SimpleNamespace(text="OK", usage_metadata=None)
+    fake = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    monkeypatch.setattr(llm_transport, "get_registry", lambda: SimpleNamespace(acquire=lambda *args: fake))
+    result = core._call_llm_transport({"kind": "gemini"}, "Gemini", "key", "model",
+                                      "system", "prompt", max_attempts=1)
+    assert result == "OK" and seen == [1]
 
 
 def test_distinct_identity_dimensions_do_not_share_a_client():

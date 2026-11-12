@@ -63,8 +63,8 @@ def test_review_panel_offers_style_rule_only_for_style_findings():
     for category, expected in (("style", True), ("terminology", False)):
         panel.apply({"queue_items": [{**base, "category": category}],
                      "filter_counts": {"all": 1}, "readiness": {}, "progress": {}})
-        panel.list.setCurrentRow(0)
-        panel._render_detail()
+        # 队列表第 0 行是分组标题：按稳定标识选卡片，不按行号。
+        assert panel.select_item_id("finding:1")
         assert panel.style_rule_button.isVisibleTo(panel) is expected, category
 
 

@@ -53,6 +53,8 @@ LEGACY_ALLOWLIST_FILES = {
 LEGACY_LINE_ALLOWLIST = {
     "scripts/stage_tesseract_payload.py": ("FOLIOTHREAD_",),
     "docs/qt-beta/release-notes.md": ("兼容别名 `foliothread`",),
+    "docs/performance/translation-bottleneck-audit.md": ("FOLIOTHREAD_TRANSLATION_CONCURRENCY",),
+    "docs/performance/phase3-boundary-review/boundary_observations.py": ("FOLIOTHREAD_LLM_CLIENT_POOL",),
     "docs/performance-real-tasks-2026-10-08/evidence.json": ('"technical_log":',),
     # Technical identifiers and evidence paths, not brand prose: environment
     # variable names, the legacy asset fallbacks, the project schema id and the
@@ -79,6 +81,7 @@ LEGACY_LINE_ALLOWLIST = {
     "docs/desktop-handover.md": ("FOLIOTHREAD", "FolioThread"),
     "scripts/qt_release_checks.py": ("兼容别名 `foliothread`",),
     "README.en.md": ("`foliothread`",),
+    "README.zh-CN.md": ("`foliothread`",),
     "README.ru.md": ("`foliothread`",),
     "README.es.md": ("`foliothread`",),
     "README.md": (
@@ -160,6 +163,10 @@ LEGACY_LINE_ALLOWLIST = {
         "FolioThread/venv", 'version("foliothread")'),
     "docs/desktop-d2/evidence-log.md": (
         "FOLIOTHREAD_", "foliothread-app-icon.png", "`foliothread-*`"),
+    # 0.8.1 SIGSEGV 诊断报告与探针里记录的是本机 worktree / 解释器的绝对路径
+    # （复现命令与证据出处），不是品牌表述；与 docs/desktop-d0/environment.md 的
+    # "FolioThread/venv" 同类，属于证据路径而不是旧品牌 prose。
+    "docs/segfault-fix-report-0.8.1.md": ("FolioThread/venv",),
     "scripts/release_checks.py": ('"/FolioThread/venv"',),
     "scripts/write_desktop_build_info.py": ("editable `foliothread 0.4.0`",),
     "scripts/d0_slice_runner.py": ("FOLIOTHREAD_",),
@@ -185,7 +192,19 @@ def _iter_text_files():
                            ".workbuddy-ai/", ".serena/", ".localize-anything/", "exports/", "tmp/", "skills/", "tests/",
                            # Generated working areas (see .gitignore): benchmark output
                            # and the local video scaffold are not shipped source.
-                           "benchmark/", "video/")):
+                           # `research/` is untracked local research material (not shipped
+                           # source); its docs quote absolute file:/// paths that contain
+                           # the checkout directory name, which is not a brand statement.
+                           "benchmark/", "video/",
+                           # Untracked local material: research notes and promo
+                           # deliverables quote absolute paths that contain the
+                           # checkout directory name. Not shipped source, not a
+                           # brand statement.
+                           "research/", "promo/", "promo-fact-check-20261031/",
+                           "promo-fact-check-20261101/",
+                           # 审查提示词里带着示例用的仓库绝对路径（含旧目录名），
+                           # 那是给审查者执行命令用的，不是品牌表述。
+                           "docs/ui-overhaul/95-review-prompt.md")):
             continue
         if rel.endswith(".egg-info/SOURCES.txt") or ".egg-info/" in rel:
             continue
@@ -214,16 +233,15 @@ def _legacy_hits() -> list[str]:
 def test_public_brand_constants_are_canonical():
     assert brand.APP_NAME == "Folith"
     assert brand.APP_NAME_ZH == "译页"
-    assert brand.WORDMARK == "Folith·译页"
+    assert brand.WORDMARK == "Folith · 译页"
     assert brand.TAGLINE == "Agentic Translation Workspace"
     assert brand.TAGLINE_ZH == "智能体翻译工作台"
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'description = "Folith·译页 — Agentic Translation Workspace"' in pyproject
-    assert "Folith·译页" in readme
-    assert "Agentic Translation Workspace" in readme
-    assert "智能体翻译工作台" in readme
+    assert 'description = "Folith · 译页 — Agentic Translation Workspace"' in pyproject
+    assert "Folith · 译页" in readme
+    assert "Make every creation global." in readme
 
 
 def test_legacy_brand_hits_are_allowlisted():

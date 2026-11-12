@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import threading
 
 import fitz
@@ -158,7 +159,8 @@ def test_interrupted_stream_resumes_and_appends(streaming_job, monkeypatch):
 
 def test_page_workers_default_and_clamp(monkeypatch):
     monkeypatch.delenv("FOLIOTHREAD_VLM_PAGE_WORKERS", raising=False)
-    assert page_worker_count() == 5
+    # #220 C1: 默认值按连接分档——不知道连接时用保守的 relay 档（2 路）。
+    assert page_worker_count() == 2
     monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "40")
     assert page_worker_count() == 8
     assert page_worker_count(1) == 1
@@ -254,6 +256,28 @@ def test_layout_flags_beat_punctuation_in_both_directions():
     assert _assemble([[SemanticBlock("paragraph", LONG_CLOSED, continues_next=True)],
                       [SemanticBlock("paragraph", "Then she sat down.")]]) \
         == [LONG_CLOSED + " Then she sat down."]
+
+
+def test_a_page_read_again_is_not_glued_to_text_that_was_finalised_apart():
+    """Pages recovered late were appended and re-sorted, never joined; a resumed read must agree."""
+    from folith.document_ir import PageEnvelope
+    from folith.spatial_index import SpatialTextIndex, align_blocks
+
+    pages = [[SemanticBlock("paragraph", LONG_CLOSED)],
+             [SemanticBlock("paragraph", "Then she sat down.", continues_previous=True)]]
+
+    def assemble(known):
+        assembler = VisualDocumentAssembler("x.pdf", known)
+        for index, blocks in enumerate(pages):
+            envelope = PageEnvelope("x.pdf", f"p{index + 1}", index, 100, 100, 0)
+            spatial = SpatialTextIndex(envelope.page_id)
+            assembler.add_page(envelope, (PageUnderstanding(blocks, "vlm", {}),
+                                          align_blocks(envelope, blocks, spatial), spatial, 0.0))
+        return assembler.finish()[0]
+
+    assert assemble([]) == [LONG_CLOSED + " Then she sat down."]                    # first read joins
+    assert assemble([LONG_CLOSED, "Then she sat down."]) == [LONG_CLOSED, "Then she sat down."]
+    assert assemble([LONG_CLOSED + " Then she sat down."]) == [LONG_CLOSED + " Then she sat down."]
 
 
 def test_text_rules_when_the_model_gives_no_layout_flags():
@@ -391,10 +415,13 @@ def test_progress_moves_per_page_and_pause_does_not_deadlock(slow_job):
     # runtime_state keeps only the latest 24 user events. Later translation
     # telemetry can evict the early pause event; check the durable log instead.
     events = core.read_runtime_events("pause-job", visibility="user")
-    assert any(e["event"] == "scan_pausing" for e in events)
-    assert any(e["event"] == "job_paused" for e in events)
-    messages = [e["message"] for e in events]
-    assert any("正在暂停：等正在识别的页完成" in m for m in messages)
+    names = [e["event"] for e in events]
+    assert names.index("job_paused") < names.index("job_continued")
+    # A request arriving just before a checkpoint can go directly to paused.
+    if "scan_pausing" in names:
+        waiting = names.index("scan_pausing")
+        assert waiting < names.index("job_paused")
+        assert "正在暂停：等正在识别的页完成" in events[waiting]["message"]
     # 事件日志不逐页刷屏：30 页最多每 5 页一条进度事件。
     assert sum(1 for e in events if e["event"] == "scan_progress") <= 7
 
@@ -513,6 +540,10 @@ def test_a_page_level_service_error_skips_the_page_and_the_stream_finishes(tmp_p
     assert [row["page"] for row in snapshot["failed_pages"]] == [3]
     assert snapshot["failed_pages"][0]["reason"] == "服务商超时"
     assert (tmp_path / "document_understanding" / "2-failure.json").exists()
+    # #220 C3：文件名 0 基，记录里 1 基的 page 与 0 基的 page_index 双记，
+    # 和快照里的 failed_pages（page=3）能直接对上。
+    recorded = json.loads((tmp_path / "document_understanding" / "2-failure.json").read_text(encoding="utf-8"))
+    assert recorded["page"] == 3 and recorded["page_index"] == 2
     pages = snapshot["document"]["pages"]
     assert pages[2]["recognition"] == "failed" and pages[2]["recognition_error"]["http_status"] == 524
     assert not any("Page 3 " in p for p in snapshot["paragraphs"])  # 没有悄悄拼进别的文字

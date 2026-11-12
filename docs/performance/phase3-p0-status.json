@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-26",
+  "branch": "perf/phase3-runtime-optimization",
+  "head": "397adb22d8de46edb0781dc75e53661318a5cb11",
+  "uncommitted": true,
+  "implementation_report": "docs/performance/phase3-p0-fixes.md",
+  "independent_report": "docs/performance/phase3-p0-reacceptance/report.md",
+  "independent_verdict": "PASS within tested local P0 contracts",
+  "findings": [
+    {
+      "finding_id": "BR01",
+      "status": "closed within independently tested scope",
+      "related": [
+        "F04"
+      ]
+    },
+    {
+      "finding_id": "BR02",
+      "status": "closed within independently tested scope",
+      "related": [
+        "F06",
+        "F08"
+      ]
+    }
+  ],
+  "regression_passed_unique": 707,
+  "windows_skipped": 4,
+  "independent_positive_tests_passed": 13,
+  "historical_observations": {
+    "normal_passed": 23,
+    "old_defect_assertions_no_longer_hold": 8
+  },
+  "default_scheduler": "c2",
+  "c4_default_promotion": false,
+  "unverified": [
+    "real Windows",
+    "real provider/network/billing and all SDK retry combinations",
+    "host power loss",
+    "persistent whole-volume ENOSPC",
+    "full repository suite",
+    "full Phase 3 completion"
+  ]
+}

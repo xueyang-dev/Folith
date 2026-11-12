@@ -720,13 +720,15 @@ def test_delivery_asset_open_and_reveal_target_the_frozen_file(client, monkeypat
     window.refresh_workbench(force=True)
 
     workbench = window.workbench
-    assert workbench.asset_list.count() >= 2
-    names = [workbench.asset_list.item(i).text()
-             for i in range(workbench.asset_list.count())]
-    assert "translation.docx" in names
-    workbench.asset_list.setCurrentRow(names.index("translation.docx"))
-    workbench._open_asset()
-    workbench._reveal_asset()
+    # 交付工作区的公开读 API：分组后的文件行（技术附件收起时也在其中）。
+    names = workbench.delivery.file_names()
+    assert len(names) >= 2, names
+    assert "translation.docx" in names, names
+    row = workbench.delivery.row_for("translation.docx")
+    assert row is not None
+    assert row.entry.missing is False
+    workbench._open_asset("translation.docx")
+    workbench._reveal_asset("translation.docx")
     app.processEvents()
 
     assert opened and opened[-1].endswith("translation.docx")
@@ -1159,18 +1161,18 @@ def test_declared_delivery_formats_are_the_ones_produced(client):
         # 完成回调（负责立刻刷新面板）可能还没被主线程处理。等"用户看到的东西"
         # 比等状态更接近真实体验，也顺带钉住"显式动作立即刷新"这条行为。
         def panel_has_assets() -> bool:
-            return any(window.workbench.asset_list.item(index).text()
-                       == "translation.docx"
-                       for index in range(window.workbench.asset_list.count()))
+            return "translation.docx" in window.workbench.delivery.file_names()
 
         assert _pump(app, 180, panel_has_assets), (
             "冻结交付后交付页没有列出资产："
-            f"{[window.workbench.asset_list.item(i).text() for i in range(window.workbench.asset_list.count())]}")
-        names = [window.workbench.asset_list.item(i).text()
-                 for i in range(window.workbench.asset_list.count())]
+            f"{window.workbench.delivery.file_names()}")
+        names = window.workbench.delivery.file_names()
         assert "translation.docx" in names
         assert "bilingual.docx" not in names
         assert "terms.xlsx" not in names
+        # F11：冻结之后，成品要回到画面里（封面 + 版本）。
+        assert window.workbench.delivery_product_row.isHidden() is False, (
+            "冻结交付后交付页没有显示成品封面行")
     finally:
         stub.stop()
 
@@ -1636,7 +1638,11 @@ def test_workbench_excludes_a_segment_and_restores_it_from_the_delivery_tab(clie
     # 排除第二段（确认框在自动化下直接通过）。
     assert workbench.select_segment(1) is True
     app.processEvents()
-    assert workbench.exclude_button.isVisible() is True
+    # F12（2026-11-04 审校）：常驻动作只留三四个，「排除」收进「更多」菜单；
+    # 这里改断言「更多」按钮在场且带着段落操作，动作本身仍走同一个 exclude_button。
+    assert workbench.segment_more_button.isVisible() is True
+    assert workbench.segment_more_button.menu() is not None
+    assert workbench.segment_more_button.menu().actions()
     workbench.exclude_button.click()
     assert _pump(app, 120, lambda: workbench.visible_segment_count() == 2)
     assert workbench.segment_row_text(0, 1) == "第一段。"
@@ -3220,23 +3226,11 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
     job_b = delivered("stale-b", "B 的译文。", with_pdf=False)
 
     def assets() -> list[str]:
-        """只取**文件行**：清单里还有按用途分组的小标题行（不可选中）。"""
-        names = []
-        for index in range(window.workbench.asset_list.count()):
-            item = window.workbench.asset_list.item(index)
-            data = item.data(Qt.ItemDataRole.UserRole) or {}
-            if data.get("kind") == "asset":
-                names.append(item.text())
-        return names
+        """只取**文件行**：交付工作区的 file_names() 不含分组标题。"""
+        return window.workbench.delivery.file_names()
 
     def group_titles() -> list[str]:
-        titles = []
-        for index in range(window.workbench.asset_list.count()):
-            item = window.workbench.asset_list.item(index)
-            data = item.data(Qt.ItemDataRole.UserRole) or {}
-            if data.get("kind") == "header":
-                titles.append(item.text())
-        return titles
+        return [card.group.title for card in window.workbench.delivery._groups]
 
     open_job_and_wait(window, job_a)
     window.refresh_workbench(force=True)
@@ -3249,9 +3243,10 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
     import time as _time
 
     window.workbench._delivery_rendered = True
-    window.workbench._delivery_key = (len(window.workbench._snapshots),
-                                      str(window.workbench._state.get(
-                                          "delivery_status") or ""))
+    # 节流键包含任务标识（views._render_delivery）：钉住"刚刚渲染过 A"这件事。
+    window.workbench._delivery_key = (
+        job_a, len(window.workbench._snapshots),
+        str(window.workbench._state.get("delivery_status") or ""))
     window.workbench._delivery_preview_at = _time.monotonic()
     open_job_and_wait(window, job_b)
     window.refresh_workbench(force=True)
@@ -3265,14 +3260,13 @@ def test_switching_between_two_delivered_tasks_shows_the_right_assets(client):
     # 要钉住的是"A 的文件一个都不能留在 B 的清单里"。
     assert sorted(names_b) == sorted(expected_b), (names_b, expected_b)
     assert "translation.pdf" not in names_b, names_b
-    # 清单按用途分组：分组标题存在，且**只有**文件行会被当成资产（A 的 PDF 不能借
-    # 标题行的身份留下来）。标题行不可选中，否则"打开"会指向一个不存在的文件。
+    # 清单按内容类型分组：分组标题存在，但 file_names() 只含真实文件行。
+    # A 的 PDF 不能借"分组标题"的身份留下来，否则"打开"会指向一个不存在的文件。
     assert group_titles(), "交付清单缺少分组标题"
-    for index in range(window.workbench.asset_list.count()):
-        item = window.workbench.asset_list.item(index)
-        data = item.data(Qt.ItemDataRole.UserRole) or {}
-        if data.get("kind") == "header":
-            assert not (item.flags() & Qt.ItemFlag.ItemIsSelectable), item.text()
+    for title in group_titles():
+        assert title not in names_b, (title, names_b)
+    assert window.workbench.delivery.row_for("translation.pdf") is None
+    assert window.workbench.delivery.row_for("translation.docx") is not None
 
 
 def test_switching_jobs_clears_the_search_but_keeps_the_status_filter(client):
@@ -3743,13 +3737,23 @@ def test_resize_and_fullscreen_round_trip_keep_the_workbench_usable(client):
     assert window.minimumHeight() <= 875, (
         f"主窗口最小高度 {window.minimumHeight()} 超过 1440x900 屏幕的可用高度（约 875pt）")
 
-    # 缩到"允许的最小尺寸"和"更大的尺寸"都必须精确生效（在这个范围内窗口可以自由缩放）
+    # The sidebar transition changes the layout's minimum until it settles.
+    assert _pump(app, 2, lambda: window._sidebar_settle is None)
+    # The previous page's explicit minimum must not cap the new layout.
+    window.resize(1400, 900)
+    _pump(app, 0.5)
+    window.setMinimumSize(1400, 900)
+    window._sync_minimum_size()
+    assert window.minimumWidth() < 1400 and window.minimumHeight() < 900
+
+    # At the settled minimum and at a larger size the workbench stays usable.
     minimum = window.minimumSize()
-    for width, height in ((minimum.width(), minimum.height()), (1400, 900)):
+    for width, height, tolerance in ((minimum.width(), minimum.height(), 1), (1400, 900, 0)):
         window.resize(width, height)
         _pump(app, 0.5)
-        assert window.size().width() == width and window.size().height() == height, \
-            f"resize({width},{height}) 没有生效：{window.size()}"
+        assert (abs(window.width() - width) <= tolerance
+                and abs(window.height() - height) <= tolerance), \
+            f"resize({width},{height}) 没有生效：{window.size()}（容差 {tolerance}px）"
         assert workbench.visible_segment_count() == rows_before, \
             f"缩放到 {width}x{height} 之后段落数变了"
         assert workbench.target_edit.isVisible(), f"{width}x{height} 下译文框不可见"
@@ -3936,14 +3940,20 @@ def test_exit_closes_an_open_settings_window(client, monkeypatch):
 
 
 class _HeldRunner:
-    """Hold operation callbacks; navigation still runs through the real pool."""
+    """Hold operation callbacks; background maintenance keeps running.
+
+    ``open-job`` and the incremental poll reads (``poll-*``) belong to the
+    window's own machinery (A1): they must keep running so the workbench
+    settles, and they are not "operations" the tests below are counting.  Only
+    real user operations are held for inspection.
+    """
 
     def __init__(self, navigation_submit) -> None:
         self.calls: list[dict] = []
         self.navigation_submit = navigation_submit
 
     def submit(self, fn, *args, on_done=None, on_error=None, label="", **kwargs):
-        if label == "open-job":
+        if label == "open-job" or str(label).startswith("poll"):
             return self.navigation_submit(fn, *args, on_done=on_done, on_error=on_error,
                                           label=label, **kwargs)
         self.calls.append({"fn": fn, "args": args, "kwargs": kwargs,
@@ -4324,21 +4334,47 @@ def test_save_acknowledges_latest_queued_text_only(client, monkeypatch):
 def test_sidebar_transition_lays_the_page_out_once(client, monkeypatch):
     """P4 审校第 5 条：侧栏开合时页面按终态宽度排一次版、从侧栏下滑出，
     不在每一帧改变页面宽度（那会让任务库卡片与段落网格逐帧重排）。"""
+    from folith.qt import views as views_module
+
     adapter, core, window, app, tmp = (client[key] for key in
                                        ("adapter", "core", "window", "app", "tmp"))
-    job_id = _seed_job_for_keyboard(adapter, core, tmp, "sidebar-motion.docx", ["甲。", "乙。"])
+    _seed_job_for_keyboard(adapter, core, tmp, "sidebar-motion.docx", ["甲。", "乙。"])
     window.show_home()
     _pump(app, 0.5)
     monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    # 先摆回展开态：前面的用例可能已经把侧栏收起来，那样 240 → 0 没有位移，
+    # 动画会走同步分支（CI 上 setter 只被调用一次）。
+    window.sidebar_clip.setFixedWidth(views_module.HomeView.SIDEBAR_WIDTH)
+    window.sidebar_clip.show()
+    _pump(app, 0.05)
     window._motion._last.clear()  # not a "rapid repeat" of the first navigation
-    widths = []
-    open_job_and_wait(window, job_id)
-    while window._motion.running("sidebar"):
-        widths.append(window.stack.width())
-        app.processEvents()
-        time.sleep(0.01)
-    _pump(app, 0.2)
-    assert len(widths) > 2, "the transition should have run for a few frames"
+
+    widths: list[int] = []
+    original_animate = window._motion.animate
+
+    def recording_animate(key, start_value, end_value, setter, **kwargs):
+        if key != "sidebar":
+            return original_animate(key, start_value, end_value, setter, **kwargs)
+
+        def recording_setter(value):
+            widths.append(window.stack.width())
+            return setter(value)
+
+        return original_animate(key, start_value, end_value, recording_setter, **kwargs)
+
+    monkeypatch.setattr(window._motion, "animate", recording_animate)
+    # 直接切页，让过渡只被触发一次：走 open_job 的话同一帧里可能连触发两次，
+    # 第二次会被 motion 当成"快速重复"直接跳帧。
+    window.stack.setCurrentWidget(window.workbench)
+    # 等过渡真的结束（有界）：固定 0.4s 在忙的 CI 机器上可能还没播完，
+    # 于是 settled() 没跑、侧栏还是可见的（macOS candidate 上就是 assert not True）。
+    assert _pump(app, 5.0, lambda: not window._motion.running("sidebar")), \
+        "the transition should have finished"
+    _pump(app, 0.1)
+
+    assert len(widths) >= 2, (
+        f"the transition should have run (setter calls={len(widths)}, "
+        f"running={window._motion.running('sidebar')})")
     assert len(set(widths)) == 1, f"page width changed during the transition: {sorted(set(widths))}"
     assert not window.sidebar_clip.isVisible()
     assert window.stack.width() == window.stack_clip.width(), "the page follows the window again"
@@ -4768,7 +4804,9 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
     job = adapter.import_documents([source], window.config)[0].job_id
     open_job_and_wait(window, job)
     setup = window.workbench.setup_panel
-    assert _pump(app, 5, lambda: setup.source_size().get("segments") == 4)
+    scope_button = setup.source_section.scope_button
+    assert _pump(app, 5, lambda: setup.source_size().get("segments") == 4
+                 and scope_button.isEnabled()), "the outline must be ready before opening scope"
     observed = []
 
     def choose_scope():
@@ -4787,7 +4825,7 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
             dialog.reject()
 
     QTimer.singleShot(0, choose_scope)
-    window.workbench.setup_panel.source_section.scope_button.click()
+    scope_button.click()
     assert observed and "将排除" in observed[0], observed
     assert _pump(app, 5, lambda: setup.source_size().get("segments") == 2)
     state = client["core"].load_job_state(job)
@@ -4802,3 +4840,49 @@ def test_setup_scope_button_opens_real_dialog_and_saves_a_plan(client):
     dialog.close()
     window._apply_scope_restore(job, list(dialog._record_checks))
     assert _pump(app, 5, lambda: setup.source_size().get("segments") == 4)
+
+
+def test_inspector_status_line_is_translated(client):
+    """阿拉伯语界面下，检查器标题下的状态行（"11/18 · 已审校"）和段落事实不能漏中文。"""
+    import re
+
+    from folith.qt import i18n as i18n_module
+
+    adapter = client["adapter"]
+    core = client["core"]
+    window = client["window"]
+    app = client["app"]
+    tmp = client["tmp"]
+
+    source = tmp / "status.docx"
+    source.write_bytes(_make_docx(["第一段。", "第二段。"]))
+    job_id = adapter.import_documents([source], adapter.EngineConfig(target_lang="简体中文"))[0].job_id
+    state = core.load_job_state(job_id) or {}
+    state["paras"] = ["第一段。", "第二段。"]
+    state["pairs"] = [
+        {"source": "第一段。", "target": "First.", "reviewed": True, "segment_uid": "s1"},
+        {"source": "第二段。", "target": "Second.", "segment_uid": "s2"},
+    ]
+    state["p1_done"] = True
+    state["p2_done"] = True
+    core.save_job_state(job_id, state)
+    i18n_module.set_language("ar")
+    # main 的 open_job 是异步的：等它的回调，而不是假定打开是同步的。
+    opened = []
+    window.open_job(job_id, after_open=lambda: opened.append(job_id))
+    deadline = time.monotonic() + 10
+    while not opened and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert opened, "打开任务没有完成"
+
+    workbench = window.workbench
+    cjk = re.compile(r"[一-鿿]")
+    for index, status in ((0, "已审校"), (1, "待审校")):
+        assert workbench.select_segment(index) is True
+        app.processEvents()
+        assert workbench.segment_status.text().endswith(i18n_module.tr(status)), \
+            workbench.segment_status.text()
+        for label in (workbench.segment_status, workbench.fact_state, workbench.fact_review,
+                      workbench.fact_source, workbench.fact_excluded):
+            assert not cjk.search(label.text()), label.text()

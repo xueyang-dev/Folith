@@ -17,7 +17,7 @@
 <!-- status-identity:begin -->
 - 候选身份：`app_version=0.6.0`、`build_id=git:9774dc8`、`worktree_dirty=false`、PyInstaller 6.22.3、built_at `2026-10-17T20:44:57+00:00`
 <!-- status-identity:end -->
-- **声明最低系统：macOS 15.7.5**（发布负责人 2026-10-13 确认；CI 产物的原生闭包上限由随包 Tesseract 决定；不声称支持更低版本）。本地开发候选 `git:28f708b` 的原生闭包实测为 15.0.0（下方身份块与发行说明按构建记录生成，写的就是这个实测值），只是该本地包的观测值，不改变发布声明
+- **声明最低系统：macOS 15.8.1**（2026-10-31 由发布负责人从 15.7.5 改为 15.8.1：CI 现在安装的 Homebrew Tesseract 及其依赖的最低系统为 15.8.1，原生闭包实测同为 15.8.1；不声称支持更低版本）。本地开发候选 `git:28f708b` 的原生闭包实测为 15.0.0（下方身份块与发行说明按构建记录生成，写的就是这个实测值），只是该本地包的观测值，不改变发布声明
 
 ### 2026-10-17 0.6 整合状态
 
@@ -34,7 +34,7 @@
 
 ### 2026-10-13 CI 历史候选范围
 
-当前 freeze 候选最低系统为 **macOS 15.7.5**，已由发布负责人确认。PySide6 固定为已验证的 6.11.2，其绑定库最低版本为 15.0；CI 的 Tesseract 可执行文件和库最低版本为 15.7.5，构建声明保留完整 patch 版本。Release gate 尚未全部通过，不能沿用下文历史候选的工程门禁结论。候选身份块由当前构建刷新；下文 2026-10-11 及更早的记录、S8 的 15.0 实测值保留为历史事实。
+当前 freeze 候选最低系统为 **macOS 15.8.1**（2026-10-31 由 15.7.5 改定，原因见上）。PySide6 固定为已验证的 6.11.2，其绑定库最低版本为 15.0；CI 的 Tesseract 可执行文件和库最低版本为 15.8.1（此前为 15.7.5），构建声明保留完整 patch 版本。Release gate 尚未全部通过，不能沿用下文历史候选的工程门禁结论。候选身份块由当前构建刷新；下文 2026-10-11 及更早的记录、S8 的 15.0 实测值保留为历史事实。
 
 ### 2026-10-11 历史范围与核验
 
@@ -51,7 +51,7 @@
 | 人工强制项 | **0/7 完成**（本轮 computer use 回传：C.2′ → **抓到真缺陷并已修复**；A.8′ 连接 PASS / 任务链被 AX 崩溃阻断；C.12 空闲 PASS / 运行中未验证；A.1′、A.7″、B.1、D.9 见下方明细）。详见 [computer-use-acceptance-2b74924a-2026-10-05.md](computer-use-acceptance-2b74924a-2026-10-05.md) |
 | 公开分发 | **DEFERRED**：Developer ID / 硬化运行时 / 签名 / 公证 / staple / 真实下载——属另行授权范围，不阻塞受邀 Beta |
 | 技术阻断 | **无**（不依赖人工项的部分已全部收口；剩余项均为"只有人能判定"） |
-| 证据规模 | 证据日志 **202 条**（E1–E202）、66 个轮次小节（S1–S8 + Beta R2–R71） |
+| 证据规模 | 证据日志 **211 条**（E1–E211）、67 个轮次小节（S1–S8 + Beta R2–R72） |
 
 ## 1. 入口与产物
 
@@ -225,18 +225,27 @@ venv/bin/python scripts/qt_release_checks.py --check-notes
 
 ## 4. 阻断与缺口
 
-- **平台级风险（非本候选独有，且应用侧无解）**：macOS 26/27 上外部辅助功能扫描
+- **平台级风险已缓解（上游 QTBUG-149612，运行时修复）**：macOS 26/27 上外部辅助功能扫描
   （AI "Computer Use" / VoiceOver / 窗口管理器 AX 客户端）遍历界面会让 Qt 平台插件崩溃
   （栈顶 `libqcocoa` + `NSAccessibilityAttributeAccessorInfo`）。上游根因 **QTBUG-149612**
-  （synthesized table elements 会删掉父级 table 的 accessibility interface；影响 Qt
-  6.11.0–6.11.2，截至 2026-10-05 无修复版本，Gerrit 765434 评审中），calibre/Qt Creator/
-  Anki/FreeCAD 同样如此。**R62 已用 `scripts/qt_ax_scan_probe.py` 稳定复现（3/3，另加对照
-  2/2）**，并实测**没有可用的应用侧开关**：`QT_ACCESSIBILITY=0` 在 Qt 6.11 完全无效、
-  `QAccessible.setActive(False)` 会被系统在 AX 客户端接入时重新激活（每 100ms 重申也照崩）。
-  因此 R61 的 `FOLITH_QT_DISABLE_ACCESSIBILITY=1` **已删除**——不能给测试者一个不存在的
-  安全感。**验收请用人工键鼠、不挂 AX 代理**（人工路径不受影响）。2026-10-05 的人工验收
-  因此未到达译文框（输入法项被阻断），详见
-  [computer-use-acceptance-2026-10-05.md](computer-use-acceptance-2026-10-05.md)。
+  （synthesized table elements 会删掉父级 table 的 accessibility interface），calibre/Qt Creator/
+  Anki/FreeCAD 同样如此——**不是本候选的业务代码**。上游修复 commit `8148c48d` 已于
+  2026-10-27 合入 qt/qtbase `dev` + `6.12`（fixVersions 6.8.10 / 6.12.1 / 6.13.0），但随包
+  PySide6 6.11.2 不含它（6.11.3 于 2026-10-26、6.12.0 于 2026-10-08 发布，都早于合入）。
+  应用现在启动时安装 `folith/qt/macos_accessibility.py`，把**两处**删除点都改为不删除 interface
+  （`-[QMacAccessibilityElement dealloc]` 先清零 `axid`，`+[QMacAccessibilityElement removeElementsFromCache:]`
+  空实现；只改 `dealloc` 不够），只对 Qt 6.11.x / 6.12.0 生效，升级到 Qt 6.12.1+ 后自动停用。
+  **因果证据**：9 份用户 `.ips` 逐帧同签名（E203）、上游缺陷/修复事实（E204）、确定性复现器
+  A/B（无修复 exit 139 / v2 exit 0；selectedChildren 仍 7 个、父表 interface 仍可解析，E205）、
+  25 次循环（无修复 cycle 0 即死 / v2 25/25，E206）。**支持性证据**：重建 `.app` 启动日志
+  确认已安装（E208）；应用内 AX 扫描探针在 v2 下源码无动作 3/3 ALIVE、源码动作路线 3/3
+  ALIVE、冻结 `.app` 2/2 ALIVE，均无新 `.ips`——**但 `FOLITH_QT_AX_WORKAROUND=0` 对照臂也
+  4/4 ALIVE、无 `.ips`**，本机未复现用户那条崩溃，故只算「没有反证」（E207；v1 只改一半的
+  3/3 崩溃是 partial-patch artefact，E209）。**未验证**：真实 Computer Use 在重建候选上的
+  完整路径（E211）、冻结 DMG、AX 表格/行/单元格是否仍可见（E210）。**版本矩阵已验证**：
+  PySide6 6.11.3 / 6.12.0 各 3/3 崩溃、修复后各 3/3 完成（E212）。**旧口径「验收请用人工键鼠、不挂 AX 代理」自 2026-11-06 起作废**（可以用 AX
+  代理/Computer Use 辅助验收，判定仍以人工为准）。2026-10-05 的人工验收未到达译文框（输入法项
+  被当时的上游崩溃阻断），详见 [computer-use-acceptance-2026-10-05.md](computer-use-acceptance-2026-10-05.md)。
 - 其余无技术阻断。剩余必需项依赖人工/外部条件（第 16–20 项）或外部凭据（签名/公证）。
 - 远端 CI 未运行（无远端授权）：`qt-macos` job 已按同一解释器环境接线，本机命令可复现，**不宣称远端 CI 通过**。
 - 项目删除入口已提供（见 §2 的 12k：确认、运行中保护、删除前备份）；不为了补旧探针回到 Streamlit 调试。
@@ -252,15 +261,16 @@ venv/bin/python scripts/qt_release_checks.py --check-notes
 2. **机器侧已无剩余工作**：166 用例、20 步验证链（`bash scripts/qt_beta_chain.sh`）、155 文件回归、
    文档一致性审计、重复定义检查——全部通过；终局核对见证据日志 R60。
 3. **唯一剩余路径 = 7 条强制人工项**（A.1′、A.7″、A.8′、B.1、C.2′、C.12、D.9）。
-   请用**人工键鼠**完成——不要挂 AX 代理/Computer Use：那是上游 QTBUG-149612 的触发条件，
-   与本候选无关，且实测没有任何应用侧开关能挡住它。回传后：
+   2026-11-06 更新：AX 崩溃（QTBUG-149612）已由启动时的运行时修复缓解，"不挂 AX 代理"的旧
+   要求作废——7 条人工项仍须由人判定，但可以挂 AX 代理 / Computer Use 辅助操作与复现；
+   回传时请附 A/B 结果（默认启动 vs `FOLITH_QT_AX_WORKAROUND=0`）。
    **需 7 条强制项全部通过后**才可把结论改为 `PRIVATE_BETA_READY`；有失败项则我按失败项
    定位修复后出新候选重验。
 4. 公开分发（Developer ID / 签名 / 公证 / staple / 真实下载）等待外部条件与另行授权。
-5. **R63 已把崩溃的后果说清楚**（可对测试者直说）：挂 AX 代理会崩进程，但**不会弄坏任务**——
+5. **R63 已把崩溃的后果说清楚**（可对测试者直说）：撞上这条上游缺陷会崩进程，但**不会弄坏任务**——
    崩溃前后全部任务的指纹（行数/状态/人工修改/交付资产/原文与译文哈希/文件大小）逐项一致、
    无残留进程、同一数据目录可重开继续用（E173）；代价只有最后一次自动保存（1.5s）之后的输入（E172）。
-   两个探针可随时复跑：`scripts/qt_ax_scan_probe.py`（复现崩溃）与
+   两个探针可随时复跑：`scripts/qt_ax_scan_probe.py`（复现/验证崩溃）与
    `scripts/qt_ax_crash_aftermath_probe.py`（后果检查，含可证伪的负控 E174）。
 6. **R64 修了两个 §6.B 的真实问题**（已重建候选，身份见 §1）：纯键盘用户此前**永远按不动**
    「打开任务」（灰按钮还会被 Tab 焦点链跳过）→ 现在表格获得焦点时当前行成为选中行；

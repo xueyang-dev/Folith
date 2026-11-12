@@ -35,6 +35,11 @@ class StepButton(QAbstractButton):
 
     HEIGHT = 28
     MARKER = 12
+    #: 窄窗里标签可以省略到的最小宽度（左侧内边距 + 一个省略号 + 右侧内边距）。
+    #: 胶囊里的四步都按这个下限参与最小宽度计算：980 逻辑 px 的窗口要把工具栏
+    #: 一起收窄，步骤标签先省略、完整文字留在提示与无障碍名称里，而不是让整页
+    #: 拒绝缩到目标宽度。
+    MIN_LABEL = 28
 
     def __init__(self, step_id: str, number: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,7 +51,11 @@ class StepButton(QAbstractButton):
         self._active = False
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        # ``Minimum`` treats sizeHint as a floor, which would keep every stage
+        # hint in the toolbar and block window narrowing. ``Preferred`` may
+        # shrink to minimumSizeHint, where paintEvent omits the nonessential
+        # hint but retains the stage label and accessible description.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(self.HEIGHT)
 
     # ---- 数据 ---------------------------------------------------------------
@@ -60,9 +69,10 @@ class StepButton(QAbstractButton):
         self.setEnabled(not inert)
         self.setCursor(Qt.CursorShape.ArrowCursor if inert
                        else Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(i18n.tr('译前设置已保存到本任务')
-                        if self.step_id == stage_model.PREPARE and state == stage_model.DONE
-                        else "")
+        tip = i18n.tr('译前设置已保存到本任务') \
+            if self.step_id == stage_model.PREPARE and state == stage_model.DONE \
+            else f"{label} {hint}".strip()
+        self.setToolTip(tip)
         self.setAccessibleName(f"{label} {hint}".strip())
         self.updateGeometry()
         self.update()
@@ -101,16 +111,28 @@ class StepButton(QAbstractButton):
         return self._state in (stage_model.DONE, stage_model.ATTENTION)
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt 命名
+        return self._size_hint(show_hint=self._shows_hint())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        # The hint is useful context, not an input that has to remain at every
+        # window width. Keeping it in the minimum width made the unified toolbar
+        # (and therefore the workbench) refuse to shrink below a normal desktop
+        # width. The label may elide too: paintEvent keeps it inside the capsule
+        # and the full text stays in the tooltip and accessible name, so a
+        # 980-logical-px window can still show all four steps.
+        width = 13 + self.MIN_LABEL + 13
+        if self._has_marker():
+            width += self.MARKER + 5
+        return QSize(width, self.HEIGHT)
+
+    def _size_hint(self, *, show_hint: bool) -> QSize:
         label_font, hint_font = self._fonts()
         width = 13 + QFontMetrics(label_font).horizontalAdvance(self._label) + 13
         if self._has_marker():
             width += self.MARKER + 5
-        if self._shows_hint():
+        if show_hint:
             width += 6 + QFontMetrics(hint_font).horizontalAdvance(self._hint)
         return QSize(width, self.HEIGHT)
-
-    def minimumSizeHint(self) -> QSize:  # noqa: N802
-        return self.sizeHint()
 
     # ---- 绘制 ---------------------------------------------------------------
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt 命名
@@ -133,8 +155,10 @@ class StepButton(QAbstractButton):
         # 从右到左的语言（阿拉伯语）里整条步骤条是镜像的：自绘内容也要跟着镜像。
         rtl = self.isRightToLeft()
         label_font, hint_font = self._fonts()
-        label_width = QFontMetrics(label_font).horizontalAdvance(self._label) + 2
-        show_hint = self._shows_hint()
+        # QHBoxLayout may allocate the minimum width before the preferred width
+        # is available. Keep the hint in the accessible name and tooltip rather
+        # than drawing it into the neighbouring step when compact.
+        show_hint = self._shows_hint() and self.width() >= self.sizeHint().width()
         hint_width = (QFontMetrics(hint_font).horizontalAdvance(self._hint) + 2) if show_hint else 0
         height = self.height()
         cursor = 13.0
@@ -164,6 +188,14 @@ class StepButton(QAbstractButton):
             label_color = tokens["text-secondary"]
         else:
             label_color = tokens["text-primary"]
+        # 窄窗里标签按分配到的宽度省略（"Transl…"），完整文字留在提示与无障碍
+        # 名称里；不把半截字画到隔壁一步上去。右内边距与左内边距同为 13。
+        label_font_metrics = QFontMetrics(label_font)
+        label_limit = max(0, int(self.width() - cursor - 13))
+        label_text = (label_font_metrics.elidedText(self._label, Qt.TextElideMode.ElideRight,
+                                                    label_limit)
+                      if label_limit > 0 else "")
+        label_width = min(label_limit, label_font_metrics.horizontalAdvance(label_text) + 2)
         if rtl:
             label_x = self.width() - cursor - label_width
             hint_x = label_x - 6 - hint_width
@@ -173,7 +205,7 @@ class StepButton(QAbstractButton):
         align = int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         painter.setFont(label_font)
         painter.setPen(theme_module.qcolor(label_color))
-        painter.drawText(QRectF(label_x, 0, label_width, height), align, self._label)
+        painter.drawText(QRectF(label_x, 0, label_width, height), align, label_text)
         if show_hint:
             painter.setFont(hint_font)
             hint_color = tokens["warning"] if state == stage_model.ATTENTION else tokens["text-secondary"]
