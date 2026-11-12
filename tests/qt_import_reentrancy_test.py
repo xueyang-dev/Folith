@@ -292,3 +292,33 @@ def test_a_second_dialog_cannot_start_its_own_import(app, tmp_path):
             second.deleteLater()
         except RuntimeError:
             pass
+
+
+# --------------------------------------------------------------------------
+# 5. 销毁对话框（父对象析构 / WA_DeleteOnClose）不能把"导入进行中"卡成永久
+# --------------------------------------------------------------------------
+def test_destroying_the_dialog_mid_import_does_not_leave_the_state_stuck(app,
+                                                                        tmp_path):
+    """计数由工作线程的 ``finally`` 递减，不依赖 dialog/runner 还活着。"""
+    from shiboken6 import delete, isValid
+
+    started, release, finished = (threading.Event(), threading.Event(),
+                                  threading.Event())
+    dialog = import_wizard.ImportWizardDialog(
+        controller=_held_controller(started=started, release=release,
+                                    finished=finished))
+    try:
+        _start_import(dialog, tmp_path)
+        assert _pump_until(app, started.is_set)
+        assert _imports_running()
+
+        delete(dialog)                        # parent teardown / WA_DeleteOnClose
+        assert not isValid(dialog)
+        assert _imports_running(), "the import keeps running after its dialog is gone"
+    finally:
+        release.set()
+        _pump_until(app, lambda: finished.is_set()
+                    and not _imports_running_for_cleanup())
+    assert not _imports_running(), (
+        "the worker's finally must clear the marker even when the dialog was "
+        "destroyed first")
