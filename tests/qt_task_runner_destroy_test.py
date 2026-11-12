@@ -19,7 +19,6 @@ the Issue -- or delete the C++ object synchronously.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -380,129 +379,45 @@ def test_process_exit_with_a_running_task_is_bounded(tmp_path):
         f"the process needed {elapsed:.1f}s to exit with a detached 30 s task")
 
 
-# --- P0-9h TEMPORARY diagnosis (delete before merging) ---------------------
+def test_abandon_keeps_the_busy_pool_alive_and_does_not_leave_a_reaper(app):
+    """#363 P0-9h: the exit path must not destroy (or join) a busy pool at all.
 
-_DIAG_PROBE = """\
-import faulthandler, os, sys, threading, time
-faulthandler.enable(all_threads=True)
-os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-sys.path.insert(0, %(root)r)
-from PySide6.QtWidgets import QApplication
-from folith.qt.workers import TaskRunner
-app = QApplication([])
-runner = TaskRunner()
-started = threading.Event()
-def work():
-    started.set()
-    time.sleep(%(work_s)r)
-runner.submit(work, label='exit-stop-like')
-while not started.is_set():
-    app.processEvents()
-    time.sleep(0.001)
-assert runner.wait_for_done(200) is False
-%(park)s
-print('probe-end', flush=True)
-"""
-
-_DIAG_PARKS = {
-    # what P0-9b ships: the busy pool is destroyed on a daemon thread
-    "daemon_delete": "handed = TaskRunner.abandon_all()\nassert handed == 1, handed",
-    # no detach at all: PySide's own shutdown sweep must join the busy pool
-    "no_detach": "pass",
-    # detach, then leave the process without any Python-level teardown
-    "detach_hard_exit": ("handed = TaskRunner.abandon_all()\n"
-                         "assert handed == 1, handed\n"
-                         "os._exit(0)"),
-    # detach and keep the main thread alive until the reaper's join is over
-    "detach_then_wait": ("handed = TaskRunner.abandon_all()\n"
-                         "assert handed == 1, handed\n"
-                         "time.sleep(6.5)"),
-}
-
-
-def _diag_run(tmp_path, tag, work_s=5.0):
-    """Run one probe; return (returncode, elapsed, stdout, stderr)."""
-    script = tmp_path / f"diag_{tag}.py"
-    script.write_text(_DIAG_PROBE % {"root": str(ROOT), "work_s": work_s,
-                                     "park": _DIAG_PARKS[tag]},
-                      encoding="utf-8")
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
-               FOLITH_QT_SETTINGS_DIR=str(tmp_path / f"settings_{tag}"),
-               PYTHONFAULTHANDLER="1")
-    started_at = time.perf_counter()
-    try:
-        proc = subprocess.run([sys.executable, "-X", "faulthandler", str(script)],
-                              cwd=str(ROOT), env=env, capture_output=True,
-                              text=True, timeout=max(15.0, work_s + 12.0))
-        return (proc.returncode, time.perf_counter() - started_at,
-                proc.stdout, proc.stderr)
-    except subprocess.TimeoutExpired as exc:
-        out = exc.stdout or ""
-        err = exc.stderr or ""
-        return ("TIMEOUT", time.perf_counter() - started_at,
-                out.decode() if isinstance(out, bytes) else out,
-                err.decode() if isinstance(err, bytes) else err)
-
-
-def _diag_debugger(tmp_path, tag):
-    """Re-run a crashing probe under a debugger and return its transcript."""
-    script = tmp_path / f"diag_{tag}.py"
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
-               FOLITH_QT_SETTINGS_DIR=str(tmp_path / f"settings_{tag}"))
-    gdb = shutil.which("gdb")
-    lldb = shutil.which("lldb")
-    if gdb:
-        cmd = [gdb, "--batch", "-nx", "-ex", "set confirm off",
-               "-ex", "set pagination off", "-ex", "run",
-               "-ex", "info threads", "-ex", "thread apply all bt 20",
-               "--args", sys.executable, str(script)]
-    elif lldb:
-        cmd = [lldb, "--batch", "-o", "run", "-o", "thread backtrace all",
-               "-o", "quit", "--", sys.executable, str(script)]
-    else:
-        return "(no gdb/lldb on this machine)"
-    try:
-        proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True,
-                              text=True, timeout=120)
-        return (proc.stdout or "") + (proc.stderr or "")
-    except Exception as exc:  # noqa: BLE001 - a diagnostic must not fail the run
-        return f"(debugger run failed: {exc!r})"
-
-
-def test_p0_9h_diagnose_the_exit_probe(tmp_path):
-    """TEMPORARY (P0-9h): record what each teardown strategy does on this OS.
-
-    Never asserts: its whole purpose is to leave a transcript in
-    ``.regression-logs/`` for the one platform we cannot run locally.
+    P0-9b handed the pool to a daemon thread that called ``shiboken6.delete``:
+    ``~QThreadPool`` then blocked inside Qt for the remaining task, on a thread
+    that the interpreter was shutting down underneath (Linux SIGSEGV).  The fixed
+    contract is the opposite one -- nothing ever destroys an abandoned pool -- so
+    this pins both halves: the pool is still alive after its work is over, and no
+    helper thread was left behind to reap it.  It also pins the exit hook's guard:
+    with nothing running, the hook must be inert (it may only leave the process
+    when it would otherwise have to join something).
     """
-    import platform
-    import shutil as _shutil
+    from folith.qt import workers as workers_module
 
-    lines = [f"platform={platform.platform()} python={sys.version.split()[0]}"]
+    runner, _started, finished = _start_busy(app, 0.5)
+    pool = runner.pool
+    threads_before = {thread.name for thread in threading.enumerate()}
+    new_threads: list[str] = []
     try:
-        import PySide6
-        lines.append(f"pyside6={PySide6.__version__}")
-    except Exception as exc:  # noqa: BLE001
-        lines.append(f"pyside6=? {exc!r}")
-    lines.append("gdb=%r lldb=%r" % (_shutil.which("gdb"), _shutil.which("lldb")))
-    for tag in _DIAG_PARKS:
-        rc, elapsed, out, err = _diag_run(tmp_path, tag)
-        lines.append(f"\n===== {tag}: rc={rc} elapsed={elapsed:.2f}s "
-                     f"stdout={out.strip()[-120:]!r}")
-        lines.append(f"stderr:\n{err.strip()[-4000:]}")
-    for attempt in range(3):
-        rc, elapsed, _o, err = _diag_run(tmp_path, "daemon_delete")
-        lines.append(f"\n===== daemon_delete repeat {attempt + 2}: rc={rc} "
-                     f"elapsed={elapsed:.2f}s stderr:\n{err.strip()[-4000:]}")
-    rc, elapsed, _out, _err = _diag_run(tmp_path, "daemon_delete")
-    if rc != 0:
-        lines.append("\n===== daemon_delete under a debugger =====\n"
-                     + _diag_debugger(tmp_path, "daemon_delete")[-12000:])
-    transcript = "\n".join(lines)
-    logs = ROOT / ".regression-logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    (logs / "p0-9h-diagnose.txt").write_text(transcript, encoding="utf-8")
-    print(transcript)
+        assert runner.abandon() is False, "a busy pool is not abandoned at once"
+        assert runner.pool is None, "the runner must stop owning the pool"
+        finished.wait(5.0)
+        _pump_until(app, lambda: pool.activeThreadCount() == 0)
+        new_threads = [thread.name for thread in threading.enumerate()
+                       if thread.name not in threads_before]
+        assert isValid(pool), (
+            "an abandoned pool was destroyed; its destructor joins the running "
+            "task and that join is what froze/segfaulted the exit")
+        assert pool in workers_module._ABANDONED, (
+            "the abandoned pool must be kept alive for the rest of the process")
+        assert not workers_module._has_running_work(), (
+            "the exit hook would leave the process on the way out even though "
+            "there is nothing left to join")
+    finally:
+        _dispose_busy(runner, finished)
+        delete(runner)
+    assert not new_threads, (
+        f"abandon() started helper threads {new_threads!r}; destroying the pool "
+        f"off-thread is the P0-9b crash")
 
 
 def test_a_runner_reused_after_abandon_gets_a_fresh_pool(app):
