@@ -180,8 +180,8 @@ def test_reference_overflow_scrolls_without_compressing_term_rows(bench, app):
     bench.term_list.set_terms([{"source": "A name", "target": "译名"},
                                {"source": "Another name", "target": "另一个译名"}])
     bench.note_box.setMinimumHeight(400)   # 前后文平时隐藏（只在筛选时出现），用批注撑出溢出
-    QTest.qWait(50)  # nested scroll-area geometry settles through queued layout requests
-    assert bench.segment_extra_section.verticalScrollBar().maximum() > 0
+    # Nested scroll-area layout is queued and can take longer on a busy CI runner.
+    assert _wait_for(lambda: bench.segment_extra_section.verticalScrollBar().maximum() > 0)
     for button in bench.term_list.buttons:
         assert button.height() >= button.sizeHint().height()
 
