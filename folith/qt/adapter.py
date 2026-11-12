@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 import zipfile
 import dataclasses
@@ -594,6 +595,58 @@ def pipeline_kwargs(config: EngineConfig, state: dict | None = None) -> dict:
         .to_pipeline_kwargs()
 
 
+# --------------------------------------------------------------- launch window
+#
+# A start is asynchronous.  ``commands.start_job`` returns as soon as the worker
+# has been launched, and in engine (subprocess) mode the child still has to
+# import ``core`` and publish its first runtime status before anything durable
+# proves the task is busy (cold start measures ~0.7 s).  A guard that only reads
+# durable state — a live worker thread, ``.worker.lock`` or the runtime status —
+# is therefore blind for that window, and a rescan or a project delete could race
+# the launch: the delete removes the directory the child is about to write into,
+# the rescan registers work for a run that has already started.
+#
+# This is the client's own record of a launch *it* requested.  It is bounded so
+# a launch that never produces a worker cannot block the UI; once durable
+# evidence exists the record is redundant and is dropped.
+START_WINDOW_SECONDS = 5.0
+
+_launch_requested_at: dict[str, float] = {}
+_launch_requested_lock = threading.Lock()
+
+
+def _note_launch_requested(job_id: str) -> None:
+    if not job_id:
+        return
+    with _launch_requested_lock:
+        _launch_requested_at[job_id] = time.monotonic()
+
+
+def forget_launch_requested(job_id: str) -> None:
+    """Drop the launch record (the task was cancelled, deleted or observed)."""
+    with _launch_requested_lock:
+        _launch_requested_at.pop(job_id, None)
+
+
+def job_start_in_flight(job_id: str) -> bool:
+    """True while a launch this client requested is not yet visible in state.
+
+    Checks only the client's own record; callers combine it with the durable
+    probes (:func:`job_is_alive`, ``core.job_is_active``) to decide "busy".
+    """
+    if not job_id:
+        return False
+    now = time.monotonic()
+    with _launch_requested_lock:
+        started = _launch_requested_at.get(job_id)
+        if started is None:
+            return False
+        if now - started >= START_WINDOW_SECONDS:
+            _launch_requested_at.pop(job_id, None)
+            return False
+        return True
+
+
 def start_job(
     job_id: str,
     filename: str,
@@ -642,6 +695,9 @@ def start_job(
             job_id, settings_sources(config, {}, user_defaults=user_defaults),
             filename=filename, file_bytes=file_bytes,
             project_id=project_id, target_lang=target_lang)
+        if started:
+            # The worker may not be visible in state yet; see the launch window.
+            _note_launch_requested(job_id)
         if fallback:
             core._append_runtime_event(job_id, {"event": "ocr_backend_fallback", "message": notice},
                                        visibility="user", category="extraction")
@@ -689,13 +745,20 @@ def continue_job(job_id: str, config: "EngineConfig | None" = None, *,
     state and restart a paused worker when it differs (issue #222).
     """
     if config is None:
-        return _commands.continue_job(job_id)
-    return _commands.continue_job(
-        job_id, settings_sources(config, {}, user_defaults=user_defaults))
+        started = _commands.continue_job(job_id)
+    else:
+        started = _commands.continue_job(
+            job_id, settings_sources(config, {}, user_defaults=user_defaults))
+    if started:
+        _note_launch_requested(job_id)
+    return started
 
 
 def cancel_job(job_id: str, *, force: bool = False) -> bool:
-    return _commands.cancel_job(job_id, force=force)
+    """Cancel a task; the launch record goes with it (nothing more to wait for)."""
+    cancelled = _commands.cancel_job(job_id, force=force)
+    forget_launch_requested(job_id)
+    return cancelled
 
 
 def stop_job_for_exit(job_id: str) -> bool:
@@ -704,7 +767,10 @@ def stop_job_for_exit(job_id: str) -> bool:
 
 
 def retry_job(job_id: str) -> bool:
-    return _commands.retry_job(job_id)
+    retried = _commands.retry_job(job_id)
+    if retried:
+        _note_launch_requested(job_id)
+    return retried
 
 
 def job_is_alive(job_id: str) -> bool:
@@ -2538,8 +2604,15 @@ def request_source_rescan(job_id: str, *, backend: str, mode: str, language: str
     核心把"请求"放在任务状态里：重新扫描会让所有由旧原文派生的结果（清洗、分句、
     译文对齐）失效，所以必须在任务不在运行时、并且在状态事务锁里登记。
     """
-    if core.is_job_worker_alive(job_id) or core.job_is_active(job_id):
+    # `job_is_alive` is the client's correct liveness entry: it reaches
+    # `read_models.job_has_live_worker` → `core._job_execution_alive`, i.e. a
+    # local thread *or* a live owner process.  `is_job_worker_alive` alone is
+    # false in engine mode, where the worker lives in another process.
+    if job_is_alive(job_id) or core.job_is_active(job_id):
+        forget_launch_requested(job_id)  # the launch is durable now; it is "running"
         raise AdapterError("任务正在运行，完成后才能重新扫描。")
+    if job_start_in_flight(job_id):
+        raise AdapterError("任务正在启动，请等它真正开始或结束后再重新扫描。")
     state = load_state(job_id)
     if not str(state.get("filename") or "").lower().endswith(".pdf"):
         raise AdapterError("重新扫描只支持 PDF 任务。")
@@ -5151,9 +5224,12 @@ def job_is_active(job_id: str) -> bool:
 
 def delete_job(job_id: str, *, allow_active: bool = False) -> bool:
     try:
-        return _commands.delete_job(job_id, allow_active=allow_active)
+        deleted = _commands.delete_job(job_id, allow_active=allow_active)
     except ValueError as exc:
         raise AdapterError(str(exc)) from exc
+    if deleted:
+        forget_launch_requested(job_id)
+    return deleted
 
 
 # ================= exit / recovery =================
@@ -5558,7 +5634,18 @@ def assign_jobs_to_project(job_ids: Sequence[str], project_id: str,
 
 def delete_project(project_id: str, *, confirm_name: str,
                    cascade: bool = False) -> dict:
-    """删除项目：四重保护由核心执行（系统工作区、逐字确认、仍含任务则拒绝、删除前备份）。"""
+    """删除项目：四重保护由核心执行（系统工作区、逐字确认、仍含任务则拒绝、删除前备份）。
+
+    `cascade=True` 还会先取消并等待任务停下（见 `core.delete_project`）。刚请求
+    启动的任务在约 1 秒内还没有落盘状态，此时删目录会与子进程的首次写入相撞，
+    因此启动窗口内直接拒绝，等它真正开始或停止后再删。
+    """
+    if cascade:
+        starting = [job["job_id"] for job in core.list_project_jobs(project_id)
+                    if job_start_in_flight(job["job_id"])]
+        if starting:
+            raise AdapterError(
+                "任务刚刚启动，还没有真正开始；请等它开始或停止后再删除项目。")
     try:
         return core.delete_project(project_id, confirm_name=confirm_name,
                                    cascade=cascade)

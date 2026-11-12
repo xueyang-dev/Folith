@@ -7,6 +7,7 @@ name defined here.  Anything still owned by ``core`` is read late-bound through
 
 import json
 import shutil
+import time
 from datetime import datetime
 from datetime import timezone
 from folith import project as _project
@@ -505,6 +506,63 @@ def _project_backup_dir():
     return _project.projects_root(_c.OUTPUT_DIR) / "_deleted"
 
 
+# Deleting a project may have to erase tasks whose worker is still running.  The
+# worker writes job state and committed pairs into that directory, so removing it
+# underneath the worker loses everything it committed and makes its next write
+# fail; the engine must be told to stop first, and the caller must not proceed
+# while it is still winding down.
+#
+# The wait is deliberately short and bounded.  Cancellation is cooperative: a
+# paused worker polls every 0.25 s and a running one checks between batches, so
+# a task that can stop at all stops well inside this budget (the exit path
+# measures 0.5–0.6 s end to end).  A worker blocked inside a provider call
+# cannot be interrupted by any wait, so waiting longer only freezes the window —
+# exactly what the non-blocking UI work exists to prevent.  On timeout the delete
+# is refused with a reason instead of racing the writer.
+DELETE_CANCEL_SETTLE_SECONDS = 3.0
+DELETE_CANCEL_POLL_SECONDS = 0.05
+
+
+def _job_still_running(job_id):
+    """Whether this task's directory must not be removed right now.
+
+    ``is_job_worker_alive`` only sees threads of *this* process, so it is false
+    in engine (subprocess) mode even while the engine is translating at full
+    speed.  The authoritative, cross-process entries are the OS worker lock plus
+    the durable runtime status (``job_is_active``) and the core's own
+    ``_job_execution_alive`` — the same probe the GUI reaches through
+    ``read_models.job_has_live_worker`` (a local thread, a supervised child that
+    has not published a status yet, or a recorded owner pid).
+    """
+    try:
+        return bool(_c.job_is_active(job_id)) or bool(_c._job_execution_alive(job_id))
+    except Exception:  # noqa: BLE001 - unreadable liveness must never authorise deletion
+        return True
+
+
+def _stop_jobs_for_delete(job_ids):
+    """Ask every task to stop, then wait a bounded time for them to do it.
+
+    Returns the tasks that are still running at the deadline.  The cancel is
+    unconditional: asking a task that is already idle is harmless (it just
+    publishes the terminal state), while gating it on a local-thread probe is
+    exactly the bug that let a running engine be deleted without any notice.
+    """
+    for job_id in job_ids:
+        try:
+            _c.request_job_cancel(job_id, force=True)
+        except Exception:  # noqa: BLE001 - a deleted/broken task must not block the rest
+            pass
+    running = [job_id for job_id in job_ids if _job_still_running(job_id)]
+    if not running:
+        return []
+    deadline = time.monotonic() + DELETE_CANCEL_SETTLE_SECONDS
+    while running and time.monotonic() < deadline:
+        time.sleep(DELETE_CANCEL_POLL_SECONDS)
+        running = [job_id for job_id in running if _job_still_running(job_id)]
+    return running
+
+
 @_serialized_project_mutation
 def delete_project(project_id, *, confirm_name, move_jobs_to=None, cascade=False):
     """删除项目（永久，不可逆），删除前先写可恢复备份。
@@ -518,6 +576,12 @@ def delete_project(project_id, *, confirm_name, move_jobs_to=None, cascade=False
        可选参数 `move_jobs_to` 保留给程序化调用（先批量移走再删）；
     4. 删除前把完整项目记忆（含已审校译对）写入
        `outputs/projects/_deleted/<id>-<时间>.json`。
+
+    级联删除的第 5 条（`cascade=True` 时）：**先取消、再有界等待**，任务真的
+    停下才删目录。正在跑的引擎如果收到删除而不收到取消，会边写边被删——它已
+    提交的批次随目录一起消失，下一次写入还会把任务目录"复活"成半写状态。等到
+    `DELETE_CANCEL_SETTLE_SECONDS` 仍未停下时，本次删除整体失败且**不删任何
+    任务**（不会出现删了一半的项目），用户可稍后重试。
 
     备份就是 `import_project_memory` 能直接吃回去的格式，因此误删在实践中
     仍然可恢复。
@@ -538,13 +602,17 @@ def delete_project(project_id, *, confirm_name, move_jobs_to=None, cascade=False
     deleted_jobs: list[str] = []
     if jobs:
         if cascade:
-            for job in jobs:
-                jid = job["job_id"]
-                try:
-                    if _c.is_job_worker_alive(jid):
-                        _c.request_job_cancel(jid, force=True)
-                except Exception:
-                    pass
+            job_ids = [job["job_id"] for job in jobs]
+            still_running = _stop_jobs_for_delete(job_ids)
+            if still_running:
+                names = "、".join(
+                    str((job["state"] or {}).get("filename") or job["job_id"])
+                    for job in jobs if job["job_id"] in still_running)
+                raise ValueError(
+                    f"有 {len(still_running)} 个任务仍在运行（{names}）；"
+                    "已请求取消，但它们在限定时间内没有停下。"
+                    "本次没有删除任何任务或项目，请等这些任务停止后再删除项目。")
+            for jid in job_ids:
                 _c.delete_job(jid, allow_active=True)
                 deleted_jobs.append(jid)
         elif move_jobs_to is None:
