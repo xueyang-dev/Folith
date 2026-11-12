@@ -201,34 +201,282 @@ def scenario_environment(base_url: str, data_dir: Path, log_dir: Path) -> dict:
     return env
 
 
-def _pump(app, seconds: float, predicate=None, interval: float = 0.02) -> bool:
-    """Drive the real Qt event loop for *seconds* (same shape as selftest.pump)."""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        app.processEvents()
-        if predicate is not None and predicate():
+_TICK_MS = 25
+_PREDICATE_INTERVAL_S = 0.2
+
+
+def _job_settled(adapter, job_id: str) -> bool:
+    """The task reached a terminal state (failed/cancelled counts as settled)."""
+    runtime = adapter.core.load_runtime_state(job_id) or {}
+    status = runtime.get("status")
+    if status in ("failed", "stalled", "interrupted", "cancelled"):
+        return True
+    if status in adapter.core.RUNTIME_ACTIVE_STATUSES:
+        return False
+    return bool((adapter.load_state(job_id) or {}).get("p2_done"))
+
+
+class _ScenarioDriver:
+    """Drive S1 from Qt event-loop callbacks instead of pumping the GUI (#327).
+
+    The previous version called ``QApplication.processEvents()`` in a loop from
+    script code.  That makes the measuring tool itself the biggest stall bucket:
+    the GUI thread sits inside the harness frame, so every native/layout stall
+    is attributed to the driver and the measured p99 contains the harness.
+    Here every step runs from a ``QTimer`` callback (the caller wires ``begin``
+    to a zero-delay single-shot and ``tick`` to a repeating timer), and the
+    driver never pumps events.  Only predicate polling (job listing, runtime
+    state reads) is marked as instrumentation, because that is harness work the
+    product does not do, so it cannot be counted against the product.
+
+    The state machine itself is Qt-free and deterministic, so a test can call
+    ``begin()``/``tick()`` directly with stub objects.
+    """
+
+    def __init__(self, *, app, window, adapter, jank, fixture, seconds,
+                 settle_timeout, result, clock=time.monotonic):
+        self.app = app
+        self.window = window
+        self.adapter = adapter
+        self.jank = jank
+        self.fixture = str(fixture)
+        self.seconds = max(1.0, float(seconds))
+        self.settle_timeout = max(1.0, float(settle_timeout))
+        self.result = result
+        self.clock = clock
+        self.state = "created"
+        self.finished = False
+        self.settled = False
+        self.job_id = ""
+        self.edited = self.pages = self.scrolls = 0
+        self._started = 0.0
+        self._deadline = 0.0
+        self._open_started = 0.0
+        self._interact_until = 0.0
+        self._settle_started = 0.0
+        self._last_predicate = -1.0
+        self._last_scroll = 0.0
+        self._last_edit = 0.0
+        self._last_page = 0.0
+        self._page_ids = ("translate", "review", "deliver")
+
+    # -- event-loop callbacks ---------------------------------------------
+    def begin(self) -> None:
+        """First callback: dispatch the import, then let the event loop run."""
+        self.state = "import"
+        self._started = self.clock()
+        self._deadline = self._started + self.settle_timeout
+        self.result["steps"].append({"step": "import_dispatched", "ok": True})
+        self.window.import_paths([self.fixture], autostart=False)
+
+    def tick(self) -> bool:
+        """One event-loop tick; returns True once the scenario is over."""
+        if self.finished:
             return True
-        time.sleep(min(interval, 0.01))
-    app.processEvents()
-    return bool(predicate()) if predicate is not None else True
+        try:
+            getattr(self, "_tick_" + self.state)(self.clock())
+        except Exception as exc:  # noqa: BLE001 - recorded in the report
+            self.result["failures"].append(f"{self.state}: {type(exc).__name__}: {exc}")
+            self._finish(settled=False)
+        return self.finished
+
+    # -- states ------------------------------------------------------------
+    def _tick_import(self, now: float) -> None:
+        if not self._predicate_due(now):
+            return
+        imported = self._instrumented(
+            lambda: not self.window.runner.busy and len(self.adapter.list_jobs()) >= 1)
+        if not imported:
+            if now > self._deadline:
+                self._fail("import did not produce a task")
+            return
+        jobs = self._instrumented(lambda: len(self.adapter.list_jobs()))
+        self.result["steps"].append({"step": "imported", "ok": True, "jobs": jobs})
+        self.job_id = self._instrumented(lambda: self.adapter.list_jobs()[0].job_id)
+        self.result["job_id"] = self.job_id
+        self.window.open_job(self.job_id)
+        self._open_started = now
+        self.state = "open"
+
+    def _tick_open(self, now: float) -> None:
+        if getattr(self.window, "_opening_job_id", ""):
+            if now - self._open_started > min(120.0, self.settle_timeout):
+                self._fail("task did not open")
+            return
+        if getattr(self.window, "_current_job_id", "") != self.job_id:
+            self._fail("task did not open")
+            return
+        self.result["steps"].append({"step": "opened", "ok": True})
+        self._phase("translate")
+        self.window.start_or_resume()
+        self.result["steps"].append({"step": "translate_started", "ok": True})
+        self._interact_until = now + self.seconds
+        self._last_scroll = self._last_edit = self._last_page = now
+        self.state = "interact"
+
+    def _tick_interact(self, now: float) -> None:
+        if now >= self._interact_until:
+            self._phase("settle")
+            self._settle_started = now
+            self.state = "settle"
+            return
+        workbench = self.window.workbench
+        table = workbench.segment_list
+        bar = table.verticalScrollBar()
+        if now - self._last_scroll >= 0.1 and bar.maximum() > 0:
+            self._last_scroll = now
+            self._phase("scroll")
+            step = max(bar.maximum() // 12, 1)
+            bar.setValue(0 if bar.value() + step > bar.maximum() else bar.value() + step)
+            self.scrolls += 1
+        if now - self._last_edit >= 2.0 and workbench.visible_segment_count():
+            self._last_edit = now
+            self._phase("edit")
+            index = self.edited % max(1, workbench.visible_segment_count())
+            try:
+                if workbench.select_segment(index):
+                    workbench.set_editor_text_for_test(f"基线场景人工修改译文 {index}")
+                    workbench.flush_draft()
+                    self.window.submit_edit(index)
+                    self.edited += 1
+            except Exception as exc:  # noqa: BLE001 - recorded, run continues
+                self.result["failures"].append(f"edit({index}): {type(exc).__name__}: {exc}")
+        if now - self._last_page >= 4.0:
+            self._last_page = now
+            self._phase("page")
+            workbench.show_page(self._page_ids[self.pages % len(self._page_ids)])
+            self.pages += 1
+
+    def _tick_settle(self, now: float) -> None:
+        if not self._predicate_due(now):
+            return
+        if self._instrumented(lambda: _job_settled(self.adapter, self.job_id)):
+            self._finish(settled=True)
+            return
+        if now - self._settle_started > self.settle_timeout:
+            self._finish(settled=False)
+
+    # -- helpers -----------------------------------------------------------
+    def _predicate_due(self, now: float) -> bool:
+        if self._last_predicate >= 0.0 and now - self._last_predicate < _PREDICATE_INTERVAL_S:
+            return False
+        self._last_predicate = now
+        return True
+
+    def _instrumented(self, call):
+        """Run harness-only work (predicate polling) under the sampler's mark."""
+        if self.jank is None:
+            return call()
+        with self.jank.instrumentation():
+            return call()
+
+    def _phase(self, name: str) -> None:
+        if self.jank is not None:
+            self.jank.set_phase(name)
+
+    def _fail(self, message: str) -> None:
+        self.result["failures"].append(message)
+        self._finish(settled=False)
+
+    def _finish(self, *, settled: bool) -> None:
+        self.settled = bool(settled) and "settle" in (self.state, "done")
+        self.state = "done"
+        self.finished = True
+        self.app.quit()
+
+
+def load_engine_config(path: Path):
+    """Build the real engine configuration from a provider config file (#327).
+
+    The file is read in memory only: the API key is never copied into the
+    report, the isolated data directory or any log.  The shape matches what
+    ``EngineConfig.load()`` reads from the app's own data dir, so the client
+    talks to the real endpoint with the user's real settings.
+    """
+    from folith.qt import adapter
+    from folith.model_connections import effective_config
+
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not (raw.get("provider") or raw.get("connections")):
+        raise RuntimeError(f"not a provider config: {path}")
+    config = adapter.EngineConfig(
+        provider=str(raw.get("provider") or ""),
+        model=str(raw.get("model") or ""),
+        api_key=str(raw.get("api_key") or ""),
+        base_url=str(raw.get("base_url") or ""),
+        reasoning_effort=str(raw.get("reasoning_effort") or ""),
+    )
+    reviewer = raw.get("reviewer") or {}
+    if isinstance(reviewer, dict) and reviewer.get("provider"):
+        config.reviewer_mode = "separate"
+        config.reviewer_provider = str(reviewer.get("provider") or "")
+        config.reviewer_model = str(reviewer.get("model") or "")
+        config.reviewer_api_key = str(reviewer.get("api_key") or "")
+        config.reviewer_base_url = str(reviewer.get("base_url") or "")
+    config.connections = list(raw.get("connections") or [])
+    config.connection_roles = dict(raw.get("connection_roles") or {})
+    config.connection_models = dict(raw.get("connection_models") or {})
+    config.ensure_connections()
+    return effective_config(config, config.connections, config.connection_roles)
+
+
+def _run_scenario_event_loop(app) -> None:
+    """Run the application's own event loop for the whole scenario (#327).
+
+    A stall captured while Qt dispatches natively (paint, layout, plugin work,
+    with no Python frame below) shows this frame as its innermost Python frame.
+    That is the *application's* event loop, not the harness pumping events: the
+    shipping client calls the same ``app.exec()`` from ``folith/qt/app.py``.
+    The frame name is kept explicit so a baseline report does not mistake it for
+    the old ``processEvents`` pump.
+    """
+    app.exec()
 
 
 def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
                log_dir: Path, base_url: str) -> dict:
-    """S1 on the shared Qt window, in-process (offscreen-capable)."""
+    """S1 on the shared Qt window, driven from the event loop (#327).
+
+    The scenario runs inside ``app.exec()``; ``_ScenarioDriver`` steps are Qt
+    timer callbacks.  This function never pumps events itself, so a stall is
+    never attributed to the harness's own ``processEvents()`` frame.
+    """
     from folith.qt import bootstrap
 
     paths = bootstrap.prepare_environment(data_dir=data_dir, log_dir=log_dir)
     from folith.qt import adapter, selftest
     from folith.qt import window as window_module
     from folith.qt.ui_health import UiHealthMonitor
+    from PySide6.QtCore import QTimer
 
     result: dict = {"mode": "source_offscreen" if args.offscreen else "source",
                     "steps": [], "failures": []}
     app = window_module.build_application([sys.argv[0]])
-    config = selftest.engine_from_env(adapter, adapter.EngineConfig.load())
+    if args.engine_config:
+        config = load_engine_config(Path(args.engine_config).expanduser())
+        problem = config.connection_problem()
+        if problem:
+            result["failures"].append(f"real engine not usable: {problem}")
+        from urllib.parse import urlparse
+
+        result["real_engine"] = {
+            "provider": config.provider,
+            "model": config.model,
+            "endpoint_host": urlparse(config.base_url or "").netloc,
+            "reviewer_mode": config.reviewer_mode,
+            "connection_problem": problem,
+            "api_key_loaded": bool(config.api_key),
+        }
+    else:
+        config = selftest.engine_from_env(adapter, adapter.EngineConfig.load())
     window = window_module.MainWindow(config, paths, None)
     window.show()
+    # S1 is a foreground session: the user is looking at and interacting with
+    # this window.  Raising it keeps the measured session comparable across
+    # runs (and out of background timer-throttling), and uses only Qt's
+    # cross-platform API.
+    window.raise_()
+    window.activateWindow()
 
     monitor = UiHealthMonitor(app, window, paths, identity=adapter.app_identity())
     try:
@@ -243,38 +491,46 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
     checkpoint = jank.checkpoint() if jank is not None else None
 
     started = time.monotonic()
+    driver = _ScenarioDriver(app=app, window=window, adapter=adapter, jank=jank,
+                             fixture=fixture, seconds=args.seconds,
+                             settle_timeout=args.settle_timeout, result=result)
+    timer = QTimer(app)
+    timer.setInterval(_TICK_MS)
+
+    def on_tick() -> None:
+        if driver.tick():
+            timer.stop()
+
+    timer.timeout.connect(on_tick)
+    safety = QTimer(app)
+    safety.setSingleShot(True)
+    safety.timeout.connect(app.quit)
+    safety.start(int((driver.seconds + driver.settle_timeout + 120.0) * 1000))
+
     try:
-        job_id = ""
-        window.import_paths([str(fixture)], autostart=False)
-        imported = _pump(
-            app, min(120.0, args.settle_timeout),
-            lambda: not window.runner.busy and len(adapter.list_jobs()) >= 1)
-        result["steps"].append({"step": "imported", "ok": imported,
-                                "jobs": len(adapter.list_jobs())})
-        if not imported:
-            raise RuntimeError("import did not produce a task")
-        job_id = adapter.list_jobs()[0].job_id
-        result["job_id"] = job_id
-        selftest.open_job_and_wait(window, job_id)
-
-        if jank is not None:
-            jank.set_phase("translate")
-        window.start_or_resume()
-        result["steps"].append({"step": "translate_started", "ok": True})
-
-        _interact(window, app, jank, args.seconds, result)
-        settled = _wait_settled(app, adapter, job_id, args.settle_timeout)
-        state = adapter.load_state(job_id) or {}
+        QTimer.singleShot(0, driver.begin)
+        timer.start()
+        # The scenario runs in the application's event loop, as callbacks — no
+        # processEvents pump from script code.
+        _run_scenario_event_loop(app)
+        timer.stop()
+        safety.stop()
+        if not driver.finished:
+            result["failures"].append("scenario did not finish (event loop ended early)")
+        job_id = driver.job_id
+        state = (adapter.load_state(job_id) or {}) if job_id else {}
         result["translation"] = {
-            "settled": settled,
-            "runtime_status": (adapter.core.load_runtime_state(job_id) or {}).get("status"),
+            "settled": driver.settled,
+            "runtime_status": ((adapter.core.load_runtime_state(job_id) or {}).get("status")
+                               if job_id else ""),
             "p2_done": bool(state.get("p2_done")),
             "segments": len(state.get("pairs") or []),
-            "edited_segments": result.pop("_edited", 0),
-            "page_switches": result.pop("_pages", 0),
-            "scroll_events": result.pop("_scrolls", 0),
+            "edited_segments": driver.edited,
+            "page_switches": driver.pages,
+            "scroll_events": driver.scrolls,
         }
-        result["run_records"] = read_run_records(paths.data_dir, job_id)
+        if job_id:
+            result["run_records"] = read_run_records(paths.data_dir, job_id)
     except Exception as exc:  # noqa: BLE001 - the JSON is the evidence
         import traceback
 
@@ -294,64 +550,6 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
         monitor.stop()
         _teardown(app, window)
     return result
-
-
-def _interact(window, app, jank, seconds: float, result: dict) -> None:
-    """S1 interaction: scroll the paragraph table, edit, switch stage pages."""
-    workbench = window.workbench
-    table = workbench.segment_list
-    bar = table.verticalScrollBar()
-    page_ids = ("translate", "review", "deliver")
-    edited = pages = scrolls = 0
-    tick = 0
-    deadline = time.monotonic() + max(1.0, seconds)
-    try:
-        while time.monotonic() < deadline:
-            app.processEvents()
-            tick += 1
-            if tick % 10 == 0 and bar.maximum() > 0:
-                if jank is not None:
-                    jank.set_phase("scroll")
-                step = max(bar.maximum() // 12, 1)
-                bar.setValue(0 if bar.value() + step > bar.maximum() else bar.value() + step)
-                scrolls += 1
-            if tick % 120 == 0 and workbench.visible_segment_count():
-                if jank is not None:
-                    jank.set_phase("edit")
-                index = (tick // 120) % max(1, workbench.visible_segment_count())
-                try:
-                    if workbench.select_segment(index):
-                        workbench.set_editor_text_for_test(f"基线场景人工修改译文 {index}")
-                        workbench.flush_draft()
-                        window.submit_edit(index)
-                        edited += 1
-                except Exception as exc:  # noqa: BLE001 - recorded, run continues
-                    result["failures"].append(f"edit({index}): {type(exc).__name__}: {exc}")
-            if tick % 200 == 0:
-                if jank is not None:
-                    jank.set_phase("page")
-                workbench.show_page(page_ids[(tick // 200) % len(page_ids)])
-                pages += 1
-            time.sleep(0.01)
-    finally:
-        if jank is not None:
-            jank.set_phase("settle")
-        result["_edited"] = edited
-        result["_pages"] = pages
-        result["_scrolls"] = scrolls
-
-
-def _wait_settled(app, adapter, job_id: str, timeout: float) -> bool:
-    def settled() -> bool:
-        runtime = adapter.core.load_runtime_state(job_id) or {}
-        status = runtime.get("status")
-        if status in ("failed", "stalled", "interrupted", "cancelled"):
-            return True
-        if status in adapter.core.RUNTIME_ACTIVE_STATUSES:
-            return False
-        return bool((adapter.load_state(job_id) or {}).get("p2_done"))
-
-    return _pump(app, timeout, settled, interval=0.2)
 
 
 def _teardown(app, window) -> None:
@@ -440,6 +638,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-dir", default=None)
     parser.add_argument("--base-url", default=None,
                         help="reuse an already running mock gateway")
+    parser.add_argument("--engine-config", default=None,
+                        help="real provider config file, read in memory: runs the "
+                             "scenario against the real endpoint instead of the mock "
+                             "gateway (the key is never written into any output)")
     args = parser.parse_args(argv)
 
     args.out = Path(args.out).expanduser().resolve()
@@ -474,7 +676,10 @@ def main(argv: list[str] | None = None) -> int:
     gateway = None
     base_url = (args.base_url or "").strip()
     try:
-        if not base_url:
+        if args.engine_config:
+            # Real endpoint: no mock gateway, and no selftest endpoint override.
+            base_url = ""
+        elif not base_url:
             gateway = MockGateway(args.out / "gateway")
             gateway.out_dir.mkdir(parents=True, exist_ok=True)
             base_url = gateway.start()
@@ -501,6 +706,13 @@ def main(argv: list[str] | None = None) -> int:
         "scenario": args.scenario,
         "implemented": True,
         "report_version": 1,
+        # #327: which measurement definition produced these numbers.  A report
+        # without this marker predates measurement v2 (harness pumped the GUI).
+        "measurement": {
+            "version": 2,
+            "driver": "qt_event_loop_callbacks",
+            "instrumentation_split": True,
+        },
         "started_at": started_at,
         "finished_at": now_iso(),
         "fixture": {"kind": "epub", "paragraphs": args.paras, "path": str(fixture)},
@@ -511,6 +723,7 @@ def main(argv: list[str] | None = None) -> int:
             "python_version": sys.version.split()[0],
             "frozen_app": args.frozen_app,
             "base_url_is_mock": gateway is not None,
+            "real_engine": result.get("real_engine") or None,
             "data_dir": str(data_dir),
         },
         "translation": result.get("translation") or {},
