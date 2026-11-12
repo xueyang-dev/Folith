@@ -888,3 +888,43 @@ def test_a_vanished_gui_leaves_the_child_to_stop_itself(isolated, tmp_path,
     runtime = core.load_runtime_state(job_id)
     assert runtime["status"] == "interrupted", runtime
     assert runtime["worker"]["owner_pid"] in (None, 0), runtime
+
+
+# ---------------------------------------------------------------------------
+# TEMPORARY diagnostic (delete before merge): stack of a stalled real engine
+# ---------------------------------------------------------------------------
+
+def test_diagnostic_real_engine_stall(isolated, monkeypatch, gateway):
+    """Report what the supervised child is blocked on (Windows regression)."""
+    url, gateway_log = gateway
+    data_dir, _log_dir = isolated
+    job_id = "e3diag00001"
+    _create_job(job_id)
+    supervisor_module.set_launch_command(None)
+    monkeypatch.setenv("FOLITH_ENGINE_HOST_STACK_DUMP", "10")
+
+    outcome = supervisor_module.start_engine(
+        job_id, mode="start", connection=_connection(url))
+    assert outcome.started, outcome.reason
+    sup = supervisor_module.supervisor(job_id)
+    assert sup is not None
+    finished = _wait_until(lambda: not sup.running, timeout=100)
+    technical = ""
+    try:
+        technical = core.runtime_technical_log_path(job_id).read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+    report = "\n".join([
+        f"finished_without_stop={finished} exit={sup.exit_code}",
+        f"runtime_state={core.load_runtime_state(job_id)!r}",
+        f"gateway_log_bytes={gateway_log.stat().st_size if gateway_log.exists() else -1}",
+        "--- runtime_technical.log ---",
+        technical[-40000:],
+        "--- child output tail ---",
+        sup.output_tail(),
+    ])
+    if not finished:
+        supervisor_module.stop_and_wait(job_id, timeout=2.0)
+        pytest.fail("the engine child made no progress\n" + report)
+    assert (core.load_runtime_state(job_id) or {}).get("status") == "completed", report

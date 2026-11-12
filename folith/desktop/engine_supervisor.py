@@ -116,7 +116,9 @@ EXIT_STOP_BUDGET = 0.6
 POLL_SECONDS = 0.15
 
 #: How much of the child's merged output is kept for an error report.
-_OUTPUT_TAIL_BYTES = 2048
+#: TEMPORARY (E-2b diagnostics): raised so a stall dump fits; restored to 2048
+#: before the fix is final.
+_OUTPUT_TAIL_BYTES = 65536
 
 _SOURCE_ENTRY = Path(__file__).resolve().parents[2] / "qt_client.py"
 

@@ -98,6 +98,7 @@ def engine_process_enabled() -> bool:
 
 def run() -> int:
     """Entry point used by ``folith.qt.app._main`` (after env preparation)."""
+    _start_stall_diagnostics()
     reader = _StdinLines()
     try:
         line = reader.readline()
@@ -296,6 +297,43 @@ def _wait_for_worker_ready(core, job_id: str) -> None:
         if (core.load_runtime_state(job_id) or {}).get("worker_connection"):
             return
         time.sleep(_POLL_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# stall diagnostics (opt-in, no behaviour change when unset)
+# ---------------------------------------------------------------------------
+
+#: Seconds between periodic all-thread stack dumps written to stderr.  Opt-in
+#: only: a hung child has no GUI left to report through, and ``stderr`` is the
+#: one channel the supervisor captures, so a support run (or a CI diagnostic)
+#: sets this and gets the stack of whatever is blocking the pipeline.
+STALL_DUMP_ENV = "FOLITH_ENGINE_HOST_STACK_DUMP"
+
+
+def _start_stall_diagnostics() -> None:
+    """Dump every thread's stack to stderr every N seconds when asked to.
+
+    ``faulthandler`` is the only in-process facility that can report a blocked
+    *Python or C* frame on every platform, including a thread stuck in a
+    blocking read/lock on Windows.  It is deliberately opt-in: the dump is
+    noisy and it is a diagnosis tool, not a log.
+    """
+    raw = os.environ.get(STALL_DUMP_ENV, "").strip()
+    if not raw:
+        return
+    try:
+        interval = float(raw)
+    except ValueError:
+        interval = 15.0
+    if interval <= 0:
+        return
+    try:
+        import faulthandler  # noqa: PLC0415 - diagnostics only
+
+        faulthandler.enable()
+        faulthandler.dump_traceback_later(interval, repeat=True)
+    except Exception:  # noqa: BLE001 - a diagnostic must never break the run
+        return
 
 
 # ---------------------------------------------------------------------------

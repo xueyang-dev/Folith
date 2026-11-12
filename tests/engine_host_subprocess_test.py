@@ -63,6 +63,13 @@ def _drain(stream, sink: list[bytes]) -> None:
             pass
 
 
+def _tail_text(text: str, limit: int = 60000) -> str:
+    """The end of a child's output (a failure message must stay readable)."""
+    if len(text) <= limit:
+        return text
+    return ("...(truncated)...\n" + text[-limit:])
+
+
 class HostProcess:
     """One ``qt_client.py --engine-host`` child with stdin kept open."""
 
@@ -112,6 +119,13 @@ class HostProcess:
     def wait(self, timeout: float = 240.0) -> int:
         try:
             return self.proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # A bare TimeoutExpired says nothing about the child; its own last
+            # words (and the stacks the stall diagnostic adds) are the evidence.
+            raise AssertionError(
+                f"engine host did not exit within {timeout}s\n"
+                f"--- child stderr ---\n{_tail_text(self.stderr_text())}\n"
+                f"--- child stdout ---\n{_tail_text(self.stdout_text())}")
         finally:
             self.close_stdin()
             for thread in self._threads:
@@ -557,3 +571,45 @@ def test_credential_never_reaches_argv_environment_disk_or_output(
     # 3. the same for the reviewer credential path (it shares the wire format).
     reviewer_secret = "sk-e2-reviewer-" + uuid.uuid4().hex
     assert _secret_files(tmp_path, reviewer_secret.encode()) == []
+
+
+# ---------------------------------------------------------------------------
+# TEMPORARY diagnostic (delete before merge): where does the Windows child stall?
+# ---------------------------------------------------------------------------
+
+def test_diagnostic_child_pipeline_stall(tmp_path, monkeypatch, gateway):
+    """Report the child's own stacks when the pipeline makes no progress.
+
+    Not a product test: it exists to turn "the Windows child hangs" into a
+    stack.  ``FOLITH_ENGINE_HOST_STACK_DUMP`` makes the child dump every
+    thread every 10 s to stderr, which this process captures.
+    """
+    url, gateway_log = gateway
+    data_dir, log_dir = _isolated_paths(tmp_path, monkeypatch)
+    job_id = "e2diagjob000000001"
+    _create_job(job_id)
+
+    host = HostProcess(data_dir, log_dir,
+                       env_extra={"FOLITH_ENGINE_HOST_STACK_DUMP": "10"})
+    host.send(protocol.encode_start_request(
+        job_id, _connection(url, api_key="sk-e2-diag"), mode="start"))
+    finished = _wait_until(lambda: host.proc.poll() is not None, timeout=100)
+    rc = host.wait(timeout=120)
+    technical = ""
+    try:
+        technical = core.runtime_technical_log_path(job_id).read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+    report = "\n".join([
+        f"finished_without_stdin_eof={finished} rc={rc}",
+        f"runtime_state={core.load_runtime_state(job_id)!r}",
+        f"gateway_log_bytes={gateway_log.stat().st_size if gateway_log.exists() else -1}",
+        "--- runtime_technical.log ---",
+        _tail_text(technical),
+        "--- child stderr ---",
+        _tail_text(host.stderr_text()),
+    ])
+    if not finished:
+        pytest.fail("the child did not finish on its own\n" + report)
+    assert rc == 0, report
