@@ -222,3 +222,40 @@ def test_duplicate_checker_can_fail(tmp_path):
     found = qt_duplicate_defs.duplicates_in(sample)
     assert any("thing" in item for item in found), found
     assert any("Box.render" in item for item in found), found
+
+
+def test_duplicate_checker_accepts_a_property_but_not_a_real_duplicate(tmp_path):
+    """`@property` + `@x.setter` share a name by design; two defs do not.
+
+    The workbench's `_state` is a property (getter invalidates derived caches),
+    so the checker must not report that pair; a genuine second definition still
+    has to fail.
+    """
+    import qt_duplicate_defs
+
+    prop = tmp_path / "prop.py"
+    prop.write_text(
+        "class Box:\n"
+        "    @property\n"
+        "    def value(self):\n"
+        "        return self._value\n\n"
+        "    @value.setter\n"
+        "    def value(self, new):\n"
+        "        self._value = new\n\n"
+        "    @value.deleter\n"
+        "    def value(self):\n"
+        "        del self._value\n",
+        encoding="utf-8")
+    assert qt_duplicate_defs.duplicates_in(prop) == [],         qt_duplicate_defs.duplicates_in(prop)
+
+    duplicate = tmp_path / "duplicate.py"
+    duplicate.write_text(
+        "class Box:\n"
+        "    @property\n"
+        "    def value(self):\n"
+        "        return 1\n\n"
+        "    def value(self):\n"
+        "        return 2\n",
+        encoding="utf-8")
+    found = qt_duplicate_defs.duplicates_in(duplicate)
+    assert any("Box.value" in item for item in found), found

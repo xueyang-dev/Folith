@@ -2237,12 +2237,20 @@ class MainWindow(QMainWindow):
                 runtime=runtime, force_terminal=True)
             return
         if isinstance(result, adapter.DeltaSnapshotChanged):
-            # A snapshot write can carry facts no journal record describes (a
-            # human edit from another surface, a structural change, or the
-            # pipeline's own compaction).  P2 deliberately reloads on either,
-            # which keeps every snapshot-powered behaviour of the old path; the
-            # per-domain optimisation belongs to P3.
-            self._log(f"workbench snapshot resync (worker_active={result.worker_active})")
+            if result.worker_active:
+                # The pipeline still owns the task: its snapshot is its own
+                # compaction of records we have already applied (an external
+                # save is refused while `.worker.lock` is held), so the rows are
+                # current and the journal cursor keeps moving.  Rebuilding the
+                # whole state here would freeze the workbench once per snapshot
+                # cadence for no new information.
+                #
+                # A write that never reaches the journal (stage switch, glossary
+                # freeze) is not lost by returning: the slow projection reloads
+                # the authoritative state on its own cadence, so it lands within
+                # DELTA_PROJECTION_SECONDS.  See _maybe_slow_projection().
+                return
+            self._log("workbench snapshot resync (no live worker)")
             self._resync_from_full(job_id)
             return
         if isinstance(result, adapter.DeltaResyncRequired):
@@ -2351,6 +2359,13 @@ class MainWindow(QMainWindow):
             runtime_view = models.get("runtime") or adapter.runtime_view(job_id, state)
             snapshots = models.get("snapshots") or []
             self._last_runtime_status = str(runtime_view.get("status") or "")
+            # A start that only exists in state.json (``p1_done``,
+            # ``source_paras``: neither reaches the journal) lands here and
+            # nowhere else, and ``_task_started()`` reads the setup view.  Only a
+            # real transition pays for this: the slow cadence must not rebuild
+            # the prepare sheet every DELTA_PROJECTION_SECONDS.
+            if self._state_started(state) != self.workbench.task_started():
+                self._load_setup(job_id, state)
             self.workbench.apply_projection(
                 job_id, state, runtime_view, snapshots, models=models,
                 refresh_delivery=refresh_delivery)
@@ -2362,6 +2377,11 @@ class MainWindow(QMainWindow):
         def failed(_message: str, _detail: str) -> None:
             self._delta_projection_in_flight = False
             self._state_load_in_flight = False
+            # A poll that arrived while this projection was in flight must still
+            # run: the other two read paths (poll-state, poll-delta) re-issue it
+            # here as well.  Without it a failed projection swallowed that tick
+            # and the workbench waited out the next 1 s timer for nothing.
+            self._flush_pending_poll()
 
         self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-projections")

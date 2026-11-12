@@ -263,12 +263,12 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 
 改动前同一命令在 load 82–95 下的 A/B 见 §13.4：A（main）3/3 绿、B（P2）每轮 1–2 红，确认是 P2 回归而非环境 flake；修复后目标 3 用例在仍处高负载时即 3/3 绿，确定性用例 5/5 绿。
 
-### 13.3 P3 未做（本轮）
+### 13.3 P3 状态
 
-- 12 处 `id(self._state)` → 域版本号（最危险，未动；静态检查脚本也未落）。
-- `SnapshotChanged(worker_active)` 目前一律整份重建（P2 简化，保留旧行为）。
-- 慢投影按域调度：已按 5 s/脏域节奏，但未做"每域独立在飞/独立失效"。
-- 阶段条 `_render_stage` 的 O(n)（见 13.1）。
+- 12 处 `id(self._state)` → 域版本号：**已完成**（见 §13.7）。
+- `SnapshotChanged(worker_active)`：**已改**为"worker 活跃继续 delta，只有无 worker 才整份重建"（§13.7）。
+- 慢投影按域调度：已按 5 s/脏域节奏，但**每域独立在飞/独立失效仍未做**（当前共享一个读槽）。
+- 阶段条 `_render_stage` 的 O(n)：已在 P2 收尾时拔掉（`blocking_count` 缓存 + 选中段直取）。
 
 ### 13.4 A/B 判定（2026-11-11，本机 load 82–95）
 
@@ -325,3 +325,112 @@ QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest \
 - 同会话 `pytest tests/qt_workbench_poll_test.py tests/qt_workbench_delta_test.py` × 3：**15 passed / 15 passed / 15 passed**（86 s / 87 s / 88 s）。
 - 该测试单独 × 5：**5 passed**（6.2 / 4.7 / 5.3 / 5.4 / 5.1 s）。
 - `FOLITH_PERF_MEASURE=1` 一轮：1k p50 **0.73 ms**（p95 0.96，max 2.98），10k p50 **1.11 ms**（p95 2.00，max 4.39）；整份重建 26 ms / 1,230 ms。
+
+### 13.7 P3：显式域版本号 + snapshot 策略（2026-11-11）
+
+**为什么**：增量路径让 `self._state` 不再是"每次刷新换一个对象"，以 `id(self._state)` 为缓存键会让面板在对象不变时静默保留旧数据。改为 12 个显式域版本（`workbench_rows.DOMAINS`）：
+
+| 位置（`folith/qt/views.py`） | 缓存 | 域 |
+|---|---|---|
+| `:4259` `_document_term_counts` | 术语全文出现次数 | `terms` |
+| `:5040` `_render_report` | 报告页 | `academic` |
+| `:5058` `_render_cases` | 案例页 | `academic` |
+| `:5072` `_render_qa` | QA 页 | `academic` |
+| `:5098` `_render_followup` | 收尾页 | `followup` |
+| `:5131` `_render_details` | 任务详情浮窗 | `details` |
+| `:5172` `_render_terms` | 术语面板 | `terms` |
+| `:5404` `_render_review` | 审校队列 | `review` |
+| `:5862` `_sync_word_count` | 字数/进度 | `counts` |
+| `:6205` `_render_delivery`（节流键） | 交付面板 | `delivery` |
+| `:3887` `apply()` 备注缓存 | 段落批注 | `details` |
+| `:7241` `_notes_loaded_at_state` | 段落批注 | `details` |
+
+**规则**：`DeltaBatch.domains` → `apply_delta()` 只 `+1` 命中域；整份 `apply()` 与 `apply_projection()` 只在**真的换了一个 state 对象**时全部 `+1`（`_replace_state()` 对同一对象直接 `return`，所以 1 s 的空刷新不再让 12 个域全部失效）；`apply_runtime()` 只动 `runtime/stage`。delta 不脏的域，面板不重算，窗口也不起投影 worker。
+
+**静态检查**：`scripts/check_workbench_domain_cache.py`（AST，忽略注释/文档串；`# domain-cache: allow <reason>` 可单点豁免）已接入 `.github/workflows/pr-checks.yml` 的 "Qt stale-wrapper static checks" 同一 step。正负向验证：现有 `views.py` → `OK: no state-identity cache keys`（exit 0）；临时文件含 `key = id(self._state)` → exit 1，并打印 `bad_view.py:2`。
+
+**snapshot 策略**：`DeltaSnapshotChanged(worker_active=True)` 不再整份重建——流水线持有 `.worker.lock` 时外部写不进来，它的快照只是已应用记录的压实；`worker_active=False` 才走整份重建。不进 journal 的写（`p1_done` / `source_paras` 这类"任务已开始"的判据）由慢投影搬运：`_maybe_slow_projection().done` 比对 `_state_started(state)` 与 `workbench.task_started()`，**只有真的变了**才调 `_load_setup()`；`apply_projection()` 末尾补一次 `_sync_segment_placeholder()`（只切正文区三态，不调 `_render_segments()`，慢投影不重建网格）。这两处曾缺失，导致 GUI 没自己发起启动的任务停在准备页（P0-11 B1，见 §13.9）。
+
+**测试**：`tests/qt_workbench_domain_versions_test.py` 当前 **15 passed**（P0-11a 新增 2 例；`bed34c71` 上是 13 例——文档早先记的 8 例是 P3 收尾时的数字，没跟上后续两个修正提交），覆盖：
+- review / terms / academic 三个域"脏标记不置位 → 面板不调 adapter；置位 → 调一次"；
+- 窗口级：`domains=("rows","counts")` 时 `adapter.load_state` 调用 0 次、无投影在飞；`domains=("review",)` 时投影 worker 起一次；`domains=("delivery",)` 时交付预检被调用；
+- snapshot：worker 活跃 + state.json 变化 → `_poll_workbench_full` 0 次、delta 路径保留；无 worker + 变化 → 整份重建且 `_cached_state` 更新；
+- 启动经慢投影到达：worker 存活、`p1_done` 未落盘时打开任务，一个投影周期内 `task_started()` 变真、网格可见、`translate` 从 `locked` 变 `current`（旧代码红：`task_started()` 仍为 False）；
+- 未变化的投影不重建准备页：连续三次慢投影，`_load_setup()` 0 次、`_setup_view` 是同一个对象、准备页仍可见（保证"只在真变了才重建"）；
+- 静态检查正负向（退出码与输出）。
+
+### 13.8 P3 收尾（2026-11-11）
+
+- **P2 审查 minor 已修并合入 P3**：`window.py` 的两条 `failed()` 现在也调用 `_flush_pending_poll()`（P2 分支 `527e2541`，P3 经 merge `6e2a215d` 带入）。修后 P2 分支同会话 `tests/qt_workbench_poll_test.py tests/qt_workbench_delta_test.py` → **15 passed in 40.92 s**。
+- **全量客户端套件发现并修复一个真实缺陷**：`WorkbenchReadModel.apply` 在"行来自 `paras`、`_pairs` 仍为空"时（任务第一批译文刚到）直接 `self._pairs[index] = pair` → `IndexError` 抛在 `done` 回调里，行保持旧值（客户端用例 `test_workbench_poll_reloads_a_journal_only_translation` 复现）。修复：`_pairs` 随索引增长；同时 `_apply_feed_result` 对应用 delta 的任何意外异常都回退到整份重建并记日志，不再留下过期行。
+- **P3 测试**：`tests/qt_workbench_domain_versions_test.py` **13 passed**（本节当时记的 8 例是 P3 收尾时的数字，`ac47bc43` / `bed34c71` 两个修正提交又补了 5 例；P0-11a 之后为 15 例）；P3 套件（poll/projection/delta/domain/layout/projects）**72 passed**；客户端全量 `qt_client_window_test.py` 见下（118 例，修复后重跑）。
+- **perf 复测（域版本迁移后，`FOLITH_PERF_MEASURE=1`）**：1k 每批 p50 **0.36 ms**（p95 0.70 / max 1.71），10k p50 **0.56 ms**（p95 1.02 / max 2.16）；整份重建 63 ms / 655 ms。相对 P2 的 0.73/1.11 更好（机器更空），**没有回归**。
+
+**边界外发现（已撤回：实测 `on_done` 就在 GUI 线程执行）**：这里原本断言 `TaskRunner.submit` 的 `on_done` 在 `QThreadPool` 工作线程执行，并据此把 `MainWindow._poll_workbench*` 说成"在 worker 线程里触碰 view"、与 #327 的随机 SIGSEGV 挂钩。**那个结论是错的**：P0-11 与 P0-9 各自在 `bc765adc` + PySide6 6.11.2 上探针实测，`work` 在池线程执行、`on_done` 在 GUI 线程执行（`on_done on GUI thread: True`），与 `.loop/0.8.2-plan.md` §6.4 的结论及 `folith/qt/workers.py` 类注释一致。#345 因此没有可复现的缺陷，可以关闭。机制上有两条保障：`_TaskSignals` 在 GUI 线程创建（跨线程 `emit` 即队列调用，投递到 GUI 线程），`_done` / `_failed` 闭包用 `isValid(self)` 挡住 runner 销毁后才到达的队列调用。不变量由 `tests/qt_task_runner_thread_test.py` 锁定（#345 分支 `test/0.8.2-345-taskrunner-callback-thread`，`859fa92d`）；该文件不在本 PR 的分支上，本分支未改 `workers.py`。
+
+### 13.9 P0-11a：慢投影到达的"启动"必须换掉准备页（2026-11-11）
+
+**回归（独立审查 P0-11 B1，本 PR 引入）**：`DeltaSnapshotChanged(worker_active=True)` 提前 `return` 之后，"任务已开始"的判据（`p1_done` / `source_paras`，二者都不进 journal）只剩慢投影一条载体，而 `apply_projection()` 只重渲染 12 个投影，既不调 `set_setup()` 也不调 `_sync_segment_placeholder()`。`_task_started()` 读的是准备视图，于是 GUI 没自己发起启动的任务——从首页打开一个 worker 已在跑、`p1_done` 尚未落盘的任务；同一任务开两个窗口；崩溃恢复——会**卡在准备页**：正文区不可见、阶段条 `translate` 显示 `locked`、详情/术语入口隐藏，直到任意一次 `force` 刷新。数据不丢（`_state` 是新的），但对该任务工作台不可用。
+
+**修法**（`folith/qt/window.py:2342-2348`、`folith/qt/views.py:4022-4028`）：
+
+- `_maybe_slow_projection().done`：`_state_started(state) != workbench.task_started()` 时才 `_load_setup(job_id, state)`。只在启动状态真的变了时付一次代价——慢投影不会每 `DELTA_PROJECTION_SECONDS` 重建准备页，否则用户正在填的准备字段会被按周期重置。
+- `apply_projection()` 末尾补一次 `_sync_segment_placeholder()`：只切"准备页 / 网格 / 空状态"三态与可见性，不调 `_render_segments()`、不碰 `_all_rows`、无 O(n) 工作；也不触碰编辑器内容，正在输入的段落不受影响（同一调用原本就在 `_render_segments()` 里跑）。
+- `_replace_state()` 的"同一对象直接 `return`"语义未改。
+
+**A/B**（同一个用例 `test_a_start_carried_by_the_slow_projection_leaves_the_prepare_page`，只把上面两处源码退回 `bed34c71`）：
+
+| | 旧代码（`bed34c71` + 本用例） | 新代码 |
+|---|---|---|
+| 结果 | **1 failed**：`p1_done` 已进视图，`task_started()` 仍为 False | 通过 |
+| 耗时 | 6.83 s（等满一个投影周期后失败） | 1.8 s（同一 tick 内到达） |
+
+用例同时断言 `_poll_workbench_full` 调用 0 次：更新确实来自慢投影，不是退化成整份重建。另加一条守卫用例 `test_an_unchanged_projection_does_not_rebuild_the_prepare_sheet`：连续三次慢投影 `_load_setup()` 0 次、`_setup_view` 仍是同一个对象。
+
+**未覆盖**：审查 B2 要求的分阶段端到端卡顿率对照（计划 §5：`main` vs 修正后，完成后阶段的 `>500 ms` 卡顿率）在本节点写出时仍未提供；本节点只有每批微秒数，不能替代那张表。（**已由 P0-5v / P0-5y2 补齐，见 §13.10**；本节保留当时的结论，说明该节点当时的状态。）
+
+### 13.10 分阶段端到端对照：`main` vs `main`+#344（P0-5v → P0-5y2，2026-11-12）
+
+这一节补的就是 §13.9 末尾"未覆盖"那一项，也就是计划 §5（`.loop/0.8.2-plan.md:145`）要求 #344 附的"**分阶段的端到端对照**"。独立审查 P0-11 曾把它列为 #344 的阻塞项之一。
+
+**口径。** offscreen + mock 网关 + 源码构建，1000 段 EPUB（`translation.segments = 2000`）、60 秒场景窗口，参数 `--paras 1000 --seconds 60 --offscreen`；**A/B 严格交替** `A1 B1 A2 B2 A3 B3 A4 B4 A5 B5`，每组 5 轮，同一台机器、同一个 runner（两棵树里逐字节相同，552 行 / sha256 `4641df77…`）、同一份交互负载（每轮 19–21 次编辑、12–13 次换页、234–244 次滚动）。
+
+- A = `main` @ `bc765adc`（`git archive` 出的归档树）。
+- B = `main` + #344。**修复前** `c9a909f7`，**修复后** `fac3885c`。
+- B 组必须用 `git merge-tree --write-tree` 拼出的只读合并树：`bc765adc` **不是** `fac3885c` 的祖先（分支基线比 `main` 少 47 个提交），直接用分支原树会把那 47 个 `main` 提交混进 A/B 差异，测到的就不是 #344 的差异了。
+
+**分阶段定义**（照计划 §5.4）：**R**（翻译中）= `metrics.run_records[0].gui_jank`，任务自己那次运行；**I**（完成后）= `metrics.gui_jank` 减去运行窗口，I 阶段短于 15 秒的轮次作废。`>100 ms` 取 `slow_count`、`>500 ms` 取 `severe_count`，两者**都不含** `instrumentation_*`（采样器自报的工具内卡顿）。单位：次/分钟，中位数取每组 5 个有效轮次。
+
+**表 1 —— 修复后（P0-5y2，B = `fac3885c`）**
+
+| 指标 | A（`main`）中位 | B（`main`+#344 修复后）中位 | B/A |
+| --- | --- | --- | --- |
+| **I >500 ms** | **4.94** | **4.82** | **0.98** |
+| I >100 ms | 62.95 | 67.52 | 1.07 |
+| R >100 ms | 74.75 | 47.21 | 0.63 |
+| R >500 ms | 5.01 | 0.00 | — |
+
+**表 2 —— 修复前 vs 修复后**（同一 A 提交、同一 runner、同一参数，可直接横向读）
+
+| | P0-5v（B = `c9a909f7`，**修复前**） | P0-5y2（B = `fac3885c`，修复后） |
+| --- | --- | --- |
+| **A I >500 ms 中位** | 4.86 | 4.94 |
+| **B I >500 ms 中位** | **13.27** | **4.82** |
+| **B/A** | **2.73** | **0.98** |
+| A I >100 ms 中位 | 69.52 | 62.95 |
+| B I >100 ms 中位 | 66.13 | 67.52 |
+
+**判据与读法。** 判据是"B 组 I 阶段 `>500 ms` 中位数不高于 A 组"：修复后**满足**（4.82 ≤ 4.94，B/A 0.98，B 不再高于 A）；修复前**不满足**（13.27 > 4.86，B 是 A 的 2.73 倍）。B 从 13.27 掉到 4.82（−64%），A 组两次测量高度一致（4.86 → 4.94，说明 A 基线可重复）。修复后的 10 轮全部 `ok=true` / `settled=true` / `failures=[]`，I 阶段 48.61–50.54 秒，**作废 0 轮**。
+
+**机制一句话。** `_render_delivery` 的节流键里多了 `_domain_version("delivery")`，而 `_replace_state()` 在"换了一个新 state 对象"时把 12 个域一起 +1 —— 每次编辑都会换 state 对象，于是键恒变，5 s / 1 s 两道时间闸门失效，整份交付校验从"每 5 秒一次"变成"每次编辑一次"。`adapter.delivery_preview` 的同参数 20 次编辑驱动实测：`main` **7** 次 / 修复前 **20** 次 / 修复后 **7** 次；单次校验成本三棵树相同（165–169 ms），所以差别只是"做得更频繁"。`fac3885c` 把域版本从该键移除，键恢复 `(job_id, len(snapshots), delivery_status)`。
+
+**必须同时说清的三条边界**
+
+1. **这不是 G2 证据。** 是 **offscreen + mock 网关 + 源码构建**（`environment.mode = source_offscreen`、`real_machine_baseline: false`），不是冻结版、不是真实窗口系统、不是真机：没有合成器、没有 GPU 绘制路径、没有原生输入；mock 网关瞬时返回使翻译阶段只有 10.1–12.0 秒，与真实模型延迟下的时序不同；驱动脚本自身仍是最大的卡顿来源之一（#347 要修的东西），**绝对卡顿率被工具放大**。G2 需要冻结候选版 + 回放负载 + 真机（计划 §13）。本文件只能作为"同一工具、同一参数下的 A/B **相对**对照"。
+2. **`I >100 ms` 方向不一致，且未归因。** A **62.95** / B **67.52**，**B 高 7.3%**；逐轮配对差 `+8.54, −7.88, +3.47, +12.78, +10.32` 有正有负，落在两棵树互相重叠的区间内。按本节点判据（只判 `>500 ms`）不影响结论，但**不能因此写成"B 在所有指标上都不差于 A"**——交付校验之外还有本节点未归因的少量残差/噪声，留给后续节点。
+3. **原始数据可核对性。** 原始 JSON 在 `/private/tmp/p0-5v/`、`/private/tmp/p0-5y2/`（`/tmp` 是 `/private/tmp` 的符号链接，**可能被系统清理**）；仓库内副本在 `.loop/reports/p0-5v-raw/`、`.loop/reports/p0-5y2-raw/`，但 **`.loop/` 已被 `.gitignore:138` 忽略 → 原始 JSON 未入库**，只在本机磁盘上。因此入库的是两份"数字 + 命令 + 路径"的证据文件，不是原始 JSON；**重建命令见两份证据文件各自的"复现"一节**（`git merge-tree --write-tree` 拼树 + 每轮一条 `runtime_baseline_runner.py` 命令 + 派生表脚本），R/I 两个数字可直接从 `metrics.gui_jank` 与 `metrics.run_records[0].gui_jank` 按公式重算，不需要重跑。
+
+**证据**
+
+- `docs/evidence/0.8.2-p0-5v-phased-jank.md` —— 修复前（B = `c9a909f7`）：5 轮 + 3 轮位置混淆对照（`/tmp` 归档树 vs worktree 同为 4.89/6.04），以及与计划 §5 表的绝对值对照。
+- `docs/evidence/0.8.2-p0-5y-phased-jank.md` —— 修复后（B = `fac3885c`）：5 轮 + 三棵树并排的 edit 探针（7 / 20 / 7）+ 与 P0-5v 的逐项对照。
