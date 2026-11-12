@@ -16,12 +16,15 @@
   展示并附恢复说明。
 - **i18n**：所有用户可见文字走 ``i18n.tr`` 模板；平台相关行为（原生文件对话框）
   由 Qt 标准 API 提供，不做 OS 分叉。
+- **重入保护**：同一进程里只允许一个向导导入写库。"导入进行中"是模块级状态，
+  不随对话框关闭而消失（#363 之后关闭向导只是界面返回，导入仍在后台写库）。
 
 state machine 与控件解耦：`ImportWizardController` 是纯 Python（可单测，不需要
 Qt），`ImportWizardDialog` 只是把状态渲染成控件。
 """
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -45,6 +48,35 @@ STEPS = (STEP_FILE, STEP_PREFLIGHT, STEP_IMPORTING, STEP_REPORT, STEP_ERROR)
 
 #: 预检里可预期的阻断原因（不是异常，是"这一步不能继续"的显式状态）。
 BLOCK_TERMBASE_NEEDS_PROJECT = "termbase_requires_project"
+
+#: 向导导入是**进程级**写操作：同一时间只允许一个在跑。
+#:
+#: 为什么状态放在模块而不是 ``ImportWizardDialog`` 上：#363 之后关闭向导不再
+#: 阻塞、也不再停止导入，对话框（甚至它的 ``TaskRunner``）可以在导入仍在写库
+#: 时先消失。重开向导时若只问"我这个对话框有没有在导入"，答案永远是"没有"，
+#: 第二个导入就会和第一个并发写同一本任务/项目。计数由工作线程在 ``finally``
+#: 里递减，所以关闭甚至销毁对话框都不会把它留在 busy。
+_IMPORT_STATE_LOCK = threading.Lock()
+_IMPORTS_RUNNING = 0
+
+
+def imports_in_progress() -> bool:
+    """是否还有向导导入在写库（跨对话框、跨窗口实例可靠）。"""
+    with _IMPORT_STATE_LOCK:
+        return _IMPORTS_RUNNING > 0
+
+
+def _begin_import_activity() -> None:
+    global _IMPORTS_RUNNING
+    with _IMPORT_STATE_LOCK:
+        _IMPORTS_RUNNING += 1
+
+
+def _finish_import_activity() -> None:
+    global _IMPORTS_RUNNING
+    with _IMPORT_STATE_LOCK:
+        if _IMPORTS_RUNNING:
+            _IMPORTS_RUNNING -= 1
 
 
 def _language_pair_label(status: str) -> str:
@@ -259,6 +291,19 @@ def _import_worker(path: str, *, importer, project_id=None, target_lang="",
             "store": dict(result.get("store") or {})}
 
 
+def _import_worker_tracked(*args, **kwargs) -> dict:
+    """``_import_worker`` + 释放进程级"导入进行中"标记。
+
+    释放在工作线程的 ``finally`` 里完成：它不依赖对话框、``TaskRunner`` 或 Qt
+    信号是否还活着，所以关闭/销毁向导都不会把标记留在 busy（那会让后续导入
+    永远被挡住）。
+    """
+    try:
+        return _import_worker(*args, **kwargs)
+    finally:
+        _finish_import_activity()
+
+
 def _report_summary(report: dict, store: dict | None = None) -> str:
     """把引擎报告渲染成对话框里的纯文本摘要（HTML 只做最小排版）。"""
     if not report:
@@ -392,6 +437,10 @@ class ImportWizardDialog(QDialog):
         "已放弃"：对话框立即隐藏，导入在后台线程继续（池不随对话框析构而同步
         等待，见 ``workers.TaskRunner``），完成/失败写日志而不是渲染到已经关掉
         的界面。代价是：用户在导入结束前重新打开向导看不到这次导入的报告。
+
+        关闭**不是取消**这一点由主窗口在 ``exec()`` 返回后告诉用户（任务库状态
+        行 + 通知，见 ``window.MainWindow.open_import_wizard``）；重新打开向导
+        也会被 ``imports_in_progress()`` 挡住，不会并发第二次导入。
         """
         if self._busy and not self._abandoned:
             self._abandoned = True
@@ -400,6 +449,11 @@ class ImportWizardDialog(QDialog):
                 "the import keeps running in the background and its report "
                 "will not be shown")
         super().reject()
+
+    @property
+    def import_abandoned(self) -> bool:
+        """向导在导入进行中被关闭、且导入仍未结束（#363）。"""
+        return bool(self._abandoned and self._busy)
 
     # ---- 页面 ----
     def _build_file_page(self) -> None:
@@ -628,6 +682,12 @@ class ImportWizardDialog(QDialog):
             self._start_import()
 
     def _start_import(self) -> None:
+        if imports_in_progress():
+            # 另一个向导的导入还在写库（它的对话框可能已经关了）。这里再放行
+            # 就是两个导入并发写同一本任务/项目——正是 #363 修复后暴露的风险。
+            self.controller.fail(i18n.tr("正在导入，请等这一批完成后再导入。"))
+            self._show_step()
+            return
         # 导入必须与预检使用同一份参数：这里先用当前控件值重跑一次预检
         # （只读、廉价），再 begin_import。用户在预检后改项目/语言时，
         # 不会出现"预检 A 项目、写入 B 项目"。
@@ -677,8 +737,9 @@ class ImportWizardDialog(QDialog):
             self.controller.fail(str(message), detail=detail or str(message))
             self._show_step()
 
+        _begin_import_activity()
         try:
-            self.runner.submit(_import_worker, payload["path"],
+            self.runner.submit(_import_worker_tracked, payload["path"],
                                importer=self.controller.importer,
                                project_id=payload["project_id"] or None,
                                target_lang=payload["target_lang"],
@@ -686,6 +747,7 @@ class ImportWizardDialog(QDialog):
                                on_done=done, on_error=failed,
                                label="import-wizard")
         except Exception as exc:  # noqa: BLE001 - 线程池拒绝也要落到错误页
+            _finish_import_activity()
             self._busy = False
             self.controller.fail(str(exc))
             self._show_step()
@@ -725,5 +787,5 @@ class ImportWizardDialog(QDialog):
 __all__ = [
     "STEP_FILE", "STEP_PREFLIGHT", "STEP_IMPORTING", "STEP_REPORT", "STEP_ERROR",
     "STEPS", "BLOCK_TERMBASE_NEEDS_PROJECT", "ImportWizardController",
-    "ImportWizardDialog",
+    "ImportWizardDialog", "imports_in_progress",
 ]

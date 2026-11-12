@@ -1952,11 +1952,32 @@ class MainWindow(QMainWindow):
         与 ``add_termbase`` 互不影响：那条把术语挂到当前任务，这条把资产导入
         项目记忆/术语库并展示校验报告。这里只刷新项目列表（后台读取），不碰
         工作台的增量刷新路径。
+
+        #363（P0-9c）之后导入在向导关闭后仍会继续写库，因此这里守住两件事：
+
+        * 进程内已有向导导入在写库时**不再打开第二个向导**。旧代码里界面被
+          冻到导入结束、点不了第二次，那是偶然的数据保护；#363 修好冻结后，
+          关闭 → 重开就能并发写同一本任务。判定用 ``import_wizard`` 的进程级
+          导入状态，不依赖某个对话框对象是否还活着；
+        * 导入中关闭向导时明确告诉用户"导入仍在后台"：只在 ``qt-client.log``
+          里记一笔，用户会以为关闭就是取消。提示走任务库状态行 + 现有通知，
+          不新造界面。
         """
+        if import_wizard.imports_in_progress():
+            self._notice(
+                i18n.tr('上一次导入仍在后台进行，请等它完成后再打开导入向导。'),
+                task=False)
+            return
         dialog = import_wizard.ImportWizardDialog(self)
         try:
             dialog.exec()
         finally:
+            if dialog.import_abandoned:
+                message = i18n.tr(
+                    '导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。')
+                # 状态行留在任务库（3 秒通知会被错过），通知负责当场可见。
+                self.home.set_status(message)
+                self._notice(message, task=False)
             if dialog.controller.report:
                 self.refresh_projects()
 

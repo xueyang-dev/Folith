@@ -2704,5 +2704,7 @@
   "导入失败：{v0}": "Import failed: {v0}",
   "未指定": "Not specified",
   "未知原因": "Unknown reason",
-  "导入资产并校验…": "Import assets and verify…"
+  "导入资产并校验…": "Import assets and verify…",
+  "上一次导入仍在后台进行，请等它完成后再打开导入向导。": "The previous import is still running in the background. Wait for it to finish before opening the import wizard again.",
+  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "The import is still running in the background: closing the wizard does not cancel it. Refresh the Projects page when it finishes to see the result."
 }

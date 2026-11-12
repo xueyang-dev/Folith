@@ -2705,5 +2705,7 @@
   "导入失败：{v0}": "Error de importación: {v0}",
   "未指定": "Sin especificar",
   "未知原因": "Motivo desconocido",
-  "导入资产并校验…": "Importar activos y verificar…"
+  "导入资产并校验…": "Importar activos y verificar…",
+  "上一次导入仍在后台进行，请等它完成后再打开导入向导。": "La importación anterior sigue en segundo plano. Espera a que termine antes de volver a abrir el asistente de importación.",
+  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "La importación sigue en segundo plano: cerrar el asistente no la cancela. Actualiza la página Proyectos cuando termine para ver el resultado."
 }
