@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -130,11 +131,13 @@ def _sequence_errors(text: str, tags: Sequence[InlineTag]) -> list[str]:
     if len(set(ids_in_text)) != len(ids_in_text):
         errors.append("同一占位符在文本中出现多次")
 
-    # 配对：按 code_name 各维护一条开启栈（配对语义名相等即可配对，嵌套是否
-    # 正确由下一条确定性检查单独判定）。配对失败各报一条最具体的错误。
+    # 配对：按 code_name（适配器给出的配对键；memoQ 用 rid、SDLXLIFF 用
+    # <g>@id）各维护一条开启栈。**XLIFF 的 bpt/ept 是序列模型，不是树模型**：
+    # 真实 memoQ 会先连续开 4 个 bpt、再按 id 关 4 个 ept，配对区间交叠，但每个
+    # 配对键都恰好开一次、关一次。跨区间交叠因此不是缺陷；只有"关一个没开过的
+    # 键"（同一侧内 rid 不自洽）和"开了没关"（id 不闭合）才是。
     by_id = {int(tag.tag_id): tag for tag in tags}
     opened: dict[str, list[int]] = {}
-    pairs: list[tuple[int, int, str]] = []
     for position, placeholder_id in enumerate(ids_in_text):
         tag = by_id.get(placeholder_id)
         if tag is None:
@@ -147,31 +150,19 @@ def _sequence_errors(text: str, tags: Sequence[InlineTag]) -> list[str]:
                 errors.append(
                     f"标签 {placeholder_id}（{tag.code_name}）关闭时没有未配对的开启")
                 continue
-            pairs.append((pending.pop(), position, tag.code_name))
+            pending.pop()
     for code_name, positions in opened.items():
         for position in positions:
             errors.append(
                 f"标签 {ids_in_text[position]}（{code_name}）开启后未闭合")
-
-    # 嵌套检查：两个配对区间交叉（外开 < 内开 < 外关 < 内关）即嵌套错乱。
-    # 一处结构缺陷只报一条——不再像"边报错边 pop 栈"那样把同一处交叉拆成
-    # "嵌套错乱 + 某个外层开启后未闭合"两条互相矛盾的错误（N2）。
-    pairs.sort(key=lambda item: (item[0], item[1]))
-    for index, (_outer_open, outer_close, outer_name) in enumerate(pairs):
-        for inner_open, inner_close, inner_name in pairs[index + 1:]:
-            if inner_open >= outer_close:
-                continue
-            # 内层在外层之前就看得到、且在外层关闭之后仍未闭合 → 交叉。
-            if inner_close > outer_close:
-                errors.append(
-                    f"标签 {ids_in_text[outer_close]} 关闭的是 {outer_name}，"
-                    f"但最内层未闭合的是 {inner_name}（嵌套错乱）")
     return errors
 
 
 def validate_tag_sequence(text: str, tags: Sequence[InlineTag]) -> list[str]:
-    """成对/自闭合校验：占位符与定义一一对应、成对标签正确嵌套闭合。
+    """成对/自闭合校验：占位符与定义一一对应、成对标签同键闭合。
 
+    配对按 ``code_name`` 匹配（同一侧内自洽），**不要求严格树嵌套**：XLIFF
+    1.2 的 ``bpt``/``ept`` 允许格式跨度交叠（先开 A、再开 B、先关 A、再关 B）。
     返回错误清单；空清单 = 该序列可安全往返。
     """
     return _sequence_errors(text, tags)
@@ -183,36 +174,44 @@ def validate_target_tags(
     target_text: str,
     target_tags: Sequence[InlineTag],
 ) -> list[str]:
-    """「译文标签集合 ⊆ 源文标签集合」的确定性检查。
+    """译文标签的**类型计数**不得超过源文，且译文自身必须自洽。
 
-    - 译文里出现源文没有的标签 → 错误（多余标签）；
-    - 同编号标签的 ``kind`` / ``code_name`` / ``payload`` 必须与源文完全一致：
-      payload 相同但把 open 改声明为 self_closing、把 open/close 互换、或换掉
-      配对语义名，同样是错误（不得改写标签方向，不得伪造负载）；
-    - 译文自身必须成对/自闭合合法（允许整对省略格式标签，不允许半对）。
+    为什么不再按编号/配对语义/负载跨侧比对：``tag_id`` 与配对键都是**每侧
+    独立**的计数器。真实 memoQ 源文 ``<bpt id="1" rid="1">`` 对应的译文是
+    ``<bpt id="1" rid="2">``；``<ph id="3">`` 在两侧的 ``id`` 也不对应。
+    跨侧逐字符比 ``payload``（或比 ``code_name``）会把**合法译文**判成伪造，
+    而导出时每侧都按自己的负载原样写回，本来就不需要两侧字节相同。
+
+    新的判据（两条都确定性可判）：
+
+    1. **同一侧内自洽**：:func:`_sequence_errors` 按各自一侧的 ``code_name``
+       配对，关闭一个没开过的键、开了没关、占位符与定义不一一对应都报错
+       （``payload`` 不跨侧比，只在同一侧内与配对键一致）。
+    2. **跨侧类型计数**：``open`` / ``close`` / ``self_closing`` 三种标签各自
+       的数量，译文不得超过源文（允许整对省略，不允许凭空多出）。这样仍能
+       抓住"译文多出标签""把整对 open/close 改写成 self_closing""把 self_closing
+       改写成一对"这类伪造。
+
+    **跨侧顺序不比较**：memoQ 会为贴合目标语序重排格式跨度（真实样本
+    ``document.mqxliff`` id=9 的源文与译文 span 顺序不同），要求顺序一致同样
+    会误判合法文件。顺序正确性由第 1 条在**每一侧内部**保证。
     """
     errors = _sequence_errors(target_text, target_tags)
-    # 同编号标签必须 **kind / code_name / payload 三者同时**与源文一致：
-    # 只比 payload 会让"把 open 改声明为 self_closing"或"open/close 互换"
-    # 这类改写整对闭合的行为静默通过，导出即写出未闭合/倒置的标签。
-    # 同一标签只报最具体的一条错误（先方向、再配对语义、最后负载）。
-    source_by_id = {}
-    for tag in source_tags:
-        source_by_id[int(tag.tag_id)] = tag
-    for tag in target_tags:
-        origin = source_by_id.get(int(tag.tag_id))
-        if origin is None:
-            errors.append(f"译文标签 {tag.tag_id} 在源文中不存在（多余标签）")
-        elif origin.kind != tag.kind:
+
+    def counts(tags: Sequence[InlineTag]) -> Counter:
+        return Counter(tag.kind for tag in tags)
+
+    source_counts = counts(source_tags)
+    target_counts = counts(target_tags)
+    # close 与 open 的数量相等已由 _sequence_errors 保证；这里三类都查，
+    # 保证"只多出一个 self_closing"这类伪造不会因为 open 计数没超而漏掉。
+    for kind, label in (("open", "开启"), ("close", "闭合"),
+                        ("self_closing", "自闭合")):
+        extra = target_counts[kind] - source_counts[kind]
+        if extra > 0:
             errors.append(
-                f"译文标签 {tag.tag_id} 的类型 {tag.kind} 与源文 {origin.kind} "
-                f"不一致（不得改写标签方向）")
-        elif origin.code_name != tag.code_name:
-            errors.append(
-                f"译文标签 {tag.tag_id} 的配对语义 {tag.code_name!r} 与源文 "
-                f"{origin.code_name!r} 不一致（不得改写配对）")
-        elif origin.payload != tag.payload:
-            errors.append(f"译文标签 {tag.tag_id} 的负载与源文不一致（不得伪造）")
+                f"译文的{label}标签 {target_counts[kind]} 个超过源文 "
+                f"{source_counts[kind]} 个（不得伪造源文没有的标签）")
     return errors
 
 
@@ -658,3 +657,126 @@ def reconcile_identities(
             "history": history,
         }
     return identities, reassignments, ledger, rejections
+
+
+# ---------------------------------------------------------------------------
+# 6. 单元切割（XLIFF 容器）
+# ---------------------------------------------------------------------------
+# 真实 memoQ 会在 ``trans-unit`` 里嵌 ``mq:historical-unit``（历史版本）与
+# ``mq:insertedmatch``（TM/CM 匹配溯源），它们各自带自己的 ``<source>``。平铺
+# ``.//source`` 会把历史版本当当前段落：实测 ``pe.mqxliff`` 306 vs 51 个
+# trans-unit、``document.mqxliff`` 35 vs 16。这里把"当前段落源文"钉死为
+# ``trans-unit`` 的**直接子节点**，并把嵌套源文按容器分类计数——适配器可以
+# 显式报告"跳过了 N 条历史版本"，但不能静默丢弃或静默多算。
+
+#: 单元容器（XLIFF 1.2）；一层文件里可有多组 ``group`` 包着它。
+TRANS_UNIT_TAG = "trans-unit"
+#: 当前段落的源文/译文元素名（必须是 ``trans-unit`` 的直接子节点）。
+SOURCE_TAG = "source"
+TARGET_TAG = "target"
+
+
+def _localname(tag: Any) -> str:
+    """去掉 ElementTree 的 ``{namespace}`` 前缀；契约层不绑定具体命名空间。"""
+    text = str(tag or "")
+    return text.rsplit("}", 1)[-1]
+
+
+@dataclass(frozen=True)
+class ScannedTransUnit:
+    """一个 ``trans-unit`` 的切割结果。
+
+    ``source`` / ``target`` 只可能是该单元的直接子节点（没有则 ``None``）；
+    ``nested_sources`` 是**单元内部但不在直接子层**的 ``<source>`` 数量，按最近
+    的容器元素名分类（实测为 ``historical-unit`` / ``insertedmatch``）。
+    """
+
+    unit_id: str
+    source: Any
+    target: Any
+    nested_sources: Mapping[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TransUnitScan:
+    """一次文件级切割的完整结果：单元清单 + 嵌套源文合计。"""
+
+    units: tuple[ScannedTransUnit, ...]
+    nested_sources: Mapping[str, int] = field(default_factory=dict)
+
+    @property
+    def unit_count(self) -> int:
+        return len(self.units)
+
+    @property
+    def units_without_source(self) -> tuple[str, ...]:
+        return tuple(unit.unit_id for unit in self.units if unit.source is None)
+
+    @property
+    def nested_source_total(self) -> int:
+        return sum(self.nested_sources.values())
+
+    def nested_summary(self) -> str:
+        """可直接放进导入报告的说明；没有嵌套源文时返回空串（不产生噪音）。"""
+        if not self.nested_sources:
+            return ""
+        detail = "、".join(
+            f"{name}={count}" for name, count in sorted(self.nested_sources.items()))
+        return (f"跳过 {self.nested_source_total} 个嵌套 <source>"
+                f"（{detail}；历史版本/TM 溯源不是当前段落）")
+
+
+def scan_trans_units(root: Any) -> TransUnitScan:
+    """按 ``trans-unit`` 直接子节点切割单元；嵌套源文单独计数。
+
+    判据（确定性、无启发式）：
+
+    - 单元 = 任意深度的 ``trans-unit`` 元素（``group`` 可嵌套）；
+    - 源文 = 该单元**直接子节点**里本地名 ``source`` 的第一个；
+    - 译文 = 直接子节点里本地名 ``target`` 的第一个；
+    - 其余后代 ``<source>`` 计入 ``nested_sources``，按最近的容器元素名分类。
+
+    适配器**不得**用 ``.//source`` 平铺扫描：那会把 ``historical-unit`` /
+    ``insertedmatch`` 的源文算成当前段落。
+    """
+    elements = list(root.iter()) if hasattr(root, "iter") else []
+    parents: dict[Any, Any] = {}
+    for parent in elements:
+        for child in parent:
+            parents[child] = parent
+
+    units: list[ScannedTransUnit] = []
+    totals: Counter = Counter()
+    for element in elements:
+        if _localname(element.tag) != TRANS_UNIT_TAG:
+            continue
+        source = target = None
+        for child in list(element):
+            name = _localname(child.tag)
+            if name == SOURCE_TAG and source is None:
+                source = child
+            elif name == TARGET_TAG and target is None:
+                target = child
+        nested: Counter = Counter()
+        for descendant in element.iter():
+            if descendant is element or descendant is source or descendant is target:
+                continue
+            if _localname(descendant.tag) != SOURCE_TAG:
+                continue
+            container = parents.get(descendant)
+            while container is not None and container is not element:
+                name = _localname(container.tag)
+                if name not in (SOURCE_TAG, TARGET_TAG):
+                    nested[name] += 1
+                    break
+                container = parents.get(container)
+            else:
+                nested["unknown"] += 1
+        totals.update(nested)
+        units.append(ScannedTransUnit(
+            unit_id=str(element.get("id") or f"#{len(units) + 1}"),
+            source=source,
+            target=target,
+            nested_sources=dict(nested),
+        ))
+    return TransUnitScan(units=tuple(units), nested_sources=dict(totals))
