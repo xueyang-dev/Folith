@@ -19,6 +19,7 @@ the Issue -- or delete the C++ object synchronously.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -377,6 +378,125 @@ def test_process_exit_with_a_running_task_is_bounded(tmp_path):
     assert "abandoned" in proc.stdout
     assert elapsed < 6.0, (
         f"the process needed {elapsed:.1f}s to exit with a detached 30 s task")
+
+
+# --- P0-9h TEMPORARY diagnosis (delete before merging) ---------------------
+
+_DIAG_PROBE = """\
+import os, sys, threading, time
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+sys.path.insert(0, %(root)r)
+from PySide6.QtWidgets import QApplication
+from folith.qt.workers import TaskRunner
+app = QApplication([])
+runner = TaskRunner()
+started = threading.Event()
+def work():
+    started.set()
+    time.sleep(%(work_s)r)
+runner.submit(work, label='exit-stop-like')
+while not started.is_set():
+    app.processEvents()
+    time.sleep(0.001)
+assert runner.wait_for_done(200) is False
+%(park)s
+print('probe-end', flush=True)
+"""
+
+_DIAG_PARKS = {
+    # what P0-9b ships: the busy pool is destroyed on a daemon thread
+    "daemon_delete": "handed = TaskRunner.abandon_all()\nassert handed == 1, handed",
+    # no detach at all: PySide's own shutdown sweep must join the busy pool
+    "no_detach": "pass",
+    # detach, then leave the process without any Python-level teardown
+    "detach_hard_exit": ("handed = TaskRunner.abandon_all()\n"
+                         "assert handed == 1, handed\n"
+                         "os._exit(0)"),
+    # detach and keep the main thread alive until the reaper's join is over
+    "detach_then_wait": ("handed = TaskRunner.abandon_all()\n"
+                         "assert handed == 1, handed\n"
+                         "time.sleep(6.5)"),
+}
+
+
+def _diag_run(tmp_path, tag, work_s=5.0):
+    """Run one probe; return (returncode, elapsed, stdout, stderr)."""
+    script = tmp_path / f"diag_{tag}.py"
+    script.write_text(_DIAG_PROBE % {"root": str(ROOT), "work_s": work_s,
+                                     "park": _DIAG_PARKS[tag]},
+                      encoding="utf-8")
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
+               FOLITH_QT_SETTINGS_DIR=str(tmp_path / f"settings_{tag}"))
+    started_at = time.perf_counter()
+    try:
+        proc = subprocess.run([sys.executable, str(script)], cwd=str(ROOT),
+                              env=env, capture_output=True, text=True,
+                              timeout=max(15.0, work_s + 12.0))
+        return (proc.returncode, time.perf_counter() - started_at,
+                proc.stdout, proc.stderr)
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout or ""
+        err = exc.stderr or ""
+        return ("TIMEOUT", time.perf_counter() - started_at,
+                out.decode() if isinstance(out, bytes) else out,
+                err.decode() if isinstance(err, bytes) else err)
+
+
+def _diag_debugger(tmp_path, tag):
+    """Re-run a crashing probe under a debugger and return its transcript."""
+    script = tmp_path / f"diag_{tag}.py"
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
+               FOLITH_QT_SETTINGS_DIR=str(tmp_path / f"settings_{tag}"))
+    gdb = shutil.which("gdb")
+    lldb = shutil.which("lldb")
+    if gdb:
+        cmd = [gdb, "--batch", "-nx", "-ex", "set confirm off",
+               "-ex", "set pagination off", "-ex", "run",
+               "-ex", "info threads", "-ex", "thread apply all bt 20",
+               "--args", sys.executable, str(script)]
+    elif lldb:
+        cmd = [lldb, "--batch", "-o", "run", "-o", "thread backtrace all",
+               "-o", "quit", "--", sys.executable, str(script)]
+    else:
+        return "(no gdb/lldb on this machine)"
+    try:
+        proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True,
+                              text=True, timeout=120)
+        return (proc.stdout or "") + (proc.stderr or "")
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must not fail the run
+        return f"(debugger run failed: {exc!r})"
+
+
+def test_p0_9h_diagnose_the_exit_probe(tmp_path):
+    """TEMPORARY (P0-9h): record what each teardown strategy does on this OS.
+
+    Never asserts: its whole purpose is to leave a transcript in
+    ``.regression-logs/`` for the one platform we cannot run locally.
+    """
+    import platform
+    import shutil as _shutil
+
+    lines = [f"platform={platform.platform()} python={sys.version.split()[0]}"]
+    try:
+        import PySide6
+        lines.append(f"pyside6={PySide6.__version__}")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"pyside6=? {exc!r}")
+    lines.append("gdb=%r lldb=%r" % (_shutil.which("gdb"), _shutil.which("lldb")))
+    for tag in _DIAG_PARKS:
+        rc, elapsed, out, err = _diag_run(tmp_path, tag)
+        lines.append(f"\n===== {tag}: rc={rc} elapsed={elapsed:.2f}s "
+                     f"stdout={out.strip()[-120:]!r}")
+        lines.append(f"stderr:\n{err.strip()[-3000:]}")
+    rc, elapsed, _out, _err = _diag_run(tmp_path, "daemon_delete")
+    if rc != 0:
+        lines.append("\n===== daemon_delete under a debugger =====\n"
+                     + _diag_debugger(tmp_path, "daemon_delete")[-12000:])
+    transcript = "\n".join(lines)
+    logs = ROOT / ".regression-logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    (logs / "p0-9h-diagnose.txt").write_text(transcript, encoding="utf-8")
+    print(transcript)
 
 
 def test_a_runner_reused_after_abandon_gets_a_fresh_pool(app):
