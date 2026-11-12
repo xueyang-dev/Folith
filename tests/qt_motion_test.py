@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QHeaderView, QWidget
 
 from folith.qt import adapter, motion, style, views
 
@@ -27,6 +27,36 @@ def _wait_for(predicate, timeout_ms=1500):
 @pytest.fixture()
 def app():
     return QApplication.instance() or QApplication([])
+
+
+def _settle_row_heights(view, timeout_ms=8000):
+    """Wait until the incremental row-height pass and its debounce are idle."""
+    return _wait_for(
+        lambda: not (view._heights_pending or view._height_timer.isActive()
+                     or view._height_resize.isActive()),
+        timeout_ms=timeout_ms)
+
+
+def _assert_row_pinned(view, row, expected_y, label, timeout_ms=8000):
+    """Assert one row's viewport y survives the whole rewrap pass.
+
+    The pass is asynchronous (120 ms debounce, then 200-row batches), so one
+    assertion after a fixed sleep both races the pass and cannot see a
+    transient jump.  Check the invariant every round, and fail if the pass
+    never drains instead of sleeping through it.
+    """
+    table = view.segment_list
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        y = table.rowViewportPosition(row)
+        assert abs(y - expected_y) <= 1, (
+            f"{label}: row {row} moved from {expected_y} to {y} during the rewrap")
+        idle = not (view._heights_pending or view._height_timer.isActive()
+                    or view._height_resize.isActive())
+        if idle:
+            return
+        assert time.monotonic() < deadline, f"{label}: the rewrap did not settle"
+        QTest.qWait(10)
 
 
 def test_reduce_motion_priority_and_system_fallback(monkeypatch):
@@ -372,17 +402,77 @@ def test_source_location_waits_for_transition_and_follows_latest_selection(bench
     assert not bench._motion.running("translation-columns")
 
 
-def test_column_rewrap_keeps_visible_editor_anchored(bench):
+def test_column_rewrap_keeps_visible_editor_anchored(bench, monkeypatch):
+    """A real column rewrap keeps what the reader is looking at in place.
+
+    Columns 1/2 are ``Stretch`` sections, so ``setColumnWidth`` is undone
+    inside the same call and this test used to drive no rewrap at all
+    (``sectionResized`` reported 474 -> 474).  Drive the user's real path
+    instead: toggling the source panel runs ``_transition_columns``, the
+    splitter resizes the grid, and the Stretch sections re-wrap the rows
+    through ``sectionResized`` -> the 120 ms debounce -> the row-height pass.
+
+    With the active row on screen, it is the anchor (the hybrid rule: the
+    visible active row, else the first visible row), so its viewport y must
+    not move -- the inline editor lives on that row.  Scrolling away is
+    covered too: the same real transition must then pin the first visible
+    row.  Before P0-3 the correction was skipped whenever the active row was
+    off screen, and the whole screen moved by the summed height delta of the
+    rows above it.
+    """
+    # Under offscreen runs motion is already reduced, but the test must not
+    # depend on the developer's macOS setting: the transition has to finish
+    # synchronously so the assertions below can watch the debounced pass from
+    # its first millisecond.  The signal chain under test is unchanged.
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
     table = bench.segment_list
+    bench._source_available = True       # the left panel needs a source to open
     bench.select_segment(40)
+    QTest.qWait(30)
+
     bar = table.verticalScrollBar()
     bar.setValue(bar.value() + table.rowViewportPosition(40) - 180)
-    before = table.rowViewportPosition(40)
-    table.setColumnWidth(1, max(120, table.columnWidth(1) - 170))
-    bench._schedule_row_heights(reset=True)
-    QTest.qWait(350)
-    assert abs(table.rowViewportPosition(40) - before) <= 1
+    assert _settle_row_heights(bench)
+    assert 0 <= table.rowViewportPosition(40) < table.viewport().height()
+
+    # ---- the visible active row: the original assertion of this test -----
+    anchored = table.rowViewportPosition(40)
+    width_before = table.columnWidth(1)
+    height_before = sum(table.rowHeight(position) for position in range(40))
+    bench.set_source_open(True)
+    assert table.columnWidth(1) < width_before, (
+        "the rewrap stimulus must really change the column width")
+    assert abs(table.rowViewportPosition(40) - anchored) <= 1, (
+        "the visible editor's row moved while the columns changed")
+    _assert_row_pinned(bench, 40, anchored, "visible active row")
+    assert _settle_row_heights(bench)
+    height_after = sum(table.rowHeight(position) for position in range(40))
+    assert height_after - height_before > 150, (
+        "the columns changed but the rows above the anchor did not re-wrap")
+
+    # The editor is the point of this test: it must still be visible and on
+    # its row once the rewrap has finished.
     assert bench.inline_editor.isVisibleTo(bench)
+    row_rect = table.visualRect(table.model().index(40, 2))
+    assert bench.inline_editor.geometry().top() == row_rect.top() + 4
+
+    # ---- scrolled away from the active row: the same real rewrap ---------
+    bar.setValue(bar.value() + table.rowViewportPosition(40) + 1200)
+    assert _settle_row_heights(bench)
+    assert table.rowViewportPosition(40) < 0, "the active row must be off screen"
+    width_before = table.columnWidth(1)
+    bench.set_source_open(False)
+    assert table.columnWidth(1) > width_before, (
+        "the rewrap stimulus must really change the column width")
+    # Opening/closing the panel re-places the inline editor synchronously via
+    # sectionResized; with the active row above the viewport that entry point
+    # moves the content before the debounced pass starts (P0-3a report §5.2).
+    # Pick the row the pass will pin and measure it from after that entry
+    # point, like the off-screen regression test.
+    witness = table.rowAt(0)
+    assert witness >= 0
+    pinned = table.rowViewportPosition(witness)
+    _assert_row_pinned(bench, witness, pinned, "off-screen active row")
 
 
 def test_reveal_removes_its_effect_when_finished(app, monkeypatch):
@@ -425,3 +515,54 @@ def test_check_and_repair_card_leaves_the_columns_alone(bench, app, monkeypatch)
     assert not bench.check_button.isChecked()
     assert bench.translation_split.sizes() == sizes
     assert bench.inspector_scroll.isVisible()
+
+
+def test_column_rewrap_keeps_first_visible_row_anchored_when_active_row_is_off_screen(bench):
+    """P0-3: an off-screen active row used to disable the scroll correction.
+
+    ``_apply_row_height_chunk`` anchored on the active row and, when that row
+    was outside the viewport, silently skipped the scroll correction.  Every
+    visible row then moved by the summed height delta of the rows above it
+    (985 px locally, 340 px on CI).  An off-screen active row now anchors on
+    the first visible row, which exists regardless of where the active row is.
+    """
+    table = bench.segment_list
+    header = table.horizontalHeader()
+    # Columns 1/2 are Stretch sections, and setColumnWidth on a Stretch
+    # section is undone inside the same call (no rewrap at all).  Make them
+    # Interactive for this test so the stimulus is real.
+    header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+    header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+    QTest.qWait(20)
+
+    bench.select_segment(5)                 # active row far above the viewport
+    QTest.qWait(30)
+    bar = table.verticalScrollBar()
+    bar.setValue(bar.value() + table.rowViewportPosition(60) - 120)
+    assert _settle_row_heights(bench)
+    assert table.rowViewportPosition(5) < 0, "the active row must be off screen"
+
+    width_before = table.columnWidth(1)
+    heights_before = sum(table.rowHeight(position) for position in range(60))
+    table.setColumnWidth(1, max(120, width_before - 170))
+    assert table.columnWidth(1) < width_before, "the rewrap stimulus must be real"
+
+    # setColumnWidth re-places the inline editor synchronously through
+    # sectionResized; that editor-height entry point is measured separately.
+    # From here the row-height pass owns the viewport.
+    witness = table.rowAt(0)
+    before = table.rowViewportPosition(witness)
+    bench._schedule_row_heights(reset=True)
+
+    deadline = time.monotonic() + 8.0
+    worst = 0
+    while time.monotonic() < deadline:
+        worst = max(worst, abs(table.rowViewportPosition(witness) - before))
+        if not (bench._heights_pending or bench._height_timer.isActive()
+                or bench._height_resize.isActive()):
+            break
+        QTest.qWait(10)
+    worst = max(worst, abs(table.rowViewportPosition(witness) - before))
+    assert worst <= 1, f"the first visible row moved {worst} px during the rewrap"
+    heights_after = sum(table.rowHeight(position) for position in range(60))
+    assert abs(heights_after - heights_before) > 200, "the rewrap must change heights"
