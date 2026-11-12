@@ -102,17 +102,35 @@ source_digest   = sha256(source_text)                 # 变化证据，与身份
 ## 3. 状态映射
 
 双向映射表（`STATUS_MAP` / `map_cat_status` / `map_folith_status`）。别名
-归一后才查表：**大小写、首尾空白、连字符与下划线等价**（XLIFF 1.2/2.0 的
-`state` 取值用连字符，如 `signed-off` / `needs-translation`，与表内下划线
-写法同义）。**表外状态一律显式拒绝**（`StatusMappingError` →
-`UNMAPPABLE_STATUS` 拒绝路径），绝不猜近似语义。
+归一后才查表：**大小写、首尾空白、连字符与下划线等价、CamelCase →
+snake_case 拆分**（XLIFF 1.2/2.0 的 `state` 取值用连字符，如 `signed-off` /
+`needs-translation`，与表内下划线写法同义；memoQ 写 `ManuallyConfirmed`、
+Trados 写 `ApprovedSignOff`，不做 CamelCase 拆分就只剩
+`manuallyconfirmed` / `approvedsignoff`，与下划线词表永不相等）。拆分只是
+拼写归一：归一后的值仍须**逐字**命中规范名或别名。**表外状态一律显式拒绝**
+（`StatusMappingError` → `UNMAPPABLE_STATUS` 拒绝路径），绝不猜近似语义，
+也不设"未知值默认通过"的兜底。
 
 | 规范状态 | 别名（示例） | → Folith pair 字段 | 说明 |
 | --- | --- | --- | --- |
-| `confirmed` | final, reviewed, signed_off（`signed-off`）, approved | `target_provenance="human_edit"`, `human_edited=True`, `reviewed=True`, `review_status="reviewed"`, `from_tm=False` | CAT 已确认 = 人工作者且人工定稿：进库即受人工保护（批量替换跳过） |
-| `translated` | draft, pre_translated, translation_complete, needs_review_translation, needs_review_adaptation, needs_review_l10n | `target_provenance="generated"`, `human_edited=False`, `reviewed=False`, `review_status="not_reviewed"`, `from_tm=False` | 已翻未确认 = 可用工作译文，仍须走本应用审校门禁 |
-| `untranslated` | new, empty, not_translated, initial, needs_translation（`needs-translation`） | 同 `translated`，**且 `target=""`** | 待生成。`target=""` 是**破坏性字段**：导入时必须**整体覆盖**单元字段，不得与旧译文 merge（否则旧译文残留、单元会被重新判成 `translated`） |
+| `confirmed` | final, reviewed, signed_off（`signed-off`）, approved, manually_confirmed（`ManuallyConfirmed`）, proofread（`Proofread`）, reviewer1_confirmed（`Reviewer1Confirmed`）, approved_sign_off（`ApprovedSignOff`）, approved_translation（`ApprovedTranslation`） | `target_provenance="human_edit"`, `human_edited=True`, `reviewed=True`, `review_status="reviewed"`, `from_tm=False` | CAT 已确认 = 人工作者且人工定稿：进库即受人工保护（批量替换跳过） |
+| `translated` | draft（`Draft`）, pre_translated（`PreTranslated`）, translation_complete, machine_translated（`MachineTranslated`）, partially_edited（`PartiallyEdited`）, needs_review_translation, needs_review_adaptation, needs_review_l10n | `target_provenance="generated"`, `human_edited=False`, `reviewed=False`, `review_status="not_reviewed"`, `from_tm=False` | 已翻未确认 = 可用工作译文，仍须走本应用审校门禁 |
+| `untranslated` | new, empty, not_translated, not_started（`NotStarted`）, initial, needs_translation（`needs-translation`） | 同 `translated`，**且 `target=""`** | 待生成。`target=""` 是**破坏性字段**：导入时必须**整体覆盖**单元字段，不得与旧译文 merge（否则旧译文残留、单元会被重新判成 `translated`） |
 | `locked` | read_only, protected | `{"excluded": True}` | 适配器不得生成译文：单元不进 `pairs`，登记进既有排除账本 `excluded_segments`；排除不计为已翻译 |
+
+**真实语料实测**（`tests/fixtures/mqxliff/` 5 个文件、`tests/fixtures/sdlxliff/`
+4 个文件）：memoQ 共 **363 个状态 token / 7 种取值**（`NotStarted` 160、
+`ManuallyConfirmed` 91、`MachineTranslated` 72、`PreTranslated` 32、
+`PartiallyEdited` 3、`Proofread` 3、`Reviewer1Confirmed` 2）；Trados 共
+**8 个 token / 4 种取值**（`Translated` 3、`Draft` 2、`ApprovedSignOff` 2、
+`ApprovedTranslation` 1）。全部可映射、**0 个表外值**；回归防线见
+`tests/tu_contract_real_corpus_test.py`（逐文件 × 逐状态词参数化）。
+
+memoQ 的**锁定是独立标志**（`mq:locked="locked"` + `translate="no"`），
+不是状态词：语料里 9 个锁定容器各自另有独立的 `mq:status`，
+`translation_status.mqxliff` 的 6 个锁定段覆盖 6 种不同状态。适配器必须把
+`mq:locked` 当正交标志单独读取，**不得**把该属性当 `status` 喂给映射表
+（`locked` 规范状态的最终落点见文末"v1 已知限制"）。
 
 反向映射（导出方向）：`excluded → locked`；`reviewed → confirmed`；有译文
 未审 → `translated`；空译文 → `untranslated`。人工保护标记不改变状态词：
@@ -124,9 +142,12 @@ CAT 状态描述定稿程度，保护标记描述"谁动的"，两者正交。
 
 可测试判定：映射表每个规范状态、每个别名、大小写变体全分支覆盖；**连字符
 写法（`signed-off` / `needs-translation` / `initial` / `needs-review-*`）与
-下划线写法等价**；表外状态（含空串、`needs-review`、`rejected`）必抛
-`StatusMappingError`；反向映射四分支全覆盖，且 `untranslated` 的闭环不靠
-测试手工补 `target`。
+下划线写法等价**；**CamelCase 写法（`NotStarted` / `ManuallyConfirmed` /
+`Reviewer1Confirmed` / `ApprovedSignOff`）与下划线写法等价**；表外状态（含
+空串、`needs-review`、`rejected`、拆分后仍不在词表的 `TotallyUnknownStatus`）
+必抛 `StatusMappingError`；真实语料（363 + 8 个 token）逐状态词参数化，100%
+命中且映射结果在规范词表内；反向映射四分支全覆盖，且 `untranslated` 的闭环
+不靠测试手工补 `target`。
 
 ## 4. 元数据保全
 
