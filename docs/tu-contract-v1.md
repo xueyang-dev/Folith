@@ -82,37 +82,61 @@ source_digest   = sha256(source_text)                 # 变化证据，与身份
   适配器按编号取回原负载写回。**禁止伪造负载**：同编号标签的译文负载必须
   与源文逐字符一致。
 - **成对/自闭合校验**（`validate_tag_sequence`）：占位符与标签定义一一对应；
-  成对标签（open/close）必须同 `code_name` 正确嵌套闭合；自闭合标签无配对
-  语义。违反即错误清单（确定性输出）。
-- **译文标签集合 ⊆ 源文标签集合**（`validate_target_tags`）：译文出现的每个
-  编号标签必须存在于源文（多余标签 = 错误）。同编号标签必须 **`kind` /
-  `code_name` / `payload` 三者同时**与源文一致——只比负载会让"把 open 改声明
-  为 self_closing"或"open/close 互换"这类改写绕过整对闭合校验，导出即写出
-  未闭合/倒置的标签。允许整对省略格式标签（目标语言词序调整），不允许半对：
-  半对（含方向改写）会被成对校验或同编号比对捕获。"标签个数相等"不是校验
-  目标，配对合法性才是。
+  成对标签（open/close）必须同 `code_name`（适配器给出的配对键：memoQ 用
+  `rid`，SDLXLIFF 用 `<g>@id`）在**同一侧内**闭合。XLIFF 1.2 的 `bpt`/`ept`
+  是**序列模型而不是树模型**：真实 memoQ 会先连续开多个 `bpt`、再按 id 关
+  `ept`，配对区间交叠但每个键恰好开一次、关一次——交叠不是缺陷。只有"关一
+  个没开过的键"（同侧 `rid` 不自洽）与"开了没关"（id 不闭合）才算错误。
+- **译文标签类型计数 ⊆ 源文**（`validate_target_tags`）：`tag_id` 与配对键
+  都是**每侧独立**的计数器。真实 memoQ 源文 `<bpt id="1" rid="1">` 对应的
+  译文是 `<bpt id="1" rid="2">`，`<ph id="3">` 的 `id` 在两侧也不对应。因此
+  契约**不跨侧比较编号、配对键或 `payload`**（跨侧逐字符比较会把 12 个真实
+  memoQ 译文判成"伪造负载/改写配对"）；跨侧只比较 `open` / `close` /
+  `self_closing` 三种类型的**数量**：译文不得超过源文——允许整对省略或重排，
+  不允许凭空多出。译文的配对自洽仍按各自一侧校验，半对必报错。**跨侧顺序
+  不比较**：memoQ 会为目标语序重排格式跨度（`document.mqxliff` id=9 是真实
+  证据），要求顺序一致同样会误判合法文件。
 - 标签校验不通过的单元按 `TAG_STRUCTURE_INVALID` 显式拒绝（单元级），
   不得截断半句入库（沿用 TMX `_tmx_seg_text` "宁可不导入，不导入半句"）。
 
-可测试判定：嵌套/自闭合合法序列零错误；乱序关闭、未闭合、多余开启、译文
-多余标签、负载不一致、**同编号标签的 `kind` 不一致、`kind` 互换、配对语义名
-被改写**各产出精确错误；一处交叉嵌套只报一条最具体的错误（不把同一处结构
-缺陷拆成"嵌套错乱 + 外层未闭合"两条）。
+可测试判定：交叠跨度（先开 A、再开 B、先关 A、再关 B）合法且零错误；关闭
+未开启、开启未闭合、占位符与定义不一一对应、译文类型计数超过源文（多出标签 /
+整对改写成自闭合 / 自闭合改写成一对）各产出精确错误；真实语料 9 个文件、
+193 个 `trans-unit`（167 个带译文）0 误判。**"交叠"不再是错误**：严格 LIFO
+树检查是 v1 的误判根因，已删除。
 
 ## 3. 状态映射
 
 双向映射表（`STATUS_MAP` / `map_cat_status` / `map_folith_status`）。别名
-归一后才查表：**大小写、首尾空白、连字符与下划线等价**（XLIFF 1.2/2.0 的
-`state` 取值用连字符，如 `signed-off` / `needs-translation`，与表内下划线
-写法同义）。**表外状态一律显式拒绝**（`StatusMappingError` →
-`UNMAPPABLE_STATUS` 拒绝路径），绝不猜近似语义。
+归一后才查表：**大小写、首尾空白、连字符与下划线等价、CamelCase →
+snake_case 拆分**（XLIFF 1.2/2.0 的 `state` 取值用连字符，如 `signed-off` /
+`needs-translation`，与表内下划线写法同义；memoQ 写 `ManuallyConfirmed`、
+Trados 写 `ApprovedSignOff`，不做 CamelCase 拆分就只剩
+`manuallyconfirmed` / `approvedsignoff`，与下划线词表永不相等）。拆分只是
+拼写归一：归一后的值仍须**逐字**命中规范名或别名。**表外状态一律显式拒绝**
+（`StatusMappingError` → `UNMAPPABLE_STATUS` 拒绝路径），绝不猜近似语义，
+也不设"未知值默认通过"的兜底。
 
 | 规范状态 | 别名（示例） | → Folith pair 字段 | 说明 |
 | --- | --- | --- | --- |
-| `confirmed` | final, reviewed, signed_off（`signed-off`）, approved | `target_provenance="human_edit"`, `human_edited=True`, `reviewed=True`, `review_status="reviewed"`, `from_tm=False` | CAT 已确认 = 人工作者且人工定稿：进库即受人工保护（批量替换跳过） |
-| `translated` | draft, pre_translated, translation_complete, needs_review_translation, needs_review_adaptation, needs_review_l10n | `target_provenance="generated"`, `human_edited=False`, `reviewed=False`, `review_status="not_reviewed"`, `from_tm=False` | 已翻未确认 = 可用工作译文，仍须走本应用审校门禁 |
-| `untranslated` | new, empty, not_translated, initial, needs_translation（`needs-translation`） | 同 `translated`，**且 `target=""`** | 待生成。`target=""` 是**破坏性字段**：导入时必须**整体覆盖**单元字段，不得与旧译文 merge（否则旧译文残留、单元会被重新判成 `translated`） |
+| `confirmed` | final, reviewed, signed_off（`signed-off`）, approved, manually_confirmed（`ManuallyConfirmed`）, proofread（`Proofread`）, reviewer1_confirmed（`Reviewer1Confirmed`）, approved_sign_off（`ApprovedSignOff`）, approved_translation（`ApprovedTranslation`） | `target_provenance="human_edit"`, `human_edited=True`, `reviewed=True`, `review_status="reviewed"`, `from_tm=False` | CAT 已确认 = 人工作者且人工定稿：进库即受人工保护（批量替换跳过） |
+| `translated` | draft（`Draft`）, pre_translated（`PreTranslated`）, translation_complete, machine_translated（`MachineTranslated`）, partially_edited（`PartiallyEdited`）, needs_review_translation, needs_review_adaptation, needs_review_l10n | `target_provenance="generated"`, `human_edited=False`, `reviewed=False`, `review_status="not_reviewed"`, `from_tm=False` | 已翻未确认 = 可用工作译文，仍须走本应用审校门禁 |
+| `untranslated` | new, empty, not_translated, not_started（`NotStarted`）, initial, needs_translation（`needs-translation`） | 同 `translated`，**且 `target=""`** | 待生成。`target=""` 是**破坏性字段**：导入时必须**整体覆盖**单元字段，不得与旧译文 merge（否则旧译文残留、单元会被重新判成 `translated`） |
 | `locked` | read_only, protected | `{"excluded": True}` | 适配器不得生成译文：单元不进 `pairs`，登记进既有排除账本 `excluded_segments`；排除不计为已翻译 |
+
+**真实语料实测**（`tests/fixtures/mqxliff/` 5 个文件、`tests/fixtures/sdlxliff/`
+4 个文件）：memoQ 共 **363 个状态 token / 7 种取值**（`NotStarted` 160、
+`ManuallyConfirmed` 91、`MachineTranslated` 72、`PreTranslated` 32、
+`PartiallyEdited` 3、`Proofread` 3、`Reviewer1Confirmed` 2）；Trados 共
+**8 个 token / 4 种取值**（`Translated` 3、`Draft` 2、`ApprovedSignOff` 2、
+`ApprovedTranslation` 1）。全部可映射、**0 个表外值**；回归防线见
+`tests/tu_contract_real_corpus_test.py`（逐文件 × 逐状态词参数化）。
+
+memoQ 的**锁定是独立标志**（`mq:locked="locked"` + `translate="no"`），
+不是状态词：语料里 9 个锁定容器各自另有独立的 `mq:status`，
+`translation_status.mqxliff` 的 6 个锁定段覆盖 6 种不同状态。适配器必须把
+`mq:locked` 当正交标志单独读取，**不得**把该属性当 `status` 喂给映射表
+（`locked` 规范状态的最终落点见文末"v1 已知限制"）。
 
 反向映射（导出方向）：`excluded → locked`；`reviewed → confirmed`；有译文
 未审 → `translated`；空译文 → `untranslated`。人工保护标记不改变状态词：
@@ -124,9 +148,12 @@ CAT 状态描述定稿程度，保护标记描述"谁动的"，两者正交。
 
 可测试判定：映射表每个规范状态、每个别名、大小写变体全分支覆盖；**连字符
 写法（`signed-off` / `needs-translation` / `initial` / `needs-review-*`）与
-下划线写法等价**；表外状态（含空串、`needs-review`、`rejected`）必抛
-`StatusMappingError`；反向映射四分支全覆盖，且 `untranslated` 的闭环不靠
-测试手工补 `target`。
+下划线写法等价**；**CamelCase 写法（`NotStarted` / `ManuallyConfirmed` /
+`Reviewer1Confirmed` / `ApprovedSignOff`）与下划线写法等价**；表外状态（含
+空串、`needs-review`、`rejected`、拆分后仍不在词表的 `TotallyUnknownStatus`）
+必抛 `StatusMappingError`；真实语料（363 + 8 个 token）逐状态词参数化，100%
+命中且映射结果在规范词表内；反向映射四分支全覆盖，且 `untranslated` 的闭环
+不靠测试手工补 `target`。
 
 ## 4. 元数据保全
 
@@ -221,6 +248,29 @@ fixture 产出指定拒绝码的单元级拒绝；文件级拒绝码登记到 `f
 有一条测试把生成器产物与提交物逐字节比对——否则"语料已提交"这条验收不可
 判定，且测试会写入仓库目录。
 
+## 8. 单元切割（`trans-unit` 的直接子节点）
+
+真实 memoQ 会在 `trans-unit` 里嵌 `mq:historical-unit`（历史版本）与
+`mq:insertedmatch`（TM/CM 匹配溯源），二者各自带自己的 `<source>`。契约因此
+把**当前段落**钉死为 `trans-unit` 的**直接子节点** `<source>` / `<target>`：
+
+- **禁止**用 `.//source`（或等价的平铺扫描）统计当前段落。实测平铺会把历史
+  版本当当前段落：`pe.mqxliff` 306 vs 51 个 `trans-unit`、`mt.mqxliff`
+  167 vs 51、`document.mqxliff` 35 vs 16、`translation_status.mqxliff`
+  25 vs 12。多算的单元会带着旧译文/旧状态进入工作台。
+- 嵌套 `<source>` **不是静默丢弃**：`scan_trans_units(root)` 返回
+  `TransUnitScan`（`units` + `nested_sources` 按容器名分类计数 +
+  `nested_summary()` 报告文本）。适配器必须把 `nested_summary()` 写进
+  `ImportReport.warnings`（或等价报告字段），让"跳过了 N 条历史版本"可见。
+- 单元容器 = 任意深度的 `trans-unit`（`group` 可嵌套）；源文/译文取直接子
+  节点中的第一个同名元素；没有 `<source>` 的单元进入 `units_without_source`，
+  由适配器显式拒绝，不得静默跳过。
+
+可测试判定：9 个真实样本的直接子节点计数逐一钉死（16/3/51/51/12/5/46/4/5，
+嵌套合计 19/0/116/255/13/0/0/0/0）；平铺计数等于直接计数 + 嵌套计数，且
+4 个 memoQ 文件平铺数大于单元数；合成树里的 `historical-unit` /
+`insertedmatch` 各计 1 且报告文本同时列出两个容器名。
+
 ## 失败 / 回滚行为
 
 契约层为新增纯库 + 文档 + fixture，无写入路径，不触碰任务状态；回滚 =
@@ -239,9 +289,11 @@ fixture 产出指定拒绝码的单元级拒绝；文件级拒绝码登记到 `f
   怎么算）：摘要吃的是带占位符的 `source_text`，因此纯标签重编号会被判成源文
   变化 → 产生一个新实例。是否去占位符/归一空白仍待后续裁定；若改口径，只影响
   "是否判成变化"，不影响身份规则本身。
-- **标签配对的扩展语义**：按 `code_name` 栈式配对，尚无 `rid` 配对键、
-  无法表达 XLIFF 2.0 `<pc>`，"允许整对省略"与"写回必须禁止整对省略"的
-  严格度也不可配（属 v1.1 扩展）。
+- **标签配对的扩展语义**：配对键由适配器通过 `code_name` 提供（memoQ 的
+  `rid`、SDLXLIFF 的 `<g>@id`），契约层不解析 `payload` 里的格式属性，因此
+  无法独立重建 `rid`；`payload` 不跨侧比较（每侧按自己的负载原样写回）。
+  无法表达 XLIFF 2.0 `<pc>`/`<sc>`/`<ec>`，"允许整对省略"与"写回必须禁止
+  整对省略"的严格度也不可配（属 v1.1 扩展）。
 - **没有字节级往返保证**：no-op 验收比较树投影等价（见第 6 节末）。
 
 ## Out of Scope

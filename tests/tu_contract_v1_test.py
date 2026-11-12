@@ -355,21 +355,46 @@ def test_tag_sequence_detects_each_error_class():
     # 关闭时没有开启。
     errors = validate_tag_sequence("Tail \ue0002\ue001.", [B_CLOSE, B_OPEN])
     assert any("没有未配对的开启" in item for item in errors)
-    # 嵌套错乱（真正交叉：b 开、i 开、b 关、i 关）——恰好一条错误（N2）。
-    errors = validate_tag_sequence(
-        "A \ue0001\ue001x \ue0003\ue001y\ue0002\ue001z\ue0004\ue001.",
-        [B_OPEN, B_CLOSE, I_OPEN, I_CLOSE])
-    assert len(errors) == 1
-    assert "嵌套错乱" in errors[0]
-    # 交叉且内层从未闭合（A <b>x <i>y </b>.）：只报最具体的一条，
-    # 不把同一处结构缺陷拆成"嵌套错乱 + 外层未闭合"两条（N2）。
+    # 开启后未闭合。
+    errors = validate_tag_sequence("Head \ue0001\ue001.", [B_OPEN, B_CLOSE])
+    assert any("开启后未闭合" in item for item in errors)
+    # 交叉且内层从未闭合（A <b>x <i>y </b>.）：只报最具体的一条。
     errors = validate_tag_sequence(
         "A \ue0001\ue001x \ue0003\ue001y\ue0002\ue001.",
         [B_OPEN, B_CLOSE, I_OPEN])
     assert len(errors) == 1
     assert "未闭合" in errors[0]
-    # 开启后未闭合。
-    errors = validate_tag_sequence("Head \ue0001\ue001.", [B_OPEN, B_CLOSE])
+
+
+def test_tag_sequence_allows_overlapping_format_spans():
+    """P3-2b：XLIFF 的 bpt/ept 是序列模型，交叠不是"嵌套错乱"。
+
+    真实 ``document.mqxliff`` id=8/9 就是先连开多个 bpt、再按 id 关 ept；
+    每个配对键都恰好开一次、关一次。按"严格 LIFO 树"判定会误判合法文件。
+    """
+    # A 开、B 开、A 关、B 关：交叠但每个 code_name 都成对。
+    assert validate_tag_sequence(
+        "A \ue0001\ue001x \ue0003\ue001y\ue0002\ue001z\ue0004\ue001.",
+        [B_OPEN, B_CLOSE, I_OPEN, I_CLOSE]) == []
+    # 真实 memoQ 的四连开/四连关。
+    tags = []
+    text = []
+    for index in range(1, 5):
+        tags.append(InlineTag(str(index), "open",
+                              f'<bpt id="{index}">&lt;rpr {index}&gt;</bpt>',
+                              f"rid:{index}"))
+        text.append(f"\ue000{index}\ue001")
+    text.append("content")
+    for index in range(1, 5):
+        tags.append(InlineTag(str(index + 4), "close",
+                              f'<ept id="{index}">&lt;/rpr {index}&gt;</ept>',
+                              f"rid:{index}"))
+        text.append(f"\ue000{index + 4}\ue001")
+    assert validate_tag_sequence("".join(text), tags) == []
+    # 交叠允许，但"开了没关"仍然必须报错（id 不闭合）。
+    broken = [tags[0], tags[1], tags[4]]
+    errors = validate_tag_sequence("\ue0001\ue001\ue0002\ue001\ue0005\ue001.",
+                                   broken)
     assert any("开启后未闭合" in item for item in errors)
 
 
@@ -387,49 +412,68 @@ def test_target_tags_must_be_subset_of_source_tags():
     errors = validate_target_tags(
         source_text, source_tags, "会议\ue0002\ue001开始。", [B_CLOSE])
     assert any("没有未配对的开启" in item for item in errors)
-    # 译文出现源文没有的标签：多余标签。
+    # 译文多出一个源文没有的标签（伪造负载）：类型计数超过源文。
+    extra = InlineTag("3", "self_closing", '<ph id="3">&lt;br/&gt;</ph>')
     errors = validate_target_tags(
         source_text, source_tags,
-        "会议\ue0003\ue001\ue0002\ue001开始。", [I_OPEN, B_CLOSE])
-    assert any("在源文中不存在" in item for item in errors)
-    # 负载伪造：同编号但负载与源文不一致。
-    forged = InlineTag("1", "open", '<bpt id="1">&lt;B&gt;</bpt>', "b")
-    errors = validate_target_tags(
+        "会议\ue0001\ue001\ue0002\ue001开始\ue0003\ue001。",
+        [B_OPEN, B_CLOSE, extra])
+    assert any("超过源文" in item and "不得伪造" in item for item in errors), errors
+
+
+def test_target_tags_are_compared_by_kind_counts_not_per_side_ids():
+    """P3-2b：``tag_id`` / ``code_name`` / ``payload`` 是每侧独立计数器。
+
+    真实 memoQ 源文 ``<bpt id="1" rid="1">`` 的译文是 ``<bpt id="1" rid="2">``；
+    跨侧逐字符比负载会把合法译文判成"伪造"。新判据只要求类型计数不超源文，
+    配对自洽在各自一侧内部校验。
+    """
+    source_text = "A \ue0001\ue001bold\ue0002\ue001 word."
+    source_tags = [B_OPEN, B_CLOSE]
+    # 译文侧 rid=2（每侧独立计数器）、负载不同：合法。
+    target_open = InlineTag("1", "open", '<bpt id="1" rid="2">&lt;b&gt;</bpt>',
+                            "rid:2")
+    target_close = InlineTag("2", "close",
+                             '<ept id="2" rid="2">&lt;/b&gt;</ept>', "rid:2")
+    assert validate_target_tags(
         source_text, source_tags,
-        "会议\ue0001\ue001\ue0002\ue001开始。", [forged, B_CLOSE])
-    assert any("负载与源文不一致" in item for item in errors)
+        "一个\ue0001\ue001加粗\ue0002\ue001词。",
+        [target_open, target_close]) == []
 
 
-def test_target_tags_reject_kind_or_code_name_changes():
-    """B1：同编号标签必须连 kind 与 code_name 一起比对，payload 相同不算通过。"""
+def test_target_tags_reject_fabricated_tag_structure():
+    """没放宽：伪造标签结构仍被三类计数与同侧配对抓住。"""
     source_text = "The \ue0001\ue001meeting\ue0002\ue001 starts."
     source_tags = [B_OPEN, B_CLOSE]
 
-    # (a) 源文 open 被重新声明成 self_closing（payload 逐字符相同）：整对闭合
-    #     被绕过，导出会写出没有对应 </bpt> 的未闭合标签。
+    # (a) 把整对 open/close 改写成一个 self_closing（负载抄自源文 open）：
+    #     自闭合计数超过源文（0 → 1），导出会写出没有对应 ept 的标签。
     errors = validate_target_tags(
         source_text, source_tags, "会议\ue0001\ue001开始。",
         [InlineTag("1", "self_closing", B_OPEN.payload)])
-    assert any("类型" in item and "不一致" in item for item in errors), errors
+    assert any("自闭合标签" in item and "超过源文" in item for item in errors), errors
 
-    # (b) open/close 互换：payload 仍与源文一致，但方向被倒置。
-    swapped = [InlineTag("1", "close", B_OPEN.payload, "b"),
-               InlineTag("2", "open", B_CLOSE.payload, "b")]
-    errors = validate_target_tags(
-        source_text, source_tags, "会议\ue0002\ue001\ue0001\ue001开始。", swapped)
-    assert any("类型" in item and "不一致" in item for item in errors), errors
-
-    # (c) kind 相同但配对语义名被换掉：闭合语义不再对应源文。
-    renamed = [B_OPEN, InlineTag("2", "close", B_CLOSE.payload, "i")]
+    # (b) 译文凭空多出一个自闭合标签（伪造负载）。
+    forged = InlineTag("3", "self_closing", '<ph id="9">&lt;FAKE/&gt;</ph>')
     errors = validate_target_tags(
         source_text, source_tags,
-        "会议\ue0001\ue001\ue0002\ue001开始。", renamed)
-    assert any("配对语义" in item for item in errors), errors
+        "会议\ue0001\ue001\ue0002\ue001开始\ue0003\ue001。",
+        [B_OPEN, B_CLOSE, forged])
+    assert any("不得伪造" in item for item in errors), errors
 
-    # 合法方向（kind / code_name / payload 全等）仍然通过。
-    assert validate_target_tags(
+    # (c) 同一侧内 rid 不自洽：close 的配对键从未开过。
+    errors = validate_target_tags(
         source_text, source_tags,
-        "会议\ue0001\ue001\ue0002\ue001开始。", [B_OPEN, B_CLOSE]) == []
+        "会议\ue0001\ue0002\ue001开始。",
+        [B_OPEN, InlineTag("2", "close", B_CLOSE.payload, "rid-other")])
+    assert any("没有未配对的开启" in item for item in errors), errors
+
+    # (d) 译文把 self_closing 改写成一对：开启计数超过源文。
+    errors = validate_target_tags(
+        "A \ue0005\ue001.", [BR_PH],
+        "A \ue0001\ue001x\ue0002\ue001.",
+        [InlineTag("1", "open", "<g>", "g"), InlineTag("2", "close", "</g>", "g")])
+    assert any("开启标签" in item and "超过源文" in item for item in errors), errors
 
 
 def test_fixture_tag_sequences_validate_clean():
@@ -502,6 +546,43 @@ def test_hyphenated_xliff_states_are_normalized():
 
     for bad in ("needs-review", "needs-adaptation", "rejected",
                 "signed-off-with-notes"):
+        with pytest.raises(StatusMappingError):
+            map_cat_status(bad)
+
+
+def test_camel_case_status_words_are_split_before_alias_lookup():
+    """P3-2a：真实 memoQ / Trados 的驼峰状态词必须命中词表。
+
+    真实语料里 memoQ 写 ``mq:status="ManuallyConfirmed"``、Trados 写
+    ``sdl:seg/@conf="ApprovedSignOff"``。不拆分时它们归一成
+    ``manuallyconfirmed`` / ``approvedsignoff``，与词表永不相等，整批
+    trans-unit 会落入 ``UNMAPPABLE_STATUS``。
+    """
+    measured = {
+        # memoQ mq:status（5 个真实样本，363 个 token，7 种取值）。
+        "NotStarted": "untranslated",
+        "ManuallyConfirmed": "confirmed",
+        "MachineTranslated": "translated",
+        "PreTranslated": "translated",
+        "PartiallyEdited": "translated",
+        "Proofread": "confirmed",
+        "Reviewer1Confirmed": "confirmed",
+        # Trados sdl:seg/@conf（4 个真实样本，8 个 token）。
+        "ApprovedSignOff": "confirmed",
+        "ApprovedTranslation": "confirmed",
+    }
+    for raw, canonical in measured.items():
+        assert map_cat_status(raw) == map_cat_status(canonical), raw
+
+    # CamelCase 拆分与既有的连字符等价叠加后仍然成立。
+    assert map_cat_status("Not-Started") == map_cat_status("untranslated")
+    assert map_cat_status("MACHINE-TRANSLATED") == map_cat_status("translated")
+
+    # 拆分只是拼写归一，不是宽松匹配：拆完不在词表的取值继续显式拒绝。
+    import pytest
+
+    for bad in ("TotallyUnknownStatus", "NotAStatus", "ManuallyRejected",
+                "Reviewer9Confirmed", "PreTranslatedExtra"):
         with pytest.raises(StatusMappingError):
             map_cat_status(bad)
 

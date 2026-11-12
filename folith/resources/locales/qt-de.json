@@ -2705,5 +2705,7 @@
   "导入失败：{v0}": "Import fehlgeschlagen: {v0}",
   "未指定": "Nicht angegeben",
   "未知原因": "Unbekannter Grund",
-  "导入资产并校验…": "Assets importieren und prüfen…"
+  "导入资产并校验…": "Assets importieren und prüfen…",
+  "上一次导入仍在后台进行，请等它完成后再打开导入向导。": "Der vorherige Import läuft noch im Hintergrund. Warten Sie, bis er abgeschlossen ist, bevor Sie den Importassistenten erneut öffnen.",
+  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "Der Import läuft noch im Hintergrund: Das Schließen des Assistenten bricht ihn nicht ab. Aktualisieren Sie nach Abschluss die Seite „Projekte“, um das Ergebnis zu sehen."
 }

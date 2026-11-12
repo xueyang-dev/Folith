@@ -83,7 +83,85 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def detach_background_work_on_exit(exit_code: int = 0) -> int:
+    """Hand every still-running task pool to its reaper so no exit path waits.
+
+    ``MainWindow._acquire_close`` already detaches the pools on the normal
+    ``closeEvent`` route.  Every other way out of :func:`main` -- ``--smoke``,
+    ``--selftest``, an exception while the window is being built, a future early
+    return, or a pool a timer re-created after the close flow detached its old
+    one -- used to leave the pool to ``~QThreadPool`` at interpreter shutdown.
+    That destructor joins the running runnable on the main thread: with a 4 s
+    task the process stayed alive 4.11 s after ``main()`` had returned, i.e.
+    after the window was already gone (#363 boundary (c)).
+
+    Deliberately a *detach*, not a drain: ``TaskRunner.abandon_all()`` only
+    drops the runner's pool reference and hands the pool to a daemon reaper
+    thread.  It never joins, never destroys a Qt object on this thread, and
+    never touches a widget, so it stays safe in the shutdown path (the class of
+    crash #363/P0-9h is about).  It is idempotent: a runner detached by
+    ``_acquire_close`` has ``pool is None``, so a second call is a no-op and the
+    close flow and this fallback can never reap the same pool.
+
+    Never raises: it runs from a ``finally``, where an exception would replace
+    the real exit code (or mask the original failure) with a shutdown error.
+
+    ``exit_code`` is handed to the workers module because the bounded exit path
+    leaves through ``os._exit``, which bypasses the interpreter's own status
+    handling: without it a startup exception would exit 0 and read as success.
+    """
+    if "PySide6.QtWidgets" not in sys.modules:
+        # No widgets module was imported, so no TaskRunner can exist.  Skipping
+        # the import keeps --ui-watchdog (which must return promptly) and a
+        # startup failure before build_application() at their current cost.
+        return 0
+    try:
+        from .workers import TaskRunner, log_note, set_exit_code
+    except Exception:  # noqa: BLE001 - a shutdown fallback must not raise
+        return 0
+    try:
+        set_exit_code(exit_code)
+    except Exception:  # noqa: BLE001 - same: exit must not fail here
+        pass
+    try:
+        handed_off = TaskRunner.abandon_all()
+    except Exception:  # noqa: BLE001 - same: exit must not fail here
+        return 0
+    if handed_off:
+        try:
+            log_note(f"exit: {handed_off} background pool(s) detached by the "
+                     "main() fallback (exit path without closeEvent)")
+        except Exception:  # noqa: BLE001 - logging must not break the exit
+            pass
+    return handed_off
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Process entry point (``qt_client.py``, ``python -m folith.qt``, the app).
+
+    The ``finally`` is the exit bound for the whole process, not just for
+    ``app.exec()``: it runs while Qt is still fully alive (before the
+    interpreter tears PySide down) and it is the last line of Python we control
+    on *every* return and exception path of :func:`_main`.  In the normal
+    ``closeEvent`` flow the pools are already detached, so this is a no-op.
+    """
+    exit_code = 0
+    try:
+        result = _main(argv)
+        exit_code = result if isinstance(result, int) else 0
+        return result
+    except SystemExit as exc:
+        code = exc.code
+        exit_code = 0 if code is None else (code if isinstance(code, int) else 1)
+        raise
+    except BaseException:
+        exit_code = 1
+        raise
+    finally:
+        detach_background_work_on_exit(exit_code)
+
+
+def _main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.ui_watchdog:
         from folith.desktop.ui_watchdog import run

@@ -67,6 +67,27 @@ _ABANDONED: "list[QThreadPool]" = []
 #: Whether :func:`_guard_the_exit` already registered its ``atexit`` hook.
 _EXIT_GUARDED = False
 
+#: Status the ``atexit`` hook hands to ``os._exit``.  ``os._exit`` skips the
+#: interpreter's own status handling, so the intended code has to be recorded
+#: before the hook runs -- otherwise a startup exception would leave through a
+#: "success" status and callers (CI, wrapper scripts, a user's shell loop) would
+#: read a crash as success.
+_EXIT_CODE = 0
+
+
+def set_exit_code(code: int) -> None:
+    """Record the status the exit hook should use.
+
+    Called from ``app.main``'s ``finally`` with the code that path is about to
+    return or raise, so :func:`_leave_without_teardown` can honour it instead of
+    the unconditional 0 it used to hand to ``os._exit``.  Never raises.
+    """
+    global _EXIT_CODE
+    try:
+        _EXIT_CODE = int(code)
+    except Exception:  # noqa: BLE001 - a status we cannot read is a failure
+        _EXIT_CODE = 1
+
 
 def _has_running_work() -> bool:
     """Whether an abandoned pool still has a runnable to join."""
@@ -87,7 +108,9 @@ def _leave_without_teardown() -> None:
     With work still running there is nothing left to shrink that wait: Qt only
     drops a pool thread once its runnable returns, and no Python-level owner can
     outlive the sweep.  So this exits here, after flushing what this module owns,
-    and lets the kernel reclaim the pool and its thread.  With nothing running the
+    and lets the kernel reclaim the pool and its thread.  The status comes from
+    :func:`set_exit_code`, not a hardcoded 0, so a startup failure still exits
+    non-zero.  With nothing running the
     hook returns and the ordinary shutdown happens unchanged -- a normal exit, and
     every test session, never takes this path.
     """
@@ -113,7 +136,7 @@ def _leave_without_teardown() -> None:
         preferences.settings().sync()
     except Exception:  # noqa: BLE001 - preferences are not worth blocking exit
         pass
-    os._exit(0)
+    os._exit(_EXIT_CODE)
 
 
 def _guard_the_exit() -> None:
