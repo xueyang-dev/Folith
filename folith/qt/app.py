@@ -76,6 +76,9 @@ def _parser() -> argparse.ArgumentParser:
                         help="打印诊断信息（版本/构建/运行时/位置/schema/工具）后退出")
     parser.add_argument("--result", default=None, help="把摘要 JSON 写到这个路径")
     parser.add_argument("--ui-watchdog", nargs=4, help=argparse.SUPPRESS)
+    parser.add_argument("--engine-host", action="store_true",
+                        help="内部：作为引擎子进程运行，从标准输入读取一行 JSON 启动请求"
+                             "（客户端在 FOLITH_ENGINE_PROCESS=1 时启动；不建窗口、不取单实例锁）")
     parser.add_argument("--allow-second-instance", action="store_true",
                         help="跳过单实例锁（仅用于隔离测试）")
     parser.add_argument("files", nargs="*", default=[],
@@ -163,6 +166,23 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.engine_host:
+        # Re-executed with --engine-host: this process is the pipeline engine,
+        # not a GUI.  The branch must stay ahead of Qt, the single-instance
+        # lock, the saved-data-dir preference (a QSettings read) and
+        # ``import core`` so the child's import surface stays what E-1 measured.
+        # The start request (including the credential) arrives on stdin only --
+        # never argv or the environment.
+        try:
+            bootstrap.prepare_environment(data_dir=args.data_dir,
+                                          log_dir=args.log_dir)
+        except OSError as exc:
+            print(f"engine-host: cannot prepare data/log directories: {exc}",
+                  file=sys.stderr, flush=True)
+            return 1
+        from folith.desktop.engine_host import run as run_engine_host
+
+        return run_engine_host()
     if args.ui_watchdog:
         from folith.desktop.ui_watchdog import run
         pid, directory, data_dir, timeout = args.ui_watchdog
