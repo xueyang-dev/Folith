@@ -83,7 +83,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def detach_background_work_on_exit() -> int:
+def detach_background_work_on_exit(exit_code: int = 0) -> int:
     """Hand every still-running task pool to its reaper so no exit path waits.
 
     ``MainWindow._acquire_close`` already detaches the pools on the normal
@@ -105,6 +105,10 @@ def detach_background_work_on_exit() -> int:
 
     Never raises: it runs from a ``finally``, where an exception would replace
     the real exit code (or mask the original failure) with a shutdown error.
+
+    ``exit_code`` is handed to the workers module because the bounded exit path
+    leaves through ``os._exit``, which bypasses the interpreter's own status
+    handling: without it a startup exception would exit 0 and read as success.
     """
     if "PySide6.QtWidgets" not in sys.modules:
         # No widgets module was imported, so no TaskRunner can exist.  Skipping
@@ -112,9 +116,13 @@ def detach_background_work_on_exit() -> int:
         # startup failure before build_application() at their current cost.
         return 0
     try:
-        from .workers import TaskRunner, log_note
+        from .workers import TaskRunner, log_note, set_exit_code
     except Exception:  # noqa: BLE001 - a shutdown fallback must not raise
         return 0
+    try:
+        set_exit_code(exit_code)
+    except Exception:  # noqa: BLE001 - same: exit must not fail here
+        pass
     try:
         handed_off = TaskRunner.abandon_all()
     except Exception:  # noqa: BLE001 - same: exit must not fail here
@@ -137,10 +145,20 @@ def main(argv: list[str] | None = None) -> int:
     on *every* return and exception path of :func:`_main`.  In the normal
     ``closeEvent`` flow the pools are already detached, so this is a no-op.
     """
+    exit_code = 0
     try:
-        return _main(argv)
+        result = _main(argv)
+        exit_code = result if isinstance(result, int) else 0
+        return result
+    except SystemExit as exc:
+        code = exc.code
+        exit_code = 0 if code is None else (code if isinstance(code, int) else 1)
+        raise
+    except BaseException:
+        exit_code = 1
+        raise
     finally:
-        detach_background_work_on_exit()
+        detach_background_work_on_exit(exit_code)
 
 
 def _main(argv: list[str] | None = None) -> int:

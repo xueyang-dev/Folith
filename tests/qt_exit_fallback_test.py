@@ -239,14 +239,20 @@ def test_fallback_detaches_a_pool_the_close_flow_never_saw(app):
 
 
 def test_main_runs_the_fallback_exactly_once_on_return_and_on_exception(monkeypatch):
-    """No return path may skip it, and no path may run it twice."""
-    calls: list[str] = []
+    """No return path may skip it, no path may run it twice, and it must carry
+    the status the process is about to exit with.
+
+    The bounded exit path leaves through ``os._exit`` (P0-9h), which bypasses the
+    interpreter's own status handling -- so a fallback that always said 0 would
+    turn a startup crash into a success for CI and wrapper scripts.
+    """
+    calls: list[int] = []
     monkeypatch.setattr(app_module, "detach_background_work_on_exit",
-                        lambda: calls.append("fallback") or 0)
+                        lambda exit_code=0: calls.append(exit_code) or 0)
     monkeypatch.setattr(app_module, "_main", lambda argv=None: 7)
 
     assert app_module.main([]) == 7
-    assert calls == ["fallback"]
+    assert calls == [7]
 
     def boom(argv=None):
         raise RuntimeError("window construction failed")
@@ -254,7 +260,7 @@ def test_main_runs_the_fallback_exactly_once_on_return_and_on_exception(monkeypa
     monkeypatch.setattr(app_module, "_main", boom)
     with pytest.raises(RuntimeError, match="window construction failed"):
         app_module.main([])
-    assert calls == ["fallback", "fallback"]
+    assert calls == [7, 1], "an exception must not reach the exit hook as success"
 
 
 def test_fallback_never_raises_into_the_exit_path(monkeypatch):
