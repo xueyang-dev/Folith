@@ -125,6 +125,39 @@ def _open(client) -> str:
     return job_id
 
 
+def _pin_slow_projections(window) -> None:
+    """Keep the slow whole-document projections out of an explicit poll.
+
+    The projections refresh on their own wall-clock cadence (5 s for the panels,
+    5 s for the delivery preview) and legitimately read the whole state when
+    they are due -- that is their job (plan D2), not the delta path's.  They are
+    therefore a *separate rhythm* from the incremental contract this file pins
+    down, and a test must not depend on wall-clock time not crossing 5 s:
+    "opening the task -> first delta poll" can take longer than that on a busy
+    machine (the CI failure diagnosed in P0-4, #324), the projection then lands
+    inside the measurement window, and a global counter/flag assertion reads it
+    as "the delta read the whole state".
+
+    Each test here stops ``window.timer``, so ``window._poll_workbench()`` is
+    the only thing that can call ``_maybe_slow_projection``: pinning the anchor
+    forward immediately before that call makes the measured window the delta
+    path by construction -- deterministic, no sleeps.  Same technique as
+    ``pin_slow_cadence`` in ``test_per_batch_delta_touches_only_the_batch``
+    (commit e2a4d5ed).
+
+    Call this *before* resetting the counters, so opening-time work is not
+    counted against the delta path.
+    """
+    now = time.monotonic()
+    window._delta_projection_at = now
+    cache = window._delivery_cache
+    # `due()` also requires the job id to match; the open path primed it with
+    # this job, so moving the timestamp is enough.  The lock is the cache's
+    # documented serialisation point for the worker that owns the field.
+    with cache._lock:
+        cache._at = now
+
+
 # ---------------------------------------------------------------------------
 # the fast path
 # ---------------------------------------------------------------------------
@@ -132,6 +165,13 @@ def test_a_batch_delta_updates_rows_without_reading_the_state(client, monkeypatc
     window, adapter, core, app = (client["window"], client["adapter"],
                                   client["core"], client["app"])
     job_id = _open(client)
+    # Let anything the open path started settle before the counters exist: a
+    # slow projection left over from opening is not the delta path's cost.
+    assert _pump(app, 30, lambda: not window._delta_projection_in_flight
+                 and not window._state_load_in_flight), (
+        "workbench did not settle after opening: inflight="
+        f"{window._state_load_in_flight} projection="
+        f"{window._delta_projection_in_flight}")
     state = core.load_job_state(job_id)
     workbench = window.workbench
     counters = _Counters(workbench)
@@ -154,12 +194,21 @@ def test_a_batch_delta_updates_rows_without_reading_the_state(client, monkeypatc
     _append_record(core, job_id, seq=1, offset=indexes[0],
                    pairs=_changed_pairs(state, indexes))
 
+    # The measured window is the delta path itself: the timer is stopped, and
+    # the independent 5 s projection cadence is pinned just before the only
+    # explicit poll.  Counting starts here (opening is not part of the delta).
+    _pin_slow_projections(window)
+    calls.update(load_state=0, segment_rows=0, document_count=0)
+
     window._poll_workbench()
     assert _pump(app, 20, lambda: not window._state_load_in_flight
                  and window._delta_applied_seq == 1
                  and workbench.segment_row_text(400, 2) == "新提交400")
 
-    # The counterexample: the delta path must not have touched any of these.
+    # The counterexample: in the measured window (after the cadence was pinned)
+    # the delta path must not have touched any of these.  This is a property of
+    # the delta path, not "no whole-state read happened anywhere in the
+    # process": the slow projections have their own 5 s rhythm.
     assert calls == {"load_state": 0, "segment_rows": 0, "document_count": 0}, calls
     # Only the batch's rows were repainted and re-measured.
     assert counters.repainted == 4, counters.repainted
@@ -458,16 +507,28 @@ def test_one_poll_converges_without_a_settle_window(client):
     # 1) One committed batch: one poll, then the event loop.
     _append_record(core, job_id, seq=1, offset=700,
                    pairs=_changed_pairs(state, [700]))
+    _pin_slow_projections(window)
     window._poll_workbench()
     assert _pump(app, 60, lambda: window.workbench.segment_row_text(700, 2)
                  == "新提交700")
+    # "One poll converged" is a fact about the incremental cursor, not about
+    # `_state_load_in_flight`: that flag is shared with the slow projections
+    # (they set it on purpose while a projection is being prepared, see
+    # window.py:2321-2323), so on its own it only means "the workbench is
+    # settled at this instant" -- and that is exactly what the pinned cadence
+    # above makes true and deterministic.
+    assert window._delta_applied_seq == 1
+    assert not window._pending_poll
+    assert not window._delta_projection_in_flight
     assert not window._state_load_in_flight
 
     # 2) A snapshot write landing while the window is live: still one poll.
     state = core.load_job_state(job_id)
     state["pairs"][700]["target"] = "落盘译文700"
     core.save_job_state(job_id, state)
+    _pin_slow_projections(window)
     window._poll_workbench()
     assert _pump(app, 60, lambda: window.workbench.segment_row_text(700, 2)
                  == "落盘译文700")
+    assert not window._delta_projection_in_flight
     assert not window._state_load_in_flight
