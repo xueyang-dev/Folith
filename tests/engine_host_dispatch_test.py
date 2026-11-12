@@ -76,7 +76,7 @@ def test_engine_host_flag_dispatches_before_anything_else(tmp_path, monkeypatch)
     assert seen.get("called") is True
     # The data/log directories are pinned before the host (and therefore core)
     # runs, exactly like a normal launch.
-    assert pinned == tmp_path / "data"
+    assert pinned.resolve() == (tmp_path / "data").resolve()
 
 
 ROOT = Path(__file__).resolve().parents[1]
