@@ -1,9 +1,9 @@
 # Runtime baseline 0.8.2 — A0 sampler and fixed scenarios (issue #323)
 
-Status: **sampler merged; S1 harness measurement v2 implemented (the harness no
-longer pumps the GUI thread) and macOS diagnostic runs recorded with it.  No
-gate baseline exists yet: S2–S4, the frozen `8109b9c2` baseline build (with the
-v2 probe back-ported) and Windows acceptance are still pending.  Every number in
+Status: **sampler merged; harness measurement v3 implemented (R/I phases,
+per-operation p95, S3, tool-share split) and macOS diagnostic runs recorded.
+No gate baseline exists yet: S2 and S4, the frozen baseline build (with the v3
+probe back-ported) and Windows acceptance are still pending.  Every number in
 this file is diagnostic data, not a gate denominator.**
 
 ## What already existed
@@ -178,9 +178,9 @@ Scenario status:
 
 | Scenario | Meaning | State |
 | --- | --- | --- |
-| S1 | ~10k-segment EPUB translating while the user scrolls / edits / switches pages | harness v2 (event-loop driven, instrumentation split); macOS v2 diagnostic runs recorded (60 s, mock, source build); frozen run and Windows pending |
+| S1 | ~10k-segment EPUB translating while the user scrolls / edits / switches pages | harness v3 (event-loop driven, instrumentation split, R/I phases, per-operation p95); macOS v3 diagnostic run recorded (60 s, mock, source build); frozen run and Windows pending |
 | S2 | ≥300-page scanned PDF, paging + thumbnails during OCR | declared, not implemented |
-| S3 | open a finished large task, switch tasks | declared, not implemented |
+| S3 | open a finished large task (10,000 segments), switch tasks | implemented (measurement v3): the tasks are built by translating them first, and the measured window starts when both are finished |
 | S4 | 8-hour run against a local mock gateway | declared, not implemented |
 
 `folith/qt/app.py` now starts the UI health monitor **before** the scripted
@@ -191,6 +191,109 @@ record says `{"measured": false, "reason": …}` instead of implying zero stalls
 The frozen `.app` run itself is still pending: no 0.8.2 artifact was available
 in this round, and the real-endpoint reference used the user's local gateway,
 not a remote provider over the WAN.
+
+### 5. Measurement v3 (#347): R/I phases, per-operation latency, tool share
+
+`measurement.version = 3`.  A report now answers four questions v2 could not,
+and each answer is a field rather than a sentence.
+
+**Which window.**  Three windows, all from the same sampler, so subtracting them
+is legal:
+
+| report field | window | used for |
+| --- | --- | --- |
+| `metrics.gui_jank` | `jank.checkpoint()` before the import → the end of the scenario | the scenario window |
+| `metrics.run_window` | translation started → the first tick that saw the task settled | R (翻译中) |
+| `metrics.run_record_window` | the app's own `.performance/runs/run_*/summary.json → gui_jank` | cross-check only, never a silent substitute |
+
+The run window closes **while the driver is still interacting**: during the
+interaction window the driver polls `_job_settled` every 0.5 s under the
+instrumentation mark, so the window ends when the translation ends, not when the
+interaction window ends.  In v2 the two coincided, which diluted R with the idle
+tail (the run record said 12.7 s; the interaction window was 60 s).
+
+**R and I** (plan §9 D1):
+
+```
+R（翻译中）= 运行窗口 >X ms 次数 ÷ 运行窗口 observed_s × 60
+I（完成后）= (场景窗口次数 − 运行窗口次数) ÷ (场景窗口 observed_s − 运行窗口 observed_s) × 60
+X ∈ {100, 500}
+```
+
+- `metrics.phases.R.tiers.{slow_100ms,severe_500ms}` and the same under `I`.
+- `.observed_s` is the duration each rate is divided by, so a reader can
+  recompute the raw counts from `count` and check the arithmetic.
+- I is, by definition, everything outside the run window, so it also contains
+  the import/open/settle tail; `metrics.phases.I.residual_note` says so.
+- A round whose **I phase is shorter than 15 s** is void:
+  `metrics.phases.I.valid` is `false`, `invalid_reason` names the duration,
+  `metrics.phases.valid_round` is `false` and
+  `measurement.phases.discarded_rounds` is `1`.  Voided rounds are counted, not
+  silently dropped.
+- S3 has no translating window: `R.measured` is `false` with that reason and I
+  covers the whole measured window (`I.window = "scenario_window"`).
+
+**Two readings plus the tool's share.**  Every tier carries both: `excluding_tool`
+(the sampler's product counters) and `including_tool` (product + the sampler's
+`instrumentation_*` counters), with `tool_events` and `tool_share` between them.
+The two groups reconcile by construction: `including_tool = excluding_tool + tool_events`.
+
+Next to that, `runner_frame_events` counts the product-side stalls whose
+innermost captured frame is a `runtime_baseline_runner` function **other than**
+`_run_scenario_event_loop` (that frame is where a native stall legitimately
+shows, so it is the product, not the harness).  These events are already inside
+`excluding_tool`, so they are reported as an *attribution of the product number*
+and never added to `including_tool` — otherwise the pair would not reconcile.
+
+**The five core operations** (plan §10), p95 per phase (`setup` / `run` /
+`complete`, where `run` is the translating phase and `complete` is the I phase):
+
+| operation | budget (p95) | driven by |
+| --- | --- | --- |
+| `scroll` 滚动段落网格 | 50 ms | `verticalScrollBar().setValue()` |
+| `select_segment` 选中段落到详情渲染完成 | 100 ms | `select_segment()` |
+| `type_echo` 键入到回显 | 50 ms | `set_editor_text_for_test()` |
+| `page_switch` 切换阶段页 | 150 ms (first open 300 ms) | `show_page()` |
+| `open_panel` 打开抽屉或浮层 | 100 ms | `open_activity()` / `set_followup_drawer_open()` |
+
+Each sample is the synchronous GUI-thread span of the call (`time.monotonic`
+immediately before and after); work Qt defers to a later paint or timer is
+outside it, and `limits` says so.  `p95_within_budget` is the verdict against the
+plan's number; `page_switch` also reports `first_ms` against the 300 ms cold-open
+allowance.  A phase with no sample is `measured: false` — never a 0 ms latency.
+The supporting operations (`import`, `open_task`, `start_translation`,
+`submit_edit`, `close_panel`, `switch_task`) are recorded with no budget verdict.
+
+**F5 — a window that was not sampled is not a zero.**  `measured: false` plus a
+`reason` is now produced for an empty block, a disabled sampler
+(`FOLITH_JANK_MONITOR=0`), a `pulse_count` of 0, and an `observed_s` of 0 (top
+level or nested under `window`).  Before v3 only `enabled: false` was flagged,
+so `{}` came back as a block of zeros that read like "zero stalls".  The same
+rule now governs `_stall_window_from_records`, which used to default a missing
+`measured` to `True`.
+
+**S3.**  `--scenario S3` imports the 10,000-segment fixture plus a 40-segment
+second task, translates both to completion against the mock gateway, and only
+then takes the measurement checkpoint, so the measured window starts with both
+tasks already finished.  It then alternates `open_task` / `switch_task` on the
+two finished tasks until the window is at least `max(--seconds, 16)`, running
+one sample of each core operation after every open.  The build duration is
+reported (`translation.build_seconds`) and is not part of any rate.
+
+**How the repaired sampler fields are consumed (P1-1).**  `longest` is passed
+through together with its provenance: when the window's own `notes` say the
+value comes from a suffix-maxima chain, `longest.exact` is `true`; the pre-P1-1
+build derives it from the bounded `recent` ring, so it is `null` with the
+reason ("a longer stall that already left the ring would be missed").  The
+per-phase distribution uses `stall_ms` (product-only stall samples);
+`interval_ms` (all pulses, instrumentation included — F2) is not used for any
+headline number.
+
+**Aggregating rounds.**  `--aggregate DIR` reads every `*/runtime-baseline.json`
+under `DIR`, drops rounds that are not v3 or are void, and prints the median of
+each R/I metric (both tiers, both tool readings).  It reports `rounds`,
+`voided_rounds` and per-round `i_phase_s`, so a variant cannot look stable by
+losing the rounds that did not fit the definition.
 
 ## Release gate (#327 ruling)
 
@@ -368,6 +471,80 @@ The remaining product hotspots are the real A1 candidates:
 `atomic_file.shared_text_reader` (state read on the GUI thread, up to
 2.9 s in a single event), `segment_assist`, `window._poll_workbench_full`, and
 `flow_layout` sizing.
+
+### macOS — measurement v3: R/I phases, five operations, tool share (1 round, diagnostic)
+
+Conditions as recorded by the report: **source build** at the v3 commit, mock
+gateway (instant replies), synthetic EPUB, offscreen QPA, **1000 paragraphs,
+60 s interaction**.  `measurement.version = 3`, `ok: true`, `failures: []`.
+
+```bash
+cd <repo>
+QT_QPA_PLATFORM=offscreen FOLITH_QT_SETTINGS_DIR=<tmp>/settings \
+  venv/bin/python scripts/runtime_baseline_runner.py \
+    --out <tmp>/runs/v3-real --paras 1000 --seconds 60 --offscreen
+```
+
+Windows: the same command from the Windows checkout (the provider config and
+the QPA differ, the measurement definition does not).
+
+**macOS, as measured by v3.**  Scenario window 61.142 s; run window 12.349 s
+(translation started → settled); I phase 48.793 s ≥ 15 s, so the round is
+**valid and not voided** (`discarded_rounds: 0`).
+
+| phase | tier | excluding tool | including tool | tool events | tool share |
+| --- | --- | --- | --- | --- | --- |
+| R（翻译中）, 12.349 s | >100 ms | **58.30 /min** (12) | 77.74 /min (16) | 4 | **25.0 %** |
+| R（翻译中）, 12.349 s | >500 ms | **0.00 /min** (0) | 4.86 /min (1) | 1 | **100 %** |
+| I（完成后）, 48.793 s | >100 ms | **82.39 /min** (67) | 84.85 /min (69) | 2 | 2.9 % |
+| I（完成后）, 48.793 s | >500 ms | **3.69 /min** (3) | 3.69 /min (3) | 0 | 0 % |
+
+**The row that matters for every historical number is R >500 ms.**  In this
+round the translating window had *no* product severe stall at all; the single
+severe stall in it was the harness's own 0.5 s settle poll.  Reported without
+the split, R >500 ms would read **4.86 /min caused entirely by the measuring
+tool**.  In the I phase the tool's share is small (2.9 % of >100 ms, none of
+>500 ms), because predicate polling only runs while it is deciding whether the
+run window is over.
+
+`runner_frame_events` (product-side stalls whose innermost captured frame is
+this harness) is **0** in the R window: the only runner frame that appears in
+captured stacks is `_run_scenario_event_loop`, which is where a native stall
+legitimately shows — that frame is the application's event loop, not the tool.
+Longest product stall in the run window 395.2 ms
+(`glossary_checks.py:1133 in _strip_preserved`).
+
+**The five core operations** (plan §10 budgets; `run` = translating, `complete`
+= after it finished):
+
+| operation | budget | run p50 / p95 / p99 (n) | complete p50 / p95 / p99 (n) | verdict |
+| --- | --- | --- | --- | --- |
+| `scroll` 滚动段落网格 | 50 ms | 3.35 / 15.50 / 39.47 (61) | 0.35 / 2.23 / 13.88 (330) | within budget, both phases |
+| `select_segment` 选中到详情渲染 | 100 ms | 3.38 / **182.54** / 182.54 (5) | 6.81 / 10.30 / 10.59 (24) | **over budget while translating** (n=5) |
+| `type_echo` 键入到回显 | 50 ms | 1.35 / 43.09 / 43.09 (5) | 0.99 / 2.28 / 2.45 (24) | within budget, both phases |
+| `page_switch` 切换阶段页 | 150 ms (first 300) | 0.02 / 7.85 / 7.85 (2) | 4.63 / 32.84 / 45.76 (12) | within budget, both phases |
+| `open_panel` 打开抽屉或浮层 | 100 ms | 29.29 / 29.29 / 29.29 (1) | 0.65 / 0.96 / 0.96 (4) | within budget (n is small) |
+
+Supporting operations with no budget: `open_task` 24.79 ms, `import` 0.51 ms,
+`start_translation` 0.33 ms, `submit_edit` p95 105.24 ms while translating vs
+2.27 ms after, `close_panel` ≤ 0.32 ms.
+
+Read the `n` column before the number: with n=5 the "p95" *is* the maximum of
+five samples, so `select_segment` at 182.54 ms is a lead to follow, not a
+measured distribution.  It is consistent with the v2 top stack that already
+named the finding list (`segment_assist._add_finding`) as the worst UI hotspot.
+
+**What this round is not.**  One round, source build, mock gateway, offscreen.
+The plan's gate needs the frozen baseline vs the frozen candidate, the same
+machine, animation on, ≥3 rounds × ≥5 min each, and the median — so the numbers
+above are diagnostic and are not a gate denominator.  `--aggregate DIR` produces
+that median (and counts voided rounds) once the rounds exist.
+
+**Cross-check.**  The harness run window (12.349 s) and the app's own run record
+(11.713 s) agree to 0.64 s; the difference is the window's start
+(`start_or_resume()` click) and the settle-poll granularity, i.e. the harness
+window is the user-facing "从点开始到看见完成".  `metrics.run_record_window`
+keeps the product's copy next to it so the difference is visible, not hidden.
 
 ### 真实模型端点对照（真实 API；仅作参考，不参与门槛判定）
 
