@@ -51,6 +51,7 @@ class WorkbenchEvents:
     def __init__(self, window, monkeypatch):
         self._counts = {name: 0 for name in _WRITE_ENTRY_POINTS}
         self._order: list[str] = []
+        self._log: list[str] = []      # never reset: a timeout report shows the history
         self._churn = 0
         view = window.workbench
         for name in _WRITE_ENTRY_POINTS:
@@ -59,11 +60,12 @@ class WorkbenchEvents:
 
     def _wrap(self, owner, name, monkeypatch) -> None:
         original = getattr(owner, name)
-        counts, order = self._counts, self._order
+        counts, order, log = self._counts, self._order, self._log
 
         def counted(*args, **kwargs):
             counts[name] += 1
             order.append(name)
+            log.append(name)
             return original(*args, **kwargs)
 
         monkeypatch.setattr(owner, name, counted)
@@ -84,8 +86,8 @@ class WorkbenchEvents:
         self._churn += 1
 
     def report(self) -> dict:
-        return {"events": list(self._order), "counts": dict(self._counts),
-                "churn": self._churn}
+        return {"events": list(self._order), "log": list(self._log),
+                "counts": dict(self._counts), "churn": self._churn}
 
 
 def wait_for_quiet(window, app, events: WorkbenchEvents, *, label: str = "",
