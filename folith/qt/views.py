@@ -14,6 +14,8 @@ Design rules that come from the Beta acceptance list:
 from __future__ import annotations
 
 import dataclasses
+import os
+import sys
 import time
 from contextlib import contextmanager
 
@@ -2937,6 +2939,13 @@ class WorkbenchView(QWidget):
             lambda row, _column: self._row_reclicked(row))
         self._height_cache: dict = {}
         self._heights_pending: list[int] = []
+        # Row-height passes pin one row (row, viewport y, scroll value) for the
+        # whole pass -- the visible active row, else the first visible row --
+        # so the correction is absolute instead of a per-batch relative delta
+        # that can drift, and it can never be skipped for lack of an anchor.
+        self._height_anchor_row: int | None = None
+        self._height_anchor_y = 0
+        self._height_anchor_scroll = 0
         self._height_timer = QTimer(self)
         self._height_timer.setInterval(0)
         self._height_timer.timeout.connect(self._apply_row_height_chunk)
@@ -6921,6 +6930,7 @@ class WorkbenchView(QWidget):
             self._heights_pending = positions + [
                 p for p in self._heights_pending if p not in queued]
             if not self._height_timer.isActive():
+                self._height_anchor_row = None
                 self._height_timer.start()
             return
         table = self.segment_list
@@ -6932,13 +6942,14 @@ class WorkbenchView(QWidget):
         rest = [p for p in range(count) if p < first or p >= last + 40]
         self._heights_pending = visible + rest
         if not self._height_timer.isActive():
+            # A fresh pass: capture the anchor before the first chunk changes
+            # any height.  A pass already in flight keeps its anchor.
+            self._height_anchor_row = None
             self._height_timer.start()
 
     def _apply_row_height_chunk(self) -> None:
         table = self.segment_list
-        position = self._active_position
-        anchor = table.visualRect(table.model().index(position, 1))
-        keep_anchor = anchor.intersects(table.viewport().rect())
+        self._pin_height_anchor()
         batch, self._heights_pending = self._heights_pending[:200], self._heights_pending[200:]
         started = time.perf_counter()
         for offset, position in enumerate(batch):
@@ -6955,12 +6966,93 @@ class WorkbenchView(QWidget):
         if not self._heights_pending:
             self._height_timer.stop()
             self._update_term_markers()
+        # The editor can be taller than the natural row (it is capped at 60%
+        # of the viewport), so let it settle before measuring the anchor.  It
+        # is repositioned by the scrollbar's valueChanged -> _place_inline_editor
+        # connection after the correction below.
         self._place_inline_editor()
-        if keep_anchor:
-            after = table.visualRect(table.model().index(self._active_position, 1)).top()
-            bar = table.verticalScrollBar()
-            bar.setValue(bar.value() + after - anchor.top())
-            self._place_inline_editor()
+        self._restore_height_anchor()
+        if not self._heights_pending:
+            # Pass is over: one final O(1) check, then drop the pin so the next
+            # pass starts from whatever the user is looking at then.
+            self._restore_height_anchor()
+            self._height_anchor_row = None
+
+    def _pin_height_anchor(self) -> None:
+        """Pin the row the pass must not move, before any height changes.
+
+        When the active row is visible it is the anchor: that is the row under
+        the caret, and the rows between the top of the viewport and it are
+        expected to reflow (the old behaviour, and the control case for this
+        fix).  When the active row is outside the viewport there is still a
+        well-defined anchor -- the first visible row -- so the correction is
+        never skipped; that off-screen case used to move the whole screen by
+        the summed height delta of the rows above it (985 px locally, 340 px
+        on CI).
+        """
+        table = self.segment_list
+        bar = table.verticalScrollBar()
+        row = self._height_anchor_row
+        if row is not None and (
+                bar.value() == self._height_anchor_scroll
+                and 0 <= row < table.rowCount()):
+            return          # same pass and nobody scrolled since the last chunk
+        row = -1
+        active = self._active_position
+        if 0 <= active < table.rowCount():
+            active_y = table.rowViewportPosition(active)
+            if (active_y < table.viewport().height()
+                    and active_y + table.rowHeight(active) > 0):
+                row = active
+        if row < 0:
+            row = table.rowAt(0)
+        if row < 0 or row >= table.rowCount():
+            # No row intersects the top of the viewport (empty grid, or the
+            # whole job fits without scrolling).  Nothing visible can move, so
+            # there is nothing to compensate: this is a genuinely empty case,
+            # not the old "the active row happened to be off screen" skip.
+            self._height_anchor_row = None
+            return
+        self._height_anchor_row = row
+        self._height_anchor_y = table.rowViewportPosition(row)
+        self._height_anchor_scroll = bar.value()
+
+    def _restore_height_anchor(self) -> None:
+        """Put the pinned row back at its pass-start viewport y.
+
+        The target is absolute (``_height_anchor_y``), not this batch's delta:
+        if one batch's correction is clamped or nudged by the editor layout,
+        the next batch still measures against the original position instead of
+        carrying the error to the end of the pass.  Only the anchor row is read
+        (O(1)); this is not a scan over the queued rows.
+        """
+        row = self._height_anchor_row
+        if row is None:
+            return
+        table = self.segment_list
+        bar = table.verticalScrollBar()
+        for _attempt in range(2):
+            delta = table.rowViewportPosition(row) - self._height_anchor_y
+            if abs(delta) <= 1:
+                break
+            current = bar.value()
+            bar.setValue(current + delta)
+            self._height_anchor_scroll = bar.value()
+            if bar.value() == current:
+                break       # clamped: no offset left in that direction
+        if abs(table.rowViewportPosition(row) - self._height_anchor_y) > 1:
+            # Only a clamped scrollbar at either end of the document lands
+            # here: no offset both restores this row and keeps the content in
+            # range.  Re-pin to where the row actually is so the rest of the
+            # pass is stable from here, and report it in debug mode rather
+            # than skipping silently.
+            wanted = self._height_anchor_y
+            self._height_anchor_y = table.rowViewportPosition(row)
+            self._height_anchor_scroll = bar.value()
+            if os.environ.get("FOLITH_DEBUG_ANCHOR"):
+                print(f"[row-height-anchor] clamped row={row} wanted_y={wanted} "
+                      f"actual_y={self._height_anchor_y} "
+                      f"scroll={bar.value()}/{bar.maximum()}", file=sys.stderr)
 
     def _columns_resized(self, index: int, _old: int, _new: int) -> None:
         if index in (1, 2):

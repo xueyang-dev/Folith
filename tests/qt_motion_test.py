@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QHeaderView, QWidget
 
 from folith.qt import adapter, motion, style, views
 
@@ -27,6 +27,14 @@ def _wait_for(predicate, timeout_ms=1500):
 @pytest.fixture()
 def app():
     return QApplication.instance() or QApplication([])
+
+
+def _settle_row_heights(view, timeout_ms=8000):
+    """Wait until the incremental row-height pass and its debounce are idle."""
+    return _wait_for(
+        lambda: not (view._heights_pending or view._height_timer.isActive()
+                     or view._height_resize.isActive()),
+        timeout_ms=timeout_ms)
 
 
 def test_reduce_motion_priority_and_system_fallback(monkeypatch):
@@ -425,3 +433,54 @@ def test_check_and_repair_card_leaves_the_columns_alone(bench, app, monkeypatch)
     assert not bench.check_button.isChecked()
     assert bench.translation_split.sizes() == sizes
     assert bench.inspector_scroll.isVisible()
+
+
+def test_column_rewrap_keeps_first_visible_row_anchored_when_active_row_is_off_screen(bench):
+    """P0-3: an off-screen active row used to disable the scroll correction.
+
+    ``_apply_row_height_chunk`` anchored on the active row and, when that row
+    was outside the viewport, silently skipped the scroll correction.  Every
+    visible row then moved by the summed height delta of the rows above it
+    (985 px locally, 340 px on CI).  An off-screen active row now anchors on
+    the first visible row, which exists regardless of where the active row is.
+    """
+    table = bench.segment_list
+    header = table.horizontalHeader()
+    # Columns 1/2 are Stretch sections, and setColumnWidth on a Stretch
+    # section is undone inside the same call (no rewrap at all).  Make them
+    # Interactive for this test so the stimulus is real.
+    header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+    header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+    QTest.qWait(20)
+
+    bench.select_segment(5)                 # active row far above the viewport
+    QTest.qWait(30)
+    bar = table.verticalScrollBar()
+    bar.setValue(bar.value() + table.rowViewportPosition(60) - 120)
+    assert _settle_row_heights(bench)
+    assert table.rowViewportPosition(5) < 0, "the active row must be off screen"
+
+    width_before = table.columnWidth(1)
+    heights_before = sum(table.rowHeight(position) for position in range(60))
+    table.setColumnWidth(1, max(120, width_before - 170))
+    assert table.columnWidth(1) < width_before, "the rewrap stimulus must be real"
+
+    # setColumnWidth re-places the inline editor synchronously through
+    # sectionResized; that editor-height entry point is measured separately.
+    # From here the row-height pass owns the viewport.
+    witness = table.rowAt(0)
+    before = table.rowViewportPosition(witness)
+    bench._schedule_row_heights(reset=True)
+
+    deadline = time.monotonic() + 8.0
+    worst = 0
+    while time.monotonic() < deadline:
+        worst = max(worst, abs(table.rowViewportPosition(witness) - before))
+        if not (bench._heights_pending or bench._height_timer.isActive()
+                or bench._height_resize.isActive()):
+            break
+        QTest.qWait(10)
+    worst = max(worst, abs(table.rowViewportPosition(witness) - before))
+    assert worst <= 1, f"the first visible row moved {worst} px during the rewrap"
+    heights_after = sum(table.rowHeight(position) for position in range(60))
+    assert abs(heights_after - heights_before) > 200, "the rewrap must change heights"
