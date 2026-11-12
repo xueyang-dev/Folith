@@ -44,6 +44,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from folith.qt import app as app_module  # noqa: E402
+from folith.qt import workers as workers_module  # noqa: E402
 from folith.qt.workers import TaskRunner  # noqa: E402
 
 #: The task the probe leaves running while ``main()`` returns.  Long enough that
@@ -376,18 +377,14 @@ def _start_busy(app: QApplication, work_s: float
     return runner, finished, stop
 
 
-def _reaper_idents() -> set[int]:
-    return {thread.ident for thread in threading.enumerate()
-            if thread.name == "folith-task-pool-reaper"}
-
-
 def test_fallback_after_acquire_close_is_a_harmless_noop(app):
     """``_acquire_close`` already detached: the fallback must do nothing.
 
     ``abandon_all()`` is idempotent by construction (a detached runner has
     ``pool is None``), and this is the property the exit hook relies on: the
-    close flow and ``main()``'s ``finally`` must never reap the same pool twice
-    or start a second reaper for it.
+    close flow and ``main()``'s ``finally`` must never reap the same pool twice.
+    The registry of abandoned pools is what must not grow -- there is no reaper
+    thread to count any more, the exit hook replaced it.
     """
     runner, finished, stop = _start_busy(app, INPROC_TASK_S)
     try:
@@ -395,7 +392,7 @@ def test_fallback_after_acquire_close_is_a_harmless_noop(app):
         assert runner.wait_for_done(50) is False
         assert TaskRunner.abandon_all() >= 1
         assert runner.pool is None
-        reapers_before = _reaper_idents()
+        abandoned_before = [id(pool) for pool in workers_module._ABANDONED]
 
         started_at = time.perf_counter()
         handed_off = app_module.detach_background_work_on_exit()
@@ -405,8 +402,8 @@ def test_fallback_after_acquire_close_is_a_harmless_noop(app):
         # This path does no I/O and starts no thread, so the tight budget holds.
         assert elapsed < INPROC_NOOP_BOUND_S, (
             f"the second detach blocked for {elapsed:.3f}s")
-        assert not (_reaper_idents() - reapers_before), (
-            "the fallback started a second reaper for an already-detached pool")
+        assert [id(pool) for pool in workers_module._ABANDONED] == abandoned_before, (
+            "the fallback re-reaped a pool that was already handed to the exit hook")
         assert runner.pool is None
     finally:
         stop.set()
