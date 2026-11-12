@@ -64,6 +64,13 @@ def _core():
     return core
 
 
+def _engine_supervisor():
+    """The GUI-side engine supervisor (only imported when the switch is on)."""
+    from folith.desktop import engine_supervisor
+
+    return engine_supervisor
+
+
 def as_settings_sources(values: Any) -> SettingsSources:
     """Accept either the named layers or a bare mapping of live values.
 
@@ -386,6 +393,10 @@ def start_job(
         resolved_name = str(state.get("filename") or name or "当前任务")
 
     base_url = kwargs.get("translator_base_url") or None
+    supervisor = _engine_supervisor()
+    if supervisor.engine_process_enabled():
+        return _start_in_engine(job_id, resolved_name, kwargs,
+                                file_bytes=file_bytes)
     if file_bytes is None:
         started = core.resume_job(job_id, resolved_name, kwargs, base_url=base_url)
     else:
@@ -395,6 +406,72 @@ def start_job(
         raise CommandRejected(
             "任务未能启动（worker 未就绪或已有同一任务的执行在运行）。")
     return True
+
+
+def _start_in_engine(job_id: str, filename: str, kwargs: Mapping[str, Any], *,
+                     file_bytes: Optional[bytes]) -> bool:
+    """Run this task in an engine subprocess instead of this process.
+
+    The GUI keeps only what it actually owns: the resolved contract (to build
+    the wire connection), the source bytes (which are written here, because the
+    pipe deliberately carries no file content), and the child's handle.  Every
+    other decision — resume bookkeeping, ``resume_request_id``, the academic
+    report flag, taking ``.worker.lock`` — stays in ``core``, executed by the
+    child, so the two paths cannot drift.
+
+    Never waits for the child: ``start_engine`` returns as soon as the start
+    line is written, and readiness is observed through ``runtime_state``.
+    """
+    core = _core()
+    supervisor = _engine_supervisor()
+    runtime = core.get_job_runtime_status(job_id) or {}
+    paused = str(runtime.get("status") or "") in {"paused", "pausing"}
+    alive = core.is_job_worker_alive(job_id) or core._job_execution_alive(job_id)
+    if paused and alive:
+        # A paused worker is alive: continue it instead of asking for a second
+        # run (the child would refuse, and the user would see "could not start").
+        return _continue_engine(job_id, filename, kwargs)
+    if alive:
+        # Repeat click / already executing (here or in a child): the in-process
+        # path answers True for this, so the surface keeps the same behaviour.
+        return True
+    if file_bytes is not None:
+        try:
+            core.save_source(job_id, file_bytes)
+        except OSError as exc:  # noqa: BLE001 - surfaced as a rejected command
+            raise CommandRejected(
+                f"源文件保存失败（{type(exc).__name__}），任务没有开始。") from exc
+    mode = "start" if file_bytes is not None else "resume"
+    outcome = supervisor.start_engine(
+        job_id, mode=mode,
+        connection=supervisor.connection_from_kwargs(kwargs), filename=filename)
+    if not outcome.started:
+        raise CommandRejected(outcome.reason or
+                              "任务未能启动（后台引擎进程不可用）。")
+    return True
+
+
+def _continue_engine(job_id: str, filename: str,
+                     kwargs: Optional[Mapping[str, Any]]) -> bool:
+    """Resume a paused task whose worker may live in an engine child.
+
+    When this process supervises the child, the connection goes over the pipe:
+    the child owns ``runtime_state.worker_connection``, so it decides whether
+    the connection really changed and only then restarts the pipeline.  When it
+    does not (nothing running, or a child left over from a previous GUI run),
+    the plain file channel is used — ``core.continue_job`` writes the pause/
+    restart flags that any owner honours.
+    """
+    core = _core()
+    supervisor = _engine_supervisor()
+    if supervisor.owns(job_id) and kwargs is not None:
+        connection = supervisor.connection_from_kwargs(kwargs)
+        if supervisor.send_continue(job_id, connection):
+            return True
+        # The pipe died between the check and the write; the file channel below
+        # is still correct for whatever owns the task now.
+    return bool(core.continue_job(job_id))
+
 
 
 def resume_job(job_id: str, values: "SettingsSources | Mapping[str, Any]") -> bool:
@@ -424,19 +501,31 @@ def continue_job(
     """
     core = _core()
     job_id = _require_text(job_id, "缺少任务标识")
+    supervisor = _engine_supervisor()
+    supervised = supervisor.owns(job_id)
     if values is None:
-        return bool(core.continue_job(job_id))
+        return _continue_engine(job_id, "", None) if supervised \
+            else bool(core.continue_job(job_id))
     state = core.load_job_state(job_id) or core.new_job_state("当前任务")
     try:
         contract = JobConfig.from_settings(
             resolve_effective_settings(as_settings_sources(values).with_state(state)))
     except Exception:  # noqa: BLE001 - a bad new selection must not block Continue
-        return bool(core.continue_job(job_id))
+        return _continue_engine(job_id, "", None) if supervised \
+            else bool(core.continue_job(job_id))
     if contract.connection_problem():
         # The newly selected connection is not usable; keep the existing worker
         # rather than restarting it into a connection that cannot run.
-        return bool(core.continue_job(job_id))
+        return _continue_engine(job_id, "", None) if supervised \
+            else bool(core.continue_job(job_id))
     kwargs = contract.to_pipeline_kwargs()
+    if supervised:
+        # Out-of-process: the payload must reach the process that owns the
+        # worker, so it goes over the child's stdin.  Writing it into this
+        # process's memory (what ``core.continue_job`` does) would be silently
+        # lost, and with it the user's new connection.
+        return _continue_engine(
+            job_id, str(state.get("filename") or "当前任务"), kwargs)
     return bool(core.continue_job(
         job_id, restart_kwargs=kwargs,
         base_url=kwargs.get("translator_base_url") or None,
@@ -444,13 +533,31 @@ def continue_job(
 
 
 def cancel_job(job_id: str, *, force: bool = False) -> bool:
-    """Request cancellation (``force`` marks it cancelled immediately)."""
+    """Request cancellation (``force`` marks it cancelled immediately).
+
+    Out-of-process this is the same call: ``core.request_job_cancel`` writes
+    ``cancel_requested`` and the owner — whichever process it is — sees it at
+    its next batch boundary.  Nothing is sent over the pipe, because nothing
+    about cancelling needs a live handle.
+    """
     return bool(_core().request_job_cancel(str(job_id or ""), force=force))
 
 
 def stop_job_for_exit(job_id: str) -> bool:
-    """Stop a task to quit the app, publishing a resumable ``interrupted`` state."""
-    return bool(_core().request_job_exit(str(job_id or "")))
+    """Stop a task to quit the app, publishing a resumable ``interrupted`` state.
+
+    Both channels are used, in this order: the durable exit flag (which any
+    owner honours and which is what makes the state *interrupted* rather than
+    *cancelled*), then stdin EOF as the supervisor's backstop.  Neither waits.
+    """
+    core = _core()
+    job_id = str(job_id or "")
+    stopped = bool(core.request_job_exit(job_id))
+    try:
+        _engine_supervisor().request_stop(job_id)
+    except Exception:  # noqa: BLE001 - exit must never fail on the supervisor
+        pass
+    return stopped
 
 
 def retry_job(job_id: str) -> bool:

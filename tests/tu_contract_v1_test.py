@@ -19,7 +19,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from folith.interop import (  # noqa: E402
+    DUPLICATE_FILE_SCOPE_CODE,
     FILE_SCOPE_CODES,
+    FILE_SCOPE_FALLBACK_CODE,
+    FILE_SCOPE_RULES,
+    FileScope,
     ImportReport,
     InlineTag,
     IdentityLedger,
@@ -27,17 +31,28 @@ from folith.interop import (  # noqa: E402
     Rejection,
     StatusMappingError,
     UNIT_SCOPE_CODES,
+    WARNING_CODES,
     build_import_report,
+    canonical_digest,
     canonical_snapshot,
+    canonical_source_text,
+    compose_external_id,
     diff_snapshots,
+    duplicate_file_scopes,
+    encode_placeholder,
+    file_scope_warnings,
     identity_key,
-    identity_pair_key,
     instance_identity,
     map_cat_status,
     map_folith_status,
     no_op_verdict,
+    pct,
     reconcile_identities,
+    resolve_file_scope,
+    segment_ids,
     source_digest,
+    split_external_id,
+    unpct,
     validate_tag_sequence,
     validate_target_tags,
     verify_preserved,
@@ -67,7 +82,8 @@ def _tags(raw):
 def _units(fixture):
     return [{"external_id": unit["external_id"],
              "source_text": unit["source_text"],
-             "source_digest": source_digest(unit["source_text"])}
+             "source_digest": canonical_digest(
+                 unit["source_text"], _tags(unit.get("tags", [])))}
             for unit in fixture["units"]]
 
 
@@ -80,8 +96,6 @@ def test_identity_is_the_external_id_without_any_content_hash():
     assert identity_key("1") == "tu:1"
     assert identity_key(" 7 ") == "tu:7"
     assert source_digest("Hello world.") not in identity_key("1")
-    # 旧名 identity_pair_key 仍可调用，但它返回的就是同一个身份。
-    assert identity_pair_key("1") == identity_key("1") == "tu:1"
 
     import pytest
 
@@ -121,7 +135,7 @@ def test_identity_reproducible_across_reimports():
     assert all(item["stable"] for item in second)
     # 摘要作为独立证据随身份返回，但不参与身份。
     assert [item["source_digest"] for item in first] == [
-        source_digest(unit["source_text"]) for unit in units]
+        unit["source_digest"] for unit in units]
     assert all(item["source_digest"] not in item["identity"] for item in first)
     # 文档声称的"账本 diff 为空"由测试判定（N4）。
     assert ledger_first.to_json() == ledger_second.to_json()
@@ -151,7 +165,8 @@ def test_source_change_assigns_a_new_instance_and_reports_it():
 
     changed = [dict(unit) for unit in units]
     changed[1]["source_text"] += " Added clause."
-    changed[1]["source_digest"] = source_digest(changed[1]["source_text"])
+    changed[1]["source_digest"] = canonical_digest(
+        changed[1]["source_text"], [])
     identities, reassignments, ledger_after, rejections = \
         reconcile_identities(changed, ledger)
 
@@ -172,8 +187,9 @@ def test_source_change_assigns_a_new_instance_and_reports_it():
     assert record["reason"] == "source_changed"
     assert record["previous_identity"] == "tu:2"
     assert record["identity"] == "tu:2#2"
-    assert record["previous_digest"] == source_digest("Please review the contract.")
-    assert record["digest"] == source_digest(changed[1]["source_text"])
+    assert record["previous_digest"] == canonical_digest(
+        "Please review the contract.", [])
+    assert record["digest"] == canonical_digest(changed[1]["source_text"], [])
     assert record["previous_digest"] != record["digest"]
     # 新旧身份与旧摘要能进导入报告。
     report = build_import_report(
@@ -201,7 +217,8 @@ def test_old_confirmed_state_is_not_inherited_by_the_new_instance():
 
     changed = [dict(unit) for unit in units]
     changed[1]["source_text"] += " Added clause."
-    changed[1]["source_digest"] = source_digest(changed[1]["source_text"])
+    changed[1]["source_digest"] = canonical_digest(
+        changed[1]["source_text"], [])
     identities, reassignments, ledger_after, _rejections = \
         reconcile_identities(changed, ledger)
 
@@ -228,7 +245,8 @@ def test_an_old_identity_is_never_reused_even_when_the_source_returns():
 
     changed = [dict(unit) for unit in units]
     changed[1]["source_text"] += " Added clause."
-    changed[1]["source_digest"] = source_digest(changed[1]["source_text"])
+    changed[1]["source_digest"] = canonical_digest(
+        changed[1]["source_text"], [])
     identities, _reassignments, ledger, _rejections = \
         reconcile_identities(changed, ledger)
     assert identities[1]["identity"] == "tu:2#2"
@@ -247,9 +265,12 @@ def test_an_old_identity_is_never_reused_even_when_the_source_returns():
 
 def test_identity_duplicate_external_id_rejected_per_unit():
     """B3：同一批次内重复 external_id 必须单元级显式拒绝，不得静默共享身份。"""
+    same = canonical_digest("Same sentence.", [])
     identities, reassignments, ledger, rejections = reconcile_identities([
-        {"external_id": "1", "source_text": "Same sentence."},
-        {"external_id": "1", "source_text": "Same sentence."},
+        {"external_id": "1", "source_text": "Same sentence.",
+         "source_digest": same},
+        {"external_id": "1", "source_text": "Same sentence.",
+         "source_digest": same},
     ])
 
     # 只产出一个身份：第二个单元被拒绝，绝不出现两个 TU 共用同一 identity。
@@ -267,8 +288,10 @@ def test_identity_duplicate_external_id_rejected_per_unit():
 
     # 同 id 但源文不同：对外谎报 source_changed 是错的——它首先是重复 id。
     identities, reassignments, _ledger, rejections = reconcile_identities([
-        {"external_id": "1", "source_text": "Same sentence."},
-        {"external_id": "1", "source_text": "Different sentence."},
+        {"external_id": "1", "source_text": "Same sentence.",
+         "source_digest": canonical_digest("Same sentence.", [])},
+        {"external_id": "1", "source_text": "Different sentence.",
+         "source_digest": canonical_digest("Different sentence.", [])},
     ])
     assert [item["external_id"] for item in identities] == ["1"]
     assert reassignments == []
@@ -285,8 +308,10 @@ def test_identity_duplicate_external_id_rejected_per_unit():
 def test_identity_missing_external_id_is_unit_level_rejection():
     """B3：空 external_id 走单元级拒绝（IDENTITY_MISSING），不整批中断。"""
     identities, reassignments, ledger, rejections = reconcile_identities([
-        {"external_id": "", "source_text": "No id."},
-        {"external_id": "2", "source_text": "Has id."},
+        {"external_id": "", "source_text": "No id.",
+         "source_digest": canonical_digest("No id.", [])},
+        {"external_id": "2", "source_text": "Has id.",
+         "source_digest": canonical_digest("Has id.", [])},
     ])
 
     # 其余单元照常导入：一个坏单元不再杀掉整个文件。
@@ -315,12 +340,232 @@ def test_identity_requires_external_id_and_ledger_roundtrip():
     assert restored == ledger
     with pytest.raises(ValueError):
         IdentityLedger.from_json({"version": 99, "entries": {}})
-    # v1 账本（身份里含源文哈希）是旧口径：显式拒绝并要求重新导入，绝不沿用。
-    with pytest.raises(ValueError) as excinfo:
-        IdentityLedger.from_json({"version": 1, "entries": {
-            "1": {"source_digest": source_digest("x"),
-                  "pair_key": "tu:1:0123456789abcdef"}}})
-    assert "重新导入" in str(excinfo.value)
+    # v1 账本（身份里含源文哈希）与 v2 账本（键空间不含 file_scope）都是旧口径：
+    # 显式拒绝并要求重新导入，绝不沿用。
+    for old_version in (1, 2):
+        with pytest.raises(ValueError) as excinfo:
+            IdentityLedger.from_json({"version": old_version, "entries": {
+                "1": {"source_digest": source_digest("x"),
+                      "pair_key": "tu:1:0123456789abcdef"}}})
+        assert "重新导入" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# 1.1 身份作用域：三段式 external_id / file_scope 三级取值 / 文件级警告
+# ---------------------------------------------------------------------------
+
+def test_external_id_three_part_composition_is_injective_and_roundtrips():
+    assert compose_external_id("i:file", "1") == "i:file/1"
+    assert compose_external_id("i:file", "1", "seg1") == "i:file/1/seg1"
+    # 每段单独转义：裸 /、%、空格、中文都不会破坏分段结构，也不会与"少一段"
+    # 或"多一段"的拼法撞车。
+    tricky = compose_external_id("i:a%2Fb", "c/d", "seg 1")
+    assert tricky == "i:a%2Fb/c%2Fd/seg%201"
+    assert split_external_id(tricky) == ("i:a%2Fb", "c/d", "seg 1")
+    chinese_scope = resolve_file_scope(original="路径").scope
+    assert chinese_scope == "o:%E8%B7%AF%E5%BE%84"
+    assert split_external_id(compose_external_id(chinese_scope, "单元/1")) == (
+        chinese_scope, "单元/1", None)
+    assert compose_external_id("i:a", "b", "c") != compose_external_id(
+        "i:a", "b/c")
+    assert pct("a/b%c d中") == "a%2Fb%25c%20d%E4%B8%AD"
+    assert unpct(pct("a/b%c d中")) == "a/b%c d中"
+
+    import pytest
+
+    for bad in ("", "only-one-part", "a/b/c/d", "/b", "a/"):
+        with pytest.raises(ValueError):
+            split_external_id(bad)
+    with pytest.raises(ValueError):
+        compose_external_id("i:file", "")
+    with pytest.raises(ValueError):
+        compose_external_id("i:file/枪", "1")
+
+
+def test_file_scope_rule_order_and_position_fallback_is_visible():
+    both = resolve_file_scope(
+        file_id="c18018b5-2ca2-4a23-904f-8e179f68b1b9",
+        original="sample_store_page.xlsx", position=1)
+    # @id 优先于 @original（memoQ 同时带两个属性）。
+    assert both == FileScope("i:c18018b5-2ca2-4a23-904f-8e179f68b1b9", "id")
+    original = resolve_file_scope(
+        original="C:\\Projects\\en-US\\SamplePhotoPrinter.doc", position=2)
+    assert original.rule == "original"
+    assert original.scope == "o:C%3A%5CProjects%5Cen-US%5CSamplePhotoPrinter.doc"
+    fallback = resolve_file_scope(position=3)
+    assert fallback == FileScope("p:3", "position")
+    assert FILE_SCOPE_RULES == ("id", "original", "position")
+
+    warnings = file_scope_warnings([both, original, fallback])
+    assert len(warnings) == 1
+    assert warnings[0].startswith(FILE_SCOPE_FALLBACK_CODE)
+    assert "p:3" in warnings[0] and "位置" in warnings[0]
+    assert FILE_SCOPE_FALLBACK_CODE in WARNING_CODES
+
+    # 回退仍然可以导入，但警告必须进报告，不能静默。
+    report = build_import_report(
+        accepted=[compose_external_id(fallback.scope, "7")],
+        warnings=warnings)
+    assert not report.file_rejected
+    assert report.accepted == ["p:3/7"]
+    assert any(item.startswith(FILE_SCOPE_FALLBACK_CODE)
+               for item in report.to_json()["warnings"])
+
+
+def test_duplicate_file_scope_is_a_file_level_warning_not_a_rejection():
+    """mt/pe 实测：两个文件解析到同一作用域 → 一条文件级警告，不逐单元报错。"""
+    mt = resolve_file_scope(
+        file_id="c18018b5-2ca2-4a23-904f-8e179f68b1b9",
+        original="sample_store_page.xlsx", position=1)
+    pe = resolve_file_scope(
+        file_id="c18018b5-2ca2-4a23-904f-8e179f68b1b9",
+        original="sample_store_page.xlsx", position=2)
+    assert duplicate_file_scopes([mt, mt, pe]) == {
+        mt.scope: (1, 2, 3)}
+    warnings = file_scope_warnings([mt, pe])
+    assert len(warnings) == 1
+    assert warnings[0].startswith(DUPLICATE_FILE_SCOPE_CODE)
+    assert mt.scope in warnings[0]
+    assert "只导入其中一份" in warnings[0]
+
+    report = build_import_report(accepted=["keep"], warnings=warnings)
+    assert report.file_rejected is False
+    assert report.unit_rejections == []
+    assert report.accepted == ["keep"]
+    # 警告码不是拒绝码：DUPLICATE_FILE_SCOPE 不会让整份导入失败。
+    assert DUPLICATE_FILE_SCOPE_CODE in WARNING_CODES
+    assert not (WARNING_CODES & (FILE_SCOPE_CODES | UNIT_SCOPE_CODES))
+
+
+MULTIFILE_XLIFF = """<?xml version="1.0" encoding="UTF-8"?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+  <file original="doc-a.docx" source-language="en" target-language="zh-CN">
+    <body>
+      <trans-unit id="1"><source>Alpha one.</source></trans-unit>
+      <trans-unit id="2"><source>Alpha two.</source></trans-unit>
+      <trans-unit id="3"><source>Alpha three.</source></trans-unit>
+    </body>
+  </file>
+  <file original="doc-b.docx" source-language="en" target-language="zh-CN">
+    <body>
+      <trans-unit id="1"><source>Beta one.</source></trans-unit>
+      <trans-unit id="2"><source>Beta two.</source></trans-unit>
+      <trans-unit id="3"><source>Beta three.</source></trans-unit>
+    </body>
+  </file>
+</xliff>
+"""
+
+
+def _synthetic_units(xml_text):
+    """把合成 XLIFF 投影成契约层要的 units。
+
+    构造依据：XLIFF 1.2 规范把 ``trans-unit/@id`` 的作用域限定在所在的
+    ``<file>`` 元素内，因此两个 ``<file>`` 各用 ``id=1..3`` 是合法的，
+    身份必须由 ``file_scope`` 区分。真实语料 0/9 个文件含多个 ``<file>``，
+    这个场景只能靠合成样本覆盖。
+    """
+    import xml.etree.ElementTree as ET
+
+    def local(tag):
+        return tag.rsplit("}", 1)[-1]
+
+    root = ET.fromstring(xml_text)
+    files = [element for element in root.iter() if local(element.tag) == "file"]
+    scopes = [resolve_file_scope(original=element.get("original"), position=index)
+              for index, element in enumerate(files, start=1)]
+    units = []
+    for element, scope in zip(files, scopes):
+        for unit in element.iter():
+            if local(unit.tag) != "trans-unit":
+                continue
+            source = next((child for child in unit
+                           if local(child.tag) == "source"), None)
+            assert source is not None
+            units.append({
+                "external_id": compose_external_id(
+                    scope.scope, unit.get("id")),
+                "source_text": source.text or "",
+                "source_digest": canonical_digest(source.text or "", []),
+                "file_scope_rule": scope.rule,
+            })
+    return scopes, units
+
+
+def test_multifile_reuses_unit_ids_without_duplicates():
+    scopes, units = _synthetic_units(MULTIFILE_XLIFF)
+    assert [item.rule for item in scopes] == ["original", "original"]
+    assert len(units) == 6
+    external_ids = [unit["external_id"] for unit in units]
+    assert len(set(external_ids)) == 6
+    assert external_ids[:3] == [f"o:doc-a.docx/{i}" for i in (1, 2, 3)]
+    assert external_ids[3:] == [f"o:doc-b.docx/{i}" for i in (1, 2, 3)]
+    assert file_scope_warnings(scopes) == []
+
+    identities, reassignments, ledger, rejections = reconcile_identities(units)
+    assert rejections == [] and reassignments == []
+    assert [item["external_id"] for item in identities] == external_ids
+    assert len(ledger.entries) == 6
+
+
+def test_true_duplicate_id_within_one_file_is_still_rejected():
+    """负向：同一 `<file>` 内真重复 id 仍然报 DUPLICATE_EXTERNAL_ID。"""
+    xml_text = """<?xml version="1.0" encoding="UTF-8"?>
+    <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+      <file original="doc-a.docx"><body>
+        <trans-unit id="1"><source>First.</source></trans-unit>
+        <trans-unit id="1"><source>Second, different text.</source></trans-unit>
+      </body></file>
+    </xliff>"""
+    _scopes, units = _synthetic_units(xml_text)
+    assert units[0]["external_id"] == units[1]["external_id"]
+    identities, reassignments, ledger, rejections = \
+        reconcile_identities(units)
+    assert [item["external_id"] for item in identities] == ["o:doc-a.docx/1"]
+    assert reassignments == []
+    assert [item.code for item in rejections] == ["DUPLICATE_EXTERNAL_ID"]
+    rejection = rejections[0]
+    assert rejection.unit_ref == "o:doc-a.docx/1"
+    # reason 必须带 file_scope，用户才能看出"两份文件自称同一作用域"。
+    assert "file_scope='o:doc-a.docx'" in rejection.reason
+
+
+def test_seg_id_only_when_multiple_mrk():
+    import pytest
+
+    assert segment_ids(0) == ()
+    assert segment_ids(1) == ()
+    assert segment_ids(2) == ("seg1", "seg2")
+    assert segment_ids(4) == ("seg1", "seg2", "seg3", "seg4")
+    # 单 <mrk> / 空 <seg-source> 不带 seg_id：身份仍是两段式。
+    assert compose_external_id("o:a.docx", "u1") == "o:a.docx/u1"
+    for seg_id in segment_ids(3):
+        external_id = compose_external_id("o:a.docx", "u1", seg_id)
+        assert split_external_id(external_id)[2] == seg_id
+    with pytest.raises(ValueError):
+        segment_ids(-1)
+
+
+def test_ledger_records_file_scope_rule():
+    import pytest
+
+    scope = resolve_file_scope(position=2)
+    external_id = compose_external_id(scope.scope, "7")
+    units = [{"external_id": external_id, "source_text": "x",
+              "source_digest": canonical_digest("x", []),
+              "file_scope_rule": scope.rule}]
+    identities, _reassignments, ledger, _rejections = \
+        reconcile_identities(units)
+    assert identities[0]["file_scope_rule"] == "position"
+    assert ledger.entries[external_id]["file_scope_rule"] == "position"
+    restored = IdentityLedger.from_json(ledger.to_json())
+    assert restored.entries[external_id]["file_scope_rule"] == "position"
+
+    with pytest.raises(ValueError):
+        reconcile_identities([{
+            "external_id": external_id, "source_text": "x",
+            "source_digest": canonical_digest("x", []),
+            "file_scope_rule": "guessed"}])
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +709,7 @@ def test_target_tags_reject_fabricated_tag_structure():
     # (c) 同一侧内 rid 不自洽：close 的配对键从未开过。
     errors = validate_target_tags(
         source_text, source_tags,
-        "会议\ue0001\ue0002\ue001开始。",
+        "会议\ue0001\ue001\ue0002\ue001开始。",
         [B_OPEN, InlineTag("2", "close", B_CLOSE.payload, "rid-other")])
     assert any("没有未配对的开启" in item for item in errors), errors
 
@@ -484,6 +729,104 @@ def test_fixture_tag_sequences_validate_clean():
         assert validate_target_tags(
             unit["source_text"], _tags(unit["tags"]),
             unit["target_text"], _tags(unit["tags"])) == []
+
+
+# ---------------------------------------------------------------------------
+# 2.1 摘要规范形式
+# ---------------------------------------------------------------------------
+
+def test_tag_id_is_adapter_assigned_and_may_be_symbolic():
+    """文件标签 id 不是契约编号：``ph1`` 这类符号也必须是合法 ``tag_id``。"""
+    import pytest
+
+    symbol = InlineTag("ph1", "self_closing",
+                       '<ph id="ph1">&lt;br/&gt;</ph>')
+    text = "A " + encode_placeholder("ph1") + " B"
+    assert encode_placeholder("ph1") == "\ue000ph1\ue001"
+    assert validate_tag_sequence(text, [symbol]) == []
+    assert canonical_source_text(text, [symbol]) == "A \ue000s1\ue001 B"
+
+    # bpt/ept 在文件里可以复用同一个 @id；适配器赋号必须保证同一侧内唯一。
+    open_tag = InlineTag("1:o", "open", '<bpt id="1" rid="1">', "rid:1")
+    close_tag = InlineTag("1:c", "close", '<ept id="1" rid="1">', "rid:1")
+    paired = (encode_placeholder("1:o") + "x"
+              + encode_placeholder("1:c"))
+    assert validate_tag_sequence(paired, [open_tag, close_tag]) == []
+    assert canonical_source_text(paired, [open_tag, close_tag]) == (
+        "\ue000o1\ue001x\ue000c1\ue001")
+
+    for bad in ("", "a\ue000b", "a\ue001b"):
+        with pytest.raises(ValueError):
+            encode_placeholder(bad)
+
+
+def test_canonical_digest_ignores_tag_ids_payload_and_code_names():
+    text_a = ("Hi \ue0001\ue001world\ue0002\ue001 "
+              "\ue0003\ue001!")
+    tags_a = [
+        InlineTag("1", "open", '<bpt id="1">&lt;b&gt;</bpt>', "b"),
+        InlineTag("2", "close", '<ept id="2">&lt;/b&gt;</ept>', "b"),
+        InlineTag("3", "self_closing", '<ph id="3">&lt;br/&gt;</ph>'),
+    ]
+    # 语义相同的序列：文件标签 id 全部 ×7、payload 改写、配对键换成另一套。
+    text_b = ("Hi \ue000701\ue001world\ue000702\ue001 "
+              "\ue000703\ue001!")
+    tags_b = [
+        InlineTag("701", "open", "<bpt id='701' rid='9'>", "rid:9"),
+        InlineTag("702", "close", "<ept id='702' rid='9'>", "rid:9"),
+        InlineTag("703", "self_closing", "<x id='703'/>"),
+    ]
+    expected = "Hi \ue000o1\ue001world\ue000c1\ue001 \ue000s2\ue001!"
+    assert canonical_source_text(text_a, tags_a) == expected
+    assert canonical_source_text(text_b, tags_b) == expected
+    assert canonical_digest(text_a, tags_a) == canonical_digest(text_b, tags_b)
+    # 旧口径恰恰把这两者算成不同摘要——这就是 115 次再指派的来源。
+    assert source_digest(text_a) != source_digest(text_b)
+
+
+def test_canonical_digest_normalizes_newlines_but_never_folds_whitespace():
+    def digest(text):
+        return canonical_digest(text, [])
+
+    # XML 1.0 §2.11 的换行等价：CRLF / CR / LF 是同一个字符数据。
+    assert digest("a\r\nb") == digest("a\rb") == digest("a\nb")
+    # 其余空白逐个参与：连续空格、制表、前后空白、空行数都不能折叠。
+    assert digest("a  b") != digest("a b")
+    assert digest("a\tb") != digest("a b")
+    assert digest(" a") != digest("a")
+    assert digest("a ") != digest("a")
+    assert digest("a\n\nb") != digest("a\nb")
+    assert digest("   \n\n") != digest("   \n")
+
+
+def test_canonical_source_text_rejects_private_use_markers():
+    import pytest
+
+    for bad in ("bad \ue000 here", "bad \ue001 here",
+                "\ue0001\ue001"):
+        with pytest.raises(ValueError):
+            canonical_source_text(bad, [])
+    # 占位符没有定义 / 定义了没出现：都不能算规范摘要。
+    with pytest.raises(ValueError):
+        canonical_source_text("\ue0001\ue001", [
+            InlineTag("2", "self_closing", "<ph/>")])
+
+
+def test_reconcile_requires_an_explicit_digest_without_silent_fallback():
+    import pytest
+
+    with pytest.raises(ValueError) as excinfo:
+        reconcile_identities([{
+            "external_id": "o:a/1", "source_text": "unhashed text"}])
+    assert "canonical_digest" in str(excinfo.value)
+
+    # 摘要只能由适配器算好后传入；同一个 source_text 不再被静默重算。
+    identities, _reassignments, _ledger, rejections = reconcile_identities([{
+        "external_id": "o:a/1", "source_text": "unhashed text",
+        "source_digest": canonical_digest("unhashed text", [])}])
+    assert rejections == []
+    assert identities[0]["source_digest"] == canonical_digest(
+        "unhashed text", [])
 
 
 # ---------------------------------------------------------------------------
