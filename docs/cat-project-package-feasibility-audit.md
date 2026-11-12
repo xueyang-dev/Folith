@@ -10,9 +10,9 @@
 SDLPPX / SDLRPX（Trados）与 MQOUT / MQBACK（memoQ）都是 **ZIP 容器**，
 内部混合了「公开可解析的 XML / 标准格式」与「专有闭源格式」。逐条目判定后：
 
-- **双语文件条目**（包内 `.sdlxliff`、`.mqxlz`/MQXLIFF）：0.9.0 既有适配器
-  （#145 SDLXLIFF Gate A、#146 MQXLIFF Gate A、#144 XLIFF safe round-trip）
-  已覆盖，**这是项目包里唯一可安全处理的部分**。
+- **双语文件条目**（包内 `.sdlxliff`、`.mqxlz`/MQXLIFF）：是后续验证的候选。
+  #145 和 #146 的 Gate A 记录了独立样本的结构，包内条目的导入和往返仍待 #144
+  及各方言的适配器验证。
 - **TM / 术语条目**：memoQ 包内的 TMX 导出与 CSV 术语库可直接走 Folith 既有
   `import_tmx` / `parse_termbase_csv`；Trados 包内的 SDLTM 是 SQLite
   （可读但 schema 未经样本验证），SDLTB 是 Access/Jet 数据库（跨平台读取
@@ -25,8 +25,8 @@ SDLPPX / SDLRPX（Trados）与 MQOUT / MQBACK（memoQ）都是 **ZIP 容器**，
   完全未经样本验证**，风险清单见 §5。
 
 > **总体建议：待样本，且 v0.9.0 不建议对项目包做任何支持承诺。**
-> 替代路径明确且已被 memoQ 官方文档背书（§4.4）：请客户改发独立双语文件，
-> 或让用户解包后直接取用包内 `.sdlxliff` / `.mqxlz` / `.xlf` 双语文件。
+> 替代路径见 §6.2：请客户改发独立双语文件，或按厂商文档从包中提取双语文件，
+> 在对应的 CAT 客户端处理。
 > 样本到位后按 §6 的补充审计协议重跑本审计，再决定是否开实现 Issue。
 
 **证据等级标注约定**（本审计无真实样本，全部结论按下述分级）：
@@ -134,12 +134,12 @@ MQOUT = 交接包、MQBACK = 交付包、允许部分交付）。
 
 ---
 
-## 3. 逐条目可处理性判定（对照 Folith 0.9.0 既有能力）
+## 3. 逐条目可处理性判定
 
 | 条目 | 可处理性 | 依据 |
 |---|---|---|
-| 包内 `.sdlxliff` | **可处理**（受 #145 Gate A 边界约束） | SDLXLIFF 适配器结论已建立：XLIFF 1.2 + `sdl:` 方言，24 P / 2 M / 4 R |
-| 包内 `.mqxlz` 内的 MQXLIFF | **可处理**（受 #146 Gate A 边界约束） | MQXLIFF 兼容矩阵已建立；`.mqxlz` 本身是 ZIP 套 ZIP，解包属普通 ZIP 处理【推断】 |
+| 包内 `.sdlxliff` | **待适配器和样本验证** | [SDLXLIFF Gate A](sdlxliff-gate-a-compatibility-matrix.md) 记录了独立样本的 XLIFF 1.2 和 `sdl:` 结构 |
+| 包内 `.mqxlz` 内的 MQXLIFF | **待适配器和样本验证** | [MQXLIFF Gate A](mqxliff-gate-a-compatibility-matrix.md) 记录了独立样本；包内 `.mqxlz` 可按 ZIP 提取仍属推断 |
 | MQOUT 内 TMX | **可处理** | Folith 已有 `import_tmx`（`folith/engine/glossary_checks.py`，文档字符串即点名 Trados/memoQ 导出） |
 | MQOUT 内 CSV 术语库 | **可处理**（列语义需对齐） | Folith 已有 `parse_termbase_csv`（同文件，Source/Target 列约定） |
 | `.sdlproj` | **半可处理**：XML 解析无障碍；工作流语义（任务/统计/回包状态）不建议建模 | §2.1、§2.2；语义绑定 Studio |
@@ -148,8 +148,8 @@ MQOUT = 交接包、MQBACK = 交付包、允许部分交付）。
 | LiveDocs 二进制语料 | **不可处理** | 专有二进制，无公开规范【文档·否定性】 |
 | `.sdlproj` 之外的 Studio 专有条目（预览、过滤器等） | **不可处理**，原样保全 | 无公开规范【推断】 |
 
-结论与 #147 预期一致：**项目包不是「解压重打包就兼容」**——可安全处理的
-只有包内的标准/已审计双语条目与标准资源导出（TMX/CSV）。
+解包后，可单独用现有导入功能处理符合要求的 TMX 和 CSV。双语条目是否可处理，
+取决于相应适配器和真实项目包样本的验证结果；回包另需在原客户端验证。
 
 ---
 
@@ -204,8 +204,8 @@ MQOUT = 交接包、MQBACK = 交付包、允许部分交付）。
 
 ### 6.2 替代工作流（客户发来项目包时）
 
-1. **首选**：请 PM 改发独立双语文件（SDLXLIFF / MQXLIFF / XLIFF）——
-   这正是 0.9.0 迁移闭环的主路径（#144/#145/#146）。
+1. **首选**：请 PM 改发独立双语文件（SDLXLIFF / MQXLIFF / XLIFF）。
+   Folith 的双语文件交换能力由 #144/#145/#146 分别验证；验证完成前请使用对应的 CAT 客户端。
 2. **用户自助**：项目包是 ZIP【代码/文档】，用户可自行解包取出双语文件。
    memoQ 侧该路径有**官方背书**【文档】：官方文档明确建议「如果交付包无法
    更新项目，解包并导入其中的 `.xlf` / `.mqxlz`」（注意官方同时声明该路径
