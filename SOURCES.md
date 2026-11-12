@@ -57,6 +57,40 @@
 `tests/fixture_provenance_test.py` 会在每次回归时重算这些哈希，并断言 CRLF
 还原可复算上游指纹。
 
+## 检出必须复现入库字节（`.gitattributes`）
+
+上表的哈希记录的是**入库 blob**，而 `tests/fixture_provenance_test.py` 读的是
+**检出后的工作区字节**。默认情况下两者并不相等：Windows 的
+`core.autocrlf=true`（runner 与多数 Windows 开发机的默认值）会在检出时把每个
+LF 换成 CRLF。2026-11-12 的 Windows 全量回归因此红了 22 条（节点 P0-8f），
+`QuotesSample.docx.sdlxliff` 被检出成 35577 B / `4873e754…`；
+`SamplePhotoPrinter.doc.sdlxliff` 更是被还原成上游原件的 CRLF 字节
+（42996 B / `d9fc637c…`），于是"上游可复算"也一起失真。
+
+修复是在 [`.gitattributes`](.gitattributes) 里把 `tests/fixtures/**` 标记为
+`-text`，关闭行尾转换。`-text` 只影响换行，不影响 `diff`：这些 XML/JSON 仍按
+文本 diff。规则覆盖 `licenses/*.txt`、golden JSON/TSV/CSV 与 TMX/TBX ——
+不加规则时 56 个 fixture 文件里有 45 个会被 autocrlf 改写，下一个字节看门
+迟早踩到同一坑。代价是从 CRLF 工作区提交会把 CRLF 存进 blob，而那正是逐字节
+看门应该报红的情况。
+
+**已有克隆**要重新检出这些文件（属性只影响下一次检出/写入）：
+
+```sh
+git pull
+git checkout -- tests/fixtures     # 按入库字节重写本机文件
+```
+
+属性生效后，Windows 上的 `git status` 会先把这 45 个文件显示为已修改（工作区
+还是旧的 CRLF 字节）；第二条命令执行完即恢复干净。**不要用
+`git add --renormalize`**：`-text` 的含义是"不做任何转换"，renormalize 会把
+CRLF 工作区字节原样写进暂存区（实测入库 blob 35384 B → 暂存 35577 B），等于
+把要修的转换结果提交回去。macOS/Linux 的克隆本来就没有转换，`git status`
+不会变脏，无需任何操作。
+
+`tests/fixture_provenance_test.py::test_fixture_files_are_marked_no_eol_conversion`
+守着这条属性：删掉 `.gitattributes` 里的规则会先在本地变红，不必等 Windows。
+
 ## 未入库的参考样本
 
 | 文件 | 上游 | 许可证 | 为什么不入库 |
