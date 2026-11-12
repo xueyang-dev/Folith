@@ -42,9 +42,9 @@ safe round trip)尚未合入,Folith 现无 XLIFF 适配器可承载实验」。*
 真实来源样本(已入库 `tests/fixtures/mqxliff/`,均来自 MIT 许可的公开仓库,
 允许再分发):
 
-| 文件 | memoQ 版本 | 来源 | SHA-256(前 16 位) | 内容特征 |
+| 文件 | memoQ 版本 | 来源 | 入库 SHA-256(前 16 位) | 内容特征 |
 |---|---|---|---|---|
-| `document.mqxliff` | 7.8.124 | [ShunSakurai/check_forbidden](https://github.com/ShunSakurai/check_forbidden) → `Test/document.mqxliff` | `384533689d1bce18` | 全部 16 段 ManuallyConfirmed;TM 溯源 `mq:insertedmatch`(matchrate=101 的 CM)、QA 警告 `mq:warnings40`(3 个 errorwarning)、历史版本 19 个 `mq:historical-unit`、CDATA 内嵌 `mq:details`、bpt/ept/ph 内联标签 |
+| `document.mqxliff` | 7.8.124 | [ShunSakurai/check_forbidden](https://github.com/ShunSakurai/check_forbidden) → `Test/document.mqxliff` | `c547f55e4f22e2d3` | 全部 16 段 ManuallyConfirmed;TM 溯源 `mq:insertedmatch`(matchrate=101 的 CM)、QA 警告 `mq:warnings40`(3 个 errorwarning)、历史版本 19 个 `mq:historical-unit`、CDATA 内嵌 `mq:details`、bpt/ept/ph 内联标签 |
 | `locked.mqxliff` | 10.3.12 | [bb-io/OpenAI](https://github.com/bb-io/OpenAI) → `Tests.OpenAI/Input/locked.mqxliff` | `5b3de4d08266a8b3` | **锁定段**(`mq:locked="locked"` + `translate="no"`)、审读态 Proofread + `mq:segmentproofread`、空目标段(NotStarted) |
 | `mt.mqxliff` | 11.6.8 | [ikuehirata/MT-quality-review](https://github.com/ikuehirata/MT-quality-review) → `sample_and_materials/mt.mqxliff` | `9c228773a9cf10d2` | **MT 工作流**:MachineTranslated ×36 + PreTranslated ×15;注释双表示(23 组 note + mq:comment,11.6 版为 116/186 组);245 个 ph 标签 |
 | `pe.mqxliff` | 11.6.8 | 同上 → `sample_and_materials/pe.mqxliff` | `12b338dc75b80831` | **同一文档后编辑后导出**:51 段全部 ManuallyConfirmed;与 mt.mqxliff 51 段段序对应 |
