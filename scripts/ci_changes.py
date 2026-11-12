@@ -62,13 +62,17 @@ PACKAGING_PATH = re.compile(
 RISK_PATH = re.compile(
     r"(state|journal|persist|storage|store_lock|job_lock|migrat|recover|resume|"
     r"checkpoint|snapshot|atomic|concurren|schedul|worker|runtime|lock|"
-    r"knowledge_cache|ocr_cache|desktop/)",
+    r"knowledge_cache|ocr_cache|desktop/|qt/app\.py)",
     re.I,
 )
 RISK_TESTS = (
     "state_", "journal", "persistence", "storage", "migration", "recovery",
     "resume", "runtime_", "lock", "atomic", "concurrency", "scheduler",
     "worker", "checkpoint", "snapshot", "task_overview_state", "knowledge_async",
+    # Lifecycle / threading regressions: destroying a busy TaskRunner and
+    # re-entering the import wizard are the two ways a background job can be
+    # left running behind the UI. Both must be exercised on Windows too.
+    "task_runner", "exit_fallback", "import_reentrancy",
 )
 
 DOC_TEST_MARKERS = re.compile(r'"docs"|docs/|README|release-notes')
