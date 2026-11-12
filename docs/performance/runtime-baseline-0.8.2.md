@@ -502,8 +502,9 @@ as a fourth comparable S1 sample.
 | thread peak | 15 | measured |
 | Top-3 stacks | next table | measured |
 
-Noise: two runs with identical parameters differ by 1.22× (>100/min), 1.26×
-(>500/min), 1.17× (p50), 1.44× (p99), 1.55× (max).  All are inside 2×, so the
+Noise: the two v1 real-machine runs in this section (`real #1` and `real #2`),
+same parameters, differ by 1.22× (>100/min), 1.26× (>500/min), 1.17× (p50),
+1.44× (p99), 1.55× (max).  All are inside 2×, so the
 pair is reported as one range rather than a single number.  n=2 is still thin:
 a gate baseline needs ≥ 3 rounds of ≥ 5 minutes each, on the replay gateway,
 built from the frozen `8109b9c2` code (D1) — not a real-endpoint run and not
