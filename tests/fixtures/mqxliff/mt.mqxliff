@@ -1,0 +1,2253 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:oasis:names:tc:xliff:document:1.2 xliff-core-1.2-transitional.xsd">
+<file original="sample_store_page.xlsx" mq:id="c18018b5-2ca2-4a23-904f-8e179f68b1b9" mq:projectid="e53bc43c-4ec4-41e7-b131-6529aeb25014" source-language="en" target-language="ja" datatype="x-MemoQ.DocConverters.MuLiDelimited.MuLiDelimitedConverter">
+<header>
+<tool tool-id="MQ" tool-name="MemoQ" tool-version="11.6.8" tool-company="Kilgray" />
+<mq:export-path>path\to\mqxliff-viewer\sample_and_materials\sample_store_page_jpn.xlsx</mq:export-path>
+<mq:docinformation mq:isabstract="isabstract" mq:hashistory="true" mq:docname="sample_store_page.xlsx" mq:majorversion="2" mq:minorversion="2" mq:nosplitjoin="false" mq:langindepgroupid="aae0844e-b77b-4fd7-9a5d-42608f5d9cc3" mq:multidocgroupid="2e81ba92-384e-42b2-b3bc-6068f4b019fc" mq:origfile="path\to\mqxliff-viewer\sample_and_materials\sample_store_page.xlsx" mq:numberofwords="438" mq:filterconfigname="custom" mq:filterconfigserverurl="" mq:changetrackingenabledstates="Off,Off,Off,Off">
+<mq:versioninfos mq:majorversion="2"><mq:minorversioninfo mq:minorversion="0" mq:comment="" mq:createdthroughview="false" mq:createreason="Reimport" mq:creationtime="581034209" mq:creatoruser="Ikue" mq:tag=""><mq:details mq:type="MinorVersionDetailsImport"><![CDATA[<?xml version="1.0"?>
+<MinorVersionDetailsImport xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <FilePath>path\to\mqxliff-viewer\sample_and_materials\sample_store_page.xlsx</FilePath>
+</MinorVersionDetailsImport>]]></mq:details></mq:minorversioninfo>
+<mq:minorversioninfo mq:minorversion="1" mq:comment="" mq:createdthroughview="false" mq:createreason="BilingualExport" mq:creationtime="581034398" mq:creatoruser="Ikue" mq:tag=""><mq:details mq:type="MinorVersionDetailsBilingExport"><![CDATA[<?xml version="1.0"?>
+<MinorVersionDetailsBilingExport xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <BilingualType>Xliff</BilingualType>
+  <TargetPath>path\to\mqxliff-viewer\sample_and_materials\sample_store_page.xlsx_jpn.mqxliff</TargetPath>
+  <TwoColumpRtfProperties>MutipleDocuments</TwoColumpRtfProperties>
+  <TableDocxProperties>MutipleDocuments</TableDocxProperties>
+  <BilingRtfProperties>EmptySegmentsWithMarkup</BilingRtfProperties>
+  <XliffProperties>IncludePreview</XliffProperties>
+</MinorVersionDetailsBilingExport>]]></mq:details></mq:minorversioninfo>
+<mq:minorversioninfo mq:minorversion="2" mq:comment="" mq:createdthroughview="false" mq:createreason="BilingualExport" mq:creationtime="581198236" mq:creatoruser="Ikue" mq:tag=""><mq:details mq:type="MinorVersionDetailsBilingExport"><![CDATA[<?xml version="1.0"?>
+<MinorVersionDetailsBilingExport xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <BilingualType>Xliff</BilingualType>
+  <TargetPath>path\to\MT-quality-review\sample_and_materials\sample_store_page.xlsx_jpn_mt.mqxliff</TargetPath>
+  <TwoColumpRtfProperties>MutipleDocuments</TwoColumpRtfProperties>
+  <TableDocxProperties>MutipleDocuments</TableDocxProperties>
+  <BilingRtfProperties>EmptySegmentsWithMarkup</BilingRtfProperties>
+  <XliffProperties>IncludePreview</XliffProperties>
+</MinorVersionDetailsBilingExport>]]></mq:details></mq:minorversioninfo>
+</mq:versioninfos>
+<mq:tagdefinition alignhighlight="false" caseinsensitive="false" rawhtml="false" showitags="false" basicformat="false" supersubscript="false" xmlcommands="false"><mq:tagdefelement name="mq:ch" placeholder="false" tagrequired="Normal"><mq:tagdefattribute name="val" filtered="true" required="true" translatable="false" /><mq:tagdefattribute name="invalidxmlchar" filtered="true" required="false" translatable="false" /></mq:tagdefelement><mq:tagdefelement name="mq:rxt" placeholder="false" tagrequired="Normal"><mq:tagdefattribute name="displaytext" filtered="true" required="true" translatable="false" /><mq:tagdefattribute name="val" filtered="true" required="true" translatable="false" /><mq:tagdefattribute name="fmt_b" filtered="true" required="false" translatable="false" /><mq:tagdefattribute name="fmt_i" filtered="true" required="false" translatable="false" /><mq:tagdefattribute name="fmt_u" filtered="true" required="false" translatable="false" /><mq:tagdefattribute name="fmt_sup" filtered="true" required="false" translatable="false" /><mq:tagdefattribute name="fmt_sub" filtered="true" required="false" translatable="false" /></mq:tagdefelement><mq:tagdefelement name="mq:rxt-req" placeholder="true" tagrequired="Required"><mq:tagdefattribute name="displaytext" filtered="true" required="true" translatable="false" /><mq:tagdefattribute name="val" filtered="true" required="true" translatable="false" /><mq:tagdefattribute name="fmt_b" filtered="true" required="false" translatable="false" /><mq:tagdefattribute name="fmt_i" filtered="true" required="false" translatable="false" /><mq:tagdefattribute name="fmt_u" filtered="true" required="false" translatable="false" /><mq:tagdefattribute name="fmt_sup" filtered="true" required="false" translatable="false" /><mq:tagdefattribute name="fmt_sub" filtered="true" required="false" translatable="false" /></mq:tagdefelement></mq:tagdefinition>
+<mq:doccomments />
+<mq:lqamodel><![CDATA[<XMLSerializedLQAModel xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><Version>1</Version><Name /><RevisionID>00000000-0000-0000-0000-000000000000</RevisionID><UseSeverityLevels>false</UseSeverityLevels><UsePenaltyPoints>false</UsePenaltyPoints><RequiresReviewerCommenting>false</RequiresReviewerCommenting><SeverityLevelNames /><ModelEntries /><PassFailCriterion><CountMultipleErrorOccuranceAsOne>false</CountMultipleErrorOccuranceAsOne><CritDefType>PenaltyPoints</CritDefType><PenaltyPointsNominator>0</PenaltyPointsNominator><PenaltyPointPerWordsDenominator>0</PenaltyPointPerWordsDenominator><NormalizedPenaltyScoreLimit>0</NormalizedPenaltyScoreLimit><CritDefinitionRules /></PassFailCriterion><QALQAMapping /><Timestamp>0001-01-01T00:00:00</Timestamp></XMLSerializedLQAModel>]]></mq:lqamodel>
+<mq:externalpreviewinfo>
+<mq:previewidsbylabels>
+<mq:previewidbylabel mq:label="0" mq:previewid="mQ-default-8f1fc227-4b46-41d6-ab5a-b6c1ad2ee651-0" />
+<mq:previewidbylabel mq:label="1" mq:previewid="mQ-default-8f1fc227-4b46-41d6-ab5a-b6c1ad2ee651-1" />
+</mq:previewidsbylabels>
+</mq:externalpreviewinfo>
+</mq:docinformation>
+</header>
+<body>
+<trans-unit id="1" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="3131d972-0c64-4326-ab97-75c976f1635b" mq:reviewer2commitusername="" mq:reviewer2committimestamp="0001-01-01T00:00:00Z" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="0" mq:lastlabel="0" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="0">Reclaim the plot your grandfather left to ruin, and breathe new life into a forgotten village.</source>
+<target xml:space="preserve">祖父が荒廃させた土地を取り戻し、忘れ去られた村に新たな命を吹き込もう。</target>
+<context-group>
+<context context-type="x-mmq-context">short description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the short description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="3131d972-0c64-4326-ab97-75c976f1635b" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="0" mq:lastlabel="0" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="0" mq:hasfollowingobject="hasfollowingobject">Reclaim the plot your grandfather left to ruin, and breathe new life into a forgotten village.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">short description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the short description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins><mq:nosplitjoin type="JoinPrevious" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="653cfda5-b999-4990-b2b9-a8e84889b34e" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the short description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff"><commitinfo matchrate="0" role="3000" timestamp="0001-01-01T00:00:00Z" username="" editingtime="14736" /></mq:commitinfos><mq:nosplitjoins><mq:nosplitjoin type="JoinPrevious" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="653cfda5-b999-4990-b2b9-a8e84889b34e" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the short description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Reclaim the plot your grandfather left to ruin, and breathe new life into a forgotten village.</source>
+<target xml:space="preserve">祖父が荒廃させた土地を取り戻し、忘れ去られた村に新たな命を吹き込もう。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="2" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="4b9ff9e0-83c6-4795-a331-134d245d5027" mq:reviewer2commitusername="" mq:reviewer2committimestamp="0001-01-01T00:00:00Z" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="0" mq:lastlabel="0" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="0">Till the earth, forge bonds, and put down roots in the valley that time forgot.</source>
+<target xml:space="preserve">大地を耕し、絆を築き、時が忘れた谷に根を下ろす。</target>
+<context-group>
+<context context-type="x-mmq-context">short description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the short description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="4b9ff9e0-83c6-4795-a331-134d245d5027" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="0" mq:lastlabel="0" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="0" mq:hasfollowingobject="hasfollowingobject">Till the earth, forge bonds, and put down roots in the valley that time forgot.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">short description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the short description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins><mq:nosplitjoin type="JoinNext" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="81e87fea-5a4b-418e-8e12-c228f859c3dc" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the short description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff"><commitinfo matchrate="0" role="3000" timestamp="0001-01-01T00:00:00Z" username="" editingtime="15047" /></mq:commitinfos><mq:nosplitjoins><mq:nosplitjoin type="JoinNext" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="81e87fea-5a4b-418e-8e12-c228f859c3dc" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the short description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Till the earth, forge bonds, and put down roots in the valley that time forgot.</source>
+<target xml:space="preserve">大地を耕し、絆を築き、時が忘れた谷に根を下ろす。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="3" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="d269e0ab-e621-4443-bd1a-25d0324943c9" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Welcome to the Ashen Vale<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="1" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>アッシェン・ヴェイルへようこそ<ept id="2" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="d269e0ab-e621-4443-bd1a-25d0324943c9" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Welcome to the Ashen Vale[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins><mq:nosplitjoin type="JoinPrevious" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="21f0b5de-64ed-43ad-b868-4fbc3a2936cd" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="d269e0ab-e621-4443-bd1a-25d0324943c9" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Welcome to the Ashen Vale[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins><mq:nosplitjoin type="JoinPrevious" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="21f0b5de-64ed-43ad-b868-4fbc3a2936cd" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins><mq:nosplitjoin type="JoinPrevious" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="21f0b5de-64ed-43ad-b868-4fbc3a2936cd" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Welcome to the Ashen Vale<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="4" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>アッシェン・ヴェイルへようこそ<ept id="5" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="6">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="4" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="0e44c3a6-31b4-4c8b-ae20-13214ede0f5c" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="0e44c3a6-31b4-4c8b-ae20-13214ede0f5c" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="3a76f89d-6df5-4841-96be-e903e2b55d7f" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="3a76f89d-6df5-4841-96be-e903e2b55d7f" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="5" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="eff3f811-63f6-4cb3-820e-74347c297700" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Once celebrated for its bountiful yield, the Ashen Vale was laid low by a bitter winter and a creeping Blight that no remedy could check.</source>
+<target xml:space="preserve">かつては豊かな収穫で名を馳せていたアッシェン・ヴェイルだが、厳しい冬と忍び寄る疫病により、どのような治療法も効かなくなった。</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="eff3f811-63f6-4cb3-820e-74347c297700" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Once celebrated for its bountiful yield, the Ashen Vale was laid low by a bitter winter and a creeping Blight that no remedy could check.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="2bb8493d-1401-48a8-a4ad-db24815ef97d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="2bb8493d-1401-48a8-a4ad-db24815ef97d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Once celebrated for its bountiful yield, the Ashen Vale was laid low by a bitter winter and a creeping Blight that no remedy could check.</source>
+<target xml:space="preserve">かつては豊かな収穫で名を馳せていたアッシェン・ヴェイルだが、厳しい冬と忍び寄る疫病により、どのような治療法も効かなくなった。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="6" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="9d1f2091-0f6c-480e-8814-c5fcc2ee3309" mq:reviewer2commitusername="" mq:reviewer2committimestamp="0001-01-01T00:00:00Z" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Weary of city life, you have come to claim what your grandfather left behind — a failing farm at the edge of a dying village.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">都会での生活に疲れ果てたあなたは、祖父が残したもの、つまり衰退しつつある村はずれの落ちぶれた農場を引き取りに来た。<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="9d1f2091-0f6c-480e-8814-c5fcc2ee3309" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Weary of city life, you have come to claim what your grandfather left behind — a failing farm at the edge of a dying village.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="836558c6-d44f-42b0-92cd-3891596a1149" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff"><commitinfo matchrate="0" role="3000" timestamp="0001-01-01T00:00:00Z" username="" editingtime="19954" /></mq:commitinfos><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="836558c6-d44f-42b0-92cd-3891596a1149" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Weary of city life, you have come to claim what your grandfather left behind — a failing farm at the edge of a dying village.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">都会での生活に疲れ果てたあなたは、祖父が残したもの、つまり衰退しつつある村はずれの落ちぶれた農場を引き取りに来た。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="7" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="2975c120-55ec-47f5-87fe-f8941749e3e1" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="2975c120-55ec-47f5-87fe-f8941749e3e1" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="185bd1df-a7c3-4fde-b952-94d81901aa6d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="185bd1df-a7c3-4fde-b952-94d81901aa6d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="8" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="2ec3cbf7-7aec-48d2-abaa-ddc269ea29ef" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[b]&quot; val=&quot;[b]&quot;&gt;</bpt>But the reasons this valley withered may run deeper than any Blight.<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/b]&quot; val=&quot;[/b]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="1" rid="2">&lt;mq:rxt displaytext=&quot;[b]&quot; val=&quot;[b]&quot;&gt;</bpt>しかし、この谷が枯れてしまった理由は、どんな疫病よりも深いところにあるのかもしれない。<ept id="2" rid="2">&lt;/mq:rxt displaytext=&quot;[/b]&quot; val=&quot;[/b]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="2ec3cbf7-7aec-48d2-abaa-ddc269ea29ef" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[b]But the reasons this valley withered may run deeper than any Blight.[/b]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="11f09e2e-e4e7-41f0-adff-81a254a520d6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="2ec3cbf7-7aec-48d2-abaa-ddc269ea29ef" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[b]But the reasons this valley withered may run deeper than any Blight.[/b]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="11f09e2e-e4e7-41f0-adff-81a254a520d6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="11f09e2e-e4e7-41f0-adff-81a254a520d6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[b]&quot; val=&quot;[b]&quot;&gt;</bpt>But the reasons this valley withered may run deeper than any Blight.<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/b]&quot; val=&quot;[/b]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="4" rid="2">&lt;mq:rxt displaytext=&quot;[b]&quot; val=&quot;[b]&quot;&gt;</bpt>しかし、この谷が枯れてしまった理由は、どんな疫病よりも深いところにあるのかもしれない。<ept id="5" rid="2">&lt;/mq:rxt displaytext=&quot;[/b]&quot; val=&quot;[/b]&quot;&gt;</ept><ph id="6">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="9" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="8222d9bd-2dbb-43f0-80c7-48777ca3c1b2" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="8222d9bd-2dbb-43f0-80c7-48777ca3c1b2" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f50135ae-33dc-4491-aa48-effb3b7e9ada" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f50135ae-33dc-4491-aa48-effb3b7e9ada" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="10" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="782c487a-32a4-4373-9352-964e0b8a94e8" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Work the Land<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="1" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>土地を耕す<ept id="2" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="782c487a-32a4-4373-9352-964e0b8a94e8" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Work the Land[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f56c9913-8a37-494c-84e1-b38b76bd4836" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="782c487a-32a4-4373-9352-964e0b8a94e8" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Work the Land[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f56c9913-8a37-494c-84e1-b38b76bd4836" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f56c9913-8a37-494c-84e1-b38b76bd4836" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Work the Land<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="4" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>土地を耕す<ept id="5" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="6">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="11" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="5cd2ea19-3c46-4acb-95c5-2329b4325e98" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="5cd2ea19-3c46-4acb-95c5-2329b4325e98" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="90adf469-3469-4f9f-bd90-d47d77060b3b" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="90adf469-3469-4f9f-bd90-d47d77060b3b" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="12" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="ac2ff135-3a77-45f0-b5f1-0eead9a23ef5" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Sow in spring, tend your crops through summer, and harvest before the frost claims what you have raised.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">春に種を蒔き、夏まで手入れをし、霜が降りる前に収穫する。<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="ac2ff135-3a77-45f0-b5f1-0eead9a23ef5" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Sow in spring, tend your crops through summer, and harvest before the frost claims what you have raised.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="84f69418-9a8f-42c0-8387-2ee374bccf46" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="84f69418-9a8f-42c0-8387-2ee374bccf46" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Sow in spring, tend your crops through summer, and harvest before the frost claims what you have raised.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">春に種を蒔き、夏まで手入れをし、霜が降りる前に収穫する。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="13" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="85fdd1c6-3344-43b4-8742-3c5266bce431" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="85fdd1c6-3344-43b4-8742-3c5266bce431" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="e81881a8-df2f-42ec-9e5a-9894e3c11b0f" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="e81881a8-df2f-42ec-9e5a-9894e3c11b0f" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="14" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="fab01491-807a-49c7-8bc9-f86eccdd7c81" mq:reviewer2commitusername="" mq:reviewer2committimestamp="0001-01-01T00:00:00Z" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Every element of the valley works against you — the soil yields reluctantly, the weather turns without warning, and the Blight spreads with a patience that feels almost deliberate.</source>
+<target xml:space="preserve">土壌は渋々ながら収穫し、天候は何の前触れもなく変わり、疫病はほとんど意図的とも感じられる忍耐強さで広がっていく。</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="fab01491-807a-49c7-8bc9-f86eccdd7c81" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Every element of the valley works against you — the soil yields reluctantly, the weather turns without warning, and the Blight spreads with a patience that feels almost deliberate.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="cbfad825-3f9e-4ccd-af18-468eb85087e6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff"><commitinfo matchrate="0" role="3000" timestamp="0001-01-01T00:00:00Z" username="" editingtime="15074" /></mq:commitinfos><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="cbfad825-3f9e-4ccd-af18-468eb85087e6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Every element of the valley works against you — the soil yields reluctantly, the weather turns without warning, and the Blight spreads with a patience that feels almost deliberate.</source>
+<target xml:space="preserve">土壌は渋々ながら収穫し、天候は何の前触れもなく変わり、疫病はほとんど意図的とも感じられる忍耐強さで広がっていく。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="15" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="5545b622-b854-4169-9ae5-c02273ee3091" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">But every plot in the Ashen Vale carries its own designs.</source>
+<target xml:space="preserve">しかし、アッシェン・ヴェイルのすべての区画にはそれぞれの意匠が施されている。</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="5545b622-b854-4169-9ae5-c02273ee3091" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">But every plot in the Ashen Vale carries its own designs.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="8bb7bca9-cccd-428d-a701-dc24ce4a00f6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="8bb7bca9-cccd-428d-a701-dc24ce4a00f6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">But every plot in the Ashen Vale carries its own designs.</source>
+<target xml:space="preserve">しかし、アッシェン・ヴェイルのすべての区画にはそれぞれの意匠が施されている。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="16" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="fc899250-fb30-450e-93ed-5b21805daeeb" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">The elders call it the Blight, but not one of them will name its architect.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">長老たちはこれを "疫病 "と呼んでいるが、誰一人としてその元凶を挙げる者はいない。<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="fc899250-fb30-450e-93ed-5b21805daeeb" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">The elders call it the Blight, but not one of them will name its architect.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f1fc48a9-629b-4d6c-aced-6a38102d1353" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f1fc48a9-629b-4d6c-aced-6a38102d1353" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">The elders call it the Blight, but not one of them will name its architect.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">長老たちはこれを "疫病 "と呼んでいるが、誰一人としてその元凶を挙げる者はいない。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="17" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="15a0b13f-ecdb-4cde-8013-47db3d17b7c8" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="15a0b13f-ecdb-4cde-8013-47db3d17b7c8" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="6cb924dc-946b-4016-9afe-48dd744289cb" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="6cb924dc-946b-4016-9afe-48dd744289cb" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="18" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="3eccb6a4-96e9-4926-b5c1-e428947539c1" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Forge your tools, smelt your ore, and expand your plots — even as you unearth what those plots have been made to conceal.</source>
+<target xml:space="preserve">道具を鍛え、鉱石を錬り、圃場を広げよう--その圃場が隠すために作られたものを発掘しながらも。</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="3eccb6a4-96e9-4926-b5c1-e428947539c1" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Forge your tools, smelt your ore, and expand your plots — even as you unearth what those plots have been made to conceal.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f26cc57e-8cfd-453e-847d-b6bbc770f822" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f26cc57e-8cfd-453e-847d-b6bbc770f822" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Forge your tools, smelt your ore, and expand your plots — even as you unearth what those plots have been made to conceal.</source>
+<target xml:space="preserve">道具を鍛え、鉱石を錬り、圃場を広げよう--その圃場が隠すために作られたものを発掘しながらも。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="19" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="433a5382-68f2-4fad-b6b1-bfa26dd9f2bc" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Building a thriving farm and exposing the valley's designs are, in the end, one and the same.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">繁栄する農場を作ることと、谷のデザインを暴くことは、結局は同じことなのだ。<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="433a5382-68f2-4fad-b6b1-bfa26dd9f2bc" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Building a thriving farm and exposing the valley's designs are, in the end, one and the same.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="1fd41366-cdd7-455d-98a0-537fb6699e9c" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="1fd41366-cdd7-455d-98a0-537fb6699e9c" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Building a thriving farm and exposing the valley's designs are, in the end, one and the same.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">繁栄する農場を作ることと、谷のデザインを暴くことは、結局は同じことなのだ。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="20" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="60382843-3dd3-46e9-b443-ae131c1d632f" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="60382843-3dd3-46e9-b443-ae131c1d632f" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="bfe58ab4-9589-4eba-90c4-b94e057c64ba" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="bfe58ab4-9589-4eba-90c4-b94e057c64ba" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="21" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="715f9642-8028-4eb5-befd-a186774ddcf7" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Court the Village<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="1" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>コート・ザ・ヴィレッジ<ept id="2" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="715f9642-8028-4eb5-befd-a186774ddcf7" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Court the Village[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="df41446e-f07f-49fe-9241-0606259e6790" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="715f9642-8028-4eb5-befd-a186774ddcf7" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Court the Village[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="df41446e-f07f-49fe-9241-0606259e6790" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="df41446e-f07f-49fe-9241-0606259e6790" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Court the Village<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="4" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>コート・ザ・ヴィレッジ<ept id="5" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="6">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="22" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="b013cb40-be09-482d-a091-7365478f34a9" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="b013cb40-be09-482d-a091-7365478f34a9" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f93e8ce7-f386-4082-9193-8aa5836cc569" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f93e8ce7-f386-4082-9193-8aa5836cc569" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="23" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="8258ccf9-afcc-4ce4-b781-e3f88520d43f" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">The village still standing at the heart of the Vale is home to a handful of stubborn souls, each carrying troubles of their own.</source>
+<target xml:space="preserve">ヴェイルの中心に今も残る村には、それぞれに悩みを抱えた一握りの頑固な魂が住んでいる。</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="8258ccf9-afcc-4ce4-b781-e3f88520d43f" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">The village still standing at the heart of the Vale is home to a handful of stubborn souls, each carrying troubles of their own.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="d498cf55-f339-4465-a35c-2e2d6b3df73d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="d498cf55-f339-4465-a35c-2e2d6b3df73d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">The village still standing at the heart of the Vale is home to a handful of stubborn souls, each carrying troubles of their own.</source>
+<target xml:space="preserve">ヴェイルの中心に今も残る村には、それぞれに悩みを抱えた一握りの頑固な魂が住んでいる。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="24" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="3be26b56-97ea-467c-91ce-eb0ea2c3b5e6" mq:reviewer2commitusername="" mq:reviewer2committimestamp="0001-01-01T00:00:00Z" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Build rapport through conversation, gifts, and shared festivals — and watch your bond with each villager deepen over time.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">会話や贈り物、祭りの共有を通じて親交を深め、時間とともに村人たちとの絆が深まっていくのを見守る。<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="3be26b56-97ea-467c-91ce-eb0ea2c3b5e6" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Build rapport through conversation, gifts, and shared festivals — and watch your bond with each villager deepen over time.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="6c429fc7-838d-4ffe-8ff9-3f711e4644c3" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff"><commitinfo matchrate="0" role="3000" timestamp="0001-01-01T00:00:00Z" username="" editingtime="18053" /></mq:commitinfos><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="6c429fc7-838d-4ffe-8ff9-3f711e4644c3" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Build rapport through conversation, gifts, and shared festivals — and watch your bond with each villager deepen over time.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">会話や贈り物、祭りの共有を通じて親交を深め、時間とともに村人たちとの絆が深まっていくのを見守る。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="25" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="946c7282-ca51-47e7-ba44-f05a1253c6c5" mq:reviewer2commitusername="" mq:reviewer2committimestamp="0001-01-01T00:00:00Z" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="946c7282-ca51-47e7-ba44-f05a1253c6c5" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="bd966699-2637-44a8-b443-9e375bb0b063" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff"><commitinfo matchrate="0" role="3000" timestamp="0001-01-01T00:00:00Z" username="" editingtime="15012" /></mq:commitinfos><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="bd966699-2637-44a8-b443-9e375bb0b063" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="26" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="5c778a82-481c-481b-9e1e-84be853c1354" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Should you choose to court someone in earnest, tread carefully.</source>
+<target xml:space="preserve">本格的に求愛する場合は、慎重に行動すること。</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="5c778a82-481c-481b-9e1e-84be853c1354" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Should you choose to court someone in earnest, tread carefully.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="d7d558cb-186d-436f-93fd-aae8841dc46d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="d7d558cb-186d-436f-93fd-aae8841dc46d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Should you choose to court someone in earnest, tread carefully.</source>
+<target xml:space="preserve">本格的に求愛する場合は、慎重に行動すること。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="27" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="2669e1ac-330c-47a6-a242-f7328222c199" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">The Vale's old customs demand that courtship be conducted with patience and sincerity.</source>
+<target xml:space="preserve">ヴェイルの古い慣習では、忍耐と誠意をもって求愛することが求められる。</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="2669e1ac-330c-47a6-a242-f7328222c199" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">The Vale's old customs demand that courtship be conducted with patience and sincerity.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="30b20a4a-b8ea-4795-af0e-4265c885e3df" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="30b20a4a-b8ea-4795-af0e-4265c885e3df" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">The Vale's old customs demand that courtship be conducted with patience and sincerity.</source>
+<target xml:space="preserve">ヴェイルの古い慣習では、忍耐と誠意をもって求愛することが求められる。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="28" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="53d9c88f-5424-4fc9-b2d6-729bac26cbf2" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Press too hard, and whatever bond you have built will unravel.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">強く押しすぎると、せっかく築いた絆もほぐれてしまう。<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="53d9c88f-5424-4fc9-b2d6-729bac26cbf2" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Press too hard, and whatever bond you have built will unravel.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="0397822a-86ff-4cb8-a18c-0d2acdf25e91" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="0397822a-86ff-4cb8-a18c-0d2acdf25e91" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Press too hard, and whatever bond you have built will unravel.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">強く押しすぎると、せっかく築いた絆もほぐれてしまう。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="29" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="3533e8f4-e07b-48ee-ae0e-ebd462eb5069" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="3533e8f4-e07b-48ee-ae0e-ebd462eb5069" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="0de4f7a0-3f39-4ac8-b8a0-d5d4a76ba369" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="0de4f7a0-3f39-4ac8-b8a0-d5d4a76ba369" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="30" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="22a679ef-33ea-4329-8291-8822f6c3eaa4" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Marry in the harvest season, and your life on the farm — and your partner's — will never be quite the same.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">収穫の季節に結婚すれば、農場での生活は、そしてパートナーとの生活も、これまでとはまったく違ったものになるだろう。<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="22a679ef-33ea-4329-8291-8822f6c3eaa4" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Marry in the harvest season, and your life on the farm — and your partner's — will never be quite the same.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="9dfc2acd-bfed-455c-9c13-6ab717a6a9a6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="9dfc2acd-bfed-455c-9c13-6ab717a6a9a6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Marry in the harvest season, and your life on the farm — and your partner's — will never be quite the same.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">収穫の季節に結婚すれば、農場での生活は、そしてパートナーとの生活も、これまでとはまったく違ったものになるだろう。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="31" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="9257cc3f-c8f5-4ee0-ab35-6b796ed12a5e" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="9257cc3f-c8f5-4ee0-ab35-6b796ed12a5e" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="d3f45078-aae9-408a-89c7-81f1529d8309" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="d3f45078-aae9-408a-89c7-81f1529d8309" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="32" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="790d74f8-03cb-4d10-801d-5e97d8cf914a" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Unearth the Valley's Secret<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="1" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>谷の秘密を解き明かす<ept id="2" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="790d74f8-03cb-4d10-801d-5e97d8cf914a" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Unearth the Valley's Secret[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="aa3bb202-c3e8-41af-b5e4-8083cfda7cf5" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="790d74f8-03cb-4d10-801d-5e97d8cf914a" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Unearth the Valley's Secret[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="aa3bb202-c3e8-41af-b5e4-8083cfda7cf5" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="aa3bb202-c3e8-41af-b5e4-8083cfda7cf5" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Unearth the Valley's Secret<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="4" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>谷の秘密を解き明かす<ept id="5" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="6">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="33" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="c0ff6a4a-93b5-48f0-a87d-43310ad7f739" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="c0ff6a4a-93b5-48f0-a87d-43310ad7f739" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="9ec8b2a3-b653-4232-b454-496592d3c4c6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="9ec8b2a3-b653-4232-b454-496592d3c4c6" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="34" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="e590212d-98de-4d09-847e-c2239227b5d6" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">On the night of the Harvest Moon, the village elder speaks plainly:</source>
+<target xml:space="preserve">豊穣の月の夜、村の長老は淡々と語る：</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="e590212d-98de-4d09-847e-c2239227b5d6" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">On the night of the Harvest Moon, the village elder speaks plainly:</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="bf2b08fe-beae-4332-846c-762d3701e8f8" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="bf2b08fe-beae-4332-846c-762d3701e8f8" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">On the night of the Harvest Moon, the village elder speaks plainly:</source>
+<target xml:space="preserve">豊穣の月の夜、村の長老は淡々と語る：</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="35" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="fde31c90-94af-4d74-b296-450144941558" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">"The Vale did not wither because the heavens turned away."<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">"天が背を向けたからと言って、ヴェイルが枯れることはなかった" <ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="fde31c90-94af-4d74-b296-450144941558" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">"The Vale did not wither because the heavens turned away."<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="444c5d4e-0639-4476-9475-d55665a8c0db" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="444c5d4e-0639-4476-9475-d55665a8c0db" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">"The Vale did not wither because the heavens turned away."<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">"天が背を向けたからと言って、ヴェイルが枯れることはなかった" <ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="36" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="b9346fea-fac5-4281-b248-b6df8c31c0a8" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="b9346fea-fac5-4281-b248-b6df8c31c0a8" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="5974eed9-31b7-4462-bf0b-9eaef41eecd3" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="5974eed9-31b7-4462-bf0b-9eaef41eecd3" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="37" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="efe83084-acfa-4cbb-a9da-50b03f54f6d5" mq:reviewer2commitusername="" mq:reviewer2committimestamp="0001-01-01T00:00:00Z" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Abandoned mine shafts.</source>
+<target xml:space="preserve">廃坑になった坑道。</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="efe83084-acfa-4cbb-a9da-50b03f54f6d5" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Abandoned mine shafts.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="fd638d62-b739-483c-b1ff-d126e84c7d87" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff"><commitinfo matchrate="0" role="3000" timestamp="0001-01-01T00:00:00Z" username="" editingtime="16995" /></mq:commitinfos><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="fd638d62-b739-483c-b1ff-d126e84c7d87" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Abandoned mine shafts.</source>
+<target xml:space="preserve">廃坑になった坑道。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="38" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="cceda2f9-ae74-447a-97a5-449f49e7fc10" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Crumbling temple records.</source>
+<target xml:space="preserve">崩れかけた寺院の記録</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="cceda2f9-ae74-447a-97a5-449f49e7fc10" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Crumbling temple records.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="0d70350f-110a-43a2-a81d-b775077c20d5" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="0d70350f-110a-43a2-a81d-b775077c20d5" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Crumbling temple records.</source>
+<target xml:space="preserve">崩れかけた寺院の記録</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="39" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="4b0f1748-4ecf-4508-a780-3e3b1680ba9f" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Characters carved into the bark of the oldest trees.</source>
+<target xml:space="preserve">最も古い樹木の樹皮に刻まれた文字。</target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="4b0f1748-4ecf-4508-a780-3e3b1680ba9f" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Characters carved into the bark of the oldest trees.</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="471bfc88-fc73-4ad2-b27e-f4a1be003945" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve"> </mq:endingws>
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="471bfc88-fc73-4ad2-b27e-f4a1be003945" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Characters carved into the bark of the oldest trees.</source>
+<target xml:space="preserve">最も古い樹木の樹皮に刻まれた文字。</target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="40" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="89fba62d-2cdb-4ccb-8a93-d0817e108a24" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1">Connect the threads, and you will come face to face with a history the valley has spent generations burying.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">糸をつなげば、この谷が何世代にもわたって葬ってきた歴史に直面することになる。<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="89fba62d-2cdb-4ccb-8a93-d0817e108a24" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">Connect the threads, and you will come face to face with a history the valley has spent generations burying.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="4eab4904-7358-49fc-b49c-db11870142ae" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="4eab4904-7358-49fc-b49c-db11870142ae" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve">Connect the threads, and you will come face to face with a history the valley has spent generations burying.<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve">糸をつなげば、この谷が何世代にもわたって葬ってきた歴史に直面することになる。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="41" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="7a4ace98-30e6-40c7-b65f-124e6ab644d8" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="7a4ace98-30e6-40c7-b65f-124e6ab644d8" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="e14a316b-1b62-40a3-a4e6-55966eb16903" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="e14a316b-1b62-40a3-a4e6-55966eb16903" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="42" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="1b7ade76-7a42-4f39-bee5-cb8e61c60ed8" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Key Features<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="1" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>主な特徴<ept id="2" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="1b7ade76-7a42-4f39-bee5-cb8e61c60ed8" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Key Features[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="ac77b50e-3645-4b64-89a9-70fd941330ff" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="1b7ade76-7a42-4f39-bee5-cb8e61c60ed8" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[h2]Key Features[/h2]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="ac77b50e-3645-4b64-89a9-70fd941330ff" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="ac77b50e-3645-4b64-89a9-70fd941330ff" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><bpt id="1" rid="1">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>Key Features<ept id="2" rid="1">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="3">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><bpt id="4" rid="2">&lt;mq:rxt displaytext=&quot;[h2]&quot; val=&quot;[h2]&quot;&gt;</bpt>主な特徴<ept id="5" rid="2">&lt;/mq:rxt displaytext=&quot;[/h2]&quot; val=&quot;[/h2]&quot;&gt;</ept><ph id="6">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="43" mq:minorversionend="2" mq:minorversionstart="2" mq:status="PreTranslated" mq:percent="100" mq:segmentguid="f5612577-4c53-4187-9dce-1a1620f1e889" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="f5612577-4c53-4187-9dce-1a1620f1e889" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="68cf36f2-6b58-466b-a3d8-8922c7aeb4fe" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="68cf36f2-6b58-466b-a3d8-8922c7aeb4fe" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="0" source="ローカルごった煮 / Ikue" matchrate="100" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="44" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="bf430b74-5318-40ea-b8e5-56fa256bd134" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:rxt displaytext=&quot;[list]&quot; val=&quot;[list]&quot;&gt;</ph><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[list]&quot; val=&quot;[list]&quot;&gt;</ph><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="bf430b74-5318-40ea-b8e5-56fa256bd134" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[list]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="c9dd451e-0ab6-484d-80a3-0b38e58c3f4b" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="bf430b74-5318-40ea-b8e5-56fa256bd134" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[list]<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="c9dd451e-0ab6-484d-80a3-0b38e58c3f4b" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="c9dd451e-0ab6-484d-80a3-0b38e58c3f4b" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[list]&quot; val=&quot;[list]&quot;&gt;</ph><ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="3">&lt;mq:rxt displaytext=&quot;[list]&quot; val=&quot;[list]&quot;&gt;</ph><ph id="4">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="45" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="f2ccac12-3714-420f-a028-733183d87b12" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>A living seasons-and-weather system that shapes farming, mining, and construction in real time<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>農業、鉱業、建設をリアルタイムで形作る、生きた季節と天候のシステム<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="f2ccac12-3714-420f-a028-733183d87b12" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]A living seasons-and-weather system that shapes farming, mining, and construction in real time<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="c1ff818d-3c3a-4887-a07e-626f5deea5aa" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="f2ccac12-3714-420f-a028-733183d87b12" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]A living seasons-and-weather system that shapes farming, mining, and construction in real time<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="c1ff818d-3c3a-4887-a07e-626f5deea5aa" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="c1ff818d-3c3a-4887-a07e-626f5deea5aa" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>A living seasons-and-weather system that shapes farming, mining, and construction in real time<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="3">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>農業、鉱業、建設をリアルタイムで形作る、生きた季節と天候のシステム<ph id="4">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="46" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="a0fc781d-f663-454c-ac2c-6f2f4802e1d2" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>Over 100 crops, processed goods, and brewing recipes to cultivate and craft<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph> 100種類以上の作物、加工品、醸造レシピを栽培し、クラフトする。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="a0fc781d-f663-454c-ac2c-6f2f4802e1d2" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]Over 100 crops, processed goods, and brewing recipes to cultivate and craft<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="594699e6-7113-436b-9de7-fd3f5ef45ae8" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="a0fc781d-f663-454c-ac2c-6f2f4802e1d2" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]Over 100 crops, processed goods, and brewing recipes to cultivate and craft<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="594699e6-7113-436b-9de7-fd3f5ef45ae8" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="594699e6-7113-436b-9de7-fd3f5ef45ae8" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>Over 100 crops, processed goods, and brewing recipes to cultivate and craft<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="3">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph> 100種類以上の作物、加工品、醸造レシピを栽培し、クラフトする。<ph id="4">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="47" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="489adbc5-2cfe-4e20-8449-8781ab87ee97" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>Deep crafting systems spanning smithing, smelting, and construction<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>鍛冶、製錬、建築にまたがる奥深いクラフトシステム<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="489adbc5-2cfe-4e20-8449-8781ab87ee97" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]Deep crafting systems spanning smithing, smelting, and construction<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="37403bf0-4c18-4b6f-90e0-e9301a9fac7d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="489adbc5-2cfe-4e20-8449-8781ab87ee97" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]Deep crafting systems spanning smithing, smelting, and construction<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="37403bf0-4c18-4b6f-90e0-e9301a9fac7d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="37403bf0-4c18-4b6f-90e0-e9301a9fac7d" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>Deep crafting systems spanning smithing, smelting, and construction<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="3">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>鍛冶、製錬、建築にまたがる奥深いクラフトシステム<ph id="4">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="48" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="fdab1b36-1254-4e34-8328-049a7c64c0a0" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>A relationship system with fully voiced villagers — including romance and marriage events<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>フルボイスの村人による人間関係システム - 恋愛や結婚イベントも含まれる<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="fdab1b36-1254-4e34-8328-049a7c64c0a0" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]A relationship system with fully voiced villagers — including romance and marriage events<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="22a84ad4-de4e-4097-b086-23df74f1fd47" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="fdab1b36-1254-4e34-8328-049a7c64c0a0" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]A relationship system with fully voiced villagers — including romance and marriage events<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="22a84ad4-de4e-4097-b086-23df74f1fd47" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="22a84ad4-de4e-4097-b086-23df74f1fd47" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>A relationship system with fully voiced villagers — including romance and marriage events<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="3">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>フルボイスの村人による人間関係システム - 恋愛や結婚イベントも含まれる<ph id="4">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="49" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="3de28f22-7e15-4add-9a63-c464ba5f965c" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>A story-driven mystery rooted in the Vale's buried history<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>ヴェイルの埋もれた歴史に根ざしたストーリー重視のミステリー<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="3de28f22-7e15-4add-9a63-c464ba5f965c" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]A story-driven mystery rooted in the Vale's buried history<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="438d6655-0f8c-4a1f-81cc-a2c0a1e3e9be" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="3de28f22-7e15-4add-9a63-c464ba5f965c" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]A story-driven mystery rooted in the Vale's buried history<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="438d6655-0f8c-4a1f-81cc-a2c0a1e3e9be" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="438d6655-0f8c-4a1f-81cc-a2c0a1e3e9be" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>A story-driven mystery rooted in the Vale's buried history<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="3">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>ヴェイルの埋もれた歴史に根ざしたストーリー重視のミステリー<ph id="4">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="50" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="40846b74-dc5a-4d64-8235-0dd6c401add2" mq:reviewer2commitusername="" mq:reviewer2committimestamp="0001-01-01T00:00:00Z" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>Distinct soil profiles and yield management across every plot of your farm<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>農場のすべての区画で、異なる土壌プロファイルと収量管理を行う。<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="40846b74-dc5a-4d64-8235-0dd6c401add2" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]Distinct soil profiles and yield management across every plot of your farm<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="fc7d0bb0-5822-41be-9650-862163380027" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="40846b74-dc5a-4d64-8235-0dd6c401add2" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="false" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[*]Distinct soil profiles and yield management across every plot of your farm<ph id="1">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="fc7d0bb0-5822-41be-9650-862163380027" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff"><commitinfo matchrate="0" role="3000" timestamp="0001-01-01T00:00:00Z" username="" editingtime="16887" /></mq:commitinfos><mq:nosplitjoins />
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="fc7d0bb0-5822-41be-9650-862163380027" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>Distinct soil profiles and yield management across every plot of your farm<ph id="2">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></source>
+<target xml:space="preserve"><ph id="3">&lt;mq:rxt displaytext=&quot;[*]&quot; val=&quot;[*]&quot; /&gt;</ph>農場のすべての区画で、異なる土壌プロファイルと収量管理を行う。<ph id="4">&lt;mq:ch val=&quot;
+&quot; /&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+<trans-unit id="51" mq:minorversionend="2" mq:minorversionstart="2" mq:status="MachineTranslated" mq:segmentguid="6ac88c55-5e65-4673-a15c-90b677c24a5f" mq:reviewer2commitusername="" mq:reviewer2committimestamp="0001-01-01T00:00:00Z" mq:lastchangedtimestamp="2026-05-18T08:23:55Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1"><ph id="1">&lt;/mq:rxt displaytext=&quot;[/list]&quot; val=&quot;[/list]&quot;&gt;</ph></source>
+<target xml:space="preserve"><ph id="1">&lt;/mq:rxt displaytext=&quot;[/list]&quot; val=&quot;[/list]&quot;&gt;</ph></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:minorversions>
+<mq:historical-unit mq:minorversionend="1" mq:minorversionstart="1" mq:status="NotStarted" mq:segmentguid="6ac88c55-5e65-4673-a15c-90b677c24a5f" mq:lastchangedtimestamp="2026-05-16T10:53:45Z" mq:lastchanginguser="Ikue" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[/list]</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins><mq:nosplitjoin type="JoinNext" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f442473a-e359-44cf-814c-9e863532c28b" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+<mq:historical-unit mq:minorversionend="0" mq:minorversionstart="0" mq:status="NotStarted" mq:segmentguid="6ac88c55-5e65-4673-a15c-90b677c24a5f" mq:lastchangedtimestamp="0001-01-01T00:00:00Z" mq:maxlengthchars="-1" mq:nosplitjoin="true" mq:firstlabel="1" mq:lastlabel="1" mq:autosplitjoinstate="0" mq:lastmodifrole="0" mq:multipleexactmatch="false">
+<source xml:space="preserve" mq:segpart="1" mq:hasfollowingobject="hasfollowingobject">[/list]</source>
+<target xml:space="preserve"></target>
+<context-group>
+<context context-type="x-mmq-context">long description</context>
+</context-group>
+<note>some comments, such as codes and character limits for the long description.</note>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff" /><mq:nosplitjoins><mq:nosplitjoin type="JoinNext" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f442473a-e359-44cf-814c-9e863532c28b" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+</mq:historical-unit>
+</mq:minorversions>
+<mq:startingws xml:space="preserve" />
+<mq:endingws xml:space="preserve" />
+<mq:commitinfos xmlns="MQXliff"><commitinfo matchrate="0" role="3000" timestamp="0001-01-01T00:00:00Z" username="" editingtime="16015" /></mq:commitinfos><mq:nosplitjoins><mq:nosplitjoin type="JoinNext" reason="filter" /></mq:nosplitjoins>
+<mq:originalsource edited="false" />
+<mq:comments>
+<mq:comment id="f442473a-e359-44cf-814c-9e863532c28b" creatoruser="Multilingual Excel and delimited text filter" time="2026-05-16T10:51:58Z" deleted="false" category="0" appliesto="Row" origin="SourceFile">some comments, such as codes and character limits for the long description.</mq:comment>
+</mq:comments>
+<mq:insertedmatch matchtype="1" source="MT / DeepL MT plugin" matchrate="0" originalmatchrate="0" ambiguousexact="false" setsegmentswhensplittingintorows="false" hitfororiginalsegementversion="false"><source xml:space="preserve"><ph id="1">&lt;/mq:rxt displaytext=&quot;[/list]&quot; val=&quot;[/list]&quot;&gt;</ph></source>
+<target xml:space="preserve"><ph id="2">&lt;/mq:rxt displaytext=&quot;[/list]&quot; val=&quot;[/list]&quot;&gt;</ph></target>
+</mq:insertedmatch>
+</trans-unit>
+</body>
+</file>
+</xliff>
