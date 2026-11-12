@@ -163,3 +163,246 @@ def test_memoq_lock_flag_is_carried_separately_from_status():
     # 锁定标志的取值从不占用状态属性；把 "locked" 当状态会与 P3-1 的
     # "锁定是正交标志"裁定冲突（该裁定仍待用户拍板，本测试不修改语义）。
     assert "locked" not in status_tokens
+
+
+# ---------------------------------------------------------------------------
+# P3-2b：真实语料上的标签校验（0 误判）与单元切割（直接子节点）
+# ---------------------------------------------------------------------------
+# 下面两个投影函数是"适配器的最小替身"：只把真实 XML 投影成契约层要的
+# ``(text, [InlineTag])``，不写回。配对键取每侧自己的 ``rid``（无则 ``id``），
+# 与真实 memoQ 语义一致；不跨侧对齐编号。
+
+PLACEHOLDER = "\ue000{}\ue001"
+
+
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+class _TagProjector:
+    def __init__(self) -> None:
+        self.tags: list = []
+        self.parts: list[str] = []
+        self._next = 1
+
+    def _add(self, kind: str, payload: str, code_name: str = "") -> None:
+        from folith.interop.tu_contract import InlineTag
+
+        tag_id = str(self._next)
+        self._next += 1
+        self.tags.append(InlineTag(tag_id, kind, payload, code_name))
+        self.parts.append(PLACEHOLDER.format(tag_id))
+
+    def project(self, element):
+        self._walk(element)
+        return "".join(self.parts), self.tags
+
+    def _walk(self, element) -> None:
+        self.parts.append(element.text or "")
+        for child in element:
+            name = _local(child.tag)
+            payload = ET.tostring(child, encoding="unicode")
+            if name == "bpt":
+                key = child.get("rid") or child.get("id") or "?"
+                self._add("open", payload, f"mq:rid={key}")
+            elif name == "ept":
+                key = child.get("rid") or child.get("id") or "?"
+                self._add("close", payload, f"mq:rid={key}")
+            elif name in ("ph", "x"):
+                self._add("self_closing", payload)
+            elif name == "g":
+                key = child.get("id") or "?"
+                self._add("open", f"<g id={key}>", f"sdl:g={key}")
+                self._walk(child)
+                self._add("close", "</g>", f"sdl:g={key}")
+            else:
+                self._walk(child)
+            self.parts.append(child.tail or "")
+
+
+def _project(element):
+    return _TagProjector().project(element)
+
+
+def _direct_child(element, name: str):
+    for child in element:
+        if _local(child.tag) == name:
+            return child
+    return None
+
+
+def _units(root):
+    return [e for e in root.iter() if _local(e.tag) == "trans-unit"]
+
+
+def _corpus_files() -> list[Path]:
+    return sorted(MQ_DIR.glob("*.mqxliff")) + sorted(SDL_DIR.glob("*.sdlxliff"))
+
+
+def _tag_cases() -> list:
+    cases = []
+    for path in _corpus_files():
+        root = ET.parse(path).getroot()
+        sources = sum(1 for tu in _units(root) if _direct_child(tu, "source") is not None)
+        targets = sum(1 for tu in _units(root)
+                      if _direct_child(tu, "source") is not None
+                      and _direct_child(tu, "target") is not None)
+        cases.append(pytest.param(path, sources, targets,
+                                  id=f"{path.parent.name}/{path.name}"))
+    return cases
+
+
+TAG_CASES = _tag_cases()
+
+
+@pytest.mark.parametrize("path,sources,targets", TAG_CASES)
+def test_real_corpus_source_tag_sequences_validate_clean(path, sources, targets):
+    """P3-2b 误判 2：memoQ 交叠格式跨度不是"嵌套错乱"。"""
+    from folith.interop.tu_contract import validate_tag_sequence
+
+    root = ET.parse(path).getroot()
+    checked = 0
+    for tu in _units(root):
+        source = _direct_child(tu, "source")
+        if source is None:
+            continue
+        text, tags = _project(source)
+        assert validate_tag_sequence(text, tags) == [], (path.name, tu.get("id"))
+        checked += 1
+    assert checked == sources, (path.name, checked, sources)
+
+
+@pytest.mark.parametrize("path,sources,targets", TAG_CASES)
+def test_real_corpus_target_tags_validate_clean(path, sources, targets):
+    """P3-2b 误判 1：每侧独立 ``id``/``rid`` 不是"伪造负载/改写配对"。"""
+    from folith.interop.tu_contract import validate_target_tags
+
+    root = ET.parse(path).getroot()
+    checked = 0
+    for tu in _units(root):
+        source = _direct_child(tu, "source")
+        target = _direct_child(tu, "target")
+        if source is None or target is None:
+            continue
+        source_text, source_tags = _project(source)
+        target_text, target_tags = _project(target)
+        assert validate_target_tags(
+            source_text, source_tags, target_text, target_tags) == [], (
+                path.name, tu.get("id"))
+        checked += 1
+    assert checked == targets, (path.name, checked, targets)
+
+
+def test_real_corpus_tag_validation_has_zero_false_positives():
+    """汇总基线：9 个文件、193 个 trans-unit（167 个带译文）全部 0 错误。"""
+    from folith.interop.tu_contract import (
+        validate_tag_sequence,
+        validate_target_tags,
+    )
+
+    units = 0
+    sources = 0
+    targets = 0
+    for path in _corpus_files():
+        root = ET.parse(path).getroot()
+        for tu in _units(root):
+            units += 1
+            source = _direct_child(tu, "source")
+            if source is None:
+                continue
+            sources += 1
+            source_text, source_tags = _project(source)
+            assert validate_tag_sequence(source_text, source_tags) == [], (
+                path.name, tu.get("id"))
+            target = _direct_child(tu, "target")
+            if target is None:
+                continue
+            targets += 1
+            target_text, target_tags = _project(target)
+            assert validate_target_tags(
+                source_text, source_tags, target_text, target_tags) == [], (
+                    path.name, tu.get("id"))
+    assert (units, sources, targets) == (193, 193, 167)
+
+
+def test_trans_unit_scan_counts_only_direct_source_children():
+    """P3-2b 误判 3：只取 trans-unit 直接子节点；嵌套源文单独计数。"""
+    from folith.interop.tu_contract import scan_trans_units
+
+    expected = {
+        "document.mqxliff": (16, 16, {"historical-unit": 19}),
+        "locked.mqxliff": (3, 3, {}),
+        "mt.mqxliff": (51, 51, {"historical-unit": 65, "insertedmatch": 51}),
+        "pe.mqxliff": (51, 51, {"historical-unit": 135, "insertedmatch": 120}),
+        "translation_status.mqxliff": (12, 12,
+                                       {"historical-unit": 11, "insertedmatch": 2}),
+        "QuotesSample.docx.sdlxliff": (5, 5, {}),
+        "SamplePhotoPrinter.doc.sdlxliff": (46, 46, {}),
+        "TTSExample.docx.sdlxliff": (4, 4, {}),
+        "quickplace.docx.sdlxliff": (5, 5, {}),
+    }
+    for path in _corpus_files():
+        scan = scan_trans_units(ET.parse(path).getroot())
+        unit_count, source_count, nested = expected[path.name]
+        assert scan.unit_count == unit_count, path.name
+        assert len([u for u in scan.units if u.source is not None]) == source_count
+        assert dict(scan.nested_sources) == nested, (path.name, scan.nested_sources)
+        assert scan.units_without_source == (), path.name
+        # 嵌套源文必须出现在报告文本里，不能静默丢弃。
+        if nested:
+            summary = scan.nested_summary()
+            assert f"跳过 {scan.nested_source_total} 个嵌套 <source>" in summary
+            for name in nested:
+                assert name in summary
+
+
+def test_flat_source_scan_would_overcount_current_units():
+    """反证：平铺 ``.//source`` 的 4 个文件会多算。"""
+    from folith.interop.tu_contract import scan_trans_units
+
+    expected_flat = {
+        "document.mqxliff": 35,
+        "locked.mqxliff": 3,
+        "mt.mqxliff": 167,
+        "pe.mqxliff": 306,
+        "translation_status.mqxliff": 25,
+        "QuotesSample.docx.sdlxliff": 5,
+        "SamplePhotoPrinter.doc.sdlxliff": 46,
+        "TTSExample.docx.sdlxliff": 4,
+        "quickplace.docx.sdlxliff": 5,
+    }
+    mismatched = 0
+    for path in _corpus_files():
+        root = ET.parse(path).getroot()
+        flat = sum(1 for e in root.iter() if _local(e.tag) == "source")
+        scan = scan_trans_units(root)
+        assert flat == expected_flat[path.name], path.name
+        if flat != scan.unit_count:
+            mismatched += 1
+        assert flat == scan.unit_count + scan.nested_source_total, path.name
+    assert mismatched == 4
+
+
+def test_scan_keeps_historical_and_insertedmatch_separate_in_synthetic_tree():
+    """负向：嵌套容器绝不会被当成当前段落，但必须被计数并报告。"""
+    from folith.interop.tu_contract import scan_trans_units
+
+    root = ET.fromstring(
+        "<xliff><file><body>"
+        "<trans-unit id='7'><source>current</source><target>t</target>"
+        "<minorversions><historical-unit><source>old</source></historical-unit>"
+        "</minorversions>"
+        "<insertedmatch><source>tm</source><target>tt</target></insertedmatch>"
+        "</trans-unit>"
+        "<trans-unit id='8'><source>second</source></trans-unit>"
+        "</body></file></xliff>")
+    scan = scan_trans_units(root)
+    assert scan.unit_count == 2
+    assert [u.unit_id for u in scan.units] == ["7", "8"]
+    assert scan.units[0].source.text == "current"
+    assert scan.units[1].source.text == "second"
+    assert dict(scan.units[0].nested_sources) == {
+        "historical-unit": 1, "insertedmatch": 1}
+    assert dict(scan.nested_sources) == {"historical-unit": 1, "insertedmatch": 1}
+    assert scan.nested_source_total == 2
+    assert "跳过 2 个嵌套 <source>" in scan.nested_summary()
