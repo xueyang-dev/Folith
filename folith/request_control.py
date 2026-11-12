@@ -79,8 +79,12 @@ def call_cancellable(fn: Callable[[], Any],
     _raise_if_cancelled(cancel_check)
     done = threading.Event()
     box: Dict[str, Any] = {}
-    # Request tracing and usage roles live in context variables; the helper
-    # thread must see the caller's, or its HTTP attempts join no logical call.
+    # Request tracing, usage roles and the runtime job id / annotation fail-stop
+    # bindings live in context variables; the helper thread must see the
+    # caller's, or its HTTP attempts join no logical call *and* the dispatch
+    # guard at the transport boundary silently passes.  Thread-locals are not
+    # copied, so anything the guard needs has to be a context variable
+    # (``core._RUNTIME_CTX``).
     context = contextvars.copy_context()
     context.run(_CALLER_THREAD.set, request_owner_thread())
 

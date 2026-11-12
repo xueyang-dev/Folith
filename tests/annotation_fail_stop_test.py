@@ -22,7 +22,10 @@ from folith.workflow_errors import AnnotationStagingError
 def isolated(tmp_path,monkeypatch):
     monkeypatch.setattr(core,'OUTPUT_DIR',tmp_path)
     monkeypatch.setattr(core,'_LLM_CTX',threading.local())
-    monkeypatch.setattr(core,'_RUNTIME_CTX',threading.local())
+    # Reset the runtime context in place. Swapping in a fresh ``threading.local``
+    # would put the pre-P0-2 carrier back and hide the cross-thread propagation
+    # this module asserts on.
+    core._RUNTIME_CTX.clear()
     for name in ['OPENAI_BASE_URL','OPENAI_ORG_ID','OPENAI_PROJECT_ID']:
         monkeypatch.delenv(name,raising=False)
     llm_transport.close_all_clients()
@@ -296,6 +299,38 @@ def test_sdk_retry_after_remote_error_cannot_send_after_peer_storage_failure(mon
     rt=core.load_runtime_state(job)
     assert rt['status']=='failed' and 'primary staging failure' in rt['error']['message']
     assert rt['error']['errno']==errno.EACCES
+
+
+def test_fail_stop_binding_reaches_the_request_helper_thread():
+    """P0-2: the latch must be readable on the thread that actually sends.
+
+    ``call_cancellable`` hands each provider request to a ``folith-request``
+    thread and only copies *context variables*.  While the carrier was a
+    ``threading.local``, ``_annotation_fail_stop_check()`` ran there against an
+    empty context, so an SDK retry of an in-flight request was still dispatched
+    after a peer batch's storage failure (the extra 3rd request).  Asserting on
+    the carrier keeps this deterministic: no backoff jitter, no prune-vs-retry
+    ordering.
+    """
+    error=AnnotationStagingError(OSError(errno.EACCES,'synthetic staging denied'))
+    failure=staging.AnnotationFailStop()
+    failure.fail(error)
+    core._RUNTIME_CTX.job_id='p0-2-helper-thread'
+    core._RUNTIME_CTX.annotation_fail_stop=failure
+    seen={}
+    def request():
+        seen['thread']=threading.current_thread().name
+        seen['job_id']=core._runtime_job_id()
+        try:
+            core._annotation_fail_stop_check()
+        except BaseException as exc:
+            seen['failure']=exc
+        return 'sent'
+    assert request_control.call_cancellable(request,lambda:False,poll=.01)=='sent'
+    assert seen['thread']=='folith-request'
+    # Same shared latch instance, not a copy: the peer's error is what raises.
+    assert seen.get('failure') is error
+    assert seen['job_id']=='p0-2-helper-thread'
 
 
 def test_pipeline_resume_uses_explicit_endpoint_instead_of_sdk_environment(monkeypatch):
