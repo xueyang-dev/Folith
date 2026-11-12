@@ -383,7 +383,8 @@ def test_process_exit_with_a_running_task_is_bounded(tmp_path):
 # --- P0-9h TEMPORARY diagnosis (delete before merging) ---------------------
 
 _DIAG_PROBE = """\
-import os, sys, threading, time
+import faulthandler, os, sys, threading, time
+faulthandler.enable(all_threads=True)
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 sys.path.insert(0, %(root)r)
 from PySide6.QtWidgets import QApplication
@@ -426,12 +427,13 @@ def _diag_run(tmp_path, tag, work_s=5.0):
                                      "park": _DIAG_PARKS[tag]},
                       encoding="utf-8")
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
-               FOLITH_QT_SETTINGS_DIR=str(tmp_path / f"settings_{tag}"))
+               FOLITH_QT_SETTINGS_DIR=str(tmp_path / f"settings_{tag}"),
+               PYTHONFAULTHANDLER="1")
     started_at = time.perf_counter()
     try:
-        proc = subprocess.run([sys.executable, str(script)], cwd=str(ROOT),
-                              env=env, capture_output=True, text=True,
-                              timeout=max(15.0, work_s + 12.0))
+        proc = subprocess.run([sys.executable, "-X", "faulthandler", str(script)],
+                              cwd=str(ROOT), env=env, capture_output=True,
+                              text=True, timeout=max(15.0, work_s + 12.0))
         return (proc.returncode, time.perf_counter() - started_at,
                 proc.stdout, proc.stderr)
     except subprocess.TimeoutExpired as exc:
@@ -487,7 +489,11 @@ def test_p0_9h_diagnose_the_exit_probe(tmp_path):
         rc, elapsed, out, err = _diag_run(tmp_path, tag)
         lines.append(f"\n===== {tag}: rc={rc} elapsed={elapsed:.2f}s "
                      f"stdout={out.strip()[-120:]!r}")
-        lines.append(f"stderr:\n{err.strip()[-3000:]}")
+        lines.append(f"stderr:\n{err.strip()[-4000:]}")
+    for attempt in range(3):
+        rc, elapsed, _o, err = _diag_run(tmp_path, "daemon_delete")
+        lines.append(f"\n===== daemon_delete repeat {attempt + 2}: rc={rc} "
+                     f"elapsed={elapsed:.2f}s stderr:\n{err.strip()[-4000:]}")
     rc, elapsed, _out, _err = _diag_run(tmp_path, "daemon_delete")
     if rc != 0:
         lines.append("\n===== daemon_delete under a debugger =====\n"
