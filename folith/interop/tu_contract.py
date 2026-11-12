@@ -1,4 +1,5 @@
-"""TU Contract v1 核心：段落身份、inline 标签、状态映射、元数据保全、拒绝语义。
+"""TU Contract v1.1 核心：段落身份（file_scope）、摘要规范形式、inline 标签、
+状态映射、元数据保全、拒绝语义。
 
 规范文本见 ``docs/tu-contract-v1.md``；本模块是其中**可由测试判定**的部分。
 每条规则都必须是确定性代码，不允许任何"看起来差不多就算通过"的判断。
@@ -19,8 +20,9 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import quote, unquote
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # 1. 段落身份（Segment identity）
@@ -32,8 +34,206 @@ CONTRACT_VERSION = 1
 # 旧确认状态不继承。
 
 def source_digest(source_text: str) -> str:
-    """源文内容摘要（**变化证据**，不是身份的一部分）。文本逐字符参与，不做空白归一。"""
+    """v1 的**逐字符**摘要口径（**不是导入口径**）。
+
+    这条 API 只为复现 v1 的缺陷与读取旧数据保留：它把适配器内部占位符编号、
+    行尾写法等全部算进摘要。v1.1 起导入必须使用
+    :func:`canonical_digest`，它吃"纯文本 + 按类型编号的占位符"。
+    """
     return hashlib.sha256(str(source_text or "").encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# 1.1 外部 id 与文件作用域
+# ---------------------------------------------------------------------------
+# 身份作用域由契约规定，适配器不得自选拼法：
+#
+#     external_id = file_scope "/" pct(unit_id) [ "/" pct(seg_id) ]
+#
+# 每个分量用同一套百分号转义，因此拼接是单射：("a/b", "c") 与 ("a", "b/c")
+# 不可能得到同一个字符串。file_scope 三级取值顺序见 :func:`resolve_file_scope`。
+
+FILE_SCOPE_RULES = ("id", "original", "position")
+
+#: 文件作用域回退警告码（**警告**，不是拒绝）：位置回退必须让用户看见。
+FILE_SCOPE_FALLBACK_CODE = "FILE_SCOPE_FALLBACK"
+#: 同一批次里两个 ``<file>`` 解析到同一作用域的警告码（**警告**，不是拒绝）。
+DUPLICATE_FILE_SCOPE_CODE = "DUPLICATE_FILE_SCOPE"
+#: ``ImportReport.warnings`` 里允许出现的结构化警告码。
+WARNING_CODES = frozenset({FILE_SCOPE_FALLBACK_CODE, DUPLICATE_FILE_SCOPE_CODE})
+
+
+def pct(value: Any) -> str:
+    """百分号转义：``[A-Za-z0-9._~-]`` 之外一律 ``%XX``（UTF-8 字节）。
+
+    只转义 unreserved 之外的全部字符，因此 ``/``、``%``、空格、中文都不会
+    破坏 ``external_id`` 的分段结构。
+    """
+    return quote(str(value), safe="-._~")
+
+
+def unpct(value: Any) -> str:
+    """``pct`` 的逆变换；非法转义原样保留（不猜语义）。"""
+    return unquote(str(value))
+
+
+@dataclass(frozen=True)
+class FileScope:
+    """``<file>`` 的身份作用域与它用了哪条规则。
+
+    ``scope`` 已经是完整前缀形式（``i:…`` / ``o:…`` / ``p:…``）；``rule``
+    必须是 :data:`FILE_SCOPE_RULES` 之一，用于在账本里留下"为什么是这个
+    作用域"的证据（位置回退不能静默）。
+    """
+
+    scope: str
+    rule: str
+
+    def __post_init__(self):
+        scope = str(self.scope or "")
+        rule = str(self.rule or "")
+        if rule not in FILE_SCOPE_RULES:
+            raise ValueError(f"未知的 file_scope 规则：{self.rule!r}")
+        prefixes = {"id": "i:", "original": "o:", "position": "p:"}
+        if not scope.startswith(prefixes[rule]):
+            raise ValueError(
+                f"file_scope {scope!r} 与规则 {rule!r} 不匹配"
+                f"（应以前缀 {prefixes[rule]!r} 开始）")
+        if rule == "position":
+            raw = scope[2:]
+            if not raw.isdigit() or int(raw) < 1:
+                raise ValueError("位置回退的 file_scope 必须是 1 基十进制位置")
+
+
+def resolve_file_scope(
+    *,
+    file_id: Any = None,
+    original: Any = None,
+    position: Any = None,
+) -> FileScope:
+    """按契约规定的**固定顺序**取第一个可用的 ``file_scope``。
+
+    1. ``<file>@id`` → ``"i:" + pct(@id)``（memoQ 的 ``mq:id``；首选，稳定）；
+    2. ``<file>@original`` → ``"o:" + pct(@original)``（SDLXLIFF 只有这个；
+       整串参与，**不做 basename**，否则两个同名文档会撞车）；
+    3. 两者都缺 → ``"p:" + 1 基位置``，且调用方必须把
+       :func:`file_scope_warnings` 的结果写进 ``ImportReport.warnings``。
+
+    ``position`` 是 ``<file>`` 在导入批次里的 1 基位置；规则 1/2 命中时不
+    需要它。
+    """
+    if str(file_id if file_id is not None else "") != "":
+        return FileScope(f"i:{pct(file_id)}", "id")
+    if str(original if original is not None else "") != "":
+        return FileScope(f"o:{pct(original)}", "original")
+    if isinstance(position, bool) or not isinstance(position, int):
+        raise ValueError("缺少 @id 与 @original 时必须提供 1 基位置（int）")
+    if position < 1:
+        raise ValueError("file 位置必须从 1 开始")
+    return FileScope(f"p:{position}", "position")
+
+
+def duplicate_file_scopes(
+    scopes: Iterable[FileScope],
+) -> dict[str, tuple[int, ...]]:
+    """返回解析到同一 ``file_scope`` 的分组（仅多文件命中；值是 1 基位置）。
+
+    这是**文件级**判据：同一批次里两个 ``<file>`` 自称同一作用域时，逐单元
+    报 ``DUPLICATE_EXTERNAL_ID`` 不可操作（mt/pe 案例会吐 51 条），应在导入前
+    用一条 ``DUPLICATE_FILE_SCOPE`` 警告让用户选择只导入其中一份。
+    """
+    positions: dict[str, list[int]] = {}
+    for index, item in enumerate(scopes, start=1):
+        positions.setdefault(str(item.scope), []).append(index)
+    return {scope: tuple(items) for scope, items in positions.items()
+            if len(items) > 1}
+
+
+def file_scope_warnings(scopes: Iterable[FileScope]) -> list[str]:
+    """把位置回退与重复作用域变成 ``ImportReport.warnings`` 里的可见文本。
+
+    两类都是**警告**（导入继续，由用户决定），不是拒绝码：位置回退仍然可以
+    导入，重复作用域仍然由单元级 ``DUPLICATE_EXTERNAL_ID`` 兜底。
+    """
+    items = list(scopes)
+    warnings: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if item.rule != "position":
+            continue
+        warnings.append(
+            f"{FILE_SCOPE_FALLBACK_CODE}: 第 {index} 个 <file> 缺少 @id 与 "
+            f"@original，按位置回退为 file_scope={item.scope!r}；"
+            f"文件重排或换机后该文件的单元身份可能变化")
+    for scope, positions in duplicate_file_scopes(items).items():
+        warnings.append(
+            f"{DUPLICATE_FILE_SCOPE_CODE}: {len(positions)} 个 <file> 解析到同一 "
+            f"file_scope={scope!r}（位置 {list(positions)}）；它们看起来是同一份"
+            f"文件的两次导出（例如 MT 与 PE 阶段）。请只导入其中一份，否则这些"
+            f"单元会逐个报 DUPLICATE_EXTERNAL_ID")
+    return warnings
+
+
+def compose_external_id(
+    file_scope: str,
+    unit_id: Any,
+    seg_id: Any = None,
+) -> str:
+    """按契约拼三段式 ``external_id``；每一段单独转义。
+
+    ``file_scope`` 由 :func:`resolve_file_scope` 产生（已含 ``i:``/``o:``/
+    ``p:`` 前缀且内部没有裸 ``/``）。``seg_id`` 只有单元真的有 ≥2 个
+    ``<mrk mtype="seg">`` 时才传（见 :func:`segment_ids`）。
+    """
+    scope = str(file_scope or "")
+    if not scope:
+        raise ValueError("file_scope 不能为空")
+    if "/" in scope:
+        raise ValueError(f"file_scope 不能含裸 '/'：{scope!r}")
+    unit = "" if unit_id is None else str(unit_id)
+    if unit == "":
+        raise ValueError("unit_id 不能为空；无 id 的单元必须由适配器显式赋号")
+    parts = [scope, pct(unit)]
+    if seg_id is not None:
+        seg = str(seg_id)
+        if seg == "":
+            raise ValueError("seg_id 不能为空字符串；无分段时不要传该参数")
+        parts.append(pct(seg))
+    return "/".join(parts)
+
+
+def split_external_id(external_id: str) -> tuple[str, str, str | None]:
+    """``compose_external_id`` 的逆；返回 ``(file_scope, unit_id, seg_id)``。
+
+    因为 ``pct`` 转义了裸 ``/``，按 ``/`` 切分不会歧义：2 段 = 无分段，
+    3 段 = 有分段。非法形状显式报错，不猜。
+    """
+    parts = str(external_id or "").split("/")
+    if len(parts) not in (2, 3) or any(part == "" for part in parts):
+        raise ValueError(
+            f"external_id 形状非法（应为 file_scope/unit_id[/seg_id]）："
+            f"{external_id!r}")
+    unit_id = unpct(parts[1])
+    seg_id = unpct(parts[2]) if len(parts) == 3 else None
+    if unit_id == "" or (seg_id is not None and seg_id == ""):
+        raise ValueError(f"external_id 的单元/分段为空：{external_id!r}")
+    return parts[0], unit_id, seg_id
+
+
+def segment_ids(mrk_count: int) -> tuple[str, ...]:
+    """单元内分段 id 序列：只有 ≥2 个 ``<mrk mtype="seg">`` 才分段。
+
+    ``seg_id`` 用**单元内序号**（``seg1``…``segN``），不用 ``<mrk@mid>``：
+    真实 SDLXLIFF 的 ``mid`` 是**文件级**计数器（同一单元的段不从 1 开始），
+    文件里插一段会让后面所有段换身份。判据看 ``<mrk>`` 数量，不看
+    ``<seg-source>`` 是否存在（真实样本里存在空 ``<seg-source>``）。
+    """
+    if isinstance(mrk_count, bool) or not isinstance(mrk_count, int):
+        raise ValueError(f"分段数必须是整数：{mrk_count!r}")
+    if mrk_count < 0:
+        raise ValueError("分段数不能为负")
+    if mrk_count < 2:
+        return ()
+    return tuple(f"seg{index}" for index in range(1, mrk_count + 1))
 
 
 def identity_key(external_id: str) -> str:
@@ -63,15 +263,6 @@ def instance_identity(external_id: str, instance: int) -> str:
     return base if instance == 1 else f"{base}#{instance}"
 
 
-def identity_pair_key(external_id: str) -> str:
-    """v1 早期名称的兼容别名；返回的就是 :func:`identity_key`。
-
-    摘要不再参与身份，因此本函数不再接受摘要参数——需要变化证据时用
-    :func:`source_digest` 单独取。
-    """
-    return identity_key(external_id)
-
-
 # ---------------------------------------------------------------------------
 # 2. Inline 标签语义
 # ---------------------------------------------------------------------------
@@ -82,15 +273,24 @@ def identity_pair_key(external_id: str) -> str:
 PLACEHOLDER_START = "\ue000"
 PLACEHOLDER_END = "\ue001"
 
-_PLACEHOLDER_RE = re.compile("\ue000(\\d+)\ue001")
+#: 占位符编号是**适配器自赋的不透明字符串**，不要求是整数：真实 SDLXLIFF 里
+#: 存在 ``ph1`` / ``pt5`` 这类符号 id，``bpt id=1`` 与 ``ept id=1`` 还会复用
+#: 同一个文件标签 id。契约只要求"同一侧内唯一"，不解释编号含义。
+_PLACEHOLDER_RE = re.compile("\ue000([^\ue000\ue001]+)\ue001")
 
 
 def encode_placeholder(tag_id: str) -> str:
-    return f"{PLACEHOLDER_START}{int(tag_id)}{PLACEHOLDER_END}"
+    """把适配器赋的标签号写成占位符；编号原样参与，不做 ``int()`` 转换。"""
+    value = str(tag_id if tag_id is not None else "")
+    if value == "":
+        raise ValueError("标签编号不能为空")
+    if PLACEHOLDER_START in value or PLACEHOLDER_END in value:
+        raise ValueError("标签编号不能含私有区定界符 U+E000/U+E001")
+    return f"{PLACEHOLDER_START}{value}{PLACEHOLDER_END}"
 
 
-def placeholder_ids(text: str) -> list[int]:
-    return [int(match) for match in _PLACEHOLDER_RE.findall(str(text or ""))]
+def placeholder_ids(text: str) -> list[str]:
+    return [match for match in _PLACEHOLDER_RE.findall(str(text or ""))]
 
 
 @dataclass(frozen=True)
@@ -114,14 +314,17 @@ class InlineTag:
             raise ValueError("成对标签必须有 code_name 才能校验配对")
         if self.kind == "self_closing" and self.code_name:
             raise ValueError("自闭合标签不应有配对语义")
-        if int(self.tag_id) < 1:
-            raise ValueError("标签编号必须从 1 开始")
+        tag_id = str(self.tag_id if self.tag_id is not None else "")
+        if tag_id == "":
+            raise ValueError("标签编号不能为空；适配器必须为每个标签显式赋号")
+        if PLACEHOLDER_START in tag_id or PLACEHOLDER_END in tag_id:
+            raise ValueError("标签编号不能含私有区定界符 U+E000/U+E001")
 
 
 def _sequence_errors(text: str, tags: Sequence[InlineTag]) -> list[str]:
     errors: list[str] = []
     ids_in_text = placeholder_ids(text)
-    ids_defined = [int(tag.tag_id) for tag in tags]
+    ids_defined = [str(tag.tag_id) for tag in tags]
     for placeholder_id in sorted(set(ids_in_text) - set(ids_defined)):
         errors.append(f"占位符 {placeholder_id} 没有对应的标签定义")
     for tag_id in sorted(set(ids_defined) - set(ids_in_text)):
@@ -136,7 +339,7 @@ def _sequence_errors(text: str, tags: Sequence[InlineTag]) -> list[str]:
     # 真实 memoQ 会先连续开 4 个 bpt、再按 id 关 4 个 ept，配对区间交叠，但每个
     # 配对键都恰好开一次、关一次。跨区间交叠因此不是缺陷；只有"关一个没开过的
     # 键"（同一侧内 rid 不自洽）和"开了没关"（id 不闭合）才是。
-    by_id = {int(tag.tag_id): tag for tag in tags}
+    by_id = {str(tag.tag_id): tag for tag in tags}
     opened: dict[str, list[int]] = {}
     for position, placeholder_id in enumerate(ids_in_text):
         tag = by_id.get(placeholder_id)
@@ -213,6 +416,88 @@ def validate_target_tags(
                 f"译文的{label}标签 {target_counts[kind]} 个超过源文 "
                 f"{source_counts[kind]} 个（不得伪造源文没有的标签）")
     return errors
+
+
+# ---------------------------------------------------------------------------
+# 2.1 源文摘要的规范形式
+# ---------------------------------------------------------------------------
+# ``source_digest``（逐字符）把适配器内部占位符编号、命名空间前缀、自闭合
+# 写法都算进摘要，一次语义不变的重新序列化就会让 115/193 个真实单元拿到新
+# 实例并清空审校状态（P3-1 实测）。规范形式只保留**段落内容**：
+#
+#     canonical_source_text = 纯文本（逐字符）+ 按类型编号的占位符
+#     placeholder           = U+E000 + {o|c|s} + <十进制序号> + U+E001
+#
+# - ``o`` / ``c`` / ``s`` = open / close / self_closing；**成对标签共用一个
+#   序号**（按开启顺序分配，关闭回填同一个号）；
+# - 只归一换行（``\r\n`` / ``\r`` → ``\n``），**不折叠空白、不 trim、不动
+#   制表符**：真实 ``SamplePhotoPrinter`` 有 30 个纯空白单元，折叠后会产生
+#   24 次撞车（把"3 个空行"判成"没变"）；
+# - **不含 payload**（``<g>`` 的 code_name、``<ph>`` 的原始串都不参与）；
+# - **不含文件标签编号**（``@id`` / ``@rid`` 不参与，跨文件重排不改变摘要）。
+
+_NEWLINE_RE = re.compile("\r\n?")
+
+
+def _normalize_newlines(text: str) -> str:
+    """只把 CRLF / CR 归一成 LF；其余字符逐个保留。"""
+    return _NEWLINE_RE.sub("\n", text)
+
+
+def canonical_source_text(text: str, tags: Sequence[InlineTag]) -> str:
+    """源文的规范形式（摘要输入）；标签序列不自洽时显式报错。
+
+    这是**唯一**允许喂给 :func:`canonical_digest` 的文本形状。适配器仍可自选
+    ``tag_id``（整数或 ``ph1`` 这类符号），规范形式不看编号本身，只看
+    ``kind`` 与配对顺序。
+    """
+    raw = str(text if text is not None else "")
+    tag_list = list(tags)
+    errors = _sequence_errors(raw, tag_list)
+    if errors:
+        raise ValueError(
+            "源文标签序列不自洽，不能计算规范摘要：" + "；".join(errors))
+    by_id = {str(tag.tag_id): tag for tag in tag_list}
+    parts: list[str] = []
+    cursor = 0
+    counter = 0
+    open_numbers: dict[str, list[int]] = {}
+    for match in _PLACEHOLDER_RE.finditer(raw):
+        chunk = raw[cursor:match.start()]
+        if PLACEHOLDER_START in chunk or PLACEHOLDER_END in chunk:
+            raise ValueError(
+                "源文纯文本里出现私有区定界符 U+E000/U+E001；"
+                "规范形式不是单射，该单元必须按 TAG_STRUCTURE_INVALID 拒绝")
+        parts.append(chunk)
+        tag = by_id[match.group(1)]
+        if tag.kind == "open":
+            counter += 1
+            open_numbers.setdefault(tag.code_name, []).append(counter)
+            parts.append(f"{PLACEHOLDER_START}o{counter}{PLACEHOLDER_END}")
+        elif tag.kind == "close":
+            pending = open_numbers.get(tag.code_name) or []
+            if not pending:  # _sequence_errors 已保证，这里只防御内部调用
+                raise ValueError(
+                    f"标签 {match.group(1)!r} 关闭时没有未配对的开启")
+            number = pending.pop()
+            parts.append(f"{PLACEHOLDER_START}c{number}{PLACEHOLDER_END}")
+        else:
+            counter += 1
+            parts.append(f"{PLACEHOLDER_START}s{counter}{PLACEHOLDER_END}")
+        cursor = match.end()
+    tail = raw[cursor:]
+    if PLACEHOLDER_START in tail or PLACEHOLDER_END in tail:
+        raise ValueError(
+            "源文纯文本里出现私有区定界符 U+E000/U+E001；"
+            "规范形式不是单射，该单元必须按 TAG_STRUCTURE_INVALID 拒绝")
+    parts.append(tail)
+    return _normalize_newlines("".join(parts))
+
+
+def canonical_digest(text: str, tags: Sequence[InlineTag]) -> str:
+    """``sha256(canonical_source_text(text, tags))``：导入唯一允许的摘要口径。"""
+    return hashlib.sha256(
+        canonical_source_text(text, tags).encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +718,15 @@ class ImportReport:
                     f"文件级拒绝 {rejection.code}：已丢弃 {dropped} 个已接受单元，"
                     f"不产出部分结果")
 
+    def add_warning(self, message: str) -> None:
+        """登记一条可见警告（如 ``FILE_SCOPE_FALLBACK`` / ``DUPLICATE_FILE_SCOPE``）。
+
+        警告不改变接受/拒绝结果；空串不产生噪音。
+        """
+        text = str(message or "").strip()
+        if text:
+            self.warnings.append(text)
+
     def to_json(self) -> dict[str, Any]:
         return {
             "contract_version": self.contract_version,
@@ -478,7 +772,10 @@ def build_import_report(
 # 身份账本与再指派
 # ---------------------------------------------------------------------------
 
-LEDGER_VERSION = 2
+#: 账本版本 3：``external_id`` 的键空间在 v1.1 变成
+#: ``file_scope/unit_id[/seg_id]``。v2 账本的键（裸 ``"1"``）在新规则下永远
+#: 不命中，若不升版会变成永不命中的孤儿并静默产生新身份——必须显式拒绝。
+LEDGER_VERSION = 3
 
 
 @dataclass
@@ -501,8 +798,9 @@ class IdentityLedger:
             if version != LEDGER_VERSION:
                 raise ValueError(
                     f"身份账本版本 {version} 不识别（当前 {LEDGER_VERSION}）；"
-                    f"版本 {LEDGER_VERSION - 1} 的旧口径把源文摘要拼进身份，"
-                    f"必须重新导入以建立新账本，不得沿用旧身份")
+                    f"v1 账本把源文摘要拼进身份，v2 账本的键空间不含 "
+                    f"file_scope（裸单元 id 在新规则下永远不命中）；"
+                    f"都必须重新导入以建立新账本，不得沿用旧身份")
         entries: dict[str, dict[str, Any]] = {}
         for external_id, record in (payload.get("entries") or {}).items():
             if not isinstance(record, dict):
@@ -520,6 +818,7 @@ class IdentityLedger:
                 "source_digest": str(record.get("source_digest") or ""),
                 "instance": max(1, instance),
                 "confirmed_state": bool(record.get("confirmed_state")),
+                "file_scope_rule": str(record.get("file_scope_rule") or ""),
                 "history": [dict(item) for item in (record.get("history") or [])
                             if isinstance(item, dict)],
             }
@@ -550,6 +849,7 @@ def _current_instance(entry: Mapping[str, Any]) -> dict[str, Any]:
         "source_digest": str(entry.get("source_digest") or ""),
         "instance": max(1, int(entry.get("instance") or 1)),
         "confirmed_state": bool(entry.get("confirmed_state")),
+        "file_scope_rule": str(entry.get("file_scope_rule") or ""),
     }
 
 
@@ -572,10 +872,14 @@ def reconcile_identities(
       1 基位置引用 ``#n``），其余单元继续导入；
     - 同一批次内重复的外部 id → **单元级拒绝** ``DUPLICATE_EXTERNAL_ID``：
       身份映射必须单射，两个 TU 共用同一身份会让注入互相覆盖；重复单元不进入
-      ``identities``，账本保留首次出现的实例，也不谎报 ``source_changed``。
+      ``identities``，账本保留首次出现的实例，也不谎报 ``source_changed``；
+    - 单元缺少 ``source_digest`` → **显式报错**（``ValueError``），不再从
+      ``source_text`` 静默重算。适配器必须用 :func:`canonical_digest` 算好再传，
+      否则"忘了传"会变成"按另一套口径猜语义"。
 
     ``stable`` 只表示"本次导入证明了身份未变"；源文变化得到的是**新实例**，
-    不是"身份不稳定"。
+    不是"身份不稳定"。``file_scope_rule``（``id`` / ``original`` / ``position``）
+    随身份与账本一起保存，位置回退因此可追溯。
     """
     ledger = ledger or IdentityLedger()
     identities: list[dict[str, Any]] = []
@@ -592,16 +896,30 @@ def reconcile_identities(
                 unit_ref=f"#{position}"))
             continue
         if external_id in seen_positions:
+            try:
+                duplicate_scope = split_external_id(external_id)[0]
+            except ValueError:
+                duplicate_scope = ""
+            scope_note = (f"（file_scope={duplicate_scope!r}）"
+                          if duplicate_scope else "")
             rejections.append(Rejection(
                 scope="unit", code="DUPLICATE_EXTERNAL_ID",
-                reason=(f"文件内重复的外部 TU id {external_id!r}"
+                reason=(f"文件内重复的外部 TU id {external_id!r}{scope_note}"
                         f"（首次出现在第 {seen_positions[external_id]} 个单元）；"
                         f"身份映射必须单射，该单元不得与首次出现的单元共用身份"),
                 unit_ref=external_id))
             continue
         seen_positions[external_id] = position
-        digest = str(unit.get("source_digest") or "") or source_digest(
-            str(unit.get("source_text") or ""))
+        digest = str(unit.get("source_digest") or "").strip()
+        if not digest:
+            raise ValueError(
+                f"单元 {external_id!r} 缺少 source_digest；适配器必须用 "
+                f"canonical_digest() 计算后显式传入，禁止从 source_text 静默重算")
+        scope_rule = str(unit.get("file_scope_rule") or "")
+        if scope_rule and scope_rule not in FILE_SCOPE_RULES:
+            raise ValueError(
+                f"单元 {external_id!r} 的 file_scope_rule 不识别："
+                f"{scope_rule!r}（允许 {FILE_SCOPE_RULES}）")
         known = ledger.entries.get(external_id)
         if not known or not known.get("identity"):
             # 第一次见到该外部 id：第 1 个实例，没有可比对的旧身份。
@@ -610,6 +928,7 @@ def reconcile_identities(
                 "source_digest": digest,
                 "instance": 1,
                 "confirmed_state": False,
+                "file_scope_rule": scope_rule,
             }
             identity, instance = current["identity"], 1
             stable = False
@@ -648,12 +967,14 @@ def reconcile_identities(
             "instance": instance,
             "stable": stable,
             "confirmed_state": confirmed_state,
+            "file_scope_rule": scope_rule,
         })
         ledger.entries[external_id] = {
             "identity": identity,
             "source_digest": digest,
             "instance": instance,
             "confirmed_state": confirmed_state,
+            "file_scope_rule": scope_rule,
             "history": history,
         }
     return identities, reassignments, ledger, rejections
