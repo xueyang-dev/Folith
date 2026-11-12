@@ -84,7 +84,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # The full regression now takes ~39 min on this runner (5806 cases). At 40
+    # the job was being cancelled mid-run, so a green/red signal was impossible:
+    # a cancelled job is indistinguishable from a failing one in the gate.
+    timeout-minutes: 90
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
