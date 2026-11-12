@@ -220,18 +220,29 @@ def validate_target_tags(
 # 3. 状态映射
 # ---------------------------------------------------------------------------
 # 双向映射表。``STATUS_MAP`` 的键是契约规范状态名，值是别名集合（不同 CAT
-# 工具对同一语义的拼写差异）；别名归一之后才查映射。表外状态一律显式拒绝
-# （``StatusMappingError``），绝不猜近似语义。
+# 工具对同一语义的拼写差异）；别名归一（大小写/首尾空白/连字符/下划线/
+# CamelCase，见 :func:`_canonical_status`）之后才查映射。表外状态一律显式
+# 拒绝（``StatusMappingError``），绝不猜近似语义。
 
 STATUS_ALIASES: dict[str, frozenset[str]] = {
-    "confirmed": frozenset({"final", "reviewed", "signed_off", "approved"}),
+    "confirmed": frozenset({
+        "final", "reviewed", "signed_off", "approved",
+        # memoQ（``mq:status``）：人工定稿/审校通过。真实样本实测取值。
+        "manually_confirmed", "proofread", "reviewer1_confirmed",
+        # Trados（SDLXLIFF ``sdl:seg/@conf``）：两级批准。
+        "approved_sign_off", "approved_translation"}),
     "translated": frozenset({
         "draft", "pre_translated", "translation_complete",
+        # memoQ：有译文但未人工定稿。``PreTranslated`` 是 memoQ 预翻译，
+        # 与已有的 ``pre_translated`` 在 CamelCase 拆分后是同一个值。
+        "machine_translated", "partially_edited",
         # XLIFF 1.2 的"已翻待审"族：有译文、但尚未定稿。
         "needs_review_translation", "needs_review_adaptation",
         "needs_review_l10n"}),
     "untranslated": frozenset({
         "new", "empty", "not_translated",
+        # memoQ：还没有任何可用译文。
+        "not_started",
         # XLIFF 2.0 ``initial`` 与 XLIFF 1.2 ``needs-translation``：都表示
         # 该单元还没有可用译文。
         "initial", "needs_translation"}),
@@ -278,13 +289,30 @@ class StatusMappingError(ValueError):
     """不可映射的 CAT 状态：调用方必须把它转成显式拒绝，不得静默降级。"""
 
 
+#: CamelCase → snake_case 的词边界。分两条规则：
+#: 1. 小写字母后紧跟大写字母（``NotStarted`` → ``Not_Started``）；
+#: 2. 小写字母 + 数字后紧跟大写字母（``Reviewer1Confirmed`` →
+#:    ``Reviewer1_Confirmed``）。数字前必须是小写字母，避免把已有的
+#:    ``L10N`` 这类缩写拆成 ``L10_N``（``NEEDS_REVIEW_L10N`` 必须保持命中）。
+#: memoQ 的 ``ManuallyConfirmed`` 与 Trados 的 ``ApprovedSignOff`` 都靠这条
+#: 规则才能落到别名表里。
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z])(?=[A-Z])")
+_CAMEL_DIGIT_BOUNDARY = re.compile(r"(?<=[a-z]\d)(?=[A-Z])")
+
+
 def _canonical_status(cat_status: str) -> str | None:
-    # 别名归一：大小写、首尾空白、以及连字符/下划线等价。XLIFF 1.2/2.0 的
-    # ``state`` 取值用连字符（``signed-off`` / ``needs-translation``），契约
-    # 表用下划线；不归一会让每个适配器各自发明一遍拼写口径。
-    value = str(cat_status or "").strip().casefold().replace("-", "_")
+    # 别名归一：首尾空白、连字符/下划线等价、大小写，以及 CamelCase →
+    # snake_case 拆分。XLIFF 1.2/2.0 的 ``state`` 取值用连字符
+    # （``signed-off`` / ``needs-translation``），契约表用下划线；memoQ 写
+    # ``ManuallyConfirmed``，不拆分就只剩 ``manuallyconfirmed``——与表里的
+    # ``manually_confirmed`` 永不相等。拆分**只是拼写归一**，不是宽松匹配：
+    # 归一后的值仍必须逐字命中规范名或别名，否则照样拒绝。
+    value = str(cat_status or "").strip()
     if not value:
         return None
+    value = _CAMEL_BOUNDARY.sub("_", value)
+    value = _CAMEL_DIGIT_BOUNDARY.sub("_", value)
+    value = value.casefold().replace("-", "_")
     for canonical, aliases in STATUS_ALIASES.items():
         if value == canonical or value in aliases:
             return canonical

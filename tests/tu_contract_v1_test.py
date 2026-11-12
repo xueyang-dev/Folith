@@ -506,6 +506,43 @@ def test_hyphenated_xliff_states_are_normalized():
             map_cat_status(bad)
 
 
+def test_camel_case_status_words_are_split_before_alias_lookup():
+    """P3-2a：真实 memoQ / Trados 的驼峰状态词必须命中词表。
+
+    真实语料里 memoQ 写 ``mq:status="ManuallyConfirmed"``、Trados 写
+    ``sdl:seg/@conf="ApprovedSignOff"``。不拆分时它们归一成
+    ``manuallyconfirmed`` / ``approvedsignoff``，与词表永不相等，整批
+    trans-unit 会落入 ``UNMAPPABLE_STATUS``。
+    """
+    measured = {
+        # memoQ mq:status（5 个真实样本，363 个 token，7 种取值）。
+        "NotStarted": "untranslated",
+        "ManuallyConfirmed": "confirmed",
+        "MachineTranslated": "translated",
+        "PreTranslated": "translated",
+        "PartiallyEdited": "translated",
+        "Proofread": "confirmed",
+        "Reviewer1Confirmed": "confirmed",
+        # Trados sdl:seg/@conf（4 个真实样本，8 个 token）。
+        "ApprovedSignOff": "confirmed",
+        "ApprovedTranslation": "confirmed",
+    }
+    for raw, canonical in measured.items():
+        assert map_cat_status(raw) == map_cat_status(canonical), raw
+
+    # CamelCase 拆分与既有的连字符等价叠加后仍然成立。
+    assert map_cat_status("Not-Started") == map_cat_status("untranslated")
+    assert map_cat_status("MACHINE-TRANSLATED") == map_cat_status("translated")
+
+    # 拆分只是拼写归一，不是宽松匹配：拆完不在词表的取值继续显式拒绝。
+    import pytest
+
+    for bad in ("TotallyUnknownStatus", "NotAStatus", "ManuallyRejected",
+                "Reviewer9Confirmed", "PreTranslatedExtra"):
+        with pytest.raises(StatusMappingError):
+            map_cat_status(bad)
+
+
 def test_folith_status_reverse_mapping_all_branches():
     assert map_folith_status({"excluded": True}) == "locked"
     assert map_folith_status({"reviewed": True}) == "confirmed"
