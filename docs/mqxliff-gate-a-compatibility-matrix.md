@@ -50,6 +50,10 @@ safe round trip)尚未合入,Folith 现无 XLIFF 适配器可承载实验」。*
 | `pe.mqxliff` | 11.6.8 | 同上 → `sample_and_materials/pe.mqxliff` | `12b338dc75b80831` | **同一文档后编辑后导出**:51 段全部 ManuallyConfirmed;与 mt.mqxliff 51 段段序对应 |
 | `translation_status.mqxliff` | 11.6.8 | [ikuehirata/mqxliff-viewer](https://github.com/ikuehirata/mqxliff-viewer) → `sample/translation_status_sample.xlsx_jpn.mqxliff` | `381f331e8c000a8b` | **单文件覆盖 6 种状态**各 2 段:NotStarted/PartiallyEdited/PreTranslated/ManuallyConfirmed/Reviewer1Confirmed/Proofread;11 个 historical-unit |
 
+表中"入库 SHA-256"是**提交内 blob** 的指纹。`document.mqxliff` 的上游原件为
+CRLF(71684 B),入库 blob 为 LF(71199 B),两者只差 485 个换行、解码文本相同;
+差异不是上游版本不同,逐字节核对见 `tests/fixtures/mqxliff/README.md`。
+
 仅审计、未入库的参考样本(许可证不适配,存仓库外
 `verification/issue-146-mqxliff-gatea/audit-only-samples/`):
 

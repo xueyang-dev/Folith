@@ -40,6 +40,10 @@ Apache-2.0 官方仓库，允许再分发）：
 | `quickplace.docx.sdlxliff` | 39 KB | 同上 → SDLTM Import Plus 单元测试 | `85e67619be7594ff` | `sdl:rep` 重复段哈希、`origin="source"` |
 | `SamplePhotoPrinter.doc.sdlxliff` | 43 KB | [RWS/trados-studio-api-samples](https://github.com/RWS/trados-studio-api-samples)（Apache-2.0） | `b27a14cb95e058d3` | 46 个 trans-unit、80 个 `sdl:st` 结构标签、TM 匹配（`percent`/`text-match`） |
 
+表中"入库 SHA-256"是**提交内 blob** 的指纹。`SamplePhotoPrinter.doc.sdlxliff` 的
+上游原件为 CRLF（42996 B），入库 blob 为 LF（42698 B），两者只差 298 个换行、
+解码文本相同；上游原件与还原后的哈希口径见 `tests/fixtures/sdlxliff/README.md`。
+
 仅审计、未入库的参考样本（许可证不适配或为人工构造，存
 `verification/issue-145-sdlxliff-gatea/audit-only-samples/`）：
 
