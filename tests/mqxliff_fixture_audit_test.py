@@ -203,5 +203,12 @@ def test_real_memoq_fixture_audit():
                    for element in root.iter()), path
 
 
+def test_readme_blob_digests_match_fixtures():
+    """README 记录的 SHA-256 必须等于入库 blob（含上游换行口径）。"""
+    from fixture_provenance_test import audit_readme_digests
+
+    audit_readme_digests(FIXTURES)
+
+
 if __name__ == "__main__":
     sys.exit(main())

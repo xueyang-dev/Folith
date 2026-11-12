@@ -116,6 +116,13 @@ def test_real_sdlxliff_fixture_audit():
     assert main() == 0
 
 
+def test_readme_blob_digests_match_fixtures():
+    """README 记录的 SHA-256 必须等于入库 blob（含上游换行口径）。"""
+    from fixture_provenance_test import audit_readme_digests
+
+    audit_readme_digests(FIXTURES)
+
+
 def test_preflight_only_exempts_unchanged_public_fixtures(monkeypatch):
     from scripts import release_preflight as preflight
     path = "tests/fixtures/sdlxliff/TTSExample.docx.sdlxliff"
