@@ -18,6 +18,10 @@ import pytest
 from folith.qt.jank_monitor import (
     ENV_SWITCH,
     JankMonitor,
+    ThreadFrame,
+    attribute_frame,
+    capture_other_thread_frames,
+    frame_is_framework,
     jank_monitor_enabled,
     render_frames,
 )
@@ -667,3 +671,365 @@ def test_summary_and_run_window_agree_on_the_longest_product_stall():
     assert window["slow_count"] == whole["slow_count"] == 3
     assert window["stall_ms"] == whole["stall_ms"]
     assert window["severe_count"] == whole["severe_count"] == 1
+
+
+# ------------------------------------------------- other threads (P1-1)
+def _wait_for(predicate, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.002)
+    return predicate()
+
+
+def _gil_hog_loop(stop: threading.Event, ready: threading.Event) -> None:
+    """A pure-Python busy loop: the GIL holder a stall report must name.
+
+    The inner loop keeps the thread's innermost frame inside this function most
+    of the time (``Event.is_set`` is a Python call, so a sample can land there),
+    which is also the case the normalisation has to survive.
+    """
+    ready.set()
+    counter = 0
+    while not stop.is_set():
+        for _ in range(200):
+            counter += 1
+
+
+def _wait_in_thread(stop: threading.Event) -> None:
+    stop.wait(5.0)
+
+
+def _pulse_loop(monitor: JankMonitor, seconds: float, sleep_s: float = 0.01) -> None:
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        monitor.mark_pulse()
+        time.sleep(sleep_s)
+
+
+def test_attribute_frame_normalises_to_the_innermost_application_frame():
+    """One thread, one aggregation key: library frames never own the row."""
+    stop = threading.Event()
+    ready = threading.Event()
+
+    def waiter() -> None:
+        ready.set()
+        _wait_in_thread(stop)
+
+    thread = threading.Thread(target=waiter, name="waiting-worker", daemon=True)
+    thread.start()
+    seen = []
+    try:
+        assert ready.wait(2.0)
+        assert _wait_for(
+            lambda: bool(seen.append(capture_other_thread_frames()[0].get(thread.ident))
+                         or seen[-1] is not None), 2.0), "the thread was never snapshotted"
+    finally:
+        stop.set()
+        thread.join(2.0)
+    observation = seen[-1]
+    assert observation.name == "waiting-worker"
+    assert observation.running is False       # parked inside threading.wait
+    # The innermost frame was threading.wait; the key is the application code
+    # that owns the wait, not the library frame.
+    assert observation.frame.endswith("in _wait_in_thread"), observation.frame
+    assert not observation.frame.startswith("<library>"), observation.frame
+    # A stdlib frame is framework, an application frame is not.
+    assert frame_is_framework(sys._getframe()) is False
+    raw = threading.current_thread()
+    assert raw is not None
+
+
+def test_attribute_frame_names_a_busy_loop_even_inside_a_library_call():
+    """``while not event.is_set()`` must not be grouped under threading.py."""
+    stop = threading.Event()
+    ready = threading.Event()
+    hog = threading.Thread(target=_gil_hog_loop, args=(stop, ready), name="busy",
+                           daemon=True)
+    hog.start()
+    try:
+        assert ready.wait(2.0)
+        seen = []
+
+        def saw_it() -> bool:
+            candidate = capture_other_thread_frames()[0].get(hog.ident)
+            if candidate is not None and "_gil_hog_loop" in candidate.frame:
+                seen.append(candidate)
+                return True
+            return False
+
+        assert _wait_for(saw_it, 2.0), "the busy thread was never attributed"
+    finally:
+        stop.set()
+        hog.join(2.0)
+    assert seen[-1].name == "busy"
+    assert not seen[-1].frame.startswith("<library>"), seen[-1].frame
+    assert seen[-1].frame.endswith("in _gil_hog_loop"), seen[-1].frame
+    # Sampled inside its own loop, it was executing application code.
+    assert any(item.running for item in seen), "never sampled in application code"
+
+
+def test_other_thread_snapshot_is_capped_and_budgeted(monkeypatch):
+    """One snapshot is bounded: thread count, and wall time (P1-1 cost rule)."""
+    stop = threading.Event()
+    workers = [threading.Thread(target=_wait_in_thread, args=(stop,),
+                                name=f"idle-{index}", daemon=True) for index in range(2)]
+    for worker in workers:
+        worker.start()
+    try:
+        idents = {worker.ident for worker in workers}
+        assert _wait_for(
+            lambda: idents.issubset(capture_other_thread_frames()[0]), 2.0
+        ), "the idle threads never appeared in a snapshot"
+        frames, truncated = capture_other_thread_frames(max_threads=1)
+        assert truncated is True
+        assert len(frames) == 1
+
+        # The time budget is checked before each thread is walked; with an
+        # injected clock past the deadline nothing is inspected.
+        import folith.qt.jank_monitor as jank_monitor
+
+        ticks = iter([100.0, 200.0] + [200.0] * 32)
+        monkeypatch.setattr(jank_monitor, "time",
+                            type("_Clock", (), {"monotonic": staticmethod(lambda: next(ticks))}))
+        frames, truncated = capture_other_thread_frames(budget_ms=4.0)
+        monkeypatch.undo()
+        assert truncated is True
+        assert frames == {}
+    finally:
+        stop.set()
+        for worker in workers:
+            worker.join(2.0)
+
+
+def test_thread_snapshot_is_taken_once_per_stall_not_once_per_poll():
+    """Cost: one all-thread snapshot per stall, not one per watcher poll."""
+    clock = [0.0]
+    calls = []
+
+    def threads_getter(ident):
+        calls.append(ident)
+        return {4242: ThreadFrame(name="hog", frame="worker.py:1 in spin", running=True)}, False
+
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0,
+                          poll_interval_ms=5.0, threads_getter=threads_getter)
+    monitor.start(_TimerStub())
+    try:
+        clock[0] = 0.2
+        assert _wait_for(lambda: bool(monitor._pending_threads), 2.0)
+        # The stall stays open for ~10 more polls of the watcher; none of them
+        # may take a second snapshot.
+        time.sleep(0.05)
+        assert len(calls) == 1, calls
+        event = monitor.mark_pulse()
+        assert event is not None
+        assert event["other_threads"] == [
+            {"thread": "hog", "frame": "worker.py:1 in spin", "running": True}]
+        assert len(calls) == 1, calls
+        clock[0] = 0.6
+        assert _wait_for(lambda: bool(monitor._pending_threads), 2.0)
+        assert monitor.mark_pulse() is not None
+        assert len(calls) == 2, calls
+    finally:
+        monitor.stop()
+    capture = monitor.summary()["stack_capture"]
+    assert capture["other_threads_attempts"] == 2
+    assert capture["other_threads_succeeded"] == 2
+
+
+def test_other_thread_ranking_names_the_thread_that_held_the_gil():
+    """A real background busy loop must be named, not inferred."""
+    monitor = JankMonitor(slow_ms=100.0, severe_ms=800.0, pulse_interval_ms=10.0,
+                          poll_interval_ms=5.0)
+    finished = threading.Event()
+    stop_hog = threading.Event()
+    errors = []
+
+    def gui_like_thread() -> None:
+        monitor.start(_TimerStub())
+        try:
+            _pulse_loop(monitor, 0.2)
+            monitor.mark_pulse()
+            time.sleep(0.35)         # the GUI is silent; the hog keeps the GIL busy
+            _pulse_loop(monitor, 0.2)  # this pulse records the stall
+        except BaseException as exc:  # noqa: BLE001 - surfaced to the test body
+            errors.append(exc)
+        finally:
+            monitor.stop()
+            finished.set()
+
+    hog = threading.Thread(target=_gil_hog_loop, args=(stop_hog, ready := threading.Event()),
+                           name="gil-hog", daemon=True)
+    hog.start()
+    assert ready.wait(2.0)
+    gui = threading.Thread(target=gui_like_thread, name="fake-gui", daemon=True)
+    gui.start()
+    try:
+        assert finished.wait(8.0)
+        gui.join(2.0)
+    finally:
+        stop_hog.set()
+        hog.join(2.0)
+    assert errors == []
+    summary = monitor.summary()
+    assert summary["slow_count"] >= 1, summary["recent"]
+    rows = summary["other_threads"]
+    assert rows, summary["stack_capture"]
+    frames = [row["frame"] for row in rows]
+    assert any("_gil_hog_loop" in frame for frame in frames), frames
+    hog_row = next(row for row in rows if "_gil_hog_loop" in row["frame"])
+    assert "gil-hog" in hog_row["threads"]
+    assert hog_row["count"] >= 1
+    assert hog_row["total_ms"] > 0.0
+    # The event itself carries the same evidence, so a run record names it too.
+    blamed = [event for event in summary["recent"] if event.get("other_threads")]
+    assert blamed, summary["recent"]
+    assert any(row["frame"] == hog_row["frame"]
+               for event in blamed for row in event["other_threads"])
+    assert summary["stack_capture"]["other_threads_attempts"] >= 1
+
+
+# ------------------------------------------------------- F1 / F2 (#327 review)
+def test_summary_since_longest_is_exact_beyond_the_recent_ring():
+    """F1: ``longest`` must not be read from the bounded ``recent`` ring."""
+    clock = [0.0]
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0, recent_limit=5)
+    monitor.mark_pulse()
+    marker = monitor.checkpoint()
+    _stall(monitor, clock, 900.0, ("huge.py:9 in giant",))
+    for index in range(9):
+        _stall(monitor, clock, 150.0 + index, (f"small.py:{index} in step{index}",))
+    whole = monitor.summary()
+    # The 900 ms event has been pushed out of the ring: this is the old defect.
+    assert all(event["interval_ms"] != 900.0 for event in whole["recent"])
+    assert len(whole["recent"]) == 5
+    window = monitor.summary_since(marker)
+    assert window["slow_count"] == 10
+    assert window["longest"]["interval_ms"] == pytest.approx(900.0, abs=0.1)
+    assert window["longest"]["stack"] == ["huge.py:9 in giant"]
+    # Consistent with the exact percentile maximum, not with the ring.
+    assert window["stall_ms"]["max"] == pytest.approx(900.0, abs=0.1)
+    assert whole["longest"]["interval_ms"] == pytest.approx(900.0, abs=0.1)
+    assert whole["longest"] == window["longest"]
+
+
+def test_all_pulse_p99_excludes_instrumentation():
+    """F2: 97 x 25 ms product pulses plus 3 x 2 s harness intervals."""
+    clock = [0.0]
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0)
+    monitor.mark_pulse()
+    for _ in range(97):
+        clock[0] += 0.025
+        monitor.mark_pulse()
+    for _ in range(3):
+        with monitor.instrumentation():
+            clock[0] += 2.0
+        monitor.mark_pulse()
+    summary = monitor.summary()
+    # Before the fix these 100 intervals gave p99 = 2000 ms; the product's own
+    # all-pulse p99 is 25 ms.
+    assert summary["interval_ms"]["count"] == 97
+    assert summary["interval_ms"]["p99"] == pytest.approx(25.0, abs=0.01)
+    assert summary["interval_ms"]["max"] == pytest.approx(25.0, abs=0.01)
+    assert summary["instrumentation_interval_ms"]["count"] == 3
+    assert summary["instrumentation_interval_ms"]["max"] == pytest.approx(2000.0, abs=0.1)
+    # And none of it leaked into the stall statistics.
+    assert summary["slow_count"] == 0
+    assert summary["stall_ms"]["count"] == 0
+    assert summary["instrumentation_slow_count"] == 3
+
+
+def test_instrumentation_never_reaches_any_product_statistic():
+    """Invariant: the harness's stall is invisible to every product field."""
+    clock = [0.0]
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0,
+                          threads_getter=lambda ident: ({}, False))
+    monitor.mark_pulse()
+    marker = monitor.checkpoint()
+    monitor._pending_stack = ("views.py:1 in _fill_cards",)
+    monitor._pending_threads = {7: ThreadFrame(name="pool-1", frame="core.py:4 in _scan")}
+    clock[0] += 0.2
+    product = monitor.mark_pulse()
+    assert product["instrumentation"] is False
+    monitor._pending_stack = ("bench.py:2 in _drive",)
+    monitor._pending_threads = {8: ThreadFrame(name="harness", frame="bench.py:3 in _drive",
+                                               running=True)}
+    with monitor.instrumentation():
+        clock[0] += 2.0
+    harness = monitor.mark_pulse()
+    assert harness["instrumentation"] is True
+    whole = monitor.summary()
+    window = monitor.summary_since(marker)
+    for block in (whole, window):
+        assert block["slow_count"] == 1
+        assert block["severe_count"] == 0
+        assert block["stall_ms"]["count"] == 1
+        assert block["stall_ms"]["max"] == pytest.approx(200.0, abs=0.1)
+        assert block["interval_ms"]["max"] == pytest.approx(200.0, abs=0.1)
+        assert block["longest"]["interval_ms"] == pytest.approx(200.0, abs=0.1)
+        assert block["longest"]["instrumentation"] is False
+        assert [row["stack"] for row in block["top_stacks"]] == [["views.py:1 in _fill_cards"]]
+        assert [row["frame"] for row in block["other_threads"]] == ["core.py:4 in _scan"]
+    assert whole["instrumentation_slow_count"] == 1
+    assert whole["instrumentation_total_ms"] == pytest.approx(2000.0, abs=0.1)
+    assert whole["instrumentation_interval_ms"]["count"] == 1
+
+
+def test_other_thread_ranking_accumulates_count_and_blocked_time():
+    """The ranking carries thread names, the frame, count and stall time."""
+    clock = [0.0]
+    spinner = ThreadFrame("spinner", "scan.py:9 in _rescan", running=True)
+    idle = ThreadFrame("idle-1", "<library> queue.py:8 in get")
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0)
+    monitor.mark_pulse()
+    monitor._pending_threads = {10: spinner, 11: idle}   # one stall before the window
+    monitor._pending_stack = ("views.py:1 in paint",)
+    clock[0] += 0.2
+    monitor.mark_pulse()
+    marker = monitor.checkpoint()
+    for interval_ms in (200.0, 300.0):
+        monitor._pending_threads = {10: spinner, 11: idle}
+        monitor._pending_stack = ("views.py:1 in paint",)
+        clock[0] += interval_ms / 1000.0
+        monitor.mark_pulse()
+    summary = monitor.summary()
+    rows = {row["frame"]: row for row in summary["other_threads"]}
+    assert rows["scan.py:9 in _rescan"]["count"] == 3
+    assert rows["scan.py:9 in _rescan"]["total_ms"] == pytest.approx(700.0, abs=0.1)
+    assert rows["scan.py:9 in _rescan"]["threads"] == ["spinner"]
+    assert rows["scan.py:9 in _rescan"]["max_ms"] == pytest.approx(300.0, abs=0.1)
+    assert rows["scan.py:9 in _rescan"]["running"] == 3
+    assert rows["<library> queue.py:8 in get"]["running"] == 0
+    # Same accumulation for the library wait, but application code leads the rank.
+    assert rows["<library> queue.py:8 in get"]["count"] == 3
+    assert [row["frame"] for row in summary["other_threads"]][0] == "scan.py:9 in _rescan"
+    # The per-event evidence keeps both threads, application frame first.
+    assert summary["recent"][0]["other_threads"] == [
+        {"thread": "spinner", "frame": "scan.py:9 in _rescan", "running": True},
+        {"thread": "idle-1", "frame": "<library> queue.py:8 in get", "running": False},
+    ]
+    window = monitor.summary_since(marker)
+    by_frame = {row["frame"]: row for row in window["other_threads"]}
+    assert by_frame["scan.py:9 in _rescan"]["count"] == 2      # exact window delta
+    assert by_frame["scan.py:9 in _rescan"]["total_ms"] == pytest.approx(500.0, abs=0.1)
+    assert by_frame["scan.py:9 in _rescan"]["max_ms"] is None   # it also ran before
+    assert by_frame["scan.py:9 in _rescan"]["running"] == 2     # exact window delta
+    assert window["stack_capture"]["other_threads_attempts"] == 0
+
+
+def test_equally_long_stalls_keep_a_maximum_in_every_window():
+    """A window starting between two equal maxima must not report ``None``."""
+    clock = [0.0]
+    monitor = JankMonitor(clock=lambda: clock[0], wall_clock=lambda: 0.0)
+    monitor.mark_pulse()
+    _stall(monitor, clock, 300.0, ("a.py:1 in a",))
+    clock[0] += 0.001
+    monitor.mark_pulse()                      # a healthy pulse, not a stall
+    marker = monitor.checkpoint()             # starts between the two equals
+    _stall(monitor, clock, 300.0, ("b.py:2 in b",))
+    window = monitor.summary_since(marker)
+    assert window["longest"]["interval_ms"] == pytest.approx(300.0, abs=0.1)
+    assert window["longest"]["stack"] == ["b.py:2 in b"]
+    # The all-time view keeps the earliest of the tie, as the helper documents.
+    assert monitor.summary()["longest"]["stack"] == ["a.py:1 in a"]
