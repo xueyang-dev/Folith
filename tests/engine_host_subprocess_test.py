@@ -348,9 +348,11 @@ def test_stdin_eof_stops_the_job_and_releases_the_lock(tmp_path, monkeypatch,
 def test_restart_line_applies_a_new_connection(tmp_path, monkeypatch):
     data_dir, log_dir = _isolated_paths(tmp_path, monkeypatch)
     job_id = "e2restartjob0000001"
+    # Enough batches that the restart line has several later batch boundaries
+    # to be consumed at; a single boundary would make the test race the worker.
     paragraphs = "\n".join(
         f"Sentence {index} about the engine host restart boundary."
-        for index in range(8))
+        for index in range(16))
     _create_job(job_id, text=paragraphs)
 
     first_log = tmp_path / "gateway-first.jsonl"
