@@ -18,13 +18,24 @@ runner's Python object -- kept alive by the in-flight task callbacks, which clos
 over it -- owns the only regular reference, so the pool cannot be freed while
 work is queued or running, and by the time it is freed its destructor has nothing
 left to wait for.  :meth:`TaskRunner.abandon` covers the one remaining wait:
-interpreter shutdown, where a still-running pool would be joined on the main
-thread.
+the exit path, where a still-running pool would otherwise be joined.
+
+That wait cannot be moved off the main thread either (#363, P0-9h).  A
+``QThreadPool`` destructor is ``waitForDone(Forever)`` while the pool has a
+running runnable, so destroying a busy pool from a helper thread leaves that
+thread blocked inside Qt for the rest of the task -- through the interpreter's
+shutdown, where CPython and PySide are tearing the same objects down.  Linux
+segfaults there.  The one wait that *can* be avoided is the join itself: an
+abandoned pool is kept alive by :data:`_ABANDONED` and the process leaves with
+:func:`_leave_without_teardown` instead of running a Qt teardown that would join
+it.  See :meth:`TaskRunner.abandon`.
 """
 from __future__ import annotations
 
+import atexit
 import logging
-import threading
+import os
+import sys
 import traceback
 import warnings
 import weakref
@@ -39,9 +50,79 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from shiboken6 import delete, isValid
+from shiboken6 import isValid
 
 _log = logging.getLogger(__name__)
+
+#: Pools handed off by :meth:`TaskRunner.abandon` while they still had work in
+#: flight.  They are **never** released.  A ``QThreadPool`` cannot be destroyed
+#: for free while a runnable runs (its destructor is an unbounded join), so
+#: nothing may destroy these; this list is the reference that stops Python's own
+#: refcount from doing it first.  A reference is not enough on its own -- PySide's
+#: shutdown hook destroys every live Python-owned ``QObject`` wrapper on the main
+#: thread whatever the reference count is -- which is what
+#: :func:`_leave_without_teardown` is for.
+_ABANDONED: "list[QThreadPool]" = []
+
+#: Whether :func:`_guard_the_exit` already registered its ``atexit`` hook.
+_EXIT_GUARDED = False
+
+
+def _has_running_work() -> bool:
+    """Whether an abandoned pool still has a runnable to join."""
+    return any(pool.activeThreadCount() > 0 for pool in _ABANDONED)
+
+
+def _leave_without_teardown() -> None:
+    """Leave the process instead of joining an abandoned pool on the way out.
+
+    Runs as an ``atexit`` hook, i.e. before PySide's own shutdown hook (registered
+    when ``PySide6.QtCore`` was imported, so it is older than this one).  That
+    hook is the problem: ``PySide::destroyQCoreApplication`` ->
+    ``BindingManager::visitAllPyObjects`` -> ``destructionVisitor`` destroys every
+    live Python-owned ``QObject``, so it finds the abandoned pool, calls
+    ``~QThreadPool`` -> ``waitForDone(Forever)`` on the main thread and the process
+    waits out the task the user just asked not to wait for.
+
+    With work still running there is nothing left to shrink that wait: Qt only
+    drops a pool thread once its runnable returns, and no Python-level owner can
+    outlive the sweep.  So this exits here, after flushing what this module owns,
+    and lets the kernel reclaim the pool and its thread.  With nothing running the
+    hook returns and the ordinary shutdown happens unchanged -- a normal exit, and
+    every test session, never takes this path.
+    """
+    if not _has_running_work():
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001 - never raise from an exit hook
+            pass
+    try:
+        logging.shutdown()
+    except Exception:  # noqa: BLE001 - never raise from an exit hook
+        pass
+    # ``MainWindow.closeEvent`` writes the window geometry through QSettings
+    # *after* the abort point (``abandon_all()`` runs first), and QSettings only
+    # reaches permanent storage on ``sync()`` or when it is destroyed -- neither
+    # of which happens on this path.  Flushing here keeps the one preference the
+    # close event still owes us.
+    try:
+        from . import preferences
+
+        preferences.settings().sync()
+    except Exception:  # noqa: BLE001 - preferences are not worth blocking exit
+        pass
+    os._exit(0)
+
+
+def _guard_the_exit() -> None:
+    """Install :func:`_leave_without_teardown` once per process."""
+    global _EXIT_GUARDED
+    if _EXIT_GUARDED:
+        return
+    _EXIT_GUARDED = True
+    atexit.register(_leave_without_teardown)
 
 
 def log_note(message: str) -> None:
@@ -189,7 +270,8 @@ class TaskRunner(QObject):
             # The owner used this runner again after abandon() (the exit flow
             # calls abandon_all() for every live pool).  Starting a fresh pool
             # keeps such a late submit working instead of crashing a timer
-            # slot; the abandoned work is already being reaped off-thread.
+            # slot; the abandoned pool is parked in _ABANDONED and will never be
+            # destroyed, so it cannot interfere with the new one.
             _log.warning("TaskRunner reused after its pool was abandoned; "
                          "starting a fresh pool for %r", label or "task")
             self.pool = self._new_pool()
@@ -261,49 +343,49 @@ class TaskRunner(QObject):
         return pool.waitForDone(timeout_ms)
 
     def abandon(self) -> bool:
-        """Detach the pool and stop owning it.
+        """Release the pool without waiting for it, and without destroying it.
 
-        Returns ``True`` when the pool was already idle (it is destroyed here,
-        immediately, because the destructor has nothing to wait for).  With work
-        still in flight the pool is handed to a daemon thread whose whole job is
-        to call the destructor: ``~QThreadPool`` joins the running runnables, so
-        that join must not happen on the GUI thread (the freeze) and must not
-        happen on the main thread at interpreter shutdown either (the process
-        would linger).  The work keeps running off-screen; its callbacks are
-        still delivered while the GUI event loop is alive.
+        Returns ``True`` when the pool was already idle: it is destroyed here,
+        immediately, because a destructor with nothing to join returns at once
+        (measured: 3 ms with a warm thread).  With work still in flight the pool
+        is moved to :data:`_ABANDONED`, where it is never destroyed, and the
+        process is told to leave without the Qt teardown that would join it
+        (:func:`_leave_without_teardown`).
+
+        Destroying the busy pool *somewhere else* is what #363 P0-9b did, and it
+        is not survivable: ``~QThreadPool`` blocks in ``waitForDone(Forever)``
+        until the runnable returns, so a helper thread sits inside Qt for the
+        rest of the task -- and ``shiboken6.delete`` first mutates the global
+        wrapper registry that PySide's shutdown hook is iterating at the same
+        time, on the main thread, with the GIL released.  Linux segfaults.
+        Not destroying it is the only option that cannot crash: the work keeps
+        running off-screen, its callbacks are still delivered while the GUI event
+        loop is alive, and the process exits when its owner does.
         """
         pool = self.pool
         if pool is None:
             return True
         self.pool = None
         if not self._running:
-            # An idle pool can be destroyed synchronously: waitForDone() returns
-            # without waiting, and the threads are told to exit.
+            # Idle: dropping the last reference destroys it here, and the
+            # destructor only has to tell the threads to quit.
             return True
-        threading.Thread(
-            target=self._reap_pool, args=(pool,),
-            name="folith-task-pool-reaper", daemon=True).start()
+        _ABANDONED.append(pool)
+        _guard_the_exit()
         return False
-
-    @staticmethod
-    def _reap_pool(pool: QThreadPool) -> None:
-        # This thread blocks in ~QThreadPool until the tasks end; the process can
-        # still exit meanwhile because it is a daemon thread and the destructor
-        # releases the GIL while it waits.
-        try:
-            delete(pool)
-        except Exception:  # pragma: no cover - shutdown race, nothing to report to
-            _log.debug("task pool reaper could not delete its pool", exc_info=True)
 
     @classmethod
     def abandon_all(cls) -> int:
         """Detach every live runner's pool; returns how many still had work.
 
         The window exit flow calls this after its bounded drain: a busy pool must
-        not be destroyed on the GUI thread, and at interpreter shutdown it must
-        not be joined on the main thread either.  The import wizard's pool and
-        the panels' pools are not children of the main window's runner, so they
-        have to be found through this registry.
+        not be joined anywhere -- not on the GUI thread (the freeze P0-9b fixed)
+        and not on the main thread at interpreter shutdown (the linger it also
+        fixed).  The import wizard's pool and the panels' pools are not children
+        of the main window's runner, so they have to be found through this
+        registry.  With any work still running this arms the exit hook described
+        by :func:`_leave_without_teardown`, i.e. the process leaves without a Qt
+        teardown that would join those pools.
         """
         handed_off = 0
         for runner in list(cls._LIVE):

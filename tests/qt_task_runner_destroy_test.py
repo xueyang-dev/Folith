@@ -379,6 +379,47 @@ def test_process_exit_with_a_running_task_is_bounded(tmp_path):
         f"the process needed {elapsed:.1f}s to exit with a detached 30 s task")
 
 
+def test_abandon_keeps_the_busy_pool_alive_and_does_not_leave_a_reaper(app):
+    """#363 P0-9h: the exit path must not destroy (or join) a busy pool at all.
+
+    P0-9b handed the pool to a daemon thread that called ``shiboken6.delete``:
+    ``~QThreadPool`` then blocked inside Qt for the remaining task, on a thread
+    that the interpreter was shutting down underneath (Linux SIGSEGV).  The fixed
+    contract is the opposite one -- nothing ever destroys an abandoned pool -- so
+    this pins both halves: the pool is still alive after its work is over, and no
+    helper thread was left behind to reap it.  It also pins the exit hook's guard:
+    with nothing running, the hook must be inert (it may only leave the process
+    when it would otherwise have to join something).
+    """
+    from folith.qt import workers as workers_module
+
+    runner, _started, finished = _start_busy(app, 0.5)
+    pool = runner.pool
+    threads_before = {thread.name for thread in threading.enumerate()}
+    new_threads: list[str] = []
+    try:
+        assert runner.abandon() is False, "a busy pool is not abandoned at once"
+        assert runner.pool is None, "the runner must stop owning the pool"
+        finished.wait(5.0)
+        _pump_until(app, lambda: pool.activeThreadCount() == 0)
+        new_threads = [thread.name for thread in threading.enumerate()
+                       if thread.name not in threads_before]
+        assert isValid(pool), (
+            "an abandoned pool was destroyed; its destructor joins the running "
+            "task and that join is what froze/segfaulted the exit")
+        assert pool in workers_module._ABANDONED, (
+            "the abandoned pool must be kept alive for the rest of the process")
+        assert not workers_module._has_running_work(), (
+            "the exit hook would leave the process on the way out even though "
+            "there is nothing left to join")
+    finally:
+        _dispose_busy(runner, finished)
+        delete(runner)
+    assert not new_threads, (
+        f"abandon() started helper threads {new_threads!r}; destroying the pool "
+        f"off-thread is the P0-9b crash")
+
+
 def test_a_runner_reused_after_abandon_gets_a_fresh_pool(app):
     """``abandon_all()`` is global (another window may still be alive).
 
