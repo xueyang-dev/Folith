@@ -4,7 +4,7 @@
 
 # Make every creation global.
 
-**Espacio de traducción de código abierto, diseñado para documentos largos y nativo de IA.**
+**Espacio de traducción de código abierto para documentos largos, diseñado desde el principio para trabajar con IA.**
 
 Entiende el documento completo. Traduce con contexto. Revisa con control. Entrega con confianza.
 
@@ -28,7 +28,7 @@ Los documentos largos necesitan más que una traducción frase por frase. Un nom
 
 Folith conecta **la preparación del documento, la traducción asistida por modelos, la revisión humana y la entrega** en un flujo de trabajo de escritorio continuo. Comienza con libros, trabajos de investigación y otros documentos largos, con una visión más amplia de localización de contenidos.
 
-> El inglés es el idioma de la página principal; el [README en chino simplificado](README.zh-CN.md) sigue siendo la fuente editorial mantenida y prevalece si hay diferencias. La interfaz está en chino simplificado por defecto; los nombres de los controles de abajo corresponden a la versión española experimental.
+> La página principal está en inglés. Si hay diferencias entre las versiones, consulta el [README en chino simplificado](README.zh-CN.md), que sigue siendo la referencia editorial. La interfaz está en chino simplificado por defecto. Los nombres de los controles que se usan aquí corresponden a la interfaz experimental en español.
 
 **Folith · 译页** («páginas traducidas») es un banco de trabajo de escritorio para traducir libros, informes técnicos, monografías académicas y otros documentos largos. Es de código abierto, prioriza el trabajo local y funciona en Windows y macOS. Trata un documento como un trabajo completo: importas un PDF / DOCX / EPUB / TXT / Markdown (escaneados incluidos), primero lee todo el texto y construye un perfil y un glosario, y después traduce por lotes con contexto. Un revisor independiente comprueba cada segmento y tú decides en cada caso. Cuando la puerta de entrega se supera, todo se congela en un paquete de entrega trazable.
 
