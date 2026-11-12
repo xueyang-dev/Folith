@@ -9,6 +9,7 @@ import io
 import json
 import csv
 import inspect
+from collections.abc import MutableMapping
 from functools import wraps
 from contextlib import contextmanager
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -304,7 +305,111 @@ def _current_llm_purpose():
 # Runtime status is deliberately file-backed: the UI can poll it while the
 # worker is inside a blocking provider request, and a browser refresh does not
 # erase the last known activity.
-_RUNTIME_CTX = threading.local()
+#
+# The *bindings* below (job id, annotation fail-stop) are carried by a context
+# variable, not by a thread-local.  Provider requests run on a ``folith-request``
+# helper thread created by ``folith/request_control.py``; that thread inherits
+# the caller's context variables through ``contextvars.copy_context()`` and
+# nothing else.  With a ``threading.local`` carrier the fail-stop latch read on
+# that thread was always ``None``, so the "no dispatch after a peer's storage
+# failure" check was a no-op exactly where the SDK retry is sent (P0-2).
+_RUNTIME_STATE: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
+    "folith_runtime_state", default=None)
+
+
+def _runtime_state() -> Dict[str, Any]:
+    """Runtime bindings visible in this context; never mutate the result."""
+    state = _RUNTIME_STATE.get()
+    return state if state is not None else {}
+
+
+class _RuntimeStateView(MutableMapping):
+    """``_RUNTIME_CTX.__dict__`` — live mapping over this context's bindings.
+
+    The carrier used to be a ``threading.local`` whose ``__dict__`` was a real
+    dict and cleanup code pops/clears keys through it.  Storage is a context
+    variable now, so the view applies the same copy-on-write rule as the
+    attribute API instead of handing out the stored dict.
+    """
+
+    __slots__ = ()
+
+    def __getitem__(self, name):
+        return _runtime_state()[name]
+
+    def __setitem__(self, name, value):
+        _RUNTIME_STATE.set({**_runtime_state(), name: value})
+
+    def __delitem__(self, name):
+        state = dict(_runtime_state())
+        del state[name]
+        _RUNTIME_STATE.set(state)
+
+    def __iter__(self):
+        return iter(_runtime_state())
+
+    def __len__(self):
+        return len(_runtime_state())
+
+    def __repr__(self):
+        return repr(dict(_runtime_state()))
+
+    def copy(self):
+        return dict(_runtime_state())
+
+    def clear(self):
+        _RUNTIME_STATE.set(None)
+
+
+class _RuntimeContext:
+    """Attribute-style runtime bindings carried by a context variable.
+
+    Inside one thread this is indistinguishable from the ``threading.local`` it
+    replaces: set/get/delete and ``__dict__`` see the bindings made on that
+    thread, and a freshly started thread begins empty.  Across threads it
+    differs in the one way that matters: a context copied with
+    ``contextvars.copy_context()`` carries the bindings to the helper thread
+    that issues provider requests, so the annotation fail-stop latch is read
+    there instead of silently disabling the dispatch guard.
+
+    Writes are copy-on-write *within the current context*: a helper thread's
+    ``set`` never reaches back into its caller.  State that must be visible on
+    another thread has to be bound on that thread's own context, or shared as a
+    thread-safe object — which is what ``AnnotationFailStop`` already is.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        try:
+            return _runtime_state()[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def __setattr__(self, name, value):
+        _RUNTIME_STATE.set({**_runtime_state(), name: value})
+
+    def __delattr__(self, name):
+        state = dict(_runtime_state())
+        try:
+            del state[name]
+        except KeyError:
+            raise AttributeError(name) from None
+        _RUNTIME_STATE.set(state)
+
+    @property
+    def __dict__(self):
+        return _RuntimeStateView()
+
+    def clear(self):
+        """Drop every binding in this context (worker cleanup, test isolation)."""
+        _RUNTIME_STATE.set(None)
+
+    def __repr__(self):
+        return f"<runtime context {dict(_runtime_state())!r}>"
+
+
+_RUNTIME_CTX = _RuntimeContext()
 _RUNTIME_LOCK = threading.RLock()
 _RUNTIME_WORKERS = {}
 _RUNTIME_WORKERS_LOCK = threading.RLock()
