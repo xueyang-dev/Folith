@@ -10,11 +10,16 @@ channels E-0 already proved sufficient:
 * the job write lock -> ``core.start_job_worker`` takes ``.worker.lock`` itself
 
 The one exception is a **restart after the connection changed**.  In-process
-that payload lives in ``core._RUNTIME_PENDING_RESTART`` because it carries the
-API key and must never be persisted; here it arrives as a later JSON line on
-the same stdin and is written back into that same in-memory dict, so the 13
-``_runtime_pause_checkpoint`` call sites, ``_WorkerRestartRequested`` and the
-pipeline re-entry keep their existing semantics untouched.
+that payload lives only in the core's in-memory restart table (it is in memory
+because it carries an API key that must never be persisted); here it arrives as
+a later JSON line on the same stdin and is handed to the public
+:func:`core.inject_pending_restart`
+inside this process — so the 13 ``_runtime_pause_checkpoint`` call sites,
+``_WorkerRestartRequested`` and the pipeline re-entry keep their existing
+semantics untouched.  The GUI uses the same line for its **Continue** action;
+because ``worker_connection`` is written by this process, the "did the
+connection actually change?" decision is made here too (unchanged -> plain
+resume, no needless pipeline unwind).
 
 Stdin EOF means the GUI process died: the worker is asked to stop through the
 existing exit flow (``core.request_job_exit``), which records ``interrupted``
@@ -252,28 +257,35 @@ def _pipeline_kwargs(connection: engine_protocol.ConnectionSpec,
 def _apply_restart(core, job_id: str, request: engine_protocol.RestartRequest) -> None:
     """Hand a new connection to the running worker at its next batch boundary.
 
-    There is no public core API for this yet (E-0 A2): the in-memory table is
-    ``core._RUNTIME_PENDING_RESTART`` guarded by its own RLock, and
-    ``_runtime_pause_checkpoint`` is what consumes it.  Writing the same shape
-    the core writes keeps every consumer unchanged; the payload never leaves
-    this process.
+    The GUI sends this line for two of its own actions, both of which are one
+    line on this pipe because the payload carries a credential:
+
+    * **Continue** (``core.continue_job`` in-process): the connection may or may
+      not have changed since the worker started.  This process owns the truth
+      (``runtime_state.worker_connection`` was written here), so the comparison
+      happens here: unchanged -> a plain resume, so a Continue click never costs
+      a needless pipeline unwind; changed -> the restart below.
+    * **Restart after a connection change** with no pause: always a restart.
+
+    The payload goes into :func:`core.inject_pending_restart` — the public
+    in-memory contract — so the 13 ``_runtime_pause_checkpoint`` call sites,
+    ``_WorkerRestartRequested`` and the pipeline re-entry are untouched.  It is
+    never written to a file, printed, or put in this process's environment.
     """
+    if not core.is_job_worker_alive(job_id):
+        # The worker already finished: nothing to restart, and writing the
+        # restart flags now would leave a stale request behind for the next run.
+        return
     state = core.load_job_state(job_id) or {}
     kwargs, base_url, filename = _pipeline_kwargs(request.connection, state)
     _wait_for_worker_ready(core, job_id)
-    with core._RUNTIME_PENDING_RESTART_LOCK:
-        core._RUNTIME_PENDING_RESTART[job_id] = {
-            "filename": filename,
-            "kwargs": dict(kwargs),
-            "base_url": base_url,
-        }
-    core.update_runtime_state(
-        job_id, pause_requested=False, exit_requested=False,
-        restart_requested=True, status="running", phase="running",
-        event="连接已更改，正在用新连接重新启动任务；已识别的页面与译文会保留"
-              "（换模型后部分页面可能按新模型重新读取）",
-        event_name="connection_changed_restart",
-        event_visibility="user", event_category="lifecycle")
+    recorded = (core.load_runtime_state(job_id) or {}).get("worker_connection")
+    if recorded and not core._worker_connection_changed(job_id, kwargs):
+        core.continue_job(job_id)
+        return
+    core.inject_pending_restart(job_id, filename=filename, kwargs=kwargs,
+                                base_url=base_url)
+
 
 
 def _wait_for_worker_ready(core, job_id: str) -> None:

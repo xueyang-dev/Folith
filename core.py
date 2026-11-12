@@ -414,6 +414,19 @@ _RUNTIME_LOCK = threading.RLock()
 _RUNTIME_WORKERS = {}
 _RUNTIME_WORKERS_LOCK = threading.RLock()
 
+#: job_id -> {"token", "pid", "registered_at"} for the engine *child process*
+#: this GUI process spawned for that job (Architecture Phase 5).  This is the
+#: ownership token of an out-of-process worker: it exists so the five GUI
+#: action gates can answer "is this task being executed right now?" without
+#: guessing from a pid on disk (`os.kill(pid, 0)` cannot tell a live child from
+#: a recycled pid), and so the supervisor can release exactly the child it
+#: registered — a release with a stale token is ignored.
+#:
+#: Empty in every in-process run, which is what keeps `FOLITH_ENGINE_PROCESS=0`
+#: behaviourally identical to before this registry existed.
+_RUNTIME_ENGINE_OWNERS = {}
+_RUNTIME_ENGINE_OWNERS_LOCK = threading.RLock()
+
 
 
 _REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
@@ -579,6 +592,43 @@ def _pending_restart_exists(job_id):
         return job_id in _RUNTIME_PENDING_RESTART
 
 
+def inject_pending_restart(job_id, *, filename=None, kwargs=None, base_url=None):
+    """Hand a freshly resolved connection to the live worker (memory only).
+
+    This is the **only** supported way to ask a running worker to re-enter its
+    pipeline on a new connection.  ``_runtime_pause_checkpoint`` raises
+    :class:`_WorkerRestartRequested` at the next batch boundary,
+    ``_run_job_worker`` consumes the payload, and the committed pages and
+    translations are kept.  The payload carries the API key, so it is never
+    serialised: it lives in this process's memory and nowhere else.
+
+    Callers: :func:`continue_job` (in-process) and the engine subprocess's
+    control line (*out-of-process* — the payload travels on the pipe and is
+    written back here, inside the process that owns the worker).
+
+    Returns ``False`` when there is no job to restart.
+    """
+    if not job_id:
+        return False
+    payload = {
+        "filename": filename or (load_job_state(job_id) or {}).get("filename")
+        or "当前任务",
+        "kwargs": dict(kwargs or {}),
+        "base_url": base_url,
+    }
+    with _RUNTIME_PENDING_RESTART_LOCK:
+        _RUNTIME_PENDING_RESTART[job_id] = payload
+    update_runtime_state(
+        job_id, pause_requested=False, exit_requested=False, restart_requested=True,
+        status="running", phase="running",
+        event="连接已更改，正在用新连接重新启动任务；已识别的页面与译文会保留"
+              "（换模型后部分页面可能按新模型重新读取）",
+        event_name="connection_changed_restart",
+        event_visibility="user", event_category="lifecycle")
+    return True
+
+
+
 def _runtime_pause_checkpoint(job_id, paused_message=None):
     """Pause cooperatively between operations; keep in-memory results and lease.
 
@@ -634,7 +684,7 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
 
 
 def request_job_pause(job_id):
-    if not is_job_worker_alive(job_id):
+    if not (is_job_worker_alive(job_id) or _job_execution_alive(job_id)):
         return False
     note = "已请求暂停；当前正在进行的请求会先用原连接完成，随后暂停"
     update_runtime_state(job_id, pause_requested=True, status="pausing",
@@ -651,25 +701,16 @@ def continue_job(job_id, *, restart_kwargs=None, base_url=None, filename=None):
     worker started with, the worker is asked to unwind to its pause boundary and
     re-enter the pipeline with these kwargs — committed pages and translations are
     kept, so the change takes effect without cancelling the task.
+
+    The gate accepts an out-of-process owner too: with the pipeline in an engine
+    child, ``is_job_worker_alive`` is false here while the task really is
+    executing, and the flags below are exactly how the child learns to resume.
     """
-    if not is_job_worker_alive(job_id):
+    if not (is_job_worker_alive(job_id) or _job_execution_alive(job_id)):
         return False
     if restart_kwargs is not None and _worker_connection_changed(job_id, restart_kwargs):
-        with _RUNTIME_PENDING_RESTART_LOCK:
-            _RUNTIME_PENDING_RESTART[job_id] = {
-                "filename": filename or (load_job_state(job_id) or {}).get("filename")
-                or "当前任务",
-                "kwargs": dict(restart_kwargs),
-                "base_url": base_url,
-            }
-        update_runtime_state(
-            job_id, pause_requested=False, exit_requested=False, restart_requested=True,
-            status="running", phase="running",
-            event="连接已更改，正在用新连接重新启动任务；已识别的页面与译文会保留"
-                  "（换模型后部分页面可能按新模型重新读取）",
-            event_name="connection_changed_restart",
-            event_visibility="user", event_category="lifecycle")
-        return True
+        return inject_pending_restart(job_id, filename=filename,
+                                      kwargs=restart_kwargs, base_url=base_url)
     update_runtime_state(job_id, pause_requested=False, exit_requested=False,
                          restart_requested=False,
                          status="running", phase="running",
@@ -8961,12 +9002,103 @@ def _runtime_mark_lost(job_id, status, message):
         event=message, event_name=status)
 
 
+def register_engine_owner(job_id, *, pid, worker_id="", token=None):
+    """Record that *this* process owns an engine child for ``job_id``.
+
+    The GUI calls this right after it spawns ``--engine-host`` and before the
+    child has written anything to disk, so every action gate
+    (:func:`request_job_pause`, :func:`continue_job`, :func:`resume_job`, ...)
+    sees the task as executing during the child's ~1 s cold start.  Returns the
+    token to hand back to :func:`release_engine_owner`.
+
+    ``worker_id`` is the child's own run id once it is known; binding it keeps
+    the registration tied to *that* run rather than to a pid (see
+    :func:`_engine_owner_alive`).
+    """
+    if not job_id or not pid:
+        return ""
+    token = str(token or uuid.uuid4().hex)
+    with _RUNTIME_ENGINE_OWNERS_LOCK:
+        _RUNTIME_ENGINE_OWNERS[str(job_id)] = {
+            "token": token,
+            "pid": int(pid),
+            "worker_id": str(worker_id or ""),
+            "registered_at": _utc_now_iso(),
+        }
+    return token
+
+
+def release_engine_owner(job_id, token):
+    """Forget an engine child, but only the one registered with ``token``.
+
+    The token check is the point: a supervisor whose child already died must
+    not clear the registration of a newer child for the same task (start, crash,
+    restart) and make a live run look stopped.
+    """
+    if not job_id or not token:
+        return False
+    with _RUNTIME_ENGINE_OWNERS_LOCK:
+        entry = _RUNTIME_ENGINE_OWNERS.get(str(job_id))
+        if not entry or entry.get("token") != str(token):
+            return False
+        _RUNTIME_ENGINE_OWNERS.pop(str(job_id), None)
+    return True
+
+
+def engine_owner(job_id):
+    """The engine child this process registered for ``job_id`` (or ``{}``)."""
+    with _RUNTIME_ENGINE_OWNERS_LOCK:
+        entry = _RUNTIME_ENGINE_OWNERS.get(str(job_id or ""))
+        return dict(entry) if entry else {}
+
+
+def _engine_owner_alive(job_id):
+    """True while the engine child registered by this process is still running.
+
+    This is the answer the pid cannot give.  The registry is written by the
+    supervisor that owns the ``Popen`` handle, so it knows the difference
+    between "my child is running" and "that pid was recycled": a reaped child is
+    removed from the registry (only with its own token, see
+    :func:`release_engine_owner`).  A recorded ``worker_id`` additionally ties
+    the registration to the run the core wrote to disk, so a registration left
+    behind by an older run cannot answer for a newer one.
+    """
+    entry = engine_owner(job_id)
+    if not entry:
+        return False
+    if not _runtime_pid_alive(entry.get("pid")):
+        return False
+    worker_id = entry.get("worker_id")
+    if not worker_id:
+        return True
+    recorded = ((load_runtime_state(job_id).get("worker")) or {}).get("worker_id")
+    return not recorded or recorded == worker_id
+
+
 def _job_execution_alive(job_id):
-    """A stale lease does not prove that its owner has stopped executing."""
+    """A stale lease does not prove that its owner has stopped executing.
+
+    Three tiers, strongest first: a worker thread in *this* process, the engine
+    child this process spawned (ownership token — see
+    :func:`_engine_owner_alive`), and a process recorded on disk.
+
+    The last tier keeps the historical pid semantics on purpose: an expired
+    lease alone is *not* proof of death (cpu-heavy extraction and long provider
+    calls both outlive a heartbeat), and `tests/workflow_recovery_test.py` /
+    `tests/runtime_heartbeat_recovery_test.py` pin "a live owner with an old
+    lease still owns the run".  Pid reuse is instead answered where it actually
+    happens: the child this GUI spawned is proven by its token, never by
+    ``os.kill(pid, 0)``.
+    """
+    if not job_id:
+        return False
     if is_job_worker_alive(job_id):
+        return True
+    if _engine_owner_alive(job_id):
         return True
     owner = (load_runtime_state(job_id).get("worker") or {}).get("owner_pid")
     return owner != os.getpid() and _runtime_pid_alive(owner)
+
 
 
 def _runtime_live_state(runtime):
@@ -9906,7 +10038,8 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
     """Idempotently request resume and publish the transition before worker start."""
     with _RUNTIME_WORKERS_LOCK:
         runtime = get_job_runtime_status(job_id)
-        if runtime.get("status") in {"paused", "pausing"} and is_job_worker_alive(job_id):
+        if runtime.get("status") in {"paused", "pausing"} and (
+                is_job_worker_alive(job_id) or _job_execution_alive(job_id)):
             # A paused worker is still alive: continue it.  Passing the freshly
             # resolved kwargs lets the core restart the worker transparently if
             # the connection changed while it was paused (issue #222).
@@ -9931,6 +10064,13 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
 
 
 def is_job_worker_alive(job_id):
+    """True when this process has a *thread* running the pipeline for ``job_id``.
+
+    Deliberately narrow (E-0): it answers "is the worker mine?".  A GUI action
+    gate must not use it alone once the pipeline can run in an engine child;
+    use ``is_job_worker_alive(...) or _job_execution_alive(...)`` instead, which
+    is what :func:`request_job_cancel` / :func:`request_job_exit` already did.
+    """
     if not job_id:
         return False
     with _RUNTIME_WORKERS_LOCK:
@@ -11716,7 +11856,9 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
     """
     if not str(job_id or "").strip():
         raise ValueError("缺少任务 ID")
-    if not _allow_active and (is_job_worker_alive(job_id) or job_is_active(job_id)):
+    if not _allow_active and (is_job_worker_alive(job_id)
+                             or _job_execution_alive(job_id)
+                             or job_is_active(job_id)):
         raise RuntimeError("任务正在运行，无法重新扫描原文")
     state = load_job_state(job_id)
     if state is None:
