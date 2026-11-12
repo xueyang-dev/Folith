@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
 from folith.qt.selftest import open_job_and_wait  # noqa: E402
+from qt_workbench_quiet import WorkbenchEvents, wait_for_quiet  # noqa: E402
 
 from qt_client_window_test import client, qt_app  # noqa: E402,F401
 
@@ -216,6 +217,20 @@ def test_unchanged_refresh_keeps_domain_versions_and_skips_projections(client, m
     so no domain may move and no panel may rebuild -- this is the post-run
     regression #344 introduced: 12 domains +5 and ``followup_view`` recomputed
     five times for five empty ticks.
+
+    Determinism (2026-11-12, `main` Linux full regression run 43224655060 job
+    131204875307): this test used to capture ``before`` and compare it with the
+    dict at the end of the loop, i.e. it assumed no background write could land
+    in between.  It can: a ``DeltaIdle`` tick from a poll the open path still
+    had in flight applies ``apply_runtime()``, which moves ``runtime`` and
+    ``stage`` without touching ``_state`` -- every assertion but the last one
+    still holds, and the failure named two domains the test is not about.  The
+    loop now (a) starts from a quiesced window (no read, projection, pending
+    poll or scheduled re-poll), (b) measures the refresh's own effect on all 12
+    domains around the synchronous call, and (c) asserts from the view's event
+    sequence that no background write ran during the loop.  The property is
+    unchanged and still asserted in full: five whole-state applies of the same
+    object move no domain and rebuild neither the follow-up view nor its panel.
     """
     window, adapter = client["window"], client["adapter"]
     _open(client)
@@ -241,15 +256,41 @@ def test_unchanged_refresh_keeps_domain_versions_and_skips_projections(client, m
     monkeypatch.setattr(adapter, "followup_view", counted_view)
     monkeypatch.setattr(workbench.followup_panel, "apply", counted_apply)
     monkeypatch.setattr(workbench, "apply", counted_whole_apply)
+
+    # Start from a window with nothing in flight: the contract is about the
+    # refresh, so a background read that was already running must be waited for
+    # (and asserted gone) instead of being compared against by accident.
+    events = WorkbenchEvents(window, monkeypatch)
+    quiet = wait_for_quiet(window, client["app"], events, label="before baseline")
+    assert quiet["quiet"], quiet
+    # The counters describe the five refreshes, not whatever the window was
+    # still finishing when the test started (that is what the wait above is
+    # for): a whole-state poll that landed during the wait also went through
+    # ``apply`` and would otherwise be counted as a sixth refresh.
+    applies["count"] = 0
+    recomputes["view"] = 0
+    recomputes["panel"] = 0
+
     before = workbench.domain_versions()
     state = workbench._state
-    for _ in range(5):
+    events.reset()
+    for index in range(5):
+        snapshot = workbench.domain_versions()
         window.refresh_workbench()
-        client["app"].processEvents()
+        # Measured around the synchronous call: no callback can run here, so
+        # this is the refresh's own effect on all 12 domains, not the world's.
+        assert workbench.domain_versions() == snapshot, (
+            index, snapshot, workbench.domain_versions())
         # No state write happened, so the refresh must reuse the same object.
-        assert workbench._state is state
+        assert workbench._state is state, index
+        client["app"].processEvents()
+        # What the event pump delivered was a background write, not the refresh
+        # under test; the final equality below would otherwise credit it to the
+        # refresh (or blame it) with no way to tell which.
+        assert events.background() == 0, (index, events.report())
     # The whole-state path really ran five times (a no-op refresh would prove
     # nothing), and it invalidated nothing.
+    assert events.background() == 0, events.report()
     assert applies["count"] == 5, applies
     assert workbench.domain_versions() == before, (before, workbench.domain_versions())
     assert recomputes == {"view": 0, "panel": 0}, recomputes

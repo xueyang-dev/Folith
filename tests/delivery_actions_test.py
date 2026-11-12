@@ -148,12 +148,40 @@ def test_archive_refuses_a_corrupted_asset_and_writes_nothing(frozen, tmp_path):
     assert not destination.exists()
 
 
-def test_save_archive_writes_the_same_bytes_atomically(frozen, tmp_path):
+def test_save_archive_writes_the_same_bytes_atomically(frozen, tmp_path, monkeypatch):
+    """The saved file is exactly the bytes the verified builder produced.
+
+    Both sides of this comparison must come from *one* build.  ``ZipFile``
+    stamps every entry with ``time.localtime(time.time())[:6]`` (2 s DOS
+    resolution), so two separate builds of the same, unmodified snapshot can
+    differ by one byte per entry whenever the clock crosses an even second in
+    between -- that is exactly what failed on CI (Release Validation run
+    43176620912, Python 3.12 job, ``At index 10 diff``).  Recording the bytes
+    the save path itself built keeps the assertion ("no re-encode, no
+    truncation, nothing else written") and removes the wall clock from it.
+    """
     job_id, version = frozen
     destination = tmp_path / "交付 结果" / "交付包.zip"
+    built: list[bytes] = []
+    real_build = adapter.delivery_archive_bytes
+
+    def recording_build(*args, **kwargs):
+        data = real_build(*args, **kwargs)
+        built.append(data)
+        return data
+
+    monkeypatch.setattr(adapter, "delivery_archive_bytes", recording_build)
     written = adapter.save_delivery_archive(job_id, version, destination)
     assert written == destination
-    assert destination.read_bytes() == adapter.delivery_archive_bytes(job_id, version)
+    # The save path must go through the validated builder (and build once).
+    assert len(built) == 1, built
+    assert destination.read_bytes() == built[0]
+    # ... and that archive carries this snapshot's payloads, timestamps aside.
+    assets = core.delivery_snapshot_assets(job_id, version)
+    with ZipFile(destination) as saved:
+        assert set(saved.namelist()) == set(assets) | {snapshots.MANIFEST_FILE}
+        for name, data in assets.items():
+            assert saved.read(name) == data, name
     # 原子写出不留下临时文件。
     assert list(destination.parent.iterdir()) == [destination]
 
