@@ -55,7 +55,8 @@ TASK_S = 4.0
 #: the exit may spend.  Half of it is the shape asked of this fix -- the exit is
 #: not coupled to the task as long as less than the remaining task is spent --
 #: and both sides have a wide margin: the bounded path spends milliseconds here,
-#: while a join spends the whole remaining task (4.11 s measured).
+#: while a join spends the whole remaining task (4.03 s measured here on the
+#: pre-fallback commit, 4.11 s end to end).
 #:
 #: Deliberately *not* a bound on ``perf_counter()`` around the whole subprocess:
 #: interpreter start-up, the PySide import and process reaping are unrelated to
