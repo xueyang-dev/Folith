@@ -9,7 +9,8 @@ README 表格里的哈希一旦与提交内的字节脱节，"字节级 round tr
 因此这里做两件事：
 
 1. **blob 看门**：逐文件解析 README 表格里记录的"入库 blob SHA-256"，与
-   `hashlib.sha256(blob)` 比对。改一个样本字节、替换样本或改记录，都会红。
+   `hashlib.sha256(blob)` 比对；Gate A 矩阵里的 16 位指纹同样比对。改一个样本
+   字节、替换样本或改记录，都会红。
 2. **上游口径**：README 同时记录"上游原件 SHA-256"。两个上游原件是 CRLF、
    入库 blob 是 LF 的样本（`SamplePhotoPrinter.doc.sdlxliff`、
    `document.mqxliff`），把 blob 的 LF 程序化还原成 CRLF 后必须复算出上游
@@ -94,6 +95,34 @@ def readme_records(directory: Path) -> dict[str, dict[str, str]]:
         if blob is None:
             continue
         records[name] = {"blob": blob, "upstream": upstream or blob}
+    return records
+
+
+def matrix_records(path: Path) -> dict[str, str]:
+    """解析 Gate A 矩阵表格里的"入库 SHA-256（前 16 位）"列。"""
+    records: dict[str, str] = {}
+    header: list[str] | None = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        cells = _split_row(line)
+        if cells is None:
+            header = None
+            continue
+        if header is None:
+            header = cells
+            continue
+        if all(_SEPARATOR.fullmatch(cell) for cell in cells if cell):
+            continue
+        if len(cells) != len(header):
+            continue
+        name = cells[0].strip("`").strip()
+        if not name.endswith((".sdlxliff", ".mqxliff")):
+            continue
+        for key, value in zip(header, cells):
+            if "SHA-256" not in key or "入库" not in key:
+                continue
+            digest = value.strip("`").strip()
+            if re.fullmatch(r"[0-9a-f]{16}", digest):
+                records[name] = digest
     return records
 
 
@@ -231,6 +260,41 @@ def test_readme_records_hex_digests(directory: Path) -> None:
     for name, record in readme_records(directory).items():
         for key in ("blob", "upstream"):
             assert _HEX64.fullmatch(record[key]), f"{name}: {key} 不是 64 位十六进制"
+
+
+MATRIX_CASES = [
+    pytest.param(
+        ROOT / "docs" / "sdlxliff-gate-a-compatibility-matrix.md",
+        SDL_DIR,
+        id="sdlxliff-matrix",
+    ),
+    pytest.param(
+        ROOT / "docs" / "mqxliff-gate-a-compatibility-matrix.md",
+        MQ_DIR,
+        id="mqxliff-matrix",
+    ),
+]
+
+
+@pytest.mark.parametrize("matrix,directory", MATRIX_CASES)
+def test_gate_a_matrix_short_digests_match_blob(
+    matrix: Path, directory: Path
+) -> None:
+    """Gate A 证据矩阵里的 16 位指纹也必须等于入库 blob 前缀。"""
+    records = matrix_records(matrix)
+    fixtures = {path.name for path in directory.glob("*.*xliff")}
+    assert set(records) == fixtures, (
+        f"{matrix.name}: 表格样本集合与目录不一致；"
+        f"仅在矩阵 {sorted(set(records) - fixtures)}，仅在目录 {sorted(fixtures - set(records))}"
+    )
+    for name, prefix in sorted(records.items()):
+        actual = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+        assert actual.startswith(prefix), (
+            f"{name}: {matrix.name} 记录的入库 SHA-256 前缀与 blob 不符\n"
+            f"  矩阵记录(前16位): {prefix}\n"
+            f"  blob 实际(前16位): {actual[:16]}\n"
+            f"  文件:              {directory / name}"
+        )
 
 
 @pytest.mark.parametrize(
