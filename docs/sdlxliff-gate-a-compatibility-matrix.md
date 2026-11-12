@@ -33,12 +33,12 @@ SDLXLIFF 是 **XLIFF 1.2 方言**：根元素为 `xliff version="1.2"`，叠加�
 真实来源样本（已入库 `tests/fixtures/sdlxliff/`，均来自 Trados 厂商 RWS 的
 Apache-2.0 官方仓库，允许再分发）：
 
-| 文件 | 大小 | 来源 | SHA-256（前 16 位） | 内容特征 |
+| 文件 | 大小 | 来源 | 入库 SHA-256（前 16 位） | 内容特征 |
 |---|---|---|---|---|
 | `QuotesSample.docx.sdlxliff` | 35 KB | [RWS/Sdl-Community](https://github.com/RWS/Sdl-Community) → XLIFF Manager for Trados Studio 单元测试 | `95a9514d5f5b7e73` | 状态全覆盖（Draft/Translated/ApprovedTranslation/ApprovedSignOff）、MT 溯源、locked、注释对、`sdl:doc-info` |
 | `TTSExample.docx.sdlxliff` | 17 KB | 同上 → SDLTM Import Plus 单元测试 | `ab3fcbcb32a91ad8` | **seg-defs 存在但无任何 `conf` 属性**（状态未知场景）；无 TM 溯源 |
 | `quickplace.docx.sdlxliff` | 39 KB | 同上 → SDLTM Import Plus 单元测试 | `85e67619be7594ff` | `sdl:rep` 重复段哈希、`origin="source"` |
-| `SamplePhotoPrinter.doc.sdlxliff` | 43 KB | [RWS/trados-studio-api-samples](https://github.com/RWS/trados-studio-api-samples)（Apache-2.0） | `d9fc637cdb18d657` | 46 个 trans-unit、80 个 `sdl:st` 结构标签、TM 匹配（`percent`/`text-match`） |
+| `SamplePhotoPrinter.doc.sdlxliff` | 43 KB | [RWS/trados-studio-api-samples](https://github.com/RWS/trados-studio-api-samples)（Apache-2.0） | `b27a14cb95e058d3` | 46 个 trans-unit、80 个 `sdl:st` 结构标签、TM 匹配（`percent`/`text-match`） |
 
 仅审计、未入库的参考样本（许可证不适配或为人工构造，存
 `verification/issue-145-sdlxliff-gatea/audit-only-samples/`）：
