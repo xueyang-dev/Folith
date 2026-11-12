@@ -1,1 +1,17 @@
+# PDF 是二进制成品，不做文本 diff / 合并。
 *.pdf binary
+
+# 逐字节证据：样本检出后必须与入库 blob 完全一致。
+# SOURCES.md、两份 fixture README 和 Gate A 矩阵记录的是"入库 blob 的
+# SHA-256"，而 tests/fixture_provenance_test.py 读的是检出后的工作区字节。
+# Windows runner 默认 core.autocrlf=true，会把每个 LF 换成 CRLF，样本字节
+# 随之改变（见 P0-8f）；`-text` 关闭行尾转换，让检出复现入库字节。
+# `-text` 只影响换行转换，不影响 `diff` 属性：这些 XML 仍按文本 diff
+# （内容无 NUL 字节），代价是从 CRLF 工作区提交会把 CRLF 存进 blob ——
+# 那正是逐字节看门应当报红的情况。
+# 覆盖 tests/fixtures/** 下的样本、licenses/*.txt、golden JSON/TSV/CSV 与
+# .docx（二进制，本就不会转换），避免下一个入库哈希看门再踩同一坑。
+tests/fixtures/** -text
+
+# 属性文件本身由 git 解析，固定成 LF，避免检出后出现 CRLF 解析歧义。
+.gitattributes text eol=lf

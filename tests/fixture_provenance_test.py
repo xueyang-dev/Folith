@@ -15,6 +15,10 @@ README 表格里的哈希一旦与提交内的字节脱节，"字节级 round tr
    入库 blob 是 LF 的样本（`SamplePhotoPrinter.doc.sdlxliff`、
    `document.mqxliff`），把 blob 的 LF 程序化还原成 CRLF 后必须复算出上游
    哈希——即"差异只有换行"是**可复算的事实**，不是一句声明。
+3. **检出属性**：上面两项读的都是 `path.read_bytes()`，即检出后的工作区字节。
+   仓库根的 `.gitattributes` 必须把 `tests/fixtures/**` 标成 `-text`，否则
+   Windows 的 `core.autocrlf=true` 会在检出时把 LF 换成 CRLF，每条哈希都对不上
+   （节点 P0-8f：Windows 全量回归 22 条红，而 macOS/Linux 全绿）。
 
 不做任何导入/写回，不联网（哈希来自 README 记录，上游比对在评审时人工完成，
 证据写在 README 的"换行口径"段落与本文件常量里）。
@@ -27,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -311,3 +316,54 @@ def test_single_byte_mutation_is_detected(tmp_path: Path, source: Path) -> None:
     recorded = readme_records(source.parent)[source.name]["blob"]
     with pytest.raises(AssertionError, match="SHA-256"):
         assert_blob_digest(mutated, recorded)
+
+
+def _check_attr(attr: str, paths: list[str]) -> dict[str, str]:
+    """用 git 自己的属性引擎求值；不在 git 检出里时返回空字典。"""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "check-attr", attr, "--", *paths],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return {}
+    if result.returncode != 0:
+        return {}
+    values: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        path, separator, value = line.rpartition(f": {attr}: ")
+        if separator:
+            values[path] = value
+    return values
+
+
+def test_fixture_files_are_marked_no_eol_conversion() -> None:
+    """样本必须标 `-text`：看门比的是检出字节，autocrlf 不得改写换行。
+
+    P0-8f：Windows runner 的 `core.autocrlf=true` 把 9 个样本的 LF 全换成
+    CRLF，`QuotesSample.docx.sdlxliff` 从 35384 B 变成 35577 B，Windows 全量
+    回归因此红了 22 条，而 macOS/Linux 全绿——只看本地是发现不了的。这条断言
+    守住 `.gitattributes` 里的 `tests/fixtures/** -text`，让它在任何平台上都能
+    先红。
+    """
+    fixtures_root = ROOT / "tests" / "fixtures"
+    fixtures = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in fixtures_root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
+    assert fixtures, "tests/fixtures 下没有任何文件"
+
+    values = _check_attr("text", fixtures)
+    if not values:
+        pytest.skip("读不到 git 属性（不在 git 检出中）")
+
+    offenders = sorted(path for path in fixtures if values.get(path) != "unset")
+    assert not offenders, (
+        "以下 fixture 没有关闭行尾转换，Windows 的 core.autocrlf 会在检出时"
+        "改写字节，逐字节看门必然误报：\n"
+        + "\n".join(f"  {path}: text={values.get(path)}" for path in offenders)
+        + "\n修复：在 .gitattributes 里保留 `tests/fixtures/** -text`"
+    )
