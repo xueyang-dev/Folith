@@ -14,8 +14,11 @@ import pytest
 from folith.desktop import engine_protocol as protocol
 from folith.desktop.engine_protocol import ConnectionSpec, EngineProtocolError
 
-SECRET = "sk-e2-protocol-secret-do-not-print"
-REVIEWER_SECRET = "sk-e2-reviewer-secret-do-not-print"
+# Deliberately not shaped like a provider key: releases/preflight flags any
+# ``sk-`` literal of 20+ characters in the HEAD tree as a suspected real
+# credential, and a fixture is not worth an exemption there.
+SECRET = "FAKE-e2-protocol-secret-do-not-print"
+REVIEWER_SECRET = "FAKE-e2-reviewer-secret-do-not-print"
 
 
 def _connection(**overrides) -> ConnectionSpec:
