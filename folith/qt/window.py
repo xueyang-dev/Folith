@@ -198,6 +198,13 @@ def _automation() -> bool:
     return bootstrap.automation() or _non_interactive_exit()
 
 
+#: 退出时等待后台任务的预算（毫秒）。超时后**不再**把等待转交给
+#: ``~QThreadPool``（那会再阻塞一次，时长等于任务剩余时间，6 s 任务实测
+#: 3.008 + 3.000 = 6.008 s）；改用 ``TaskRunner.abandon_all()`` 把池交给
+#: 后台线程收尾（#363）。模块级常量便于退出路径的测试缩短预算。
+_EXIT_DRAIN_MS = 3000
+
+
 class MainWindow(QMainWindow):
     def __init__(self, config: adapter.EngineConfig,
                  paths: desktop_paths.DesktopPaths,
@@ -4745,7 +4752,7 @@ class MainWindow(QMainWindow):
         if self._pending_update:
             # Updating must never use the existing force-quit escape hatch.
             # A cancelled or failed shutdown leaves the verified download ready.
-            if forced or not self.runner.wait_for_done(3000):
+            if forced or not self.runner.wait_for_done(_EXIT_DRAIN_MS):
                 self._pending_update = False
                 self._exit_in_progress = False
                 self._critical(i18n.tr('暂时无法更新'), i18n.tr('请等待任务和保存操作完成后再试。'))
@@ -4774,7 +4781,15 @@ class MainWindow(QMainWindow):
         self._close_other_windows()
         self._closing_accepted = True
         self._exit_in_progress = False
-        self.runner.wait_for_done(3000)
+        # #363 B-2：这个 drain 是**有界**的，返回值必须检查。旧代码丢弃返回值，
+        # 把等待转交给窗口析构时的 ~QThreadPool，于是总阻塞 = 3 s + 任务剩余时间
+        # （6 s 任务实测 3.008 + 3.000 = 6.008 s）。超时后放弃等待：后台任务照常
+        # 跑完，但任何生存的池都不再由 GUI 线程（或解释器退出时的主线程）join。
+        if not self.runner.wait_for_done(_EXIT_DRAIN_MS):
+            self._log("exit: background tasks still running; not waiting for them")
+        handed_off = TaskRunner.abandon_all()
+        if handed_off:
+            self._log(f"exit: {handed_off} background pool(s) detached")
         # Edits still queued behind the background writer: save them now, in
         # order, so a submitted edit is never left behind as a mere draft.
         while self._edit_queue:

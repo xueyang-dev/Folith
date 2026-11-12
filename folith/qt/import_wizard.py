@@ -22,6 +22,7 @@ Qt），`ImportWizardDialog` 只是把状态渲染成控件。
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -33,6 +34,8 @@ from PySide6.QtWidgets import (
 
 from . import adapter, i18n, theme as theme_module
 from .workers import TaskRunner
+
+_log = logging.getLogger(__name__)
 
 #: 四个步骤的稳定标识（测试与文档都引用这些字符串）。
 STEP_FILE = "file"
@@ -345,6 +348,8 @@ class ImportWizardDialog(QDialog):
         self.target_lang = str(target_lang or "")
         self.runner = TaskRunner(self, max_threads=1)
         self._busy = False
+        #: 导入进行中被关闭：不取消（引擎没有取消入口），但结果也不再写回界面。
+        self._abandoned = False
         self.setWindowTitle(i18n.tr("导入与校验"))
         self.resize(640, 520)
 
@@ -382,6 +387,22 @@ class ImportWizardDialog(QDialog):
         self.close_button.clicked.connect(self.reject)
         layout.addWidget(self.buttons)
         self._show_step()
+
+    def reject(self) -> None:  # noqa: N802 - Qt naming
+        """关闭向导（Esc / 关闭按钮 / 标题栏 X）。
+
+        #363：导入进行中没有取消入口，关闭不能等导入跑完。这里只把结果标记为
+        "已放弃"：对话框立即隐藏，导入在后台线程继续（池不随对话框析构而同步
+        等待，见 ``workers.TaskRunner``），完成/失败写日志而不是渲染到已经关掉
+        的界面。代价是：用户在导入结束前重新打开向导看不到这次导入的报告。
+        """
+        if self._busy and not self._abandoned:
+            self._abandoned = True
+            _log.warning(
+                "import wizard closed while importing %s; the import keeps "
+                "running in the background and its report will not be shown",
+                self.controller.path)
+        super().reject()
 
     # ---- 页面 ----
     def _build_file_page(self) -> None:
@@ -630,6 +651,14 @@ class ImportWizardDialog(QDialog):
         def done(result) -> None:
             self._busy = False
             result = dict(result or {})
+            if self._abandoned:
+                # 对话框已经关了：结果不能写回界面，但长导入不能无声消失。
+                report = dict(result.get("report") or {})
+                _log.warning(
+                    "import of %s finished after the wizard was closed "
+                    "(status=%r, error=%r); report not shown",
+                    payload["path"], report.get("status"), result.get("error"))
+                return
             if "error" in result:
                 self.controller.fail(
                     str(result.get("error") or ""),
@@ -643,6 +672,11 @@ class ImportWizardDialog(QDialog):
         def failed(message: str, detail: str) -> None:
             # Worker 自己接住了异常；这里只兜底线程池级别的失败（没有报告）。
             self._busy = False
+            if self._abandoned:
+                _log.warning(
+                    "import of %s failed after the wizard was closed: %s",
+                    payload["path"], message)
+                return
             self.controller.fail(str(message), detail=detail or str(message))
             self._show_step()
 
