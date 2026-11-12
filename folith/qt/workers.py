@@ -44,6 +44,21 @@ from shiboken6 import delete, isValid
 _log = logging.getLogger(__name__)
 
 
+def log_note(message: str) -> None:
+    """Append ``message`` to the client log ``window.py`` writes.
+
+    This app installs no ``logging`` handler, so ``_log.warning`` only reaches
+    stderr; a background result dropped after its owner went away must still be
+    findable in ``qt-client.log``.  Falls back to the stdlib logger when the Qt
+    bootstrap paths are not ready (unit tests, early startup).
+    """
+    try:
+        from .bootstrap import appender
+        appender()(message)
+    except Exception:  # noqa: BLE001 - a log line must never break the caller
+        _log.warning("%s", message)
+
+
 def _require_gui_thread(where: str) -> None:
     """Refuse work submitted from a thread that cannot own the callbacks.
 
@@ -206,9 +221,9 @@ class TaskRunner(QObject):
                 # The owner (wizard/panel) died first; the result is dropped so
                 # it cannot touch deleted widgets, but a long import must not
                 # vanish without a trace in the log.
-                _log.warning(
-                    "background task %r finished after its owner was destroyed; "
-                    "result dropped", task.label)
+                log_note(
+                    f"background task {task.label!r} finished after its owner "
+                    "was destroyed; result dropped")
 
         def _failed(message: str, detail: str) -> None:
             _finish()
@@ -223,9 +238,9 @@ class TaskRunner(QObject):
             if isValid(self):
                 on_error(message, detail)
             else:
-                _log.warning(
-                    "background task %r failed after its owner was destroyed; "
-                    "error dropped: %s", task.label, message)
+                log_note(
+                    f"background task {task.label!r} failed after its owner "
+                    f"was destroyed; error dropped: {message}")
 
         task.signals.done.connect(_done)
         task.signals.failed.connect(_failed)

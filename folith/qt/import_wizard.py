@@ -22,7 +22,6 @@ Qt），`ImportWizardDialog` 只是把状态渲染成控件。
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -33,9 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import adapter, i18n, theme as theme_module
-from .workers import TaskRunner
-
-_log = logging.getLogger(__name__)
+from .workers import TaskRunner, log_note
 
 #: 四个步骤的稳定标识（测试与文档都引用这些字符串）。
 STEP_FILE = "file"
@@ -398,10 +395,10 @@ class ImportWizardDialog(QDialog):
         """
         if self._busy and not self._abandoned:
             self._abandoned = True
-            _log.warning(
-                "import wizard closed while importing %s; the import keeps "
-                "running in the background and its report will not be shown",
-                self.controller.path)
+            log_note(
+                f"import wizard closed while importing {self.controller.path}; "
+                "the import keeps running in the background and its report "
+                "will not be shown")
         super().reject()
 
     # ---- 页面 ----
@@ -654,10 +651,10 @@ class ImportWizardDialog(QDialog):
             if self._abandoned:
                 # 对话框已经关了：结果不能写回界面，但长导入不能无声消失。
                 report = dict(result.get("report") or {})
-                _log.warning(
-                    "import of %s finished after the wizard was closed "
-                    "(status=%r, error=%r); report not shown",
-                    payload["path"], report.get("status"), result.get("error"))
+                log_note(
+                    f"import of {payload['path']} finished after the wizard "
+                    f"was closed (status={report.get('status')!r}, "
+                    f"error={result.get('error')!r}); report not shown")
                 return
             if "error" in result:
                 self.controller.fail(
@@ -673,9 +670,9 @@ class ImportWizardDialog(QDialog):
             # Worker 自己接住了异常；这里只兜底线程池级别的失败（没有报告）。
             self._busy = False
             if self._abandoned:
-                _log.warning(
-                    "import of %s failed after the wizard was closed: %s",
-                    payload["path"], message)
+                log_note(
+                    f"import of {payload['path']} failed after the wizard "
+                    f"was closed: {message}")
                 return
             self.controller.fail(str(message), detail=detail or str(message))
             self._show_step()
