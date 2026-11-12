@@ -36,4 +36,15 @@
 
 其余三个样本的上游原件本身就是 LF，与入库 blob 逐字节相同。
 
+### 检出不得改写字节（`-text`）
+
+看门比的是**检出后的工作区字节**，所以 `tests/fixtures/**` 在仓库根的
+[`.gitattributes`](../../../.gitattributes) 里标记为 `-text`：Windows 的
+`core.autocrlf=true` 不再把上述 LF 换成 CRLF。否则
+`QuotesSample.docx.sdlxliff` 会被检出成 35577 B / `4873e754…`，而
+`SamplePhotoPrinter.doc.sdlxliff` 会被还原成上游的 CRLF 字节——入库口径和上游
+口径一起失真（P0-8f，Windows 全量回归 22 条红）。已有克隆需
+`git checkout -- tests/fixtures` 重新检出；口径与团队命令见
+[SOURCES.md](../../../SOURCES.md) 的"检出必须复现入库字节"一节。
+
 复核方式（不联网的回归看门）：`python -m pytest tests/fixture_provenance_test.py -q`。
