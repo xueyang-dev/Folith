@@ -39,6 +39,16 @@ Exit codes
 No credential is ever written to stdout/stderr, a file, ``argv`` or the
 environment: this module never formats a request object, and the protocol
 module's errors name fields only.
+
+Build identity
+--------------
+The child must never *probe* the toolchain to describe itself: the pipeline
+records its build id at run start, and ``paths.build_id()`` falls back to a
+``git`` subprocess, which on Windows can block a ``subprocess.run(timeout=)``
+recovery path forever (the pipeline then never issues its first provider
+request).  :func:`pin_build_identity` runs before ``import core`` and pins the
+id the parent passed in ``FOLITH_BUILD_ID``, or :data:`FALLBACK_BUILD_ID` for a
+hand-launched child.
 """
 from __future__ import annotations
 
@@ -52,6 +62,7 @@ from . import engine_protocol
 from .engine_protocol import EngineProtocolError
 
 __all__ = [
+    "BUILD_ID_ENV",
     "DEFAULT_STOP_TIMEOUT",
     "ENGINE_PROCESS_ENV",
     "EXIT_INTERNAL",
@@ -59,7 +70,9 @@ __all__ = [
     "EXIT_PROTOCOL",
     "EXIT_START_FAILED",
     "EXIT_STOP_TIMEOUT",
+    "FALLBACK_BUILD_ID",
     "engine_process_enabled",
+    "pin_build_identity",
     "run",
 ]
 
@@ -86,6 +99,17 @@ _POLL_SECONDS = 0.05
 _WORKER_READY_TIMEOUT = 10.0
 
 
+#: Build identity handed to this process by the parent (see
+#: :func:`pin_build_identity`).  Mirrors ``folith.desktop.paths.BUILD_ID_ENV``.
+BUILD_ID_ENV = "FOLITH_BUILD_ID"
+
+#: What this process calls itself when the parent passed nothing.  A source
+#: checkout has no packaged build record, and the alternative -- letting
+#: ``paths.build_id()`` shell out to ``git`` -- is what used to hang the whole
+#: pipeline on Windows (see :func:`pin_build_identity`).
+FALLBACK_BUILD_ID = "engine-host"
+
+
 def engine_process_enabled() -> bool:
     """True when the pipeline should run in an engine subprocess.
 
@@ -96,9 +120,49 @@ def engine_process_enabled() -> bool:
     return value not in {"", "0", "false", "no", "off"}
 
 
+def pin_build_identity() -> str:
+    """Pin this process's build identity so nothing probes the toolchain.
+
+    ``folith.desktop.paths.build_id()`` resolves the id from an explicit
+    environment value, then the packaged ``desktop_build_info.json``, and only
+    as a last resort shells out to ``git rev-parse``.  That last step is fine
+    for the GUI (a packaged build never reaches it) but it is *fatal* for the
+    engine child on Windows:
+
+    * the pipeline calls it from the worker thread at run start
+      (``trace.record_run_configuration``), i.e. before the first provider
+      request, on every task;
+    * ``subprocess.run(..., timeout=5)`` on Windows does not give up when the
+      timeout expires -- it kills the direct child and then calls
+      ``communicate()`` again **without a timeout** (``subprocess.py``).  A
+      surviving descendant still holds the stdout/stderr pipes (Git for Windows
+      runs the real executable as a child of a wrapper), so that second
+      ``communicate()`` never returns and the pipeline never issues a single
+      request.  Observed as a child that stays ``running`` with
+      ``completed_units: 0`` until its stdin is closed.
+
+    The engine child is a re-execution of the parent's own build, so it already
+    knows which build it is: the supervisor passes :data:`BUILD_ID_ENV` in the
+    environment.  When this process was launched by hand there is no parent to
+    ask, so it pins :data:`FALLBACK_BUILD_ID` instead of re-deriving one.  Both
+    branches are pure environment/file reads: this process never spawns a tool
+    to describe itself.
+    """
+    from . import paths as desktop_paths  # noqa: PLC0415 - dependency-light
+
+    explicit = os.environ.get(BUILD_ID_ENV, "").strip()
+    if explicit:
+        return explicit
+    recorded = desktop_paths.build_info().get("build_id")
+    value = recorded.strip() if isinstance(recorded, str) else ""
+    value = value or FALLBACK_BUILD_ID
+    os.environ[BUILD_ID_ENV] = value
+    return value
+
+
 def run() -> int:
     """Entry point used by ``folith.qt.app._main`` (after env preparation)."""
-    _start_stall_diagnostics()
+    pin_build_identity()
     reader = _StdinLines()
     try:
         line = reader.readline()
@@ -297,43 +361,6 @@ def _wait_for_worker_ready(core, job_id: str) -> None:
         if (core.load_runtime_state(job_id) or {}).get("worker_connection"):
             return
         time.sleep(_POLL_SECONDS)
-
-
-# ---------------------------------------------------------------------------
-# stall diagnostics (opt-in, no behaviour change when unset)
-# ---------------------------------------------------------------------------
-
-#: Seconds between periodic all-thread stack dumps written to stderr.  Opt-in
-#: only: a hung child has no GUI left to report through, and ``stderr`` is the
-#: one channel the supervisor captures, so a support run (or a CI diagnostic)
-#: sets this and gets the stack of whatever is blocking the pipeline.
-STALL_DUMP_ENV = "FOLITH_ENGINE_HOST_STACK_DUMP"
-
-
-def _start_stall_diagnostics() -> None:
-    """Dump every thread's stack to stderr every N seconds when asked to.
-
-    ``faulthandler`` is the only in-process facility that can report a blocked
-    *Python or C* frame on every platform, including a thread stuck in a
-    blocking read/lock on Windows.  It is deliberately opt-in: the dump is
-    noisy and it is a diagnosis tool, not a log.
-    """
-    raw = os.environ.get(STALL_DUMP_ENV, "").strip()
-    if not raw:
-        return
-    try:
-        interval = float(raw)
-    except ValueError:
-        interval = 15.0
-    if interval <= 0:
-        return
-    try:
-        import faulthandler  # noqa: PLC0415 - diagnostics only
-
-        faulthandler.enable()
-        faulthandler.dump_traceback_later(interval, repeat=True)
-    except Exception:  # noqa: BLE001 - a diagnostic must never break the run
-        return
 
 
 # ---------------------------------------------------------------------------

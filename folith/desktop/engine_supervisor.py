@@ -51,6 +51,17 @@ built by :mod:`folith.desktop.engine_protocol`).  It is never placed in argv,
 the child's environment, a file, or a log line, and the child's own output is
 redacted against the same two credentials before it can reach
 ``runtime_state.json``.
+
+Build identity
+--------------
+The one non-secret value added to the child's environment is its build id
+(``FOLITH_BUILD_ID``).  Without it the child's pipeline would resolve the id
+itself with a ``git`` subprocess -- and on Windows a timed-out
+``subprocess.run`` can wait forever for a surviving descendant's pipes, which
+stalls the pipeline before its first provider request (E-2b, see
+:func:`folith.desktop.engine_host.pin_build_identity`).  The parent forwards the
+id it already has (explicit environment value or packaged build record) and
+never runs the probe itself: ``start_engine`` must not block.
 """
 from __future__ import annotations
 
@@ -116,9 +127,7 @@ EXIT_STOP_BUDGET = 0.6
 POLL_SECONDS = 0.15
 
 #: How much of the child's merged output is kept for an error report.
-#: TEMPORARY (E-2b diagnostics): raised so a stall dump fits; restored to 2048
-#: before the fix is final.
-_OUTPUT_TAIL_BYTES = 65536
+_OUTPUT_TAIL_BYTES = 2048
 
 _SOURCE_ENTRY = Path(__file__).resolve().parents[2] / "qt_client.py"
 
@@ -211,8 +220,36 @@ def _paths() -> Tuple[Path, Path]:
 
 
 def _child_environment() -> Dict[str, str]:
-    """Inherit the parent's environment; the credential is never added to it."""
-    return dict(os.environ)
+    """Inherit the parent's environment; the credential is never added to it.
+
+    The one value this adds is the build identity.  The child records its build
+    id at run start, and without an explicit value
+    :func:`folith.desktop.paths.build_id` would shell out to ``git`` -- which on
+    Windows can block the pipeline before its first provider request (see
+    :func:`folith.desktop.engine_host.pin_build_identity`).  The parent's own
+    id is forwarded when it is cheap to obtain (an explicit environment value or
+    the packaged build record); the parent deliberately never runs the ``git``
+    probe itself, because that would put a subprocess on the start path this
+    module promises not to block.  When neither exists the child pins
+    :data:`folith.desktop.engine_host.FALLBACK_BUILD_ID` instead.
+    """
+    environment = dict(os.environ)
+    if not environment.get(engine_host.BUILD_ID_ENV, "").strip():
+        identity = _known_build_identity()
+        if identity:
+            environment[engine_host.BUILD_ID_ENV] = identity
+    return environment
+
+
+def _known_build_identity() -> str:
+    """The packaged/explicit build id, without spawning anything."""
+    try:
+        from . import paths as desktop_paths
+
+        recorded = desktop_paths.build_info().get("build_id")
+    except Exception:  # noqa: BLE001 - an unreadable record is simply absent
+        return ""
+    return recorded.strip() if isinstance(recorded, str) else ""
 
 
 # ---------------------------------------------------------------------------

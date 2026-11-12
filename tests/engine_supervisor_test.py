@@ -219,6 +219,12 @@ if mode == "failed":
     sys.exit(0)
 if mode == "silent":
     sys.exit(3)
+if mode == "record-build-id":
+    # E-2b: prove the identity the parent handed over arrived, without the
+    # child ever running the `git rev-parse` fallback.
+    (target / "child_build_id.txt").write_text(
+        os.environ.get("FOLITH_BUILD_ID", ""), encoding="utf-8")
+    sys.exit(0)
 if mode == "ignore-eof":
     time.sleep(120)
     sys.exit(0)
@@ -891,40 +897,50 @@ def test_a_vanished_gui_leaves_the_child_to_stop_itself(isolated, tmp_path,
 
 
 # ---------------------------------------------------------------------------
-# TEMPORARY diagnostic (delete before merge): stack of a stalled real engine
+# 9. build identity: the child is told, it never probes the toolchain (E-2b)
 # ---------------------------------------------------------------------------
 
-def test_diagnostic_real_engine_stall(isolated, monkeypatch, gateway):
-    """Report what the supervised child is blocked on (Windows regression)."""
-    url, gateway_log = gateway
-    data_dir, _log_dir = isolated
-    job_id = "e3diag00001"
+def test_the_child_environment_carries_the_build_identity(isolated, monkeypatch):
+    """A supervised child must not run the ``git rev-parse`` fallback.
+
+    The pipeline records its build id at run start, and
+    ``folith.desktop.paths.build_id()`` falls back to a ``git`` subprocess.  On
+    Windows ``subprocess.run(..., timeout=5)`` does not return when the timeout
+    expires: it kills the direct child, then calls ``communicate()`` again
+    *without* a timeout, and a surviving descendant still holding the pipes
+    keeps the call from ever returning.  The pipeline then never issues its
+    first provider request.
+    """
+    monkeypatch.delenv(engine_host.BUILD_ID_ENV, raising=False)
+    monkeypatch.setattr(supervisor_module, "_known_build_identity",
+                        lambda: "0.8.2+20261107")
+    environment = supervisor_module._child_environment()
+    assert environment[engine_host.BUILD_ID_ENV] == "0.8.2+20261107"
+
+    # A source run has no packaged record.  The parent must still not pay a
+    # subprocess on the start path (``start_engine`` promises not to block);
+    # the child pins its own fallback id instead.
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("start_engine must not spawn a tool")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    monkeypatch.setattr(supervisor_module, "_known_build_identity", lambda: "")
+    environment = supervisor_module._child_environment()
+    assert engine_host.BUILD_ID_ENV not in environment
+
+
+def test_the_supervised_child_actually_receives_the_identity(isolated, stub_child,
+                                                             monkeypatch):
+    data_dir, _log = isolated
+    monkeypatch.setenv(engine_host.BUILD_ID_ENV, "git:0123abc4")
+    monkeypatch.setenv("ENGINE_STUB_MODE", "record-build-id")
+    job_id = "e3buildid01"
     _create_job(job_id)
-    supervisor_module.set_launch_command(None)
-    monkeypatch.setenv("FOLITH_ENGINE_HOST_STACK_DUMP", "10")
 
     outcome = supervisor_module.start_engine(
-        job_id, mode="start", connection=_connection(url))
+        job_id, mode="resume", connection=_connection("http://127.0.0.1:9/v1"))
     assert outcome.started, outcome.reason
     sup = supervisor_module.supervisor(job_id)
-    assert sup is not None
-    finished = _wait_until(lambda: not sup.running, timeout=100)
-    technical = ""
-    try:
-        technical = core.runtime_technical_log_path(job_id).read_text(
-            encoding="utf-8", errors="replace")
-    except OSError:
-        pass
-    report = "\n".join([
-        f"finished_without_stop={finished} exit={sup.exit_code}",
-        f"runtime_state={core.load_runtime_state(job_id)!r}",
-        f"gateway_log_bytes={gateway_log.stat().st_size if gateway_log.exists() else -1}",
-        "--- runtime_technical.log ---",
-        technical[-40000:],
-        "--- child output tail ---",
-        sup.output_tail(),
-    ])
-    if not finished:
-        supervisor_module.stop_and_wait(job_id, timeout=2.0)
-        pytest.fail("the engine child made no progress\n" + report)
-    assert (core.load_runtime_state(job_id) or {}).get("status") == "completed", report
+    assert sup is not None and sup.wait_finished(20.0)
+    recorded = (data_dir / job_id / "child_build_id.txt").read_text(encoding="utf-8")
+    assert recorded == "git:0123abc4"
