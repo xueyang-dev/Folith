@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from . import i18n, platform_ui
 from . import adapter
+from folith.workbench_rows import DOMAINS as _DOMAIN_NAMES
 from . import components
 from . import motion
 from . import icons
@@ -256,7 +257,8 @@ def library_run_view(row) -> tuple[str, str]:
     tone, line = run_status_view(
         {"status": status, "runtime": getattr(row, "runtime", {})},
         note=note, running=row.active,
-        completed=0, total=0, unit="")
+        completed=0, total=0, unit="",
+        job_id=str(getattr(row, "job_id", "") or ""))
     return tone, line or i18n.tr_dynamic(row.status_label)
 
 
@@ -437,6 +439,7 @@ class _TaskCard(QFrame):
         self.status_label.setObjectName("coverStatus")
         self.status_label.setProperty("state", tone)
         status_row = QHBoxLayout()
+        text.addLayout(status_row)
         status_row.setSpacing(6)
         status_row.setContentsMargins(0, 0, 0, 0)
         status_row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -444,7 +447,6 @@ class _TaskCard(QFrame):
         text.addWidget(self.title)
         text.addWidget(self.meta)
         text.addSpacing(2)
-        text.addLayout(status_row)
         self.progress = None
         if percent is not None:
             # 进度条的颜色跟"这次运行"走，但任务还没做完时不许是绿色的：满格绿条
@@ -774,18 +776,18 @@ class HomeView(QWidget):
         engine_row.addWidget(self.engine_model, 1, Qt.AlignmentFlag.AlignVCenter)
 
         # 品牌字标在侧栏左上角（E 层次 v2）；底部只留连接状态 + 设置按钮同一行。
-        footer_row = QHBoxLayout()
-        footer_row.setContentsMargins(0, 0, 0, 0)
-        footer_row.setSpacing(theme_module.SPACE["sm"])
-        footer_row.addWidget(engine_card, 1)
-        footer_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
-
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         sidebar_footer = QFrame()
         sidebar_footer.setObjectName("sidebarFooterGG")
         footer_layout = QVBoxLayout(sidebar_footer)
         footer_layout.setContentsMargins(0, 0, 0, 0)
         footer_layout.setSpacing(0)
+        footer_row = QHBoxLayout()
         footer_layout.addLayout(footer_row)
+        footer_row.setContentsMargins(0, 0, 0, 0)
+        footer_row.setSpacing(theme_module.SPACE["sm"])
+        footer_row.addWidget(engine_card, 1)
+        footer_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         sidebar = QWidget()
         self.sidebar = sidebar
@@ -800,13 +802,13 @@ class HomeView(QWidget):
         # 与导航图标左缘对齐（按钮左内边距 + 1px 透明边）。
         side.addSpacing(theme_module.SPACE["xs"])
         logo_row = QHBoxLayout()
+        side.addLayout(logo_row)
         logo_row.setContentsMargins(theme_module.SPACE["md"] + 1, 0, 0, 0)
         self._brand_mark = QLabel()
         self._brand_mark.setPixmap(self._mark_pixmap())
         logo_row.addWidget(self._brand_mark, 0, Qt.AlignmentFlag.AlignVCenter)
         # 字标独占剩余宽度：再加一个弹簧会分走一半，副标题就提前折行。
         logo_row.addWidget(self._logo_label, 1)
-        side.addLayout(logo_row)
         side.addSpacing(theme_module.SPACE["lg"])
         side.addWidget(self.import_button)
         # 分组之间 20px、组内 4px：只在"组"上写间距，行与行之间保持同一条节奏。
@@ -833,13 +835,24 @@ class HomeView(QWidget):
         self.stats_line.setTextFormat(Qt.TextFormat.RichText)
         self.stats_line.setVisible(False)
         self.stats_line.linkActivated.connect(self._status_filter_changed)
+        # ---- 主区组装：先把布局挂到画布上，再往里填（见 qt_layout_item_wrapper_test）----
+        main = components.GradientCanvas()
+        layout = QVBoxLayout(main)
+        layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
+                                  theme_module.SPACE["xl"], theme_module.SPACE["lg"])
+        layout.setSpacing(theme_module.SPACE["lg"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        page_header = QHBoxLayout()
+        layout.addLayout(page_header)
+        page_header.setSpacing(theme_module.SPACE["lg"])
+        title_box = QVBoxLayout()
+        page_header.addLayout(title_box, 1)
+        title_box.setSpacing(theme_module.SPACE["xxs"])
         title_row = QHBoxLayout()
+        title_box.addLayout(title_row)
         title_row.setSpacing(theme_module.SPACE["lg"])
         title_row.addWidget(title, 0, Qt.AlignmentFlag.AlignBaseline)
         title_row.addWidget(self.stats_line, 1, Qt.AlignmentFlag.AlignBaseline)
-        title_box = QVBoxLayout()
-        title_box.setSpacing(theme_module.SPACE["xxs"])
-        title_box.addLayout(title_row)
         title_box.addWidget(self.subtitle)
 
         self.refresh_icon_button = style_module.icon_button("refresh", i18n.tr('刷新任务'))
@@ -890,14 +903,10 @@ class HomeView(QWidget):
         self.sort_box.currentIndexChanged.connect(self._apply_filter)
 
         header_actions = QHBoxLayout()
+        page_header.addLayout(header_actions, 0)
         header_actions.setSpacing(theme_module.SPACE["sm"])
         header_actions.addWidget(self.search_edit)
         header_actions.addWidget(self.refresh_icon_button)
-
-        page_header = QHBoxLayout()
-        page_header.setSpacing(theme_module.SPACE["lg"])
-        page_header.addLayout(title_box, 1)
-        page_header.addLayout(header_actions, 0)
 
         # ---- 首次运行提示（只有未配置模型时出现） --------------------------
         self.setup_banner = style_module.NoticeStrip(tone="warn")
@@ -1078,13 +1087,7 @@ class HomeView(QWidget):
         self.list_card.body_layout.addWidget(self.stack, 1)
         self.list_card.body_layout.addWidget(self.actions_frame)
 
-        # ---- 主区组装 ------------------------------------------------------
-        main = components.GradientCanvas()
-        layout = QVBoxLayout(main)
-        layout.setContentsMargins(theme_module.SPACE["xl"], theme_module.SPACE["lg"],
-                                  theme_module.SPACE["xl"], theme_module.SPACE["lg"])
-        layout.setSpacing(theme_module.SPACE["lg"])
-        layout.addLayout(page_header)
+        # ---- 主区组装：main/layout/page_header 已在前段创建并挂好 ----
         layout.addWidget(self.setup_banner)
         layout.addWidget(self.stats)
         layout.addWidget(self.continue_card)
@@ -1230,7 +1233,9 @@ class HomeView(QWidget):
         self.continue_row = row
         self.continue_paper = components.DocThumb(40, 52)
         row.addWidget(self.continue_paper, 0, Qt.AlignmentFlag.AlignVCenter)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         text = QVBoxLayout()
+        row.addLayout(text, 1)
         text.setSpacing(0)
         self.continue_title = style_module.ElideLabel("", mode=Qt.TextElideMode.ElideMiddle)
         self.continue_title.setObjectName("continueTitle")
@@ -1247,15 +1252,15 @@ class HomeView(QWidget):
         self.continue_divider = QFrame()
         self.continue_divider.setObjectName("statSeparator")
         self.continue_divider.setFixedSize(1, 12)
+        text.addStretch(1)
+        text.addWidget(self.continue_title)
         detail = QHBoxLayout()
+        text.addLayout(detail)
         detail.setSpacing(theme_module.SPACE["md"])
         detail.addWidget(self.continue_meta, 0)
         detail.addWidget(self.continue_divider, 0, Qt.AlignmentFlag.AlignVCenter)
         detail.addWidget(self.continue_stage, 0)
         detail.addStretch(1)
-        text.addStretch(1)
-        text.addWidget(self.continue_title)
-        text.addLayout(detail)
         text.addStretch(1)
         self.continue_button = QPushButton(i18n.tr('继续'))
         style_module.set_button(self.continue_button, "primary")
@@ -1263,7 +1268,6 @@ class HomeView(QWidget):
         self.continue_button.clicked.connect(
             lambda: self._continue_job_id and self.openRequested.emit(self._continue_job_id))
         style_module.fit_button(self.continue_button, max_width=200)
-        row.addLayout(text, 1)
         row.addWidget(self.continue_button, 0, Qt.AlignmentFlag.AlignVCenter)
         card.setVisible(False)
         return card
@@ -1541,7 +1545,7 @@ class HomeView(QWidget):
         if event.type() == QEvent.Type.StyleChange and not getattr(self, "_restyle_pending", False):
             # 样式表先换、当前主题名后改（window.apply_theme_preference）：下一轮再取颜色。
             self._restyle_pending = True
-            QTimer.singleShot(0, self._restyle_rich_text)
+            QTimer.singleShot(0, self, self._restyle_rich_text)
 
     def _restyle_rich_text(self) -> None:
         self._restyle_pending = False
@@ -1797,6 +1801,7 @@ class HomeView(QWidget):
             # 已经选中了一个项目：上面的标签就是标题，分组标题不再重复一遍。
             if not (self.project_filter.currentData() or ""):
                 heading_row = QHBoxLayout()
+                section_layout.addLayout(heading_row)
                 heading_row.setSpacing(theme_module.SPACE["sm"])
                 heading = QLabel(self._project_label(project_id))
                 heading.setObjectName("groupHeading")
@@ -1805,9 +1810,9 @@ class HomeView(QWidget):
                 count.setObjectName("hint")
                 heading_row.addWidget(count, 0, Qt.AlignmentFlag.AlignBaseline)
                 heading_row.addStretch(1)
-                section_layout.addLayout(heading_row)
 
             grid = QGridLayout()
+            section_layout.addLayout(grid)
             grid.setContentsMargins(0, 0, 0, 0)
             grid.setHorizontalSpacing(theme_module.SPACE["lg"])
             grid.setVerticalSpacing(theme_module.SPACE["lg"])
@@ -1825,7 +1830,6 @@ class HomeView(QWidget):
             for column in range(columns):
                 grid.setColumnStretch(column, 0)
             grid.setColumnStretch(columns, 1)     # 多出来的宽度留在右侧，卡片保持紧凑
-            section_layout.addLayout(grid)
             self.card_layout.addWidget(section)
         if groups:
             # 虚线格排在最后一组的最后一张卡后面（与卡片同一套网格）。
@@ -1919,7 +1923,7 @@ class HomeView(QWidget):
             self._select_current_row_for_keyboard()
         if (event.type() == QEvent.Type.Resize and hasattr(self, "card_scroll")
                 and watched is self.card_scroll.viewport()):
-            QTimer.singleShot(0, self._relayout_cards)
+            QTimer.singleShot(0, self, self._relayout_cards)
         if watched is getattr(self, "engine_card", None) and (
                 event.type() == QEvent.Type.MouseButtonRelease
                 or (event.type() == QEvent.Type.KeyPress
@@ -2002,13 +2006,110 @@ def _parse_iso(value) -> float | None:
         return None
 
 
+def _as_seconds(value) -> float | None:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def _trace_active_seconds(job_id: str) -> float | None:
+    """Active work seconds from the run tracker, when this build has #320.
+
+    #320 exposes ``folith.trace.trace.active_seconds(job_id)`` for the run this
+    process is still tracking.  Extracted so tests can drive the branch without a
+    real run, and so builds before #320 degrade to ``None`` instead of raising.
+    """
+    try:
+        from folith import trace as trace_module
+    except Exception:  # pragma: no cover - trace is a core module; stay defensive
+        return None
+    manager = getattr(trace_module, "trace", None)
+    accessor = getattr(manager, "active_seconds", None)
+    if not callable(accessor):
+        return None
+    try:
+        return _as_seconds(accessor(job_id))
+    except Exception:
+        return None
+
+
+def _history_active_seconds(job_id: str, raw: dict) -> float | None:
+    """``active_seconds`` of the finished run from the task's history.json (#320).
+
+    The run record is written per task under ``<job>/.performance/history.json``.
+    Match the finished run by ``run_id`` when the runtime record carries one, else by
+    its finish time; an older segment of the same task must never stand in for the
+    run being shown.
+    """
+    if not job_id:
+        return None
+    try:
+        history_path = adapter.core.job_dir(job_id) / ".performance" / "history.json"
+    except Exception:
+        return None
+    try:
+        import json
+        entries = json.loads(history_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(entries, list):
+        return None
+    candidates = [entry for entry in entries
+                  if isinstance(entry, dict) and str(entry.get("task_id") or "") == job_id]
+    if not candidates:
+        return None
+
+    run_id = str(raw.get("run_id") or "")
+    if run_id:
+        for entry in reversed(candidates):
+            if str(entry.get("run_id") or "") == run_id:
+                return _as_seconds(entry.get("active_seconds"))
+
+    finished = _parse_iso(raw.get("finished_at"))
+    if finished is not None:
+        for entry in reversed(candidates):
+            entry_finished = _parse_iso(entry.get("finished_at"))
+            if entry_finished is not None and abs(entry_finished - finished) <= 2.0:
+                return _as_seconds(entry.get("active_seconds"))
+        # This run's history entry is not flushed yet; showing an older segment's
+        # active time would be wrong, so let the caller keep the wall-clock wording.
+        return None
+    return _as_seconds(candidates[-1].get("active_seconds"))
+
+
+def _active_run_minutes(job_id: str, raw: dict) -> int | None:
+    """Minutes actually worked for the finished run, or ``None`` when not recorded.
+
+    #320's heartbeat-based active time wins over the ``started_at`` → ``finished_at``
+    difference, which counts a laptop sleeping or the process being frozen.  When
+    neither the live accessor nor the history entry has the number (this tree before
+    #320, or records from before it), the caller keeps the old wall-clock wording
+    rather than showing nothing or zero.
+    """
+    if not job_id:
+        return None
+    seconds = _trace_active_seconds(job_id)
+    if seconds is None:
+        seconds = _history_active_seconds(job_id, raw)
+    if seconds is None:
+        return None
+    return max(1, int(round(seconds / 60)))
+
+
 def run_status_view(runtime: dict, *, note: str, running: bool, completed: int,
-                    total: int, unit: str, now: float | None = None) -> tuple[str, str]:
+                    total: int, unit: str, now: float | None = None,
+                    job_id: str = "") -> tuple[str, str]:
     """(tone, line) for the run status group: colour and the words that say the same.
 
     Tones: running / waiting (model call in flight) / retrying / stalled / failed /
     paused / done / idle.  "Stalled" uses the core's own ``stalled`` status, or no
     progress for ``_STALL_AFTER_S`` seconds while running.
+
+    ``job_id`` is optional: with it, a finished run's active work time (#320) is
+    preferred over the ``started_at`` → ``finished_at`` difference; when no active
+    record exists the old wall-clock wording is kept unchanged.
     """
     now = time.time() if now is None else now
     status = str(runtime.get("status") or "")
@@ -2023,6 +2124,11 @@ def run_status_view(runtime: dict, *, note: str, running: bool, completed: int,
     waiting_since = _parse_iso(raw.get("model_wait_started_at"))
     if status == "completed":
         started = _parse_iso(raw.get("started_at"))
+        # #320: prefer the heartbeat-based active work time.  It excludes laptop
+        # sleep / a frozen process, which the wall-clock difference counts.
+        active_minutes = _active_run_minutes(job_id, raw)
+        if active_minutes is not None:
+            return "done", i18n.tr('已完成 · {v0} 分钟', v0=max(1, active_minutes))
         finished = _parse_iso(raw.get("finished_at")) or now
         minutes = int(round((finished - started) / 60)) if started else 0
         return "done", (i18n.tr('已完成 · {v0} 分钟', v0=max(1, minutes)) if started
@@ -2143,17 +2249,18 @@ class RunStatusGroup(QFrame):
         self.line.setObjectName("runStatusLine")
         # 兼容旧调用点：状态行本身就是那个「视图」，不再套一层滚动容器。
         self.line_view = self.line
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(theme_module.SPACE["xs"] + 2)
-        top.addWidget(self.track, 1, Qt.AlignmentFlag.AlignVCenter)
-        top.addWidget(self.percent, 0, Qt.AlignmentFlag.AlignVCenter)
         layout = QVBoxLayout(self)
         # 四周留够白：展开运行记录时这一块是「凸」字的上半截，进度条贴着它的上、左、右
         # 边会显得局促（试用反馈）。
         layout.setContentsMargins(*self.PADDING)
         layout.setSpacing(3)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        top = QHBoxLayout()
         layout.addLayout(top)
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(theme_module.SPACE["xs"] + 2)
+        top.addWidget(self.track, 1, Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(self.percent, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.line)
         # 状态行自己会省略，所以只有进度那一行需要硬下限。让整组可以缩到 144，
         # 窄窗口下才不至于把统一工具栏撑宽。
@@ -2453,7 +2560,10 @@ class WorkbenchView(QWidget):
         self._painted_look: tuple = ()
         self._delivery_state: dict | None = None  # state object the preview was built from
         self._grid_source: tuple | None = None  # (rows, state, job_id, look) last rendered
-        self._state: dict = {}
+        #: 本视图渲染的权威状态。**普通属性**：赋值本身没有副作用；换状态一律走
+        #: ``_replace_state()``（它才让全部域版本前进，静态检查拦直接赋值）。
+        #: 这里是初始化：还没有任何派生缓存，所以不需要（也没有东西可以）失效。
+        self._state: dict = {}  # domain-cache: allow initial value, nothing cached yet
         # 译前准备视图（adapter.task_setup_view）。``None`` 表示"没有准备面"，
         # 此时一律按"已开始"处理，旧的调用路径（测试、恢复）不受影响。
         self._setup_view: dict | None = None
@@ -2496,6 +2606,11 @@ class WorkbenchView(QWidget):
         self._qa_key: tuple = ()
         self._cases_key: tuple = ()
         self._report_key: tuple = ()
+        #: Explicit projection-domain revisions (issue #324 P3).  Cache keys use
+        #: these instead of ``id(state)``: a delta bumps only the domains it
+        #: touched, a whole-state *replacement* bumps all of them.  A stale
+        #: object identity can no longer silently keep an old panel.
+        self._domain_revs: dict[str, int] = {name: 0 for name in _DOMAIN_NAMES}
         #: 任务打开时读入的大纲负载（sidecar + 解析状态）；之后只在结构变化时重算映射。
         self._outline_payload: dict = {}
         self._outline_mapping: dict = {}
@@ -3399,12 +3514,7 @@ class WorkbenchView(QWidget):
             i18n.tr('被排除的段落不进入译文与交付；原文与排除时的译文完整保留。交付包里会附上这份排除清单。'))
         self.excluded_hint.setObjectName("hint")
         self.excluded_hint.setWordWrap(True)
-        excluded_actions = QHBoxLayout()
-        excluded_actions.addWidget(self.excluded_list, 1)
-        excluded_actions.addWidget(self.restore_excluded_button)
-        self.excluded_empty = style_module.EmptyState(
-            icon="check-circle", title=i18n.tr('没有被排除的段落'),
-            hint=i18n.tr('排除的段落会出现在这里，并附在交付包中；恢复后段落回到工作台。'))
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         excluded_card = Card()
         # F11：0 条时整张卡片不出现（原来一个空状态占满一张卡）。
         self.excluded_card = excluded_card
@@ -3416,7 +3526,13 @@ class WorkbenchView(QWidget):
         self.excluded_title.setObjectName("cardTitle")
         excluded_layout.addWidget(self.excluded_title)
         excluded_layout.addWidget(self.excluded_hint)
+        excluded_actions = QHBoxLayout()
         excluded_layout.addLayout(excluded_actions)
+        excluded_actions.addWidget(self.excluded_list, 1)
+        excluded_actions.addWidget(self.restore_excluded_button)
+        self.excluded_empty = style_module.EmptyState(
+            icon="check-circle", title=i18n.tr('没有被排除的段落'),
+            hint=i18n.tr('排除的段落会出现在这里，并附在交付包中；恢复后段落回到工作台。'))
         excluded_layout.addWidget(self.excluded_empty)
 
         # 交付页内容随清单长度变化：套一层滚动区，窗口不高时整页滚动，
@@ -3487,13 +3603,14 @@ class WorkbenchView(QWidget):
         terms_close.setAccessibleName(i18n.tr('收起术语'))
         terms_close.clicked.connect(lambda: self.set_terms_open(False))
         self.terms_close_button = terms_close
+        terms_layout = QVBoxLayout(self.terms_side)
+        terms_layout.setContentsMargins(0, 8, theme_module.SPACE["sm"], 0)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         terms_head = QHBoxLayout()
+        terms_layout.addLayout(terms_head)
         terms_head.setContentsMargins(0, 0, 0, 0)
         terms_head.addWidget(terms_title, 1)
         terms_head.addWidget(terms_close)
-        terms_layout = QVBoxLayout(self.terms_side)
-        terms_layout.setContentsMargins(0, 8, theme_module.SPACE["sm"], 0)
-        terms_layout.addLayout(terms_head)
         # The compact panel can be taller than the available workspace in a
         # short window. Scroll the complete panel instead of compressing its
         # editor and navigation controls into overlapping rectangles.
@@ -3700,16 +3817,17 @@ class WorkbenchView(QWidget):
         self._terms_blocked = False
         self._sync_academic_tabs()
 
-        body = QVBoxLayout()
-        body.setContentsMargins(20, 12, 20, 12)
-        body.setSpacing(10)
-        body.addWidget(self.terms_gate)
-        body.addWidget(self.tabs, 1)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(header_card)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        body = QVBoxLayout()
         layout.addLayout(body, 1)
+        body.setContentsMargins(20, 12, 20, 12)
+        body.setSpacing(10)
+        body.addWidget(self.terms_gate)
+        body.addWidget(self.tabs, 1)
 
         # ⌘↩：编辑框里由编辑框自己接住（保存并进入下一段）；焦点在表格时是"下一段"。
         next_shortcut = QAction(i18n.tr('下一段'), self)
@@ -3732,7 +3850,7 @@ class WorkbenchView(QWidget):
         self.show_page("translate")
         self.job_id = job_id
         self.config = config
-        self._state = state
+        self._replace_state(state)
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._snapshots = snapshots
@@ -3785,6 +3903,52 @@ class WorkbenchView(QWidget):
                 and self._outline_available():
             self._set_left_panel("outline", True)
 
+    # -- projection-domain revisions -------------------------------------
+    def _replace_state(self, state: dict) -> None:
+        """Replace the whole state; every derived cache becomes invalid.
+
+        This is the **only** way to change ``_state`` (``_state`` itself is a
+        plain attribute: assigning it has no side effect, and
+        ``scripts/check_workbench_domain_cache.py`` rejects a direct
+        ``self._state = ...`` outside this method).  Keeping the invalidation
+        explicit instead of hidden in a property setter means the cost is
+        visible at every call site -- which is exactly where the regression
+        lived: the whole-state path also runs when *nothing* changed (the 1 s
+        poll right after a save, the fallback for a task without a journal),
+        and it hands back the very same state object.  Bumping every domain
+        there made all panels rebuild the whole document for no new data.
+
+        So: only a *different* state object invalidates the projections.  The
+        incremental path never gets here (it bumps only the domains in
+        ``DeltaBatch.domains``); a whole-state reload produces a new object and
+        invalidates everything, exactly like the old ``id(state)`` key did.
+
+        Besides the domain revisions this clears the whole-document blocking
+        count, which is not a projection domain and would otherwise survive a
+        task switch (``load``) with the previous document's findings.
+        """
+        if state is self._state:
+            return                      # same object: nothing derived changed
+        self._state = state
+        revisions = getattr(self, "_domain_revs", None)
+        if revisions is not None:
+            for name in revisions:
+                revisions[name] += 1
+        self._blocking_cached = None
+
+    def _domain_version(self, name: str) -> int:
+        """Monotonic revision of one projection domain."""
+        return self._domain_revs.get(name, 0)
+
+    def _bump_domains(self, names) -> None:
+        for name in names or ():
+            if name in self._domain_revs:
+                self._domain_revs[name] += 1
+
+    def domain_versions(self) -> dict[str, int]:
+        """Snapshot of every domain revision (diagnostics and tests)."""
+        return dict(self._domain_revs)
+
     def apply(self, job_id: str, state: dict, rows: list[adapter.SegmentRow],
               runtime: dict, snapshots: list[dict],
               *, refresh_delivery: bool = False, prepared: dict | None = None,
@@ -3799,7 +3963,7 @@ class WorkbenchView(QWidget):
         itself, exactly as before.
         """
         self.job_id = job_id
-        self._state = state
+        self._replace_state(state)
         self.row_delegate.source_language = str(state.get("source_lang") or "")
         self.row_delegate.target_language = str(state.get("target_lang") or "")
         self._last_runtime = runtime or {}
@@ -3825,7 +3989,7 @@ class WorkbenchView(QWidget):
                     or not self._notes_loaded_at_state(state):
                 self._notes = adapter.segment_notes(job_id) if job_id else {}
                 self._notes_job = job_id
-                self._notes_state = id(state)
+                self._notes_state = self._domain_version("details")
             self._render_segments()
             self._grid_source = (rows, state, job_id, grid_key)
         # 翻译范围入口跟着工作列表走：只要段落已提取（译前或运行中）就可以
@@ -3846,6 +4010,133 @@ class WorkbenchView(QWidget):
         self._render_qa()
         self._render_activity()
         self._render_details()
+        self._render_stage()
+
+    # ================= 增量应用（A1 / #324 P2） =================
+    def apply_delta(self, job_id: str, rows, positions, *, counts=None,
+                    runtime: dict | None = None, domains=(),
+                    counters=None) -> bool:
+        """Apply one committed batch without rebuilding the grid.
+
+        ``rows``/``positions`` are the read model's changed rows (absolute row
+        positions).  Only those rows are replaced and repainted; the counters
+        come from the incremental index.  Returns ``False`` when the delta does
+        not line up with the rows on screen -- the caller must then fall back to
+        the whole-state path (never guess).
+
+        Deliberately **not** refreshed here: the whole-document projections
+        (review queue, delivery gate, terms, follow-up, academic pages).  They
+        keep their own slower cadence and are applied by
+        :meth:`apply_projection`; doing them per batch was the freeze this
+        change removes.
+        """
+        if job_id != self.job_id:
+            return False
+        positions = [int(position) for position in positions]
+        rows = list(rows)
+        if positions and not self._apply_row_delta(rows, positions):
+            return False
+        self._bump_domains(set(domains or ()))
+        if counters or (set(domains or ()) & {"review", "followup", "delivery"}):
+            self._blocking_cached = None
+        if positions:
+            if self._filters_active():
+                # A user filter is on: keeping the visible subset correct is a
+                # whole-table recompute.  It is the documented exception -- it
+                # only happens while the user has a filter enabled.
+                self._render_segments()
+            else:
+                self._queue_segment_paint(positions=positions)
+                self._sync_drafts_banner()
+                self._sync_word_count(counts)
+                changed = set(positions)
+                if self._current_index in changed and not self.has_unsaved_editor_text():
+                    self._render_segment_detail()
+                if changed & set(self.selected_indexes() or [self._current_index]):
+                    self._sync_selection_count()
+        elif counts is not None:
+            self._sync_word_count(counts)
+        if runtime is not None:
+            self._last_runtime = dict(runtime)
+            self._render_runtime()
+        domain_set = set(domains or ())
+        if "stage" in domain_set or counters:
+            self._render_stage()
+        self._render_activity()
+        return True
+
+    def _apply_row_delta(self, rows: list, positions: list[int]) -> bool:
+        """Replace already-visible rows in place; no membership re-scan."""
+        all_rows = self._all_rows
+        visible = self._rows
+        unfiltered = not self._filters_active()
+        replacements = []
+        for position, row in zip(positions, rows):
+            overlaid = self._with_pending_save(row)
+            if position < len(all_rows):
+                all_rows[position] = overlaid
+            elif position == len(all_rows):
+                all_rows.append(overlaid)
+            else:
+                return False            # a gap: the caller must resync
+            replacements.append(overlaid)
+        if unfiltered:
+            for position, overlaid in zip(positions, replacements):
+                if position < len(visible):
+                    visible[position] = overlaid
+                elif position == len(visible):
+                    visible.append(overlaid)
+                else:
+                    return False
+        return True
+
+    def apply_projection(self, job_id: str, state: dict, runtime: dict, snapshots,
+                         *, models: dict | None = None,
+                         refresh_delivery: bool = False) -> None:
+        """Refresh the slow, whole-document projections only.
+
+        The grid keeps the rows the incremental path already applied; setting a
+        fresh authoritative state object is what invalidates the panels' own
+        caches (``_render_*`` keys), exactly as before.
+        """
+        self.job_id = job_id
+        self._replace_state(state)
+        self.row_delegate.source_language = str(state.get("source_lang") or "")
+        self.row_delegate.target_language = str(state.get("target_lang") or "")
+        self._last_runtime = runtime or {}
+        self._snapshots = snapshots or []
+        self._models = dict(models or {})
+        self._delivery_owned_by_background = models is not None
+        self._render_excluded()
+        self._render_outline()
+        self._render_delivery(force=refresh_delivery)
+        self._render_runtime()
+        self._render_segment_detail()
+        self._render_review()
+        self._render_terms()
+        self._render_followup()
+        self._sync_academic_tabs()
+        self._render_report()
+        self._render_cases()
+        self._render_qa()
+        self._render_activity()
+        self._render_details()
+        self._render_stage()
+        # The body is whichever of prepare / grid / empty card applies, and the
+        # grid keeps the rows the incremental path applied: the segments are not
+        # rebuilt here (that is O(n); ``_render_segments`` owns it).  But a start
+        # that arrived on this path only changes ``started``, which is exactly the
+        # flag this decides -- skipping it left the prepare sheet in front of a
+        # running task until some unrelated forced refresh.
+        self._sync_segment_placeholder()
+
+    def apply_runtime(self, runtime: dict | None) -> None:
+        """One cheap tick: progress/status only (used while no batch arrived)."""
+        if runtime is None:
+            return
+        self._bump_domains(("runtime", "stage"))
+        self._last_runtime = dict(runtime)
+        self._render_runtime()
         self._render_stage()
 
     # ================= 阶段与页面导航 =================
@@ -4072,9 +4363,9 @@ class WorkbenchView(QWidget):
         """每条术语在全文原文里出现在几段（按任务状态缓存）。"""
         from . import term_highlight
 
-        key = id(self._state)
-        if self._term_counts.get("__state__") != key:
-            self._term_counts = {"__state__": key}
+        key = self._domain_version("terms")
+        if self._term_counts.get("__domain__") != key:
+            self._term_counts = {"__domain__": key}
         counts = {}
         for term in terms:
             source = str(term.get("source") or "")
@@ -4252,7 +4543,7 @@ class WorkbenchView(QWidget):
         self.term_focus_bar.setVisible(found is not None)
         if was_visible != (found is not None):
             # 定位条出现 / 消失会改变网格高度：当前编辑的行不能因此滑出视野。
-            QTimer.singleShot(0, self._keep_active_row_visible)
+            QTimer.singleShot(0, self, self._keep_active_row_visible)
         self._sync_escape()
         self._update_term_markers()
         self.segment_list.viewport().update()
@@ -4537,7 +4828,7 @@ class WorkbenchView(QWidget):
         if self.select_segment(first):
             self._sync_outline_highlight()
             self.focus_editor()
-            QTimer.singleShot(0, lambda: self._keep_active_row_visible()
+            QTimer.singleShot(0, self, lambda: self._keep_active_row_visible()
                               if self._current_index == first else None)
             return
         if self._filters_active():
@@ -4548,7 +4839,7 @@ class WorkbenchView(QWidget):
             if self.select_segment(first):
                 self._sync_outline_highlight()
                 self.focus_editor()
-                QTimer.singleShot(0, lambda: self._keep_active_row_visible()
+                QTimer.singleShot(0, self, lambda: self._keep_active_row_visible()
                                   if self._current_index == first else None)
                 return
         self.set_task_notice(i18n.tr('「{v0}」当前无法定位', v0=title), error=True)
@@ -4663,7 +4954,7 @@ class WorkbenchView(QWidget):
         split.setSizes(self._translation_column_sizes())
         # The grid's columns are re-laid out after this returns; the inline
         # editor must follow them, or it hangs past the grid's new right edge.
-        QTimer.singleShot(0, self._place_inline_editor)
+        QTimer.singleShot(0, self, self._place_inline_editor)
 
     def inspector_min_width(self) -> int:
         """操作台完整显示所需的宽度：内容的最小宽度 + 纵向滚动条。"""
@@ -4762,6 +5053,22 @@ class WorkbenchView(QWidget):
                           ("qa", i18n.tr('合规与 QA'))))
         self.stage_bar.set_more_pages(pages)
 
+    def blocking_count(self) -> int:
+        """Number of unresolved blocking findings, cached between deltas.
+
+        ``blocking_items()`` walks the whole findings list (O(document)).  The
+        stage bar only needs its length, and a delta that does not touch
+        review/follow-up/delivery cannot change that length -- so this is the
+        one whole-document scan the per-batch path used to pay (1k 0.75 ms vs
+        10k 2.08 ms in the A1 measurements).  Invalidated by whole-state apply
+        and by a delta that reports those domains.
+        """
+        cached = getattr(self, "_blocking_cached", None)
+        if cached is None:
+            cached = len(self.blocking_items())
+            self._blocking_cached = cached
+        return cached
+
     def blocking_items(self) -> list[dict]:
         """尚未解决的**阻断级**检查项——交付门禁、审校步骤、页头与交付页共用的那一份。
 
@@ -4777,12 +5084,12 @@ class WorkbenchView(QWidget):
 
     def _render_stage(self) -> None:
         """用审校投影、交付预检与运行视图重算阶段步骤条与"下一步"。"""
-        blocking = self.blocking_items()
+        blocking = self.blocking_count()
         view = stage_model.stage_view(
             started=self._task_started(), runtime=self._last_runtime,
             state=self._state, review=self.review_panel.view(),
             delivery=self._delivery_preview, terms_blocked=self._terms_blocked,
-            blocking=len(blocking))
+            blocking=blocking)
         self.stage_bar.set_stages(view)
         # 术语、检查与修复、任务详情与"更多"里的页面只对已经开始的任务有意义：
         # 准备阶段没有术语表、没有记录。
@@ -4839,7 +5146,7 @@ class WorkbenchView(QWidget):
         # 报告页要读取运行视图与多份学术产物：随状态对象变化时才重算，
         # 并且只在它的页签可见时算（避免没有打开学术模式的人为它付出代价）。
         status = str((self._last_runtime or {}).get("status") or "")
-        key = (self.job_id, id(self._state), status)
+        key = (self.job_id, self._domain_version("academic"), status)
         if key == self._report_key:
             return
         self._report_key = key
@@ -4854,7 +5161,7 @@ class WorkbenchView(QWidget):
     def _render_cases(self) -> None:
         if not self.job_id or not self.academic_visible():
             return
-        key = (self.job_id, id(self._state))
+        key = (self.job_id, self._domain_version("academic"))
         if key == self._cases_key:
             return
         self._cases_key = key
@@ -4868,7 +5175,7 @@ class WorkbenchView(QWidget):
     def _render_qa(self) -> None:
         if not self.job_id or not self.academic_visible():
             return
-        key = (self.job_id, id(self._state))
+        key = (self.job_id, self._domain_version("academic"))
         if key == self._qa_key:
             return
         self._qa_key = key
@@ -4892,8 +5199,8 @@ class WorkbenchView(QWidget):
             pass
 
     def _render_followup(self) -> None:
-        """收尾页随任务状态对象重算（它要读检查点与实体登记，不放在每秒轮询里）。"""
-        key = (self.job_id, id(self._state))
+        """收尾页只在 follow-up 域脏时重算（检查点/实体登记，不进每秒轮询）。"""
+        key = (self.job_id, self._domain_version("followup"))
         if key == self._followup_key:
             return
         self._followup_key = key
@@ -4934,7 +5241,7 @@ class WorkbenchView(QWidget):
             return
         if not self.details_popover.isVisible():
             return
-        key = (self.job_id, id(self._state))
+        key = (self.job_id, self._domain_version("details"))
         if key == self._details_key:
             return
         self._details_key = key
@@ -4966,7 +5273,7 @@ class WorkbenchView(QWidget):
         self.activity_panel.set_rows(rows[-50:], signature=signature)
 
     def _render_terms(self, *, force: bool = False) -> None:
-        key = (self.job_id, id(self._state))
+        key = (self.job_id, self._domain_version("terms"))
         if key == self._terms_key and not force:
             return
         # The full table counts every term's occurrences across the document
@@ -5053,6 +5360,7 @@ class WorkbenchView(QWidget):
         dialog.resize(1050, 680)
         layout = QVBoxLayout(dialog)
         header = QHBoxLayout()
+        layout.addLayout(header)
         header.addWidget(QLabel(i18n.tr('当前审校队列中的术语问题：{v0}', v0=len(items))))
         header.addStretch(1)
         header.addWidget(QLabel(i18n.tr('问题类型')))
@@ -5063,7 +5371,6 @@ class WorkbenchView(QWidget):
         for code, label in TERMINOLOGY_CONFLICT_KINDS:
             kind_filter.addItem(f"{i18n.tr(label)} · {counts[code]}", code)
         header.addWidget(kind_filter)
-        layout.addLayout(header)
         table = QTableWidget(0, 6)
         table.setHorizontalHeaderLabels([
             i18n.tr('类型'), i18n.tr('源术语'), i18n.tr('问题'),
@@ -5085,6 +5392,7 @@ class WorkbenchView(QWidget):
         detail.setMaximumHeight(180)
         layout.addWidget(detail)
         buttons = QHBoxLayout()
+        layout.addLayout(buttons)
         edit_term = QPushButton(i18n.tr('编辑相关术语'))
         locate = QPushButton(i18n.tr('定位段落'))
         review = QPushButton(i18n.tr('重新审校'))
@@ -5092,7 +5400,6 @@ class WorkbenchView(QWidget):
         revalidate = QPushButton(i18n.tr('重新验证术语表'))
         for button in (edit_term, locate, review, resolve, revalidate):
             buttons.addWidget(button)
-        layout.addLayout(buttons)
         action = []
         visible_items: list[dict] = []
 
@@ -5198,8 +5505,8 @@ class WorkbenchView(QWidget):
         self._render_terms(force=True)
 
     def _render_review(self) -> None:
-        """审校页只在状态真的换了对象时重算（队列要过一遍原文质量门禁）。"""
-        key = (self.job_id, id(self._state))
+        """审校页只在 review 域脏时重算（队列要过一遍原文质量门禁）。"""
+        key = (self.job_id, self._domain_version("review"))
         if key == self._review_key:
             return
         self._review_key = key
@@ -5280,7 +5587,7 @@ class WorkbenchView(QWidget):
         self.search_edit.setText(text)
 
     def _filters_changed(self, *_args) -> None:
-        QTimer.singleShot(0, self._sync_context_visibility)
+        QTimer.singleShot(0, self, self._sync_context_visibility)
         self._search = self.search_edit.text()
         self._only_edited = self.only_edited_box.isChecked()
         self._only_issues = self.only_issues_box.isChecked()
@@ -5566,13 +5873,34 @@ class WorkbenchView(QWidget):
         model.dataChanged.emit(model.index(first, 0),
                                model.index(last, model.columnCount() - 1))
 
-    def _queue_segment_paint(self, *, schedule_heights: bool = True) -> None:
+    def _queue_segment_paint(self, *, schedule_heights: bool = True,
+                             positions: list[int] | None = None) -> None:
         """先把屏幕内的行画上，其余的行在 4 ms 的片段里补。
 
         ``schedule_heights`` 为 False 时只画不排行高（调用方随后会整表排一次）。
         同一个行集合、同一组列宽下，只有内容变了的行才可能换行高；这些行在画完
         之后一起排队，不用整表重算。
+
+        ``positions`` 给出"只重画这些行"（A1 增量批）：一次批提交只碰它提交的段，
+        所以这里不能像整份重建那样扫全表。正在进行的整表补画不会被取消——它的
+        缓存比较会让已画过的行自动跳过。
         """
+        if positions is not None:
+            self._paint_schedules_heights = schedule_heights
+            self._repainted = []
+            valid = [position for position in positions
+                     if 0 <= position < len(self._rows)]
+            if not valid:
+                self._flush_painted_heights()
+                return
+            first, last = min(valid), max(valid)
+            with self._quiet_segment_model() as model:
+                for position in valid:
+                    if self._paint_row(position, self._rows[position]):
+                        self._repainted.append(position)
+            self._notify_painted_range(model, first, last + 1)
+            self._flush_painted_heights()
+            return
         # Keep the final model dimensions stable for Qt accessibility. Only cell
         # contents are filled in batches; selection always uses the full row set.
         self._paint_timer.stop()
@@ -5634,12 +5962,19 @@ class WorkbenchView(QWidget):
         positions, self._repainted = self._repainted, []
         self._schedule_row_heights(positions=positions)
 
-    def _sync_word_count(self) -> None:
-        """整份文档的字数与进度（按原文计）。状态没换就不重算。"""
+    def _sync_word_count(self, count=None) -> None:
+        """整份文档的字数与进度（按原文计）。状态没换就不重算。
+
+        ``count`` 是增量路径算好的 ``DocumentCount``（A1）：给出时直接采用，
+        不再对全部行做一次 ``document_count``。
+        """
         from folith import word_count
 
-        key = (self.job_id, id(self._state), len(self._all_rows))
-        if key != self._word_count_key:
+        key = (self.job_id, self._domain_version("counts"), len(self._all_rows))
+        if count is not None:
+            self._word_count = count
+            self._word_count_key = key
+        elif key != self._word_count_key:
             self._word_count_key = key
             count = self._models.get("word_count")
             if count is None:
@@ -5666,7 +6001,13 @@ class WorkbenchView(QWidget):
         indexes = set(self.selected_indexes())
         if len(indexes) <= 1 and self._current_index >= 0:
             indexes = {self._current_index}
-        rows = [row for row in self._all_rows if row.index in indexes]
+        # Row.index is its position in _all_rows (both the pairs and the paras
+        # branch build it that way), so a selection lookup is O(selected), not a
+        # whole-book scan.  The scan showed up as the residual per-batch growth
+        # (1k 0.76 ms -> 10k 2.0 ms) whenever the committed batch touched the
+        # current row.
+        rows = [self._all_rows[position] for position in sorted(indexes)
+                if 0 <= position < len(self._all_rows)]
         if not rows:
             self.word_selection_label.setText("")
             return
@@ -5838,7 +6179,8 @@ class WorkbenchView(QWidget):
             self.progress.setValue(0)
         tone, line = run_status_view(runtime, note=note, running=running,
                                      completed=completed, total=total,
-                                     unit=str(stage_progress.get("unit") or ""))
+                                     unit=str(stage_progress.get("unit") or ""),
+                                     job_id=str(getattr(self, "job_id", "") or ""))
         # F2：这一次运行跑完了，不等于这个任务做完了。只要交付门禁还挂着未解决的
         # 阻断项，页头就不能说「已完成」——它与交付页、审校步骤条必须同一个数。
         blocking = self.blocking_items()
@@ -5974,6 +6316,14 @@ class WorkbenchView(QWidget):
         now = time.monotonic()
         prepared = getattr(self, "_prepared_delivery", None)
         self._prepared_delivery = None
+        # 键只放"面板上看得见的内容"，不要放 `_domain_version("delivery")`：
+        # `_replace_state()` 收到新的 state 对象时会给**全部 12 个域**各 +1，
+        # 而完成后每一次编辑落盘都是一个新对象。域版本挂进这个键，`unchanged`
+        # 就永远是 False，下面两道时间闸门（5 s 与 1 s 地板）同时失效，整个
+        # 全文档交付校验退化成"每次编辑一次"（P0-5x：20 次驱动校验 20 次 vs
+        # main 的 5 次；刷新均值 391.6 ms vs 288.2 ms）。后台
+        # `_DeliveryPreviewCache` + `_maybe_slow_projection` 已经按自己的 5 s
+        # 地板重算并回传 `models["delivery"]`，GUI 线程这次同步重算只是重复。
         key = (self.job_id, len(self._snapshots),
                str(self._state.get("delivery_status") or ""))
         unchanged = self._delivery_rendered and key == self._delivery_key
@@ -6452,7 +6802,7 @@ class WorkbenchView(QWidget):
         self._sync_outline_highlight()
 
     def _load_selected_row(self, position: int) -> None:
-        QTimer.singleShot(0, self._sync_term_focus_label)
+        QTimer.singleShot(0, self, self._sync_term_focus_label)
         if position < 0 or position >= len(self._rows):
             self._activate_position(-1)
             return
@@ -7001,7 +7351,7 @@ class WorkbenchView(QWidget):
         self.findReplaceRequested.emit()
 
     def _notes_loaded_at_state(self, state: dict) -> bool:
-        return getattr(self, "_notes_state", None) == id(state)
+        return getattr(self, "_notes_state", None) == self._domain_version("details")
 
     def _save_note(self, text: str) -> None:
         if not self.job_id or not self._loaded_uid:

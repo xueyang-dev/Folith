@@ -218,16 +218,17 @@ class EngineDialog(QDialog):
             self.stack.addWidget(page)
         bar.addStretch(1)
 
-        body = QVBoxLayout()
-        body.setContentsMargins(20, theme_module.SPACE["sm"], 20, theme_module.SPACE["md"])
-        body.setSpacing(theme_module.SPACE["sm"])
-        body.addWidget(self.stack, 1)
-        body.addWidget(self._status)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(toolbar)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        body = QVBoxLayout()
         layout.addLayout(body, 1)
+        body.setContentsMargins(20, theme_module.SPACE["sm"], 20, theme_module.SPACE["md"])
+        body.setSpacing(theme_module.SPACE["sm"])
+        body.addWidget(self.stack, 1)
+        body.addWidget(self._status)
 
         # 立即生效：改动合并 250 ms 再落盘（拖动、连续输入不会每一下都写一次）。
         self._defaults_timer = QTimer(self)
@@ -1201,6 +1202,8 @@ class DiagnosticsDialog(QDialog):
         heading.setObjectName("cardTitle")
         summary_layout.addWidget(heading)
         facts = QFormLayout()
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        summary_layout.addLayout(facts)
         # 标签左对齐：右对齐的窄标签列会让"版本/运行方式"这些两字标签浮在中间，
         # 值列起点也随标签长度跳动；左对齐后这一栏才像一张事实表。
         facts.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -1251,7 +1254,6 @@ class DiagnosticsDialog(QDialog):
             if label == "支持范围" and support_tip:
                 value_label.setToolTip(support_tip)
             facts.addRow(style_module.field_label(label), value_label)
-        summary_layout.addLayout(facts)
 
         # 状态标签：导出结果与失败原因都要有落点（脚本化运行不弹框）。
         self._status = QLabel("")
@@ -1272,13 +1274,6 @@ class DiagnosticsDialog(QDialog):
         self.copy_button.clicked.connect(self._copy)
         self.close_button.clicked.connect(self.accept)
 
-        buttons = QHBoxLayout()
-        for widget in (self.export_button, self.reveal_button,
-                       self.copy_button):
-            buttons.addWidget(widget)
-        buttons.addStretch(1)
-        buttons.addWidget(self.close_button)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(12)
@@ -1288,7 +1283,14 @@ class DiagnosticsDialog(QDialog):
         layout.addWidget(style_module.SectionLabel(i18n.tr('完整报告（JSON）')))
         layout.addWidget(view, 1)
         layout.addWidget(self._status)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        buttons = QHBoxLayout()
         layout.addLayout(buttons)
+        for widget in (self.export_button, self.reveal_button,
+                       self.copy_button):
+            buttons.addWidget(widget)
+        buttons.addStretch(1)
+        buttons.addWidget(self.close_button)
 
     def _copy(self) -> None:
         import json
@@ -1373,7 +1375,11 @@ class SegmentSplitDialog(QDialog):
         self.source_b = QPlainTextEdit(source_b)
         self.target_a = QPlainTextEdit(target_a)
         self.target_b = QPlainTextEdit(target_b)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         grid = QGridLayout()
+        layout.addLayout(grid, 1)
         grid.setHorizontalSpacing(12)
         for column, (title_a, widget_a, title_b, widget_b) in enumerate((
                 (i18n.tr('第一段原文'), self.source_a, i18n.tr('第二段原文'), self.source_b),
@@ -1388,9 +1394,6 @@ class SegmentSplitDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addWidget(hint)
-        layout.addLayout(grid, 1)
         layout.addWidget(buttons)
 
     def parts(self) -> dict:
@@ -1511,15 +1514,16 @@ class FindReplaceDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('关闭'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        form = QFormLayout()
-        form.addRow(i18n.tr('查找'), self.find_edit)
-        form.addRow(i18n.tr('替换为'), self.replace_edit)
         hint = QLabel(i18n.tr('只查找和替换译文。替换的段落记为人工修改，需要重新审校。'))
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         layout = QVBoxLayout(self)
         layout.addWidget(hint)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        form = QFormLayout()
         layout.addLayout(form)
+        form.addRow(i18n.tr('查找'), self.find_edit)
+        form.addRow(i18n.tr('替换为'), self.replace_edit)
         layout.addWidget(self.case_box)
         layout.addWidget(self.protect_box)
         layout.addWidget(self.summary)
@@ -1608,14 +1612,15 @@ class TermEditDialog(QDialog):
             '可以在下一步逐段确认替换。'))
         hint.setObjectName("hint")
         hint.setWordWrap(True)
-        form = QFormLayout()
-        form.addRow(i18n.tr('首选译名'), self.preferred_edit)
-        form.addRow(i18n.tr('禁用译名'), self.forbidden_edit)
-        form.addRow(i18n.tr('状态'), self.status_box)
         layout = QVBoxLayout(self)
         layout.addWidget(hint)
         layout.addWidget(source_label)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        form = QFormLayout()
         layout.addLayout(form)
+        form.addRow(i18n.tr('首选译名'), self.preferred_edit)
+        form.addRow(i18n.tr('禁用译名'), self.forbidden_edit)
+        form.addRow(i18n.tr('状态'), self.status_box)
         layout.addWidget(self.preview_box)
         layout.addWidget(buttons)
         self.preferred_edit.textChanged.connect(self._sync)
@@ -1696,7 +1701,17 @@ class TermReplaceDialog(QDialog):
                                            | Qt.ItemFlag.ItemIsEnabled))
             self.preview.addItem(item)
         self.preview.itemChanged.connect(self._sync)
+        hint = QLabel(i18n.tr('替换的段落记为人工修改，需要重新审校；人工改写或人工确认过的段落不会被替换。'))
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        layout = QVBoxLayout(self)
+        layout.addWidget(heading)
+        layout.addWidget(self.summary)
+        layout.addWidget(hint)
+        layout.addWidget(self.preview, 1)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         select_row = QHBoxLayout()
+        layout.addLayout(select_row)
         self.all_button = QPushButton(i18n.tr('全选'))
         self.none_button = QPushButton(i18n.tr('全不选'))
         select_row.addWidget(self.all_button)
@@ -1710,15 +1725,6 @@ class TermReplaceDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('关闭'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        hint = QLabel(i18n.tr('替换的段落记为人工修改，需要重新审校；人工改写或人工确认过的段落不会被替换。'))
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
-        layout = QVBoxLayout(self)
-        layout.addWidget(heading)
-        layout.addWidget(self.summary)
-        layout.addWidget(hint)
-        layout.addWidget(self.preview, 1)
-        layout.addLayout(select_row)
         layout.addWidget(buttons)
         self.ok_button.clicked.connect(lambda: self.accept())
         buttons.accepted.connect(self.accept)
@@ -1782,7 +1788,11 @@ class DocumentProfileDialog(QDialog):
                       else i18n.tr('开始翻译前保存，翻译会直接使用这里的画像。'))
         hint.setObjectName("hint")
         hint.setWordWrap(True)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         form = QFormLayout()
+        layout.addLayout(form)
         self.fields: dict[str, QWidget] = {}
         for key, label in adapter.PROFILE_FIELDS:
             if key == "style_constraints":
@@ -1798,9 +1808,6 @@ class DocumentProfileDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(i18n.tr('取消'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addWidget(hint)
-        layout.addLayout(form)
         layout.addWidget(buttons)
 
     def values(self) -> dict:

@@ -126,7 +126,12 @@ class OutlinePanel(QWidget):
         close.clicked.connect(self.closeRequested.emit)
         self.close_button = close
 
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(theme_module.SPACE["xs"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         head = QHBoxLayout()
+        layout.addLayout(head)
         head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(title, 1)
         edit = QToolButton()
@@ -172,10 +177,6 @@ class OutlinePanel(QWidget):
         self.tree.itemClicked.connect(self._activated)
         self.tree.itemActivated.connect(self._activated)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(theme_module.SPACE["xs"])
-        layout.addLayout(head)
         layout.addWidget(self.summary)
         layout.addWidget(self.status)
         layout.addWidget(self.empty)
@@ -231,10 +232,12 @@ class OutlinePanel(QWidget):
         self.status.setVisible(bool(status))
 
     def clear(self) -> None:
+        # Drop the Python item wrappers before Qt deletes the C++ items: a wrapper that
+        # outlives its item is the stale-wrapper SIGSEGV seed.
+        self._items = {}
         self.tree.clear()
         self._nodes = {}
         self._mapping = {}
-        self._items = {}
         self._children = {}
         self._capped_parent = {}
         self._paths = {}
@@ -271,8 +274,9 @@ class OutlinePanel(QWidget):
 
     # ---- tree construction -------------------------------------------
     def _rebuild(self, outline: dict, nodes: list[dict]) -> None:
-        self.tree.clear()
+        # Drop the Python item wrappers before Qt deletes the C++ items (see clear()).
         self._items = {}
+        self.tree.clear()
         self._pending = set()
         self._nodes = {str(node["id"]): node for node in nodes}
         depth: dict[str, int] = {}

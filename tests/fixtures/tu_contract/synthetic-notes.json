@@ -1,0 +1,207 @@
+{
+  "name": "synthetic-notes",
+  "description": "注释与上下文组：必须按原样保全并在导出时写回，不得静默丢弃。",
+  "provenance": {
+    "origin": "synthetic",
+    "created": "2026-10-26",
+    "generator": "tests/fixtures/tu_contract/generate_fixtures.py",
+    "issue": 143,
+    "license": "与本仓库同许可",
+    "notes": "仓库内合成的最小结构样本，不含真实项目内容，无需外部授权。"
+  },
+  "source_tree": {
+    "name": "xliff",
+    "attrs": {
+      "version": "1.2"
+    },
+    "text": null,
+    "children": [
+      {
+        "name": "file",
+        "attrs": {
+          "source-language": "en",
+          "target-language": "zh-CN",
+          "datatype": "plaintext"
+        },
+        "text": null,
+        "children": [
+          {
+            "name": "body",
+            "attrs": {},
+            "text": null,
+            "children": [
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "30"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Document title.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "文档标题。",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "note",
+                    "attrs": {
+                      "priority": "1"
+                    },
+                    "text": "Title of the source document",
+                    "children": []
+                  },
+                  {
+                    "name": "context-group",
+                    "attrs": {
+                      "name": "orig"
+                    },
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "context",
+                        "attrs": {
+                          "context-type": "sourcefile"
+                        },
+                        "text": "en/source.docx",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "units": [
+    {
+      "external_id": "30",
+      "source_text": "Document title.",
+      "target_text": "文档标题。",
+      "status": "translated",
+      "tags": []
+    }
+  ],
+  "exported_tree": {
+    "name": "xliff",
+    "attrs": {
+      "version": "1.2"
+    },
+    "text": null,
+    "children": [
+      {
+        "name": "file",
+        "attrs": {
+          "source-language": "en",
+          "target-language": "zh-CN",
+          "datatype": "plaintext"
+        },
+        "text": null,
+        "children": [
+          {
+            "name": "body",
+            "attrs": {},
+            "text": null,
+            "children": [
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "30"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Document title.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "文档标题。",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "note",
+                    "attrs": {
+                      "priority": "1"
+                    },
+                    "text": "Title of the source document",
+                    "children": []
+                  },
+                  {
+                    "name": "context-group",
+                    "attrs": {
+                      "name": "orig"
+                    },
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "context",
+                        "attrs": {
+                          "context-type": "sourcefile"
+                        },
+                        "text": "en/source.docx",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "preserved": [
+      {
+        "location": "/xliff[0]/file[0]/body[0]/trans-unit[0]/note[0]",
+        "payload": "{\"attrs\": {\"priority\": \"1\"}, \"children\": [], \"name\": \"note\", \"text\": \"Title of the source document\"}"
+      },
+      {
+        "location": "/xliff[0]/file[0]/body[0]/trans-unit[0]/context-group[0]",
+        "payload": "{\"attrs\": {\"name\": \"orig\"}, \"children\": [{\"attrs\": {\"context-type\": \"sourcefile\"}, \"children\": [], \"name\": \"context\", \"text\": \"en/source.docx\"}], \"name\": \"context-group\", \"text\": null}"
+      }
+    ]
+  }
+}

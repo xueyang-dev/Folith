@@ -1,0 +1,224 @@
+{
+  "name": "synthetic-locked",
+  "description": "locked 段（translate=no）：适配器必须登记进排除账本，不生成译文。",
+  "provenance": {
+    "origin": "synthetic",
+    "created": "2026-10-26",
+    "generator": "tests/fixtures/tu_contract/generate_fixtures.py",
+    "issue": 143,
+    "license": "与本仓库同许可",
+    "notes": "仓库内合成的最小结构样本，不含真实项目内容，无需外部授权。"
+  },
+  "source_tree": {
+    "name": "xliff",
+    "attrs": {
+      "version": "1.2"
+    },
+    "text": null,
+    "children": [
+      {
+        "name": "file",
+        "attrs": {
+          "source-language": "en",
+          "target-language": "zh-CN",
+          "datatype": "plaintext"
+        },
+        "text": null,
+        "children": [
+          {
+            "name": "body",
+            "attrs": {},
+            "text": null,
+            "children": [
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "20",
+                  "translate": "no"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Locked boilerplate.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "21"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Translatable sentence.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "units": [
+    {
+      "external_id": "20",
+      "source_text": "Locked boilerplate.",
+      "target_text": "",
+      "status": "locked",
+      "tags": []
+    },
+    {
+      "external_id": "21",
+      "source_text": "Translatable sentence.",
+      "target_text": "",
+      "status": "untranslated",
+      "tags": []
+    }
+  ],
+  "exported_tree": {
+    "name": "xliff",
+    "attrs": {
+      "version": "1.2"
+    },
+    "text": null,
+    "children": [
+      {
+        "name": "file",
+        "attrs": {
+          "source-language": "en",
+          "target-language": "zh-CN",
+          "datatype": "plaintext"
+        },
+        "text": null,
+        "children": [
+          {
+            "name": "body",
+            "attrs": {},
+            "text": null,
+            "children": [
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "20",
+                  "translate": "no"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Locked boilerplate.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "trans-unit",
+                "attrs": {
+                  "id": "21"
+                },
+                "text": null,
+                "children": [
+                  {
+                    "name": "source",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "Translatable sentence.",
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "name": "target",
+                    "attrs": {},
+                    "text": null,
+                    "children": [
+                      {
+                        "name": "g",
+                        "attrs": {},
+                        "text": "",
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -156,7 +156,19 @@ class TermsPanel(QWidget):
         self.current_segment_box.toggled.connect(self._fill_table)
         # 复选框的实际宽度比 sizeHint 宽，按整框排，否则折行算错、末字被裁掉。
         self.conflict_box.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect, True)
+        editor_card = _TermsEditorCard()
+        editor_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        editor_layout = QVBoxLayout(editor_card)
+        editor_layout.setContentsMargins(16, 14, 16, 14)
+        editor_layout.setSpacing(10)
+        self.details_button = QPushButton(i18n.tr('详细属性'))
+        self.details_button.setCheckable(True)
+        self.details_button.toggled.connect(self._sync_details)
+        editor_layout.addWidget(self.details_button)
+
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         form = QFormLayout()
+        editor_layout.addLayout(form)
         form.setHorizontalSpacing(12)
         # macOS 默认输入框停在建议宽度：窄栏里留一大块空白。
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -237,16 +249,6 @@ class TermsPanel(QWidget):
                        self.lock_selected_button, self.reject_selected_button,
                        self.lock_all_button, self.undo_form_button):
             edit_actions.addWidget(widget)
-        editor_card = _TermsEditorCard()
-        editor_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        editor_layout = QVBoxLayout(editor_card)
-        editor_layout.setContentsMargins(16, 14, 16, 14)
-        editor_layout.setSpacing(10)
-        self.details_button = QPushButton(i18n.tr('详细属性'))
-        self.details_button.setCheckable(True)
-        self.details_button.toggled.connect(self._sync_details)
-        editor_layout.addWidget(self.details_button)
-        editor_layout.addLayout(form)
         editor_layout.addWidget(edit_actions_host)
 
         # 术语为 0 时整页是一个空状态（设计审校 40 号 6.2：原来提示条、"0 个术语"、
@@ -280,7 +282,10 @@ class TermsPanel(QWidget):
         layout.addWidget(self.banner)
         layout.addWidget(self.filter_bar)
         self.content_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        layout.addLayout(self.content_layout, 1)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         list_layout = QVBoxLayout()
+        self.content_layout.addLayout(list_layout, 3)
         list_layout.addWidget(self.table, 1)
         list_layout.addWidget(self.empty_state, 1)
         # The workspace has enough horizontal room for the term table and a
@@ -323,9 +328,7 @@ class TermsPanel(QWidget):
         self.detail_host.addWidget(self.detail_scroll_page)
         self.detail_host.setCurrentWidget(self.detail_scroll_page)
         self._detail_in_scroll = True
-        self.content_layout.addLayout(list_layout, 3)
         self.content_layout.addWidget(self.detail_host, 2)
-        layout.addLayout(self.content_layout, 1)
         gate_actions = components.FlowRow(spacing=6)
         layout.addLayout(gate_actions)
         for widget in (self.freeze_button, self.save_button, self.bypass_button,

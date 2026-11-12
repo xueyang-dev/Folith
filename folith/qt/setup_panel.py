@@ -163,18 +163,23 @@ def _setting_row(title: str, control: QWidget, hint="") -> QWidget:
     row = QHBoxLayout(holder)
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(theme_module.SPACE["md"])
-    row.addLayout(_copy_column(title, hint), 1)
+    _add_copy_column(row, title, hint)
     row.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
     return holder
 
 
-def _copy_column(title: str, hint="") -> QVBoxLayout:
-    """左侧的"标题 + 一行说明"。
+def _add_copy_column(row: QHBoxLayout, title: str, hint="") -> None:
+    """左侧的"标题 + 一行说明"：先把列挂到 ``row``，再往里放标签。
+
+    先挂后填是硬要求（``tests/qt_layout_item_wrapper_test.py``）：``row`` 已经装
+    在控件上，若先填好列再 ``addLayout``，PySide 会给每个标签留下一个
+    ``QWidgetItem`` 包装器，Qt 删掉条目后它仍在 Shiboken 表里（SIGSEGV 种子）。
 
     ``hint`` 既可以是一句话，也可以是一个 **QLabel** —— 后者用于说明会随控件
     取值变化的行（如「请求调度」的批次说明），调用方要能在后面接着改它的文案。
     """
     column = QVBoxLayout()
+    row.addLayout(column, 1)
     column.setContentsMargins(0, 0, 0, 0)
     column.setSpacing(theme_module.SPACE["xxs"])
     column.addWidget(style_module.field_label(title))
@@ -186,7 +191,6 @@ def _copy_column(title: str, hint="") -> QVBoxLayout:
         note.setObjectName("hint")
         note.setWordWrap(True)
         column.addWidget(note)
-    return column
 
 
 #: 分组行的左缩进（发丝线与折叠体从这里开始）；分组与分组行在 components 里，全应用共用。
@@ -226,7 +230,7 @@ class ToggleRow(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(theme_module.SPACE["md"])
-        row.addLayout(_copy_column(title, hint), 1)
+        _add_copy_column(row, title, hint)
         row.addWidget(box, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt 命名
@@ -484,12 +488,6 @@ class TaskSetupPanel(QWidget):
         self.subtitle_label.setObjectName("hint")
         self.subtitle_label.setWordWrap(True)
 
-        head = QVBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.setSpacing(theme_module.SPACE["xxs"])
-        head.addWidget(self.title_label)
-        head.addWidget(self.subtitle_label)
-
         # 两栏：左边是这份文档（agent 读到了什么），右边是要做的决定。
         # 右栏自上而下按"必须 → 常用 → 可以不管"排列，「开始翻译」紧跟在决定之后。
         # F5（2026-11-04 UI 审查）：主行动「开始翻译」原来跟着内容一起滚，1238×720 的
@@ -516,10 +514,16 @@ class TaskSetupPanel(QWidget):
         column = QVBoxLayout(content)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(theme_module.SPACE["lg"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
+        head = QVBoxLayout()
+        column.addLayout(head)
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(theme_module.SPACE["xxs"])
+        head.addWidget(self.title_label)
+        head.addWidget(self.subtitle_label)
         # 页头（「译前准备」+ 说明）不再显示：工作台顶部的阶段条已经标出「准备」。
         self.title_label.setVisible(False)
         self.subtitle_label.setVisible(False)
-        column.addLayout(head)
 
         options = self._build_context_card()
         # ① 必须：原文语言 → 目标语言（这一页仅有的两个大号控件）。
@@ -540,6 +544,7 @@ class TaskSetupPanel(QWidget):
         self.source_hint.setContentsMargins(4, 0, 0, 0)
         self.source_hint.setVisible(False)
         languages = QGridLayout()
+        column.addLayout(languages)
         languages.setContentsMargins(0, 0, 0, 0)
         languages.setHorizontalSpacing(theme_module.SPACE["md"])
         languages.setVerticalSpacing(theme_module.SPACE["xs"])
@@ -550,7 +555,6 @@ class TaskSetupPanel(QWidget):
         languages.addWidget(self.source_hint, 2, 0, 1, 2)
         languages.setColumnStretch(0, 1)
         languages.setColumnStretch(1, 1)
-        column.addLayout(languages)
         # ② 原文结构（#27，只读）：里面写了什么——本地解析的章节/页/段落分组
         #    与原文预览，未调用模型；摘要行收起时也把答案说出来。区块里带
         #    「翻译范围…」按钮（#28）：开始前排除不打算付费翻译的章节。
@@ -733,7 +737,9 @@ class TaskSetupPanel(QWidget):
             lambda _index: self._sync_document_summary())
         self.ocr_language_box.currentIndexChanged.connect(
             lambda _index: self._sync_document_summary())
+        ocr_layout.addWidget(style_module.SectionLabel(i18n.tr('扫描件识别')))
         ocr_grid = QGridLayout()
+        ocr_layout.addLayout(ocr_grid)
         ocr_grid.setContentsMargins(0, 0, 0, 0)
         ocr_grid.setHorizontalSpacing(theme_module.SPACE["md"])
         ocr_grid.setVerticalSpacing(theme_module.SPACE["sm"])
@@ -758,8 +764,6 @@ class TaskSetupPanel(QWidget):
         ocr_grid.addWidget(self.ocr_quality_field, 2, 0, 1, 2)
         ocr_grid.setColumnStretch(0, 1)
         ocr_grid.setColumnStretch(1, 1)
-        ocr_layout.addWidget(style_module.SectionLabel(i18n.tr('扫描件识别')))
-        ocr_layout.addLayout(ocr_grid)
         self.ocr_hint = QLabel(i18n.tr(_OCR_SOURCE_HINTS[False]))
         self.ocr_hint.setObjectName("hint")
         self.ocr_hint.setWordWrap(True)
@@ -950,12 +954,13 @@ class TaskSetupPanel(QWidget):
         self.style_inherit_button.setCheckable(True)
         self.style_inherit_button.setToolTip(i18n.tr('沿用设置里的风格规则'))
         self.style_inherit_button.clicked.connect(lambda: self.style_box.setCurrentIndex(0))
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         actions = QHBoxLayout()
+        inner.addLayout(actions)
         actions.setSpacing(theme_module.SPACE["md"])
         actions.addStretch(1)
         actions.addWidget(self.style_profile_button)
         actions.addWidget(self.style_inherit_button)
-        inner.addLayout(actions)
 
         # 推荐结果只在用过「智能画像」之后才出现。
         self.style_accept_button = QPushButton(i18n.tr('接受推荐'))
@@ -967,10 +972,10 @@ class TaskSetupPanel(QWidget):
         self.style_status.setWordWrap(True)
         self.style_status.setVisible(False)
         reco_row = QHBoxLayout()
+        inner.addLayout(reco_row)
         reco_row.setSpacing(theme_module.SPACE["md"])
         reco_row.addWidget(self.style_status, 1)
         reco_row.addWidget(self.style_accept_button, 0, Qt.AlignmentFlag.AlignVCenter)
-        inner.addLayout(reco_row)
 
         # 文档画像：模型把这份文档当成什么来译（领域 · 文本类型 · 读者 · 语域）。
         # 判断错了可以改；保存后翻译直接用它。
@@ -1213,10 +1218,10 @@ class TaskSetupPanel(QWidget):
         self.delivery_seg = style_module.SegmentedControl([])
         self.delivery_seg.changed.connect(self._on_delivery_preset)
         head = QHBoxLayout()
+        body.addLayout(head)
         head.setContentsMargins(0, 0, 0, 0)
         head.addStretch(1)
         head.addWidget(self.delivery_seg)
-        body.addLayout(head)
 
         # 实时汇总：把"选了哪套方案"与"实际会产出什么"直接对上。方案是**快捷入口**，
         # 勾选才是事实，两者一旦不一致就换到「自定义」，这一行说的就是事实。

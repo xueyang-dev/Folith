@@ -4,6 +4,13 @@ The profiler is intentionally independent from the workflow state machine.  A
 stage can record timing data without changing whether the stage succeeds,
 fails, or is resumed.  It is safe to call from OCR/LLM worker threads and
 keeps the persisted payload small enough to be useful as an audit artifact.
+
+:class:`ActiveTimeTracker` (issue #320) measures the task duration with a
+wall-clock heartbeat instead of ``perf_counter``.  Its guarantee is bounded, not
+absolute: a *detected* interruption (gap > factor x interval) is excluded and
+understates work by at most the heartbeat period preceding it, while pauses
+shorter than that threshold cannot be distinguished from work and are counted
+as active time.  See the class docstring for the failure examples.
 """
 from __future__ import annotations
 
@@ -12,10 +19,15 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 
 VERSION = 1
+
+#: Default heartbeat period for :class:`ActiveTimeTracker` (#320).
+DEFAULT_HEARTBEAT_INTERVAL_S = 5.0
+#: A gap larger than this many heartbeat periods is an interruption.
+DEFAULT_INTERRUPTION_FACTOR = 3.0
 
 
 def _now_iso() -> str:
@@ -276,3 +288,161 @@ class PipelineProfiler:
             # Timing must never turn a successful import into a failed import.
             pass
         return snapshot
+
+
+def _iso_from_timestamp(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat(timespec="milliseconds")
+
+
+class ActiveTimeTracker:
+    """Wall-clock time a task actually worked, ignoring local interruptions (#320).
+
+    Why a heartbeat instead of ``perf_counter``: the monotonic clock's behaviour
+    while the machine sleeps is platform-dependent (it stops on macOS, and
+    Windows only promises monotonicity), so a duration derived from it is not
+    comparable across platforms.  This tracker samples ``time.time()`` every
+    ``interval_s``.  A gap between two samples larger than
+    ``factor * interval_s`` is treated as an interruption — machine suspend /
+    hibernation, a frozen process, or the gap before a resume — and contributes
+    zero active seconds.
+
+    The guarantee is bounded and two-sided, not "never inflates":
+
+    * A **detected** interruption contributes zero, so a real suspend is
+      understated by at most one heartbeat period (the work between the last
+      sample and the suspend start).
+    * A pause **shorter than the threshold cannot be distinguished from work**.
+      With the defaults (5 s heartbeat, factor 3) a 10 s sleep or a 10 s silent
+      pause is counted as active time, i.e. the result *overstates* by up to
+      the threshold.
+    * **Real work longer than the threshold is dropped**: an 18 s stop-the-world
+      GC pause or 18 s of heartbeat-starved computation looks like an
+      interruption, so that stretch is *understated* by up to the gap itself.
+    * The final stretch is only committed by ``stop()``: if a run ends 20 s
+      after the last sample without a heartbeat in between, that 20 s is
+      classified as one interruption and ``active_seconds`` can be 0 even
+      though 20 s of work happened.  That is why the commit interval matters
+      for very short runs.
+
+    Only the wall clock (``time.time``) is injected, so tests can jump it
+    without sleeping.
+    """
+
+    def __init__(
+        self,
+        interval_s: float = DEFAULT_HEARTBEAT_INTERVAL_S,
+        factor: float = DEFAULT_INTERRUPTION_FACTOR,
+        wall_clock: Callable[[], float] = time.time,
+    ) -> None:
+        self.interval_s = max(0.05, float(interval_s))
+        self.factor = max(1.5, float(factor))
+        self._wall_clock = wall_clock
+        self._lock = threading.RLock()
+        self._active_s = 0.0
+        self._interrupted_s = 0.0
+        self._spans: List[Dict[str, Any]] = []
+        self._clock_anomalies = 0
+        self._samples = 0
+        self._first: Optional[float] = None
+        self._last: Optional[float] = None
+        self._running = False
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    # -- sampling ----------------------------------------------------------
+    def start(self) -> None:
+        with self._lock:
+            if self._running:
+                return
+            now = float(self._wall_clock())
+            self._running = True
+            self._first = self._last = now
+            self._samples = 1
+
+    def tick(self, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """Take one sample; return the interruption span when one was detected."""
+        moment = float(self._wall_clock() if now is None else now)
+        with self._lock:
+            if not self._running or self._last is None:
+                return None
+            gap = moment - self._last
+            self._samples += 1
+            self._last = moment
+            if gap < 0.0:
+                # A backwards wall-clock jump is not work; it is not an
+                # interruption either (the clock, not the machine, moved).
+                self._clock_anomalies += 1
+                return None
+            if gap <= self.factor * self.interval_s:
+                self._active_s += gap
+                return None
+            span = {
+                "reason": "inactive_gap",
+                "started_at": _iso_from_timestamp(moment - gap),
+                "ended_at": _iso_from_timestamp(moment),
+                "duration_s": round(gap, 3),
+            }
+            self._interrupted_s += gap
+            self._spans.append(span)
+            return dict(span)
+
+    def stop(self, now: Optional[float] = None) -> Dict[str, Any]:
+        """Count the final stretch and freeze the totals."""
+        self.tick(now)
+        with self._lock:
+            self._running = False
+        return self.snapshot()
+
+    def start_sampling(self) -> None:
+        """Start the heartbeat thread (one per tracked run)."""
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+        self.start()
+        with self._lock:
+            self._stop = threading.Event()
+            self._thread = threading.Thread(target=self._sample_loop, args=(self._stop,),
+                                            name="FolithActiveTime", daemon=True)
+            self._thread.start()
+
+    def stop_sampling(self) -> Dict[str, Any]:
+        with self._lock:
+            self._stop.set()
+            thread, self._thread = self._thread, None
+        if (thread is not None and thread.is_alive()
+                and thread is not threading.current_thread()):
+            thread.join(timeout=2.0)
+        return self.stop()
+
+    def _sample_loop(self, stop_event: threading.Event) -> None:
+        while not stop_event.wait(self.interval_s):
+            self.tick()
+
+    # -- reading -----------------------------------------------------------
+    def current(self, now: Optional[float] = None) -> float:
+        """Active seconds so far, including the stretch since the last sample."""
+        with self._lock:
+            active = self._active_s
+            if self._running and self._last is not None:
+                moment = float(self._wall_clock() if now is None else now)
+                gap = moment - self._last
+                if 0.0 <= gap <= self.factor * self.interval_s:
+                    active += gap
+            return round(active, 4)
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            first, last = self._first, self._last
+            return {
+                "method": "wall_clock_heartbeat",
+                "heartbeat_interval_s": self.interval_s,
+                "interruption_factor": self.factor,
+                "samples": self._samples,
+                "active_seconds": round(self._active_s, 4),
+                "interrupted_seconds": round(self._interrupted_s, 4),
+                "interruption_count": len(self._spans),
+                "elapsed_wall_clock_s": round((last - first), 3)
+                if first is not None and last is not None else 0.0,
+                "clock_anomalies": self._clock_anomalies,
+                "spans": [dict(span) for span in self._spans],
+            }

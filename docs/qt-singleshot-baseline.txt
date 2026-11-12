@@ -1,0 +1,3 @@
+# Existing QTimer.singleShot(msec, callable) sites without a context
+# object (ratchet). Each fix batch removes its own lines.
+

@@ -96,7 +96,9 @@ class ScopeDialog(QDialog):
         self.summary_label = _label("", "meta", wrap=True)
         layout.addWidget(self.summary_label)
 
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         buttons = QHBoxLayout()
+        layout.addLayout(buttons)
         buttons.addStretch(1)
         self.restore_button = QPushButton(i18n.tr('恢复所选段落'))
         style_module.set_button(self.restore_button, "secondary")
@@ -109,7 +111,6 @@ class ScopeDialog(QDialog):
         style_module.mark_primary(self.exclude_button)
         self.exclude_button.clicked.connect(self._exclude_selected)
         buttons.addWidget(self.exclude_button)
-        layout.addLayout(buttons)
 
         self._sync()
 
@@ -120,7 +121,9 @@ class ScopeDialog(QDialog):
         box.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                theme_module.SPACE["md"], theme_module.SPACE["sm"])
         box.setSpacing(theme_module.SPACE["xs"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         header = QHBoxLayout()
+        box.addLayout(header)
         header.addWidget(_label(str(group.get("label") or ""), "name"))
         header.addStretch(1)
         group_checks: list = []
@@ -134,7 +137,6 @@ class ScopeDialog(QDialog):
         select_all.clicked.connect(
             lambda _checked=False, checks=group_checks: self._set_checks(checks, True))
         header.addWidget(select_all)
-        box.addLayout(header)
         for node in group.get("nodes") or []:
             key = str(node.get("key") or "")
             text = i18n.tr('{v0}　·　第 {v1}–{v2} 段 · {v3} 段 / {v4} 字',
@@ -155,7 +157,9 @@ class ScopeDialog(QDialog):
         box.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
                                theme_module.SPACE["md"], theme_module.SPACE["sm"])
         box.setSpacing(theme_module.SPACE["xs"])
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         header = QHBoxLayout()
+        box.addLayout(header)
         header.addWidget(_label(i18n.tr('已排除的段落（勾选后可恢复）'), "name"))
         header.addStretch(1)
         record_checks: list = []
@@ -164,7 +168,6 @@ class ScopeDialog(QDialog):
         clear.clicked.connect(
             lambda _checked=False, checks=record_checks: self._set_checks(checks, False))
         header.addWidget(clear)
-        box.addLayout(header)
         for record in records:
             excluded_id = str(record.get("excluded_id") or "")
             position = str(record.get("position") or "")

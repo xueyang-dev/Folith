@@ -159,7 +159,8 @@ def test_interrupted_stream_resumes_and_appends(streaming_job, monkeypatch):
 
 def test_page_workers_default_and_clamp(monkeypatch):
     monkeypatch.delenv("FOLIOTHREAD_VLM_PAGE_WORKERS", raising=False)
-    assert page_worker_count() == 5
+    # #220 C1: 默认值按连接分档——不知道连接时用保守的 relay 档（2 路）。
+    assert page_worker_count() == 2
     monkeypatch.setenv("FOLIOTHREAD_VLM_PAGE_WORKERS", "40")
     assert page_worker_count() == 8
     assert page_worker_count(1) == 1

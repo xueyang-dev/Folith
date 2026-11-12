@@ -1,0 +1,3 @@
+# Existing "apply after attach" layout sites (ratchet).
+# Each fix batch removes its own lines; see docs/segfault-audit-0.8.2.md.
+

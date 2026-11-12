@@ -180,13 +180,14 @@ class _ListRow(style_module.Surface):
         row.setContentsMargins(10, 6, 10, 6)
         row.setSpacing(10)
         row.addWidget(icons.IconLabel(icon, 18, "accent" if selected else tone))
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         text = QVBoxLayout()
+        row.addLayout(text, 1)
         text.setSpacing(0)
         title = _elide(name, "name")
         self.meta = _elide(meta, "time")
         text.addWidget(title)
         text.addWidget(self.meta)
-        row.addLayout(text, 1)
         if pending:
             row.addWidget(components.CountBadge(str(pending), "muted" if key == "unsorted" else "info"))
         self.setToolTip(f"{name}\n{meta}")
@@ -263,7 +264,9 @@ class ProjectsView(QWidget):
         box = QVBoxLayout(nav)
         box.setContentsMargins(4, 12, 8, 8)
         box.setSpacing(2)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         head = QHBoxLayout()
+        box.addLayout(head)
         head.setContentsMargins(10, 0, 0, 8)
         title = _text(i18n.tr('项目'), "page-title")
         head.addWidget(title, 1)
@@ -271,7 +274,6 @@ class ProjectsView(QWidget):
         self.new_button.setAccessibleName(i18n.tr('新建项目'))
         self.new_button.clicked.connect(self._create)
         head.addWidget(self.new_button)
-        box.addLayout(head)
         self.search = QLineEdit()
         self.search.setPlaceholderText(i18n.tr('搜索项目'))
         self.search.setClearButtonEnabled(True)
@@ -393,14 +395,16 @@ class ProjectsView(QWidget):
         box = QVBoxLayout(content)
         box.setContentsMargins(20, 14, 12, 12)
         box.setSpacing(12)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         head = QHBoxLayout()
+        box.addLayout(head)
         titles = QVBoxLayout()
+        head.addLayout(titles, 1)
         titles.setSpacing(2)
         self.title = _text("", "page-title")
         self.subtitle = _text("", "meta")
         titles.addWidget(self.title)
         titles.addWidget(self.subtitle)
-        head.addLayout(titles, 1)
         self.export_button = QPushButton(i18n.tr('导出记忆'))
         self.export_button.setIcon(icons.icon("download", 16, "text-secondary"))
         self.export_button.clicked.connect(lambda: self._export_memory())
@@ -409,7 +413,6 @@ class ProjectsView(QWidget):
         self.more_button.clicked.connect(self._open_more)
         head.addWidget(self.export_button, 0, Qt.AlignmentFlag.AlignTop)
         head.addWidget(self.more_button, 0, Qt.AlignmentFlag.AlignTop)
-        box.addLayout(head)
 
         self.tab_bar = style_module.SegmentedControl([("overview", "")])
         self.tab_bar.changed.connect(self._tab_changed)
@@ -638,9 +641,10 @@ class ProjectsView(QWidget):
         box = QVBoxLayout(card)
         box.setContentsMargins(16, 12, 16, 12)
         box.setSpacing(6)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         head = QHBoxLayout()
-        head.addWidget(_text(i18n.tr('任务'), "section"), 1)
         box.addLayout(head)
+        head.addWidget(_text(i18n.tr('任务'), "section"), 1)
         tasks = self._detail.get("tasks") or []
         if not tasks:
             box.addWidget(_text(i18n.tr('这个项目里还没有任务。可以在任务库里把任务移进来。'),
@@ -719,9 +723,9 @@ class ProjectsView(QWidget):
                                 "meta", wrap=True))
         for entry in log[:6]:
             row = QHBoxLayout()
+            box.addLayout(row)
             row.addWidget(_text(i18n.tr_dynamic(entry["what"]), "body", wrap=True), 1)
             row.addWidget(_text(components.relative_time(entry["when"]), "time"))
-            box.addLayout(row)
         box.addStretch(1)
         return card
 
@@ -746,6 +750,7 @@ class ProjectsView(QWidget):
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(8)
         bar = QHBoxLayout()
+        box.addLayout(bar)
         self.term_query = QLineEdit()
         self.term_query.setPlaceholderText(i18n.tr('搜索原文、译名或领域'))
         self.term_query.setClearButtonEnabled(True)
@@ -763,11 +768,11 @@ class ProjectsView(QWidget):
         self.batch_button.clicked.connect(self._batch_accept)
         bar.addWidget(self.batch_button)
         bar.addWidget(self.term_add)
-        box.addLayout(bar)
 
         # 工具条：状态筛选、来源下拉（只在「待确认」）、右侧「显示只出现过 1 次」和「批量确认…」。
         # 宽度不够时右侧那组换到下一行，不挤压表格以外的任何东西。
         self.toolbar = QGridLayout()
+        box.addLayout(self.toolbar)
         self.toolbar.setContentsMargins(0, 0, 0, 0)
         self.toolbar.setHorizontalSpacing(8)
         self.toolbar.setVerticalSpacing(6)
@@ -790,7 +795,6 @@ class ProjectsView(QWidget):
         self.toolbar.setColumnStretch(2, 1)
         self._toolbar_narrow = None
         self._arrange_toolbar(False)
-        box.addLayout(self.toolbar)
         self.term_note = _text("", "time", wrap=True)     # 只在没有已锁定术语时显示一行
 
         self.term_table = _table(["", i18n.tr('原文'), i18n.tr('译名'), i18n.tr('状态'),
@@ -819,6 +823,7 @@ class ProjectsView(QWidget):
         self.term_detail_body.setSpacing(4)
         detail.addLayout(self.term_detail_body)
         actions = QHBoxLayout()
+        detail.addLayout(actions)
         self.term_edit = QPushButton(i18n.tr('编辑'))
         self.term_remove = QPushButton(i18n.tr('从术语库移除'))
         style_module.set_button(self.term_remove, "danger")
@@ -827,7 +832,6 @@ class ProjectsView(QWidget):
         actions.addWidget(self.term_edit)
         actions.addWidget(self.term_remove)
         actions.addStretch(1)
-        detail.addLayout(actions)
         box.addWidget(self.term_detail)
 
         # 待确认的行：译名可改，确认 / 只用于这个任务 / 不是术语。
@@ -838,12 +842,12 @@ class ProjectsView(QWidget):
         self.look_button = QPushButton(i18n.tr('看原文'))
         style_module.set_button(self.look_button, "plain", small=True)
         head = QHBoxLayout()
+        review.addLayout(head)
         self.detail_title = _text("", "name")
         self.detail_meta = _elide("", "time")
         head.addWidget(self.detail_title)
         head.addWidget(self.detail_meta, 1)
         head.addWidget(self.look_button)
-        review.addLayout(head)
         self.detail_context = _text("", "body", wrap=True)
         self.detail_context.setTextFormat(Qt.TextFormat.RichText)
         review.addWidget(self.detail_context)
@@ -866,8 +870,9 @@ class ProjectsView(QWidget):
         self.review_actions.setHorizontalSpacing(8)
         self.review_actions.setVerticalSpacing(6)
         self._actions_narrow = None
-        self._arrange_actions(False)
+        # Attach before filling: _arrange_actions() fills it from another method.
         review.addLayout(self.review_actions)
+        self._arrange_actions(False)
         box.addWidget(self.review_detail)
 
         self.term_empty = style_module.EmptyState(
@@ -1049,8 +1054,8 @@ class ProjectsView(QWidget):
                 self._fill_term_row(r, self._term_rows[r])
             table.setUpdatesEnabled(True)
             if end < len(self._term_rows):
-                QTimer.singleShot(0, lambda: step(end))
-        QTimer.singleShot(0, step)
+                QTimer.singleShot(0, self, lambda: step(end))
+        QTimer.singleShot(0, self, step)
 
     def flush_rows(self) -> None:
         """把还没补上的行立刻补完（测试、导出用）。"""
@@ -1308,27 +1313,29 @@ class ProjectsView(QWidget):
             for task in tasks[at:at + 3]:
                 self.unsorted_box.insertWidget(self.unsorted_box.count() - 1,
                                                self._unsorted_card(task, has_action))
-            QTimer.singleShot(0, lambda: more(at + 3))
+            QTimer.singleShot(0, self, lambda: more(at + 3))
         if len(tasks) > first:
-            QTimer.singleShot(0, more)
+            QTimer.singleShot(0, self, more)
 
     def _unsorted_card(self, task: dict, has_action: bool = False) -> QWidget:
         card = _TaskCard()
         box = QVBoxLayout(card)
         box.setContentsMargins(0, 0, 0, 6)
         box.setSpacing(0)
+        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
         head = QHBoxLayout()
+        box.addLayout(head)
         head.setContentsMargins(16, 10, 14, 6)
         head.setSpacing(8)
         head.addWidget(icons.IconLabel("file-text", 16, "text-secondary"))
         names = QVBoxLayout()
+        head.addLayout(names, 1)
         names.setSpacing(0)
         names.addWidget(_elide(task["name"], "name"))
         names.addWidget(_elide(
             f"{_dir(task['direction_label'])} · "
             + i18n.tr('{v0} 条术语，{v1} 条已锁定', v0=task["term_count"], v1=task["locked_count"]),
             "time"))
-        head.addLayout(names, 1)
         open_button = QPushButton(i18n.tr('打开任务'))
         style_module.set_button(open_button, "plain", small=True)
         open_button.clicked.connect(lambda _c=False, j=task["job_id"]: self.openJobRequested.emit(j, -1))
@@ -1340,8 +1347,8 @@ class ProjectsView(QWidget):
         make.setToolTip(i18n.tr('用这个任务新建项目…'))
         make.clicked.connect(lambda _c=False, j=task["job_id"]: self.newFromTaskRequested.emit(j))
         head.addWidget(make)
-        box.addLayout(head)
         grid = QGridLayout()
+        box.addLayout(grid)
         grid.setContentsMargins(16, 4, 16, 0)
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(4)
@@ -1386,7 +1393,6 @@ class ProjectsView(QWidget):
                 card.keep_buttons.append(keep)
                 keep.clicked.connect(lambda _c=False, i=term["item"]: self.decideRequested.emit(i, "task_only"))
                 grid.addWidget(keep, r, 4, Qt.AlignmentFlag.AlignRight)
-        box.addLayout(grid)
         if task["more"]:
             box.addWidget(_text("  " + i18n.tr('还有 {v0} 条', v0=task["more"]), "time"))
         return card

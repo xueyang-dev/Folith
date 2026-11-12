@@ -133,7 +133,11 @@ def test_opening_drawer_reuses_current_state_and_refreshes_new_state(bench, monk
         bench.set_followup_drawer_open(True)
         bench.set_followup_drawer_open(False)
     assert not calls
-    bench._state = dict(bench._state)
+    # Swapping the state object must go through _replace_state(): the domain
+    # cache is invalidated there, which is what makes the refresh visible.
+    # Assigning _state directly used to work only via a property setter that
+    # bumped every domain unconditionally; that setter was removed in #344.
+    bench._replace_state(dict(bench._state))
     bench._render_followup()
     assert len(calls) == 1
 
