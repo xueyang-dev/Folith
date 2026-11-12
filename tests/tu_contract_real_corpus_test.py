@@ -30,7 +30,14 @@ if str(REPO_ROOT) not in sys.path:
 
 from folith.interop.tu_contract import (  # noqa: E402
     STATUS_MAP,
+    canonical_digest,
+    compose_external_id,
+    duplicate_file_scopes,
+    file_scope_warnings,
     map_cat_status,
+    reconcile_identities,
+    resolve_file_scope,
+    source_digest,
 )
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
@@ -381,6 +388,349 @@ def test_flat_source_scan_would_overcount_current_units():
             mismatched += 1
         assert flat == scan.unit_count + scan.nested_source_total, path.name
     assert mismatched == 4
+
+
+# ---------------------------------------------------------------------------
+# P3-2：身份作用域（file_scope）/ 摘要规范形式（115 → 0）
+# ---------------------------------------------------------------------------
+# 真实语料 9 个文件、193 个 trans-unit。所有函数只读；"往返"是写临时目录的
+# 重序列化副本（不动 fixture）。
+
+from folith.interop.tu_contract import InlineTag  # noqa: E402
+
+
+class _FileTagProjector:
+    """把 ``<source>`` 投影成 ``(text, [InlineTag])``，标签号**源自文件标签 id**。
+
+    这样 ``source_digest(text)``（v1 逐字符口径）会随文件里的 ``@id``/``@rid``
+    变化，而 ``canonical_digest(text, tags)`` 不看标签号。两者对同一份往返的
+    差异就是 P3-1 实测的 115 → 0。
+    """
+
+    def __init__(self) -> None:
+        self.tags: list = []
+        self.parts: list[str] = []
+        self._count = 0
+
+    def _tag_id(self, element, kind: str) -> str:
+        self._count += 1
+        raw = element.get("id")
+        if raw is None:
+            raw = element.get("rid") or "?"
+        # 同一文件标签 id 可能被 bpt/ept 复用；契约只要求同侧唯一，故加侧别与
+        # 出现序号消歧。符号 id（ph1…）原样保留：扰动不会改它们，和 P3-1 一致。
+        return f"{raw}:{kind}:{self._count}"
+
+    def _add(self, element, kind: str, payload: str, code_name: str = "") -> None:
+        tag_id = self._tag_id(element, kind)
+        self.tags.append(InlineTag(tag_id, kind, payload, code_name))
+        self.parts.append(f"\ue000{tag_id}\ue001")
+
+    def project(self, element):
+        self._walk(element)
+        return "".join(self.parts), self.tags
+
+    def _walk(self, element) -> None:
+        self.parts.append(element.text or "")
+        for child in element:
+            name = _local(child.tag)
+            payload = ET.tostring(child, encoding="unicode")
+            if name == "bpt":
+                key = child.get("rid") or child.get("id") or "?"
+                self._add(child, "open", payload, f"mq:rid={key}")
+            elif name == "ept":
+                key = child.get("rid") or child.get("id") or "?"
+                self._add(child, "close", payload, f"mq:rid={key}")
+            elif name in ("ph", "x"):
+                self._add(child, "self_closing", payload)
+            elif name == "g":
+                key = child.get("id") or "?"
+                self._add(child, "open", f"<g id={key}>", f"sdl:g={key}")
+                self._walk(child)
+                self._add(child, "close", "</g>", f"sdl:g={key}")
+            else:
+                self._walk(child)
+            self.parts.append(child.tail or "")
+
+
+def _project_with_file_ids(element):
+    return _FileTagProjector().project(element)
+
+
+def _file_elements(root):
+    return [element for element in root.iter() if _local(element.tag) == "file"]
+
+
+def _file_scope(file_element, position: int):
+    return resolve_file_scope(
+        # memoQ 的 file id 在 ``{MQXliff}id``；SDLXLIFF 只有 original。
+        file_id=(file_element.get(f"{{{MQ_NS}}}id")
+                 or file_element.get("id")),
+        original=file_element.get("original"),
+        position=position,
+    )
+
+
+def _units_with_file(path: Path):
+    """返回 ``[(file_scope, trans-unit, source), ...]``；保留文件顺序。"""
+    root = ET.parse(path).getroot()
+    files = _file_elements(root)
+    parents = {child: parent for parent in root.iter() for child in parent}
+    scopes = {element: _file_scope(element, index)
+              for index, element in enumerate(files, start=1)}
+    rows = []
+    for unit in _units(root):
+        source = _direct_child(unit, "source")
+        if source is None:
+            continue
+        node = parents.get(unit)
+        file_element = None
+        while node is not None:
+            if _local(node.tag) == "file":
+                file_element = node
+                break
+            node = parents.get(node)
+        assert file_element is not None, (path.name, unit.get("id"))
+        rows.append((scopes[file_element], unit, source))
+    return rows
+
+
+def _identity_rows(path: Path):
+    rows = []
+    for scope, unit, _source in _units_with_file(path):
+        rows.append((
+            scope,
+            str(unit.get("id")),
+            compose_external_id(scope.scope, unit.get("id")),
+        ))
+    return rows
+
+
+def _digest_rows(path: Path):
+    """每单元：外部身份 + 旧口径摘要 + 规范摘要（含适配器赋的标签）。"""
+    rows = []
+    for scope, unit, source in _units_with_file(path):
+        text, tags = _project_with_file_ids(source)
+        rows.append({
+            "external_id": compose_external_id(scope.scope, unit.get("id")),
+            "file_scope_rule": scope.rule,
+            "legacy": source_digest(text),
+            "canonical": canonical_digest(text, tags),
+            "tagged": bool(tags),
+        })
+    return rows
+
+
+def _perturb_file(path: Path, output: Path) -> None:
+    """语义不变的往返：标签 ``@id``/``@rid`` ×7 + 整份重新序列化。
+
+    保序单射（配对不变），模拟 CAT 工具重新生成文件时的标签重编号与写法变化。
+    符号 id（``ph1``/``pt5``）不是整数，保持不动——与 P3-1 的扰动一致。
+    """
+    tree = ET.parse(path)
+    root = tree.getroot()
+    for element in root.iter():
+        if _local(element.tag) not in ("g", "bpt", "ept", "x", "ph"):
+            continue
+        for attribute in ("id", "rid"):
+            value = element.get(attribute)
+            if value is None:
+                continue
+            try:
+                element.set(attribute, str(int(value) * 7))
+            except ValueError:
+                pass
+    output.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + ET.tostring(root, encoding="unicode"),
+        encoding="utf-8")
+
+
+def test_real_corpus_has_exactly_one_file_element_per_file():
+    """真实语料实测：9/9 个文件只有 1 个 ``<file>``；多文件场景无样本证据。"""
+    counts = [_len for _len in
+              (len(_file_elements(ET.parse(path).getroot()))
+               for path in _corpus_files())]
+    assert counts == [1] * 9
+
+
+def test_real_corpus_identity_is_file_scoped():
+    """193 个单元的身份全部唯一，**除了 mt/pe 那对同一份文件的两次导出**。
+
+    mt 与 pe 的 ``file@id`` / ``file@original`` / 51 个单元 id / 51 条源文全部
+    相同：按 ``file_scope/unit_id`` 组身份，两文件一起导入会得到 51 个
+    ``DUPLICATE_EXTERNAL_ID``。这不是残留 bug，而是"同一文档两个阶段"的
+    真实盲区；契约用一条**文件级** ``DUPLICATE_FILE_SCOPE`` 警告处理，
+    由用户选择只导入其中一份。
+    """
+    scopes = []
+    rows = []
+    for path in _corpus_files():
+        file_scope_rows = _identity_rows(path)
+        assert file_scope_rows, path.name
+        scopes.append(file_scope_rows[0][0])
+        rows.extend((path.name, external_id)
+                    for _scope, _uid, external_id in file_scope_rows)
+
+    assert len(rows) == 193
+    warnings = file_scope_warnings(scopes)
+    assert len(warnings) == 1
+    assert warnings[0].startswith("DUPLICATE_FILE_SCOPE")
+    shared = "i:c18018b5-2ca2-4a23-904f-8e179f68b1b9"
+    assert shared in warnings[0]
+    groups = duplicate_file_scopes(scopes)
+    assert list(groups) == [shared]
+    positions = groups[shared]
+    assert {scopes[index - 1].rule for index in positions} == {"id"}
+    assert {path.name for path in _corpus_files()} >= {
+        "mt.mqxliff", "pe.mqxliff"}
+
+    counts = Counter(external_id for _name, external_id in rows)
+    collisions = {external_id: count for external_id, count
+                  in counts.items() if count > 1}
+    assert len(collisions) == 51
+    assert set(collisions.values()) == {2}
+    for external_id in collisions:
+        names = {name for name, value in rows if value == external_id}
+        assert names == {"mt.mqxliff", "pe.mqxliff"}, (external_id, names)
+
+    # 用户选择"只导入其中一份"后：其余 8 个文件的作用域互不相同。
+    kept_scopes: set[str] = set()
+    deduplicated: list[str] = []
+    for path in _corpus_files():
+        file_scope_rows = _identity_rows(path)
+        scope = file_scope_rows[0][0].scope
+        if scope in kept_scopes:
+            continue
+        kept_scopes.add(scope)
+        deduplicated.extend(external_id
+                            for _scope, _uid, external_id in file_scope_rows)
+    assert len(deduplicated) == 193 - 51 == 142
+    assert len(set(deduplicated)) == 142
+
+
+def test_real_corpus_file_scope_rule_is_id_then_original():
+    """memoQ 走 ``@id``（5/5），SDLXLIFF 走 ``@original``（4/4），0 个位置回退。"""
+    for path in sorted(MQ_DIR.glob("*.mqxliff")):
+        (scope, _unit, _external), *_ = _units_with_file(path)
+        assert scope.rule == "id", path.name
+        assert scope.scope.startswith("i:"), path.name
+    for path in sorted(SDL_DIR.glob("*.sdlxliff")):
+        (scope, _unit, _external), *_ = _units_with_file(path)
+        assert scope.rule == "original", path.name
+        assert scope.scope.startswith("o:"), path.name
+    all_scopes = [row[0] for path in _corpus_files()
+                  for row in _units_with_file(path)]
+    assert all(item.rule != "position" for item in all_scopes)
+
+
+def test_real_corpus_legacy_digest_would_reassign_115_units(tmp_path):
+    """旧口径（逐字符 + 文件标签号）在一次语义不变往返后改变 115 个摘要。"""
+    totals = Counter()
+    for path in _corpus_files():
+        before = _digest_rows(path)
+        output = tmp_path / f"{path.name}.perturbed.xml"
+        _perturb_file(path, output)
+        after = _digest_rows(output)
+        assert len(before) == len(after)
+        for old, new in zip(before, after):
+            assert old["external_id"] == new["external_id"]
+            totals["units"] += 1
+            totals["tagged"] += old["tagged"]
+            totals["legacy_changed"] += old["legacy"] != new["legacy"]
+            totals["canonical_changed"] += \
+                old["canonical"] != new["canonical"]
+    assert (totals["units"], totals["tagged"]) == (193, 123)
+    assert totals["legacy_changed"] == 115
+    # 同一往返下规范形式必须 0 变化（这是本节点要钉死的数字）。
+    assert totals["canonical_changed"] == 0
+
+
+def test_real_corpus_canonical_digest_has_zero_changes(tmp_path):
+    """规范形式：9 个真实样本、193 个单元、一次往返后 0 个摘要变化。"""
+    for path in _corpus_files():
+        before = _digest_rows(path)
+        output = tmp_path / f"{path.name}.roundtrip.xml"
+        _perturb_file(path, output)
+        after = _digest_rows(output)
+        assert [row["canonical"] for row in before] == \
+            [row["canonical"] for row in after], path.name
+        assert [row["legacy"] for row in before] != \
+            [row["legacy"] for row in after] or not any(
+                row["tagged"] for row in before), path.name
+
+
+def test_real_corpus_reimport_has_zero_reassignments(tmp_path):
+    """带着账本重导入往返后的文件：``reassignments == []`` 且全部 ``stable``。"""
+    for path in _corpus_files():
+        before = _digest_rows(path)
+        units = [{"external_id": row["external_id"],
+                  "source_digest": row["canonical"],
+                  "file_scope_rule": row["file_scope_rule"]}
+                 for row in before]
+        identities, reassignments, ledger, rejections = \
+            reconcile_identities(units)
+        assert reassignments == [] and rejections == [], path.name
+
+        output = tmp_path / f"{path.name}.reimport.xml"
+        _perturb_file(path, output)
+        after = _digest_rows(output)
+        assert [row["external_id"] for row in after] == \
+            [row["external_id"] for row in before]
+        units_after = [{"external_id": row["external_id"],
+                        "source_digest": row["canonical"],
+                        "file_scope_rule": row["file_scope_rule"]}
+                       for row in after]
+        identities_after, reassignments_after, _ledger, rejections_after = \
+            reconcile_identities(units_after, ledger)
+        assert reassignments_after == [] and rejections_after == [], path.name
+        assert all(item["stable"] for item in identities_after), path.name
+        assert [item["identity"] for item in identities_after] == \
+            [item["identity"] for item in identities]
+
+
+def test_real_corpus_whitespace_is_not_normalized():
+    """30 个纯空白单元：规范形式保留 8 种逐字符形状；折叠会产生 24 次撞车。
+
+    30 个单元只有 8 种不同的空白串（``""`` / 1–9 个 ``\\n``），因此"30 个
+    摘要两两不同"不成立；能判定的是：规范形式保留这 8 种形状，而"折叠空白"
+    会把它们并成 1–2 种。
+    """
+    path = SDL_DIR / "SamplePhotoPrinter.doc.sdlxliff"
+    texts = []
+    for _scope, _unit, source in _units_with_file(path):
+        text = "".join(source.itertext())
+        if text.strip() == "":
+            texts.append(text)
+    assert len(texts) == 30
+    assert len(set(texts)) == 8
+    digests = {canonical_digest(text, []) for text in texts}
+    assert len(digests) == 8
+    assert canonical_digest("\n\n\n", []) != canonical_digest("\n\n", [])
+    assert canonical_digest("\n\n\n", []) != canonical_digest(
+        "\n\n\n\n\n", [])
+
+    # 复现 P3-1 的"折叠后撞车"口径：每个单元与上一个同折叠值的单元比较，
+    # 文本不同即记一次撞车。实测 24 次（`" ".join(text.split())` 是折叠口径）。
+    previous: dict[str, str] = {}
+    collisions = 0
+    for text in texts:
+        collapsed = " ".join(text.split())
+        if collapsed in previous and previous[collapsed] != text:
+            collisions += 1
+        previous[collapsed] = text
+    assert collisions == 24
+
+
+def test_real_corpus_no_duplicate_ids_within_each_file():
+    """回归护栏：193 个单元在每个文件内 id 唯一（真重复走拒绝路径）。"""
+    total = 0
+    for path in _corpus_files():
+        counts = Counter(str(unit.get("id")) for unit in _units(
+            ET.parse(path).getroot()))
+        assert all(count == 1 for count in counts.values()), path.name
+        total += sum(counts.values())
+    assert total == 193
 
 
 def test_scan_keeps_historical_and_insertedmatch_separate_in_synthetic_tree():
