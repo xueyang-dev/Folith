@@ -9010,6 +9010,13 @@ def _lost_worker_message(runtime, state, *, stalled=False):
 
 
 def _runtime_mark_lost(job_id, status, message):
+    """Publish a lost/stalled status. **Writes** — never call it from a read.
+
+    Only write paths call this: :func:`publish_lost_runtime_state` (the
+    launcher that holds ``.worker.lock``) and the supervisor's terminal
+    boundary.  :func:`get_job_runtime_status` returns
+    :func:`_runtime_stopped_view` instead (E-4e).
+    """
     worker = load_runtime_state(job_id).get("worker") or {}
     return update_runtime_state(
         job_id, status=status, phase=status, phase_label=message,
@@ -9136,6 +9143,34 @@ def _job_execution_alive(job_id):
     return owner != os.getpid() and _runtime_pid_alive(owner)
 
 
+def _worker_lock_held(job_id):
+    """True while *something* holds ``.worker.lock`` (read-only probe, E-4e).
+
+    The OS lock is the ownership evidence a pid cannot give: a pipeline worker,
+    an engine child, an external save and a direct segment operation all take
+    ``.worker.lock`` before touching the task, and the OS releases it when that
+    owner dies — including the cold-start window in which the child has not
+    written ``worker.owner_pid`` yet.  Absence of a pid is therefore not
+    absence of an owner.
+
+    The probe leaves no trace on disk: the file is only opened when it already
+    exists, and an acquirable (i.e. unheld) lock is closed immediately.
+    """
+    if not job_id:
+        return False
+    path = job_dir(job_id) / ".worker.lock"
+    try:
+        if not path.is_file():
+            return False
+        lock = _job_lock.acquire(path, blocking=False)
+    except OSError:
+        return False
+    if lock is None:
+        return True
+    lock.close()
+    return False
+
+
 
 def _runtime_live_state(runtime):
     """Recover an old false-stall label without losing cancel/pause intent."""
@@ -9148,8 +9183,42 @@ def _runtime_live_state(runtime):
     return {"status": status, "phase": status, "phase_label": label}
 
 
+def _runtime_stopped_view(runtime, status, message, *, executing=False):
+    """A lost/stalled status as a **view**: derived, never persisted (E-4e).
+
+    ``get_job_runtime_status`` used to publish this payload through
+    :func:`_runtime_mark_lost`, which made every UI refresh a writer — and in
+    the engine child's cold-start window the missing ``owner_pid`` was enough
+    to rewrite a live task as ``interrupted``, swallowing the user's pause
+    request.  The same payload is now only *returned*, marked ``measured:
+    False`` ("this status was not read from disk").
+
+    The durable transition belongs to a writer that observed the end: the
+    worker's heartbeat, the engine supervisor's ``_publish_terminal_state``, or
+    :func:`publish_lost_runtime_state` for a launcher that holds
+    ``.worker.lock``.  ``executing`` keeps the recorded owner block for a
+    stalled-but-alive run (the pid is still the truthful owner).
+    """
+    worker = runtime.get("worker") or {}
+    return {
+        **runtime,
+        "status": status,
+        "phase": status,
+        "phase_label": message,
+        "worker": dict(worker) if executing else {
+            "owner_pid": None, "worker_id": None, "lease_expires_at": None},
+        "measured": False,
+    }
+
+
 def get_job_runtime_status(job_id, state=None):
-    """Return the durable runtime status and reconcile dead local workers."""
+    """Return the runtime status as a view. **A read must never write** (E-4e).
+
+    A dead owner is reported as ``status="interrupted"``/``"stalled"`` with
+    ``measured: False`` (:func:`_runtime_stopped_view`) instead of being
+    persisted here; publishing is the job of
+    :func:`publish_lost_runtime_state` and of the owners themselves.
+    """
     state = state if isinstance(state, dict) else load_job_state(job_id)
     runtime = load_runtime_state(job_id)
     failure = _workflow_errors.failure(job_id)
@@ -9177,24 +9246,43 @@ def get_job_runtime_status(job_id, state=None):
         if status == "resume_requested" and not pid \
                 and transition_age is not None and transition_age <= RUNTIME_STALL_SECONDS:
             return runtime
+        # Ownership evidence comes *before* the pid (E-4e).  ``worker.owner_pid``
+        # is written only after the engine child has imported ``core``, so a
+        # refresh inside that window used to read ``None`` and declare a live
+        # run lost.  "No pid yet" is not "no owner": a thread in this process,
+        # this process's engine token, and a held ``.worker.lock`` each prove
+        # an execution that a pid cannot.
+        owned = (registered or is_job_worker_alive(job_id)
+                 or _job_execution_alive(job_id))
+        pid_alive = _runtime_pid_alive(pid)
+        if not owned:
+            # Cross-process tier, probed only when nothing cheaper answered:
+            # the lock outlives a pid-less cold start and the OS drops it when
+            # its owner dies.
+            owned = _worker_lock_held(job_id)
         # A live local execution is stronger evidence than a delayed heartbeat.
         # CPU-heavy extraction and temporary file access failures are not proof
         # that a worker stopped. Progress also proves a foreign owner is active.
         if registered or is_job_worker_alive(job_id):
             return runtime
-        if not _runtime_pid_alive(pid):
-            return _runtime_mark_lost(job_id, "interrupted",
-                                   _lost_worker_message(runtime, state))
+        if not pid_alive:
+            if owned:
+                # Cold start: the owner exists (token/thread/lock) but has not
+                # published its pid yet.  Report the launch/request status.
+                return runtime
+            return _runtime_stopped_view(
+                runtime, "interrupted", _lost_worker_message(runtime, state))
         if last_progress and (now - last_progress).total_seconds() <= RUNTIME_STALL_SECONDS:
             return runtime
         if lease and lease < now or heartbeat and (
                 now - heartbeat).total_seconds() > RUNTIME_STALL_SECONDS:
-            if registered or _job_execution_alive(job_id):
-                return _runtime_mark_lost(job_id, "stalled",
-                                       _lost_worker_message(
-                                           runtime, state, stalled=True))
-            return _runtime_mark_lost(job_id, "interrupted",
-                                   _lost_worker_message(runtime, state))
+            if owned:
+                return _runtime_stopped_view(
+                    runtime, "stalled",
+                    _lost_worker_message(runtime, state, stalled=True),
+                    executing=True)
+            return _runtime_stopped_view(
+                runtime, "interrupted", _lost_worker_message(runtime, state))
         if not registered and pid == os.getpid():
             # Streamlit can re-execute the app module while a worker thread
             # from the same process is still handling a long model request.
@@ -9209,8 +9297,8 @@ def get_job_runtime_status(job_id, state=None):
             if status in {"queued", "starting"} \
                     and transition_age is not None and transition_age <= RUNTIME_STALL_SECONDS:
                 return runtime
-            return _runtime_mark_lost(job_id, "interrupted",
-                                      _lost_worker_message(runtime, state))
+            return _runtime_stopped_view(
+                runtime, "interrupted", _lost_worker_message(runtime, state))
         return runtime
     if status == "idle":
         inferred = "completed" if _runtime_business_complete(state) else "idle_incomplete"
@@ -9222,6 +9310,41 @@ def get_job_runtime_status(job_id, state=None):
             return {**runtime, "status": inferred, "phase": inferred,
                     "phase_label": "已完成" if inferred == "completed" else "尚未完成"}
     return runtime
+
+
+def publish_lost_runtime_state(job_id, state=None, *, owns_execution_lock=False):
+    """**Write** the lost-run verdict that :func:`get_job_runtime_status` only reports.
+
+    Reads must not publish (E-4e): a workbench refresh inside the engine
+    child's cold-start window used to persist ``interrupted`` from a missing
+    ``owner_pid``, turning the user's pause request into "the last run exited".
+    The durable transition therefore belongs to a caller that has *evidence*
+    the run ended:
+
+    * the engine supervisor's terminal boundary (``_publish_terminal_state``)
+      when its child exits;
+    * :func:`start_job_worker` — it holds ``.worker.lock`` and passes
+      ``owns_execution_lock=True``.  Holding the lock proves no other execution
+      exists, so a leftover active status belongs to a dead run, and the task
+      can start as a resumable one instead of being refused forever (the old
+      launch gate only worked because the read path had healed the file);
+    * any other observer that watched the owner stop.
+
+    The evidence is re-checked here, so a stale verdict can never overwrite a
+    live run.  Returns ``True`` when a transition was written.
+    """
+    if not job_id:
+        return False
+    if _job_execution_alive(job_id):
+        return False
+    if not owns_execution_lock and _worker_lock_held(job_id):
+        return False
+    runtime = load_runtime_state(job_id)
+    if str(runtime.get("status") or "") not in RUNTIME_ACTIVE_STATUSES:
+        return False
+    state = state if isinstance(state, dict) else load_job_state(job_id)
+    _runtime_mark_lost(job_id, "interrupted", _lost_worker_message(runtime, state))
+    return True
 
 
 #: Canonical runtime-action policy: one status -> the actions a user may take.
@@ -9994,7 +10117,18 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
                 status not in RUNTIME_ACTIVE_STATUSES or (
                     status == "resume_requested" and runtime.get("resume_request_id") == resume_request_id))
             if status in RUNTIME_ACTIVE_STATUSES and not matching_resume:
-                return False
+                # We hold ``.worker.lock``, so no other execution can exist and
+                # this active status is a leftover from a run that ended without
+                # publishing (the app was closed, a child was killed).  Publish
+                # that loss here, explicitly — the read path no longer heals it
+                # (E-4e) — and start as a resumed run.  ``resume_requested`` is
+                # kept: it is another launch's pending request, not a dead run.
+                if status != "resume_requested" and publish_lost_runtime_state(
+                        job_id, owns_execution_lock=True):
+                    runtime = load_runtime_state(job_id)
+                    status = str(runtime.get("status") or "interrupted")
+                if status in RUNTIME_ACTIVE_STATUSES:
+                    return False
             if not matching_resume and not request_pending:
                 runtime = get_job_runtime_status(job_id)
                 if runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
