@@ -169,11 +169,15 @@ def test_a_grandchild_holding_the_capture_cannot_delay_the_return(tmp_path):
     assert _wait_until(lambda: not pid_alive(grandchild_pid)), \
         f"grandchild {grandchild_pid} survived the timeout"
     assert not pid_alive(grandchild_pid)
-    if os.name != "nt":
-        # The child led its own process group (start_new_session=True); an empty
-        # group is the POSIX proof that no descendant stayed behind.
-        with pytest.raises(ProcessLookupError):
-            os.killpg(wrapper_pid, 0)
+    # The direct child was reaped too (its status is available to the caller).
+    assert _wait_until(lambda: not pid_alive(wrapper_pid)), \
+        f"the wrapper {wrapper_pid} was not reaped"
+    # Deliberately no "the process group is empty" assertion: a SIGKILLed
+    # grandchild is a zombie until its new parent reaps it, and a zombie still
+    # counts as a member of the group (on a CI container PID 1 often does not
+    # reap, so `killpg(pid, 0)` keeps succeeding).  The pid checks above are the
+    # zombie-aware statement of the same property (`pid_alive` reports a zombie
+    # as dead).
 
 
 def test_the_module_has_no_pipe_and_no_unbounded_communicate():
