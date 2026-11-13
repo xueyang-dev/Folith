@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QHeaderView, QWidget
 
-from folith.qt import adapter, motion, style, views
+from folith.qt import adapter, motion, platform_motion, style, views
 
 
 def _wait_for(predicate, timeout_ms=1500):
@@ -77,6 +77,31 @@ def test_reduce_motion_priority_and_system_fallback(monkeypatch):
 def test_reduce_motion_never_reads_stored_settings(monkeypatch):
     """没有界面能写的偏好不能参与判断：测试和脚本不能依赖开发者本机的 QSettings。"""
     assert not hasattr(motion, "QSettings")
+
+
+def test_reduced_asks_the_platform_boundary_and_caches_it(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        platform_motion, "system_reduce_motion", lambda: calls.append("read") or True)
+    monkeypatch.delenv("FOLITH_REDUCE_MOTION", raising=False)
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    monkeypatch.delenv("FOLITH_QT_NONINTERACTIVE", raising=False)
+    motion._cache.update(at=0.0, value=False)
+    assert motion.reduced() is True
+    assert motion.reduced() is True
+    assert calls == ["read"]
+
+
+def test_reduced_transparency_uses_the_platform_boundary(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        platform_motion, "system_reduce_transparency",
+        lambda: calls.append("read") or True)
+    monkeypatch.delenv("FOLITH_REDUCE_TRANSPARENCY", raising=False)
+    monkeypatch.setattr(motion.sys, "platform", "darwin")
+    motion._transparency_cache.update(at=0.0, value=False)
+    assert motion.reduced_transparency() is True
+    assert calls == ["read"]
 
 
 def test_animation_is_interruptible_and_latest_completion_wins(app, monkeypatch):
