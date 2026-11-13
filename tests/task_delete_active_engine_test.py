@@ -57,14 +57,15 @@ SETTLE_SLACK_SECONDS = 0.6
 def _hold_state_write_lock(child_core, job_dir, log, committed: int) -> None:
     """Emulate one slow Windows ``update_runtime_state`` in the engine child.
 
-    ``core.update_runtime_state`` merges under ``.runtime-write.lock`` with a
-    *blocking* acquire, and on Windows that acquire is
+    ``core.update_runtime_state`` merges under ``.runtime-write.lock``.  Before
+    E-6t that acquire was *blocking*, and on Windows the primitive is
     ``msvcrt.locking(LK_LOCK)``: it retries in whole seconds and gives up only
-    after ten.  A state write that takes seconds in the engine therefore makes
-    the GUI's own ``request_job_cancel`` — the first step of every delete — wait
-    whole seconds before it can even ask the task to stop.  Holding the same OS
-    lock for a fixed window reproduces that stage deterministically, instead of
-    waiting for a Windows runner where one write happens to be slow (M-1).
+    after ten, so a state write that took seconds in the engine made the GUI's
+    own ``request_job_cancel`` — the first step of every delete — wait whole
+    seconds before it could even ask the task to stop.  The acquire is bounded
+    now (``job_lock.acquire_bounded``), but holding the same OS lock for a fixed
+    window still reproduces the contention deterministically, instead of waiting
+    for a Windows runner where one write happens to be slow (M-1).
     """
     hold = child_core._job_lock.acquire(job_dir / ".runtime-write.lock")
     try:
@@ -458,10 +459,11 @@ def test_a_slow_engine_state_write_cannot_stretch_the_delete_wait(delete_env):
     """Windows 上 7.06 s 的那一段（M-1）。
 
     删除的第一步是"请求取消"，而请求取消要合并进 ``runtime_state.json``，
-    合并走 ``.runtime-write.lock`` 的**阻塞**获取。Windows 上那是
-    ``msvcrt.locking(LK_LOCK)``：失败后整秒重试、最多十次。于是引擎子进程正
+    合并走 ``.runtime-write.lock``。修复前那是**阻塞**获取，Windows 上即
+    ``msvcrt.locking(LK_LOCK)``：失败后整秒重试、最多十次（E-6t 已改成
+    ``job_lock.acquire_bounded`` 的非阻塞轮询 + 截止时间）。于是引擎子进程正
     在写状态的那几秒，会原封不动地加到删除等待上 —— 3 s 的有界等待一秒都没超，
-    超的是它前面那段没有任何界的东西。
+    超的是它前面那段没有任何界的东西。这条用例继续守住删除预算本身。
 
     这里让子进程真的按住同一个 OS 锁 3 s（假引擎放大，见
     :func:`_hold_state_write_lock`），断言**整段删除**仍然落在预算内。这条在

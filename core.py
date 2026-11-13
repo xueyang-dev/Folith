@@ -8838,7 +8838,15 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     if not job_id:
         return _runtime_defaults()
     now = _utc_now_iso()
-    with _RUNTIME_LOCK, _job_lock.exclusive(job_dir(job_id) / ".runtime-write.lock"):
+    # Bounded acquire (E-6t). On Windows the blocking primitive is
+    # ``msvcrt.locking(LK_LOCK)``: it retries in whole seconds and gives up only
+    # after ten, so one slow foreign writer used to park this caller for
+    # 4-10 s (M-1: 4.063 s = 4 s + 63 ms inside the delete path). The wait is
+    # now an explicit deadline; the lock, the merge and the atomic replace are
+    # unchanged, and a timed-out update raises instead of half-writing.
+    with _RUNTIME_LOCK, _job_lock.exclusive(
+            job_dir(job_id) / ".runtime-write.lock",
+            timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
         current = load_runtime_state(job_id)
         # ``None`` is normally omitted so optional status fields do not erase
         # an existing value accidentally.  ``error`` is different: callers
