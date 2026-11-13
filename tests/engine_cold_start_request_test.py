@@ -277,16 +277,18 @@ def test_pause_survives_the_queued_publish_after_a_workbench_refresh(
     """The silent form of the defect: publish ``queued`` must not clear the flag.
 
     A workbench refresh while the child is still starting calls
-    ``get_job_runtime_status`` (through ``adapter.runtime_view``), which
-    reconciles the request-only label to a resumable terminal status.  That is
-    how E-6p observed ``pause_requested -> interrupted -> job_queued -> ... ->
+    ``get_job_runtime_status`` (through ``adapter.runtime_view``).  E-6p §5②
+    caught that read *publishing* ``interrupted`` ("上次运行的进程已退出") from
+    the still-missing ``owner_pid``; E-4e made it a pure view, so the refresh
+    must leave the request label and the event stream untouched.  That is how
+    E-6p observed ``pause_requested -> interrupted -> job_queued -> ... ->
     job_completed``: with the refresh in between, the child no longer refused
     the start, it published ``queued`` and **cleared the request**, then ran to
     completion with no error at all.
 
     Kept separate from the gate tests above because it pins the other half of
     the fix: the launch is the only writer of those flags, the child's publish
-    only reads them.
+    only reads them, and a refresh writes nothing at all.
     """
     job_id = "e6aquetepub1"
     _create_job(job_id)
@@ -296,6 +298,10 @@ def test_pause_survives_the_queued_publish_after_a_workbench_refresh(
     _assert_cold_start_window(job_id, expected_flag="pause_requested")
     # The workbench refresh the GUI runs from its own timer (see E-6p §5②).
     core.get_job_runtime_status(job_id)
+    assert _status(job_id) == "pausing", (
+        f"the refresh rewrote the request: {_runtime(job_id)!r}")
+    assert "interrupted" not in _events(job_id), (
+        "the refresh published an interrupted event (E-4e)")
 
     startup_gate.write_text("go", encoding="utf-8")
 
