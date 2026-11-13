@@ -92,6 +92,7 @@ from folith import ocr_models as _ocr_models
 from folith import ocr_online as _ocr_online
 from folith import text_layer_quality as _text_layer_quality
 from folith.desktop.process import hidden_console_kwargs as _hidden_console_kwargs
+from folith.subprocess_bounds import run_bounded as _run_bounded
 from folith.ocr_cache import (
     OCRPageCache as _OCRPageCache,
     OCRPageIdentity as _OCRPageIdentity,
@@ -847,7 +848,9 @@ def _find_soffice():
 def _tesseract_languages(command):
     """Return installed OCR languages, ignoring Tesseract control models."""
     try:
-        proc = subprocess.run(
+        # Bounded (E-2c): a missing Tesseract must cost 15 s at most, even when
+        # the launcher is a wrapper that leaves a descendant holding the pipes.
+        proc = _run_bounded(
             [command, "--list-langs"], capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=15,
             **_hidden_console_kwargs(),
@@ -1283,7 +1286,8 @@ def _ocr_backend_version(backend, command=""):
     version = ""
     if str(backend or "") == "tesseract" and command:
         try:
-            proc = subprocess.run(
+            # Bounded (E-2c): the version probe may not delay an OCR run.
+            proc = _run_bounded(
                 [command, "--version"], capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=15,
                 **_hidden_console_kwargs())
@@ -10641,9 +10645,11 @@ def run_libreoffice_render_qa(job_id, state=None):
         save_job_state(job_id, state)
         return state, qa
     from folith import academic_evidence, academic_writer
-    version_result = subprocess.run([soffice, "--version"], capture_output=True,
-                                    text=True, timeout=10, check=False,
-                                    **_hidden_console_kwargs())
+    # Bounded (E-2c): LibreOffice's launcher can leave a long-lived descendant
+    # behind, and an unbounded wait on its pipes would stall the whole job.
+    version_result = _run_bounded([soffice, "--version"], capture_output=True,
+                                  text=True, timeout=10, check=False,
+                                  **_hidden_console_kwargs())
     engine_version = (version_result.stdout or version_result.stderr or "").strip()
     with tempfile.TemporaryDirectory(prefix=f"folith-lo-{job_id}-") as tmp:
         tmp_path = Path(tmp)
@@ -10654,9 +10660,9 @@ def run_libreoffice_render_qa(job_id, state=None):
         command = [soffice, "--headless", "-env:UserInstallation=file://"
                    + str(profile), "--convert-to", "pdf", "--outdir", tmp,
                    str(source_path)]
-        result = subprocess.run(command, capture_output=True, text=True,
-                                timeout=120, check=False,
-                                **_hidden_console_kwargs())
+        result = _run_bounded(command, capture_output=True, text=True,
+                              timeout=120, check=False,
+                              **_hidden_console_kwargs())
         pdf_path = tmp_path / "current.pdf"
         if result.returncode != 0 or not pdf_path.is_file():
             detail = (result.stderr or result.stdout or "未知 LibreOffice 错误").strip()
