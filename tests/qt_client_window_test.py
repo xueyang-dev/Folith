@@ -3088,6 +3088,10 @@ def test_home_batch_delete_deletes_idle_tasks_and_refuses_running_ones(client):
             prompts.append(message) or True
         window.failures.clear()
         window.delete_jobs_requested(ids[0])       # 首页信号：处理整批
+        # E-4e：删除循环在 TaskRunner 上跑（GUI 不再冻结），整批结束前
+        # `_delete_in_flight` 一直是 True。断言前必须让后台真的跑完。
+        assert _pump(app, 30, lambda: not window._delete_in_flight), \
+            "批量删除没有在预算内结束"
         app.processEvents()
         assert len(prompts) == 1, f"整批只应确认一次：{prompts}"
         assert "3 个任务" in prompts[0]
@@ -4422,6 +4426,9 @@ def test_project_task_menu_delete_confirms_and_refreshes_the_projects_page(clien
     monkeypatch.setattr(window, "refresh_projects", lambda: reloads.append(1))
 
     window.projects.deleteJobsRequested.emit([job_id])
+    # E-4e：删除（以及删完的 refresh_projects）都在后台完成后才发生。
+    assert _pump(app, 30, lambda: not window._delete_in_flight), \
+        "项目页的删除没有在预算内结束"
     app.processEvents()
 
     assert asked == ["删除任务"]

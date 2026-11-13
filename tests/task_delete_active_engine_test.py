@@ -381,6 +381,27 @@ def test_a_registered_engine_that_has_not_published_a_status_is_not_deleted(
 # 3b. window.delete_jobs 走的是同一条守卫，并把拒绝原因如实展示
 # ---------------------------------------------------------------------------
 
+class _SyncRunner:
+    """Inline stand-in for ``TaskRunner``: this case is about the batch wording.
+
+    E-4e moved the per-task loop onto ``self.runner``; that the *thread* is a
+    worker (and therefore that the GUI never freezes) is
+    ``task_delete_async_gui_test.py``'s claim.  Here the runner runs inline so
+    one call is enough to reach the "batch finished" UI updates.
+    """
+
+    def submit(self, fn, *args, on_done=None, on_error=None, label="", **kwargs):
+        try:
+            value = fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - mirror TaskRunner's contract
+            if on_error is not None:
+                on_error(str(exc), repr(exc))
+            return None
+        if on_done is not None:
+            on_done(value)
+        return None
+
+
 def test_window_delete_jobs_reports_the_guarded_refusal(delete_env, monkeypatch):
     pytest.importorskip("PySide6")
     import types
@@ -404,13 +425,18 @@ def test_window_delete_jobs_reports_the_guarded_refusal(delete_env, monkeypatch)
     notices: list[str] = []
     stub = types.SimpleNamespace(
         _current_job_id="",
+        _delete_in_flight=False,
+        runner=_SyncRunner(),
         stack=None,
         _confirm=lambda *a, **k: True,
         refresh_home=lambda: None,
         _failure=lambda title, message, task=True: failures.append((title, message)),
         _notice=lambda message, task=True: notices.append(message),
     )
-    window_module.MainWindow.delete_jobs(stub, [JOB_ID, "e4b-other-job"])
+    # E-4e 把 worker/on_done 拆成了独立方法；未绑定的调用需要一个 stub 上的绑定。
+    stub._delete_jobs_async = types.MethodType(
+        window_module.MainWindow._delete_jobs_async, stub)
+    assert window_module.MainWindow.delete_jobs(stub, [JOB_ID, "e4b-other-job"]) is True
 
     assert called == [JOB_ID, "e4b-other-job"]
     assert failures, "被守卫拒绝的任务必须显示原因，而不是静默"

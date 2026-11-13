@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QRectF, QSize, QSizeF, Qt, QTimer, Signal
@@ -234,6 +235,12 @@ class MainWindow(QMainWindow):
         self._exit_forced = False
         self._quit_filter_installed = False
         self._deleting_batch = False
+        #: A delete batch is running on ``self.runner``.  Deleting several tasks
+        #: serialises one bounded stop per task (up to 3.6 s each, E-4b/M-1), so
+        #: the whole batch left the GUI thread (E-4e); this flag is the
+        #: re-entrancy boundary that keeps a second batch from racing the first
+        #: one's ``rmtree`` on the same directory.
+        self._delete_in_flight = False
         #: Submitted edits waiting for the background writer, saved one at a time
         #: in submission order: (job_id, index, text).
         self._edit_queue: list[tuple[str, int, str]] = []
@@ -1537,15 +1544,36 @@ class MainWindow(QMainWindow):
 
     def delete_project_jobs(self, job_ids: list[str]) -> None:
         """项目页「任务」里的删除：同一个确认框，删完刷新项目页。"""
-        self.delete_jobs(job_ids)
-        if self.stack.currentWidget() is self.projects:
-            self.refresh_projects()
-        self.refresh_pending_badge(force=True)
+        def finished() -> None:
+            if self.stack.currentWidget() is self.projects:
+                self.refresh_projects()
+            self.refresh_pending_badge(force=True)
 
-    def delete_jobs(self, job_ids: list[str]) -> None:
+        if not self.delete_jobs(job_ids, on_finished=finished):
+            # 没有真正开始（对话框取消 / 上一批还在删）：刷新照旧，别让项目页
+            # 停在旧数字上。
+            finished()
+
+    def delete_jobs(self, job_ids: list[str], *,
+                    on_finished: Callable[[], None] | None = None) -> bool:
+        """删除一批任务；返回是否真的把这一批交给了后台。
+
+        确认框留在 GUI 线程（它本来就是对的），删除**循环**放进
+        ``self.runner.submit(...)``：每个任务的删除是"先取消 + 有界等待"（M-1
+        收紧到 3.0 + 0.6 s），在 GUI 线程上逐个同步调用时，选 5 个卡住的任务就是
+        ~18 s 界面冻结（E-4e，M-1 报告 §5①）。有界语义一条都没改，只是换了个线程
+        去等；``adapter.delete_job`` 仍是唯一的被调用者。
+
+        ``on_finished``：整批结束（含失败收尾）后、界面已刷新完毕时回调一次，给
+        项目页这类"删完还要复读别的东西"的调用方用。
+        """
         ids = [item for item in job_ids if item]
         if not ids:
-            return
+            return False
+        if self._delete_in_flight:
+            # 明确拒绝，而不是排队：两批同时删同一批目录会撞 rmtree。
+            self._notice(i18n.tr('上一批任务还在删除中，请等它完成后再试。'), task=False)
+            return False
         names = []
         for item in ids:
             state = adapter.load_state(item)
@@ -1561,36 +1589,73 @@ class MainWindow(QMainWindow):
                 v0=len(ids), v1=preview)
         if not self._confirm(i18n.tr('删除任务'), question, yes=i18n.tr('永久删除'),
                              no=i18n.tr('取消'), tone="danger"):
-            return
-        deleted: list[str] = []
-        refused: list[str] = []
-        for item, name in zip(ids, names):
-            try:
-                adapter.delete_job(item)
-            except adapter.AdapterError as exc:
-                refused.append(f"{name}：{exc}")
-                continue
-            except Exception as exc:  # noqa: BLE001
-                refused.append(f"{name}：{type(exc).__name__}: {exc}")
-                continue
-            # Drop the in-memory outline cache so a re-import of the same
-            # filename cannot return stale outline data from a deleted task.
-            _outline_loader().invalidate(item)
-            deleted.append(name)
-            if self._current_job_id == item:
-                self._current_job_id = ""
-                self.stack.setCurrentWidget(self.home)
-        self.refresh_home()
-        if refused:
-            self._failure(
-                i18n.tr('{v0} 个任务未能删除', v0=len(refused)),
-                "；".join(refused)
-                + i18n.tr("。运行中的任务需要先取消再删除。"), task=False)
-        if deleted:
-            self._notice(
-                i18n.tr("已删除 {v0} 个任务", v0=len(deleted))
-                + (i18n.tr("：{v0}", v0="、".join(deleted[:3]))
-                   if len(deleted) <= 3 else ""), task=False)
+            return False
+        return self._delete_jobs_async(ids, names, on_finished=on_finished)
+
+    def _delete_jobs_async(self, ids: list[str], names: list[str], *,
+                           on_finished: Callable[[], None] | None = None) -> bool:
+        """把逐个删除放进 ``self.runner``，拒绝逐条收集、完成后如实展示。
+
+        worker 线程**只**碰 ``adapter``；控件、提示、选中态都在 ``on_done`` 里，
+        由 ``TaskRunner`` 投回 GUI 线程执行。
+        """
+        by_id = dict(zip(ids, names))
+
+        def work() -> tuple[list[str], list[str]]:
+            deleted: list[str] = []
+            refused: list[str] = []
+            for item in ids:
+                name = by_id.get(item, item)
+                try:
+                    adapter.delete_job(item)
+                except adapter.AdapterError as exc:
+                    refused.append(f"{name}：{exc}")
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    refused.append(f"{name}：{type(exc).__name__}: {exc}")
+                    continue
+                deleted.append(item)
+            return deleted, refused
+
+        def done(result) -> None:
+            self._delete_in_flight = False
+            deleted_ids, refused = result
+            for item in deleted_ids:
+                # Drop the in-memory outline cache so a re-import of the same
+                # filename cannot return stale outline data from a deleted task.
+                _outline_loader().invalidate(item)
+                if self._current_job_id == item:
+                    self._current_job_id = ""
+                    self.stack.setCurrentWidget(self.home)
+            self.refresh_home()
+            if refused:
+                self._failure(
+                    i18n.tr('{v0} 个任务未能删除', v0=len(refused)),
+                    "；".join(refused)
+                    + i18n.tr("。运行中的任务需要先取消再删除。"), task=False)
+            deleted = [by_id.get(item, item) for item in deleted_ids]
+            if deleted:
+                self._notice(
+                    i18n.tr("已删除 {v0} 个任务", v0=len(deleted))
+                    + (i18n.tr("：{v0}", v0="、".join(deleted[:3]))
+                       if len(deleted) <= 3 else ""), task=False)
+            if on_finished is not None:
+                on_finished()
+
+        def failed(message: str, detail: str) -> None:
+            # 循环本身炸了（不是逐任务的拒绝）：批次同样结束，界面必须能恢复。
+            self._delete_in_flight = False
+            self._failure(i18n.tr('删除任务失败'), message, detail, task=False)
+            if on_finished is not None:
+                on_finished()
+
+        self._delete_in_flight = True
+        try:
+            self.runner.submit(work, on_done=done, on_error=failed, label="delete-jobs")
+        except Exception:
+            self._delete_in_flight = False
+            raise
+        return True
 
     def delete_job(self, job_id: str) -> None:
         """单个删除（保留给菜单/测试等直接调用）。"""
@@ -4676,6 +4741,16 @@ class MainWindow(QMainWindow):
     def _begin_exit(self) -> None:
         if self._exit_in_progress:
             return
+        if self._delete_in_flight:
+            # 一批删除正在后台串行跑（每个任务最多 3.6 s 的有界收尾）。此刻退出会
+            # 把同一批任务交给退出流程再停一次，或者在 ``rmtree`` 中途被丢弃、留下
+            # 半个目录；交互式下明确拒绝并告知，而不是悄悄吞掉这次退出。
+            # 自动化运行不能卡在对话框/提示上（同 `_stop_and_close` 里 `forced`
+            # 的处置），所以照旧放行、只留一条日志。
+            if not _non_interactive_exit():
+                self._notice(i18n.tr('任务正在删除中，请等删除完成后再退出。'), task=False)
+                return
+            self._log("exit during a delete batch (non-interactive): not waiting for it")
         if not self._confirm_leave_unsaved_terms():
             return
         self._exit_in_progress = True
