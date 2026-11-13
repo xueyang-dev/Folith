@@ -78,6 +78,10 @@ EXCLUSIVE = frozenset({
     "performance_trace_test.py",
     "red_team_acceptance_test.py",
     "web_ui_hotpath_test.py",
+    # Starts a real HTTP server and asserts exact served-request lists and
+    # latencies; under the parallel pool a dropped connection turns a timing
+    # assertion into a count mismatch (seen once on #411's Linux run).
+    "replay_latency_gateway_test.py",
 })
 
 
