@@ -408,6 +408,57 @@ def test_translation_starts_after_first_window_not_twenty(slow_job, monkeypatch)
     assert commits[1] == 30 or commits[1] - commits[0] >= 20
 
 
+def test_first_window_target_does_not_follow_the_recognition_thread(streaming_job, monkeypatch):
+    """识别线程已经跑到第 25 页时，首窗仍然只要 5 页，不为「顺手多读的页」多等。
+
+    旧写法 ``target = max(stream.pages_done, 已提交页数) + 首窗``：识别越快、首批译文越晚，
+    而且识别侧一旦有人在等翻译侧（旧版 provider 里的 ``translation_started.wait(20)``）
+    就成环——目标落在被门扣住的那一页上，永远不可达（见 ``.loop/reports/M-3.md``）。
+    """
+    vision, started, args = streaming_job
+    started.set()  # 本用例不看翻译放行，只看首窗的页数目标
+    vision.page_seconds = READ_PACE_S
+    waits, commits, seen, statuses = [], [], {}, []
+
+    original_start = core._start_scan_stream
+    original_advance = core._advance_scan_stream
+
+    def start_ahead(job_id, filename, file_bytes, **kwargs):
+        stream = original_start(job_id, filename, file_bytes, **kwargs)
+        # 页数同步点（不是墙钟）：让识别线程先读完 25 页，主线程才进首窗等待。
+        stream.wait_for_pages(25)
+        seen["pages_done"] = stream.pages_done
+        real_wait = stream.wait_for_pages
+
+        def record(pages, on_tick=None):
+            waits.append(int(pages))
+            return real_wait(pages, on_tick=on_tick)
+
+        stream.wait_for_pages = record
+        return stream
+
+    def spy(job_id, state, *a, **k):
+        result = original_advance(job_id, state, *a, **k)
+        commits.append(state["streaming_ingest"]["pages_done"])
+        return result
+
+    monkeypatch.setattr(core, "_start_scan_stream", start_ahead)
+    monkeypatch.setattr(core, "_advance_scan_stream", spy)
+    state = core.run_job_pipeline("ahead", "scan.pdf", scanned_pdf(),
+                                  **{**args, "on_status": statuses.append})
+
+    assert seen["pages_done"] >= 25
+    # 首窗目标 = 已提交页数(0) + 5；旧写法是 25 + 5 = 30。
+    assert waits[0] == 5
+    # 首批提交的就是识别到此刻能定稿的页（在途上限 4 页 = 2 worker × 2）；旧写法会
+    # 一路等到第 30 页。
+    assert commits[0] <= seen["pages_done"] + 4
+    # 文案里的页数与实际等待的阈值是同一个数。
+    hint = next(text for text in statuses if "就交给翻译" in text)
+    assert f"识别满 {waits[0]} 页就交给翻译" in hint
+    assert state["streaming_ingest"]["status"] == "complete" and state["p2_done"]
+
+
 def test_progress_moves_per_page_and_pause_does_not_deadlock(slow_job):
     slow, outcome, run = slow_job
     thread = run("pause-job")
