@@ -77,6 +77,24 @@ jobs:
           tests/knowledge_async_commit_test.py
           tests/desktop_updates_test.py tests/qt_updater_test.py
           tests/windows_update_helper_test.py tests/macos_updater_packaging_test.py
+          tests/qt_platform_motion_test.py
+      - name: Run animations with reduce-motion off
+        # Separate from the list above. That list stays on the job's offscreen
+        # platform, which forces reduced motion. This group is the only place
+        # FOLITH_REDUCE_MOTION=0 is set, so the new tests actually interpolate.
+        env:
+          FOLITH_REDUCE_MOTION: "0"
+        run: python -m pytest -q tests/qt_motion_execute_test.py
+      - name: Windows client-area animation setting
+        # Real SPI_GET/SET on the Windows runner. Not the Settings app, and not
+        # a substitute for a person flipping "显示动画" on their own machine.
+        # The flag is restored before the step exits and is not written to the profile.
+        if: runner.os == 'Windows'
+        env:
+          FOLITH_WINDOWS_MOTION_PROBE: "1"
+        run: >-
+          python -m pytest -q
+          tests/qt_platform_motion_test.py::test_windows_client_area_animation_toggle_round_trip
       - name: Upload shared-qt failure evidence
         if: always()
         uses: actions/upload-artifact@v4
