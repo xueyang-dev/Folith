@@ -12,7 +12,12 @@ These tests pin the two halves of the replacement:
    never from the thread probe — the stubs below have no
    ``is_job_worker_alive`` at all, so any regression raises ``AttributeError``;
 2. a wait that times out reports the current state (status, liveness, engine
-   child) instead of quietly returning ``False``.
+   child) instead of quietly returning ``False``;
+3. E-6q: "execution finished" also requires the supervisor to have **forgotten**
+   the child's handle.  ``job_is_alive`` goes false when the ownership token is
+   released, and ``_forget`` happens a poll interval later; a wait that stopped
+   at the first half read a leftover ``Popen`` handle after cancel — the
+   Windows-only red this file now pins without Windows.
 """
 from __future__ import annotations
 
@@ -225,6 +230,102 @@ def test_snapshot_reports_the_engine_child_handle(monkeypatch):
     assert info["alive"] is True
     assert info["engine_child"]["pid"] == 4242
     assert info["engine_child"]["output_tail"] == "engine output"
+
+
+# ---------------------------------------------------------------------------
+# E-6q: "finished" means the supervisor forgot the child, not merely "not alive"
+# ---------------------------------------------------------------------------
+
+class _LeftoverChild:
+    """The describe()/output_tail() surface a snapshot reads from a stale handle."""
+
+    def describe(self) -> dict:
+        # ``running`` is False and ``exit_code`` is None: exactly what the
+        # Windows failure message showed — the child had exited, but the monitor
+        # had not yet published and forgotten it.
+        return {"pid": 4242, "running": False, "exit_code": None}
+
+    def output_tail(self) -> str:
+        return ""
+
+
+def _patch_supervisor(monkeypatch, getter) -> None:
+    import folith.desktop.engine_supervisor as engine_supervisor
+    monkeypatch.setattr(engine_supervisor, "supervisor", getter)
+
+
+def test_execution_finished_requires_the_supervisor_to_forget_the_child(monkeypatch):
+    """E-6q: terminal status + no live owner is not yet "the child is gone".
+
+    ``EngineSupervisor._watch`` releases the ownership token (which is what makes
+    ``adapter.job_is_alive`` false) *before* it forgets the handle, so the two
+    answers disagree for a poll interval.  The Windows run 43399538998 read the
+    handle inside that window and reported a leftover engine child after cancel.
+    """
+    _install(monkeypatch, _FakeAdapter(alive=False, status="cancelled"))
+    probe = _probe()
+    _patch_supervisor(monkeypatch, lambda _job: _LeftoverChild())
+    assert probe._engine_child_settled("job") is False
+    assert probe._execution_finished("job") is False
+    _patch_supervisor(monkeypatch, lambda _job: None)
+    assert probe._engine_child_settled("job") is True
+    assert probe._execution_finished("job") is True
+
+
+def test_a_job_without_a_supervisor_is_settled(monkeypatch):
+    """Thread mode (and a never-supervised job) has no handle to wait for."""
+    _install(monkeypatch, _FakeAdapter(alive=False, status="cancelled"))
+    _patch_supervisor(monkeypatch, lambda _job: None)
+    assert _probe()._engine_child_settled("job") is True
+
+
+def test_wait_for_finish_does_not_end_on_a_leftover_dead_child_handle(monkeypatch):
+    """The E-6q race reproduced without Windows, deterministically.
+
+    The durable answer is terminal from the first check, and the dead child's
+    handle stays registered for two more pump turns.  The wait must survive
+    those turns: ending on the first one is what produced
+    ``assert report["cancel"]["engine_child"] is None`` failing on Windows.
+    """
+    _install(monkeypatch, _FakeAdapter(alive=False, status="cancelled"))
+    probe = _probe()
+    registry: dict = {"job": _LeftoverChild()}
+    _patch_supervisor(monkeypatch, lambda job: registry.get(job))
+    checks = {"n": 0}
+
+    def pump(_seconds, predicate=None):
+        # One event-loop turn per call to the predicate, like the real pump.
+        for _ in range(10):
+            checks["n"] += 1
+            if checks["n"] == 3:      # the monitor reaps, publishes and forgets
+                registry.pop("job", None)
+            if predicate is not None and predicate():
+                return True
+        return False
+
+    report: dict = {}
+    assert probe.pump_until_finished(pump, 5, "job", report=report,
+                                     label="lifecycle-main-cancel") is True
+    assert checks["n"] == 3, "the wait ended before the handle was forgotten"
+    assert report["waits"][-1]["timed_out"] is False
+    assert registry == {}
+
+
+def test_wait_for_finish_timeout_reports_the_leftover_child_handle(monkeypatch):
+    """A handle that is never forgotten is a timeout with evidence, not a pass."""
+    _install(monkeypatch, _FakeAdapter(alive=False, status="cancelled"))
+    probe = _probe()
+    _patch_supervisor(monkeypatch, lambda _job: _LeftoverChild())
+
+    def pump(_seconds, _predicate=None):
+        return False
+
+    report: dict = {}
+    with pytest.raises(probe.ProbeTimeout) as caught:
+        probe.pump_until_finished(pump, 0.01, "job", report=report,
+                                  label="lifecycle-main-cancel")
+    assert caught.value.snapshots[0]["engine_child"]["pid"] == 4242
+    assert report["waits"][-1]["timed_out"] is True
 
 
 # ---------------------------------------------------------------------------

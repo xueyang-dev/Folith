@@ -216,6 +216,37 @@ def _is_processing(job_id: str) -> bool:
     return _owner_published(job_id)
 
 
+def _engine_child_settled(job_id: str) -> bool:
+    """本进程名下这个任务的引擎子进程句柄已经消失（没有受监管子进程时为真）。
+
+    ``adapter.job_is_alive`` 回答"还有执行者吗"；本函数回答"监管器还拿着一个
+    子进程句柄吗"。收尾时这两件事**不在同一刻**发生
+    （``EngineSupervisor._watch``）：``Popen.poll()`` 看到子进程退出 →
+    发布终态 → ``release_engine_owner``（此刻 ``job_is_alive`` 变假）→
+    ``_forget``（句柄从 ``_SUPERVISORS`` 消失）。中间那段窗口里"任务已结束"
+    已经成立，而 :func:`_runtime_snapshot` 仍读到上一个子进程的 ``Popen`` 记录。
+
+    Windows 上 ``pid_alive`` 用 ``GetExitCodeProcess``，子进程一终止就回答"不在
+    了"，窗口就等于监控线程的一整个轮询间隔（``POLL_SECONDS``）加上发布终态
+    的写盘时间；macOS 上僵尸进程的判定要起 ``ps``，窗口常被探针恰巧错过，所以
+    同一条竞态在本机极少显形。E-6q 的既有红灯正是这条窗口：取消后探针读到
+    残留句柄（``cancel.engine_child is None`` 失败，main run 43399538998 /
+    43403933373 同一断言、同一 message）。
+
+    所以"执行结束"必须等到句柄真的消失。这不是放宽断言：``_forget`` 在
+    ``_watch`` 的 ``finally`` 里，正常收尾一定会发生；等不到就是
+    ``ProbeTimeout``，报告现场而不是静默通过。
+    """
+    try:
+        from folith.desktop import engine_supervisor
+    except Exception:  # noqa: BLE001 - nothing supervised in this process
+        return True
+    try:
+        return engine_supervisor.supervisor(job_id) is None
+    except Exception:  # noqa: BLE001 - the registry read must not break a wait
+        return True
+
+
 def _execution_finished(job_id: str) -> bool:
     """没人再执行这个任务了：线程/子进程已消失，且状态离开活动集合。
 
@@ -223,8 +254,12 @@ def _execution_finished(job_id: str) -> bool:
     half of both modes, built only from product answers: liveness
     (``adapter.job_is_alive``), the client's own launch window
     (``adapter.job_start_in_flight``, so a just-requested start is not mistaken
-    for a finished run) and the runtime status (``adapter.runtime_view``) against
-    the core's ``RUNTIME_ACTIVE_STATUSES``.
+    for a finished run), the runtime status (``adapter.runtime_view``) against
+    the core's ``RUNTIME_ACTIVE_STATUSES``, and — in engine mode — the supervisor
+    having actually forgotten the child's handle (:func:`_engine_child_settled`,
+    E-6q).  Without that last half, "the run ended" was true for the whole window
+    in which the monitor had not yet published its terminal truth, and a caller
+    that then read the handle saw a child that no longer existed.
     """
     try:
         adapter = _probe_adapter()
@@ -235,7 +270,9 @@ def _execution_finished(job_id: str) -> bool:
     if adapter.job_start_in_flight(job_id):
         return False
     runtime = adapter.runtime_view(job_id, adapter.load_state(job_id))
-    return str(runtime.get("status") or "") not in adapter.core.RUNTIME_ACTIVE_STATUSES
+    if str(runtime.get("status") or "") in adapter.core.RUNTIME_ACTIVE_STATUSES:
+        return False
+    return _engine_child_settled(job_id)
 
 
 def _pump_until(pump, seconds: float, predicate, job_ids, *, what: str,
@@ -288,6 +325,12 @@ def pump_until_finished(pump, seconds: float, job_ids, *, report: dict | None = 
     works), the answer comes from ``adapter``/``runtime_view`` as always, and a
     timeout reports the child's handle, status and last events instead of
     returning quietly.
+
+    "消失" is taken literally (E-6q): the supervisor must have forgotten the
+    child's handle, not merely stopped calling it alive.  The product's publish →
+    release → forget sequence makes those two different instants, and the second
+    one is the only point at which "there is no engine child for this task" is
+    true of the same registry the report reads.
     """
     ids = [job_ids] if isinstance(job_ids, str) else list(job_ids)
     what = "、".join(ids) + " 执行结束"
