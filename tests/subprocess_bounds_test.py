@@ -82,7 +82,10 @@ def test_a_short_command_behaves_like_subprocess_run():
     binary = run_bounded([sys.executable, "-c", "print('bytes')"],
                          capture_output=True, timeout=30)
     assert binary.returncode == 0
-    assert binary.stdout == b"bytes\n"
+    # Bytes mode is raw, exactly like subprocess.run: no newline translation, so
+    # Windows keeps the "\r\n" that print() writes.  (Text mode above did
+    # translate it to "\n" -- that is the behaviour being protected.)
+    assert binary.stdout.replace(b"\r\n", b"\n") == b"bytes\n"
     assert binary.stderr == b""
 
 
