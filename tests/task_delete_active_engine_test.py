@@ -77,6 +77,28 @@ def _hold_state_write_lock(child_core, job_dir, log, committed: int) -> None:
 
 
 def _run_engine_worker(argv: list[str]) -> int:
+    """Entry point for the fake engine child.
+
+    Wrapped so a crash before the child publishes its pid always leaves a
+    reason in ``engine.log``: on Windows the parent saw an empty stderr and no
+    state, which made "the engine died" impossible to diagnose (E-6u follow-up).
+    """
+    try:
+        return _run_engine_worker_body(argv)
+    except BaseException:
+        import traceback
+
+        output_dir = Path(argv[1]) if len(argv) > 1 else Path(".")
+        try:
+            with (output_dir / "engine.log").open("a", encoding="utf-8") as stream:
+                stream.write("worker crashed before publishing:\n")
+                stream.write(traceback.format_exc())
+        except OSError:
+            pass
+        raise
+
+
+def _run_engine_worker_body(argv: list[str]) -> int:
     import core as child_core
 
     mode, output_dir, job_id = argv[0], Path(argv[1]), argv[2]
@@ -167,10 +189,38 @@ class FakeEngine:
             if (runtime.get("worker") or {}).get("owner_pid") == self.process.pid:
                 return
             if self.process.poll() is not None:
-                raise AssertionError(
-                    f"engine died before running: {self.process.stderr.read()!r}")
+                raise AssertionError(self._death_report())
             time.sleep(0.02)
         raise AssertionError("engine never published its owner pid")
+
+    def _death_report(self) -> str:
+        """Everything we have about a child that exited before publishing.
+
+        A bare ``stderr`` was empty on Windows while the child was dying, which
+        left the reason unknown; the child now also writes its traceback to
+        ``engine.log``, and this report carries the exit code, the file's tail,
+        and the state the job was left in.
+        """
+        assert self.process is not None
+        code = self.process.poll()
+        stderr = b""
+        try:
+            stderr = self.process.stderr.read() if self.process.stderr else b""
+        except Exception as exc:  # noqa: BLE001 - reporting must never mask the failure
+            stderr = f"<unreadable: {exc}>".encode()
+        log_path = self.output_dir / "engine.log"
+        tail = ""
+        if log_path.is_file():
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+            tail = "\n".join(text.splitlines()[-20:])
+        runtime = core.load_runtime_state(self.job_id) or {}
+        return (
+            f"engine died before running (exit={code})\n"
+            f"  argv={self.process.args!r}\n"
+            f"  stderr={stderr.decode('utf-8', 'replace')!r}\n"
+            f"  engine.log tail:\n{tail or '    <missing>'}\n"
+            f"  runtime status={runtime.get('status')!r} "
+            f"worker={runtime.get('worker')!r}")
 
     def batches(self) -> int:
         pairs = core.job_dir(self.job_id) / "pairs.jsonl"

@@ -54,6 +54,23 @@ BATCH_LIMIT = 200  # 20 s: more than every test needs, less than a hung CI run
 # ---------------------------------------------------------------------------
 
 def _run_engine_worker(argv: list[str]) -> int:
+    """Entry point for the fake engine child (crash reasons land in engine.log)."""
+    try:
+        return _run_engine_worker_body(argv)
+    except BaseException:
+        import traceback
+
+        output_dir = Path(argv[1]) if len(argv) > 1 else Path(".")
+        try:
+            with (output_dir / "engine.log").open("a", encoding="utf-8") as stream:
+                stream.write("worker crashed before publishing:\n")
+                stream.write(traceback.format_exc())
+        except OSError:
+            pass
+        raise
+
+
+def _run_engine_worker_body(argv: list[str]) -> int:
     import core as child_core
 
     mode, output_dir, job_id = argv[0], Path(argv[1]), argv[2]
@@ -137,9 +154,31 @@ class FakeEngine:
                 return
             if self.process.poll() is not None:
                 raise AssertionError(
-                    f"engine died before running: {self.process.stderr.read()!r}")
+                    self._death_report())
             time.sleep(0.02)
         raise AssertionError("engine never published its owner pid")
+
+    def _death_report(self) -> str:
+        """Exit code, argv, stderr, engine.log tail and the state left behind."""
+        assert self.process is not None
+        code = self.process.poll()
+        try:
+            stderr = self.process.stderr.read() if self.process.stderr else b""
+        except Exception as exc:  # noqa: BLE001
+            stderr = f"<unreadable: {exc}>".encode()
+        log_path = self.output_dir / "engine.log"
+        tail = ""
+        if log_path.is_file():
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+            tail = "\n".join(text.splitlines()[-20:])
+        runtime = core.load_runtime_state(self.job_id) or {}
+        return (
+            f"engine died before running (exit={code})\n"
+            f"  argv={self.process.args!r}\n"
+            f"  stderr={stderr.decode('utf-8', 'replace')!r}\n"
+            f"  engine.log tail:\n{tail or '    <missing>'}\n"
+            f"  runtime status={runtime.get('status')!r} "
+            f"worker={runtime.get('worker')!r}")
 
     def batches(self) -> int:
         pairs = core.job_dir(self.job_id) / "pairs.jsonl"
