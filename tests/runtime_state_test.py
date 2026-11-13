@@ -450,10 +450,11 @@ def test_reading_a_never_run_job_writes_nothing(tmp_path):
       只要被界面读过一次就会多出一个 runtime_state.json；
     - `list_jobs()` 会先 `_ensure_output_dir()`，于是"列出任务"也会创建 outputs/。
 
-    保留的**唯一**写路径是死 worker 的纠正：当持久化状态仍是 running/queued
-    等活跃状态、而对应进程已不存在时，读取会把它纠正为 interrupted/stalled 并
-    落盘。那只发生在真正启动过 worker 的任务上，且是为了让各个界面看到一致的
-    状态，不是"看一眼就产生文件"。
+    保留的写路径只有显式写函数（E-4e）：持久化状态仍是 running/queued 等活跃
+    状态、而所有权证据（线程 / 引擎令牌 / `.worker.lock`）全都不存在时，
+    `get_job_runtime_status` 只在返回值里给出 `interrupted`/`stalled` 的视图
+    （`measured=False`），**不落盘**；落盘由
+    `publish_lost_runtime_state(...)` 或持有 `.worker.lock` 的启动方显式完成。
     """
     old_dir = core.OUTPUT_DIR
     core.OUTPUT_DIR = tmp_path
