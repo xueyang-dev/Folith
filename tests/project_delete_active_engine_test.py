@@ -338,7 +338,18 @@ def test_deleting_a_project_with_idle_jobs_does_not_wait(tmp_path, monkeypatch):
                                  cascade=True)
     elapsed = time.monotonic() - started
     assert result["deleted_jobs"] == job_ids
-    assert elapsed < 1.0, f"没有运行中的任务却等了 {elapsed:.2f}s"
+    # The failure this guards against is "paid the settle wait anyway", so the
+    # bound is the settle itself.  A bare 1.0 s was a wall-clock guess: on a
+    # loaded Windows runner three idle deletes plus their directory removal
+    # already take ~1.1 s without waiting for anything.
+    assert elapsed < engine_projects.DELETE_CANCEL_SETTLE_SECONDS, (
+        f"没有运行中的任务却等了 {elapsed:.2f}s（等于付出了 "
+        f"{engine_projects.DELETE_CANCEL_SETTLE_SECONDS} s 的收尾等待）")
+    # 墙钟只是外圈。真正要证的是"没有进入等待"：分段统计里 settle 必须接近 0，
+    # 且没有撞到 deadline —— 这两条与 runner 快慢无关。
+    stats = engine_projects.delete_stop_stats()
+    assert stats["deadline_hit"] is False, f"空闲删除撞到了收尾 deadline：{stats}"
+    assert stats["settle_seconds"] < 0.5, f"空闲删除却进了收尾等待：{stats}"
     for job_id in job_ids:
         assert not core.job_dir(job_id).exists()
 
