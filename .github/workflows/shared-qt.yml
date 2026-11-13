@@ -62,6 +62,10 @@ jobs:
           tests/runtime_heartbeat_recovery_test.py tests/workflow_recovery_test.py
           tests/windows_atomic_file_test.py tests/runtime_pause_test.py
           tests/qt_worker_lifetime_test.py
+          tests/fixture_provenance_test.py
+          tests/interop_fixture_provenance_test.py
+          tests/sdlxliff_fixture_audit_test.py
+          tests/mqxliff_fixture_audit_test.py
           tests/qt_task_runner_destroy_test.py
           tests/qt_import_reentrancy_test.py
           tests/concept_workflow_test.py tests/qt_concept_dialog_test.py
