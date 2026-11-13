@@ -86,7 +86,9 @@ def test_successful_render_records_engine_hashes_and_pdf_facts(tmp_path, monkeyp
         (outdir / "current.pdf").write_bytes(pdf)
         return SimpleNamespace(returncode=0, stdout="convert ok", stderr="")
 
-    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    # E-2c: LibreOffice runs through the bounded runner (no pipes, tree kill on
+    # timeout), so the fake replaces that entry point rather than Popen/run.
+    monkeypatch.setattr(core, "_run_bounded", fake_run)
     state, qa = core.run_libreoffice_render_qa(job_id)
 
     assert qa["libreoffice_render"] == "PASS"

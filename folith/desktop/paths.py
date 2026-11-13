@@ -173,10 +173,16 @@ def build_id() -> str:
     root = repo_root()
     if root is not None:
         try:
-            import subprocess
+            # Bounded (E-2c): ``subprocess.run(timeout=5)`` never returns on
+            # Windows when the launcher leaves a grandchild holding the pipes
+            # (Git for Windows ships ``git.exe`` as a wrapper), and this call
+            # sits on the pipeline's start path -- before the first provider
+            # request.  ``run_bounded`` is the wrapper that gives up on time and
+            # kills the whole tree.
+            from ..subprocess_bounds import run_bounded
 
             from .process import hidden_console_kwargs
-            result = subprocess.run(
+            result = run_bounded(
                 ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
                 capture_output=True, text=True, timeout=5, check=False,
                 **hidden_console_kwargs(),

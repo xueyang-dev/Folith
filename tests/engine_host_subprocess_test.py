@@ -632,7 +632,10 @@ def test_the_engine_child_never_spawns_a_tool_to_identify_itself(monkeypatch):
         raise AssertionError(
             "the engine host must not spawn a tool to identify itself")
 
+    # Both entry points: subprocess.run (what the old code used) and Popen (what
+    # the E-2c bounded runner uses).
     monkeypatch.setattr(subprocess, "run", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
     assert engine_host.pin_build_identity() == engine_host.FALLBACK_BUILD_ID
     # ... and the pipeline's own call now resolves without the probe.
     assert desktop_paths.build_id() == engine_host.FALLBACK_BUILD_ID
