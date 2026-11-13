@@ -522,6 +522,36 @@ def _project_backup_dir():
 DELETE_CANCEL_SETTLE_SECONDS = 3.0
 DELETE_CANCEL_POLL_SECONDS = 0.05
 
+#: Wall-clock split of the last bounded stop, written by
+#: :func:`_stop_jobs_for_delete` and read by :func:`delete_stop_stats`.
+#:
+#: M-1 needed this: a Windows Full Regression reported the delete taking 7.06 s
+#: against a 3 s budget, and the single total could not say *which* step
+#: overspent.  The suspicion was the settle loop; the loop is capped by
+#: construction (`deadline`), so the missing time had to be the cancel request
+#: itself — a cross-process ``runtime_state`` write.  Keeping the split here
+#: lets a failing assertion (or a CI log) name the step instead of guessing.
+#: Format mirrors ``core._RUNTIME_PERSIST_STATS``: one dict, updated in place.
+def _new_delete_stop_stats():
+    return {
+        "budget_seconds": DELETE_CANCEL_SETTLE_SECONDS,
+        "cancel_seconds": 0.0,
+        "settle_seconds": 0.0,
+        "probe_seconds": 0.0,
+        "probes": 0,
+        "deadline_hit": False,
+        "still_running": [],
+        "cancel_pending": False,
+    }
+
+
+_DELETE_STOP_STATS = _new_delete_stop_stats()
+
+
+def delete_stop_stats():
+    """The timing split of the most recent bounded stop (see the dict above)."""
+    return dict(_DELETE_STOP_STATS)
+
 
 def _job_still_running(job_id):
     """Whether this task's directory must not be removed right now.
@@ -567,18 +597,37 @@ def _stop_jobs_for_delete(job_ids):
     publishes the terminal state), while gating it on a local-thread probe is
     exactly the bug that let a running engine be deleted without any notice.
     """
+    stats = _new_delete_stop_stats()
+
+    def probe(job_id):
+        began = time.monotonic()
+        try:
+            return _job_still_running(job_id)
+        finally:
+            stats["probe_seconds"] += time.monotonic() - began
+            stats["probes"] += 1
+
+    began = time.monotonic()
     for job_id in job_ids:
         try:
             _c.request_job_cancel(job_id, force=True)
         except Exception:  # noqa: BLE001 - a deleted/broken task must not block the rest
             pass
-    running = [job_id for job_id in job_ids if _job_still_running(job_id)]
+    stats["cancel_seconds"] = time.monotonic() - began
+
+    running = [job_id for job_id in job_ids if probe(job_id)]
     if not running:
+        _DELETE_STOP_STATS.update(stats)
         return []
     deadline = time.monotonic() + DELETE_CANCEL_SETTLE_SECONDS
+    began = time.monotonic()
     while running and time.monotonic() < deadline:
         time.sleep(DELETE_CANCEL_POLL_SECONDS)
-        running = [job_id for job_id in running if _job_still_running(job_id)]
+        running = [job_id for job_id in running if probe(job_id)]
+    stats["settle_seconds"] = time.monotonic() - began
+    stats["deadline_hit"] = bool(running)
+    stats["still_running"] = list(running)
+    _DELETE_STOP_STATS.update(stats)
     return running
 
 

@@ -11,7 +11,9 @@ E-4a 修的是**项目级**级联删除，并自己指出：`adapter.delete_job`
 3. 刚请求启动的窗口内 → 拒绝（不删成功），窗口过后照常删；
 4. 引擎不理会取消 → `DELETE_CANCEL_SETTLE_SECONDS` 后明确失败，**一个都不删**；
 5. 判活复用 E-4a 的口径（`core.job_is_active` + `core._job_execution_alive`），
-   不另造一套。
+   不另造一套；
+6. M-1：**整段**删除（请求取消 + 收尾等待）都落在同一个预算里 —— 取消请求自己
+   是一次跨进程状态写，它在 Windows 上按整秒阻塞，不能算在预算之外。
 
 运行：``python -m pytest tests/task_delete_active_engine_test.py -q``
 """
@@ -38,11 +40,40 @@ JOB_ID = "e4b-engine-job001"
 PROJECT_NAME = "E-4b 引擎项目"
 BATCH_SECONDS = 0.1
 BATCH_LIMIT = 200  # 20 s: more than every test needs, less than a hung CI run
+#: One emulated slow ``update_runtime_state`` in the engine child (see
+#: :func:`_hold_state_write_lock`).  Long enough that "the write ate the budget"
+#: cannot be confused with runner jitter on any platform.
+SLOW_STATE_WRITE_SECONDS = 3.0
+#: Slack on top of the settle budget: one poll (``DELETE_CANCEL_POLL_SECONDS``,
+#: rounded up by the Windows 15.6 ms timer) plus the liveness probes that run
+#: inside the same window.  Deliberately NOT a second budget.
+SETTLE_SLACK_SECONDS = 0.6
 
 
 # ---------------------------------------------------------------------------
 # 子进程里的假引擎：真的持有 .worker.lock、真的写 runtime_state.json
 # ---------------------------------------------------------------------------
+
+def _hold_state_write_lock(child_core, job_dir, log, committed: int) -> None:
+    """Emulate one slow Windows ``update_runtime_state`` in the engine child.
+
+    ``core.update_runtime_state`` merges under ``.runtime-write.lock`` with a
+    *blocking* acquire, and on Windows that acquire is
+    ``msvcrt.locking(LK_LOCK)``: it retries in whole seconds and gives up only
+    after ten.  A state write that takes seconds in the engine therefore makes
+    the GUI's own ``request_job_cancel`` — the first step of every delete — wait
+    whole seconds before it can even ask the task to stop.  Holding the same OS
+    lock for a fixed window reproduces that stage deterministically, instead of
+    waiting for a Windows runner where one write happens to be slow (M-1).
+    """
+    hold = child_core._job_lock.acquire(job_dir / ".runtime-write.lock")
+    try:
+        log(f"state write started after {committed} batches")
+        time.sleep(SLOW_STATE_WRITE_SECONDS)
+    finally:
+        hold.close()
+    log("state write finished")
+
 
 def _run_engine_worker(argv: list[str]) -> int:
     import core as child_core
@@ -93,6 +124,8 @@ def _run_engine_worker(argv: list[str]) -> int:
             except OSError as exc:
                 log(f"STATUS WRITE FAILED after {committed} batches: {exc}")
                 return 4
+            if mode == "slow-state-write" and index == 2:
+                _hold_state_write_lock(child_core, job_dir, log, committed)
             time.sleep(BATCH_SECONDS)
         log(f"finished after {committed} batches")
         return 0
@@ -104,14 +137,21 @@ class FakeEngine:
     """A separate process that behaves like the engine worker, not a thread."""
 
     def __init__(self, output_dir: Path, job_id: str, *,
-                 honor_cancel: bool = True) -> None:
+                 honor_cancel: bool = True,
+                 slow_state_write: bool = False) -> None:
         self.output_dir = output_dir
         self.job_id = job_id
         self.honor_cancel = honor_cancel
+        self.slow_state_write = slow_state_write
         self.process: subprocess.Popen | None = None
 
     def start(self) -> None:
-        mode = "honor-cancel" if self.honor_cancel else "ignore-cancel"
+        if self.slow_state_write:
+            # A slow state write is the interesting case *because* the engine
+            # ignores the cancel it cannot even receive yet.
+            mode = "slow-state-write"
+        else:
+            mode = "honor-cancel" if self.honor_cancel else "ignore-cancel"
         (self.output_dir / "engine.log").unlink(missing_ok=True)
         self.process = subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "--engine-worker",
@@ -155,6 +195,47 @@ class FakeEngine:
             self.process.kill()
             self.process.wait(timeout=5)
 
+    def wait_for_log(self, needle: str, timeout: float = 30.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if any(needle in line for line in self.log_lines()):
+                return
+            if self.process is not None and self.process.poll() is not None:
+                break
+            time.sleep(0.02)
+        raise AssertionError(
+            f"engine never logged {needle!r}: {self.log_lines()!r}")
+
+
+def _wait_until(predicate, timeout: float = 30.0, what: str = "") -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"condition never held: {what}")
+
+
+def _timing_line(elapsed: float) -> str:
+    """One line that says where a delete's wall clock went (M-1).
+
+    ``DELETE_CANCEL_SETTLE_SECONDS`` bounds the *whole* stop, so the interesting
+    split is "how much of it did the cancel request take, how much the settle
+    wait, and what is left over in the caller".  Printing it as the assertion
+    message is what puts the per-stage numbers into a CI artifact — a single
+    total cannot tell a 3 s budget hit from a 4 s blocking state write.
+    """
+    stats = engine_projects.delete_stop_stats()
+    other = elapsed - stats["cancel_seconds"] - stats["settle_seconds"]
+    return (
+        f"删除耗时 {elapsed:.3f}s = 取消请求 {stats['cancel_seconds']:.3f}s"
+        f" + 收尾等待 {stats['settle_seconds']:.3f}s"
+        f"（其中探活 {stats['probes']} 次 / {stats['probe_seconds']:.3f}s）"
+        f" + 其它 {other:.3f}s；"
+        f"预算 {stats['budget_seconds']:.1f}s，"
+        f"撞满={stats['deadline_hit']}，"
+        f"取消未送达={stats['cancel_pending']}")
+
 
 @pytest.fixture()
 def delete_env(tmp_path, monkeypatch):
@@ -194,8 +275,8 @@ def test_deleting_a_running_task_cancels_the_engine_before_removing_anything(
         assert adapter.delete_job(job_id) is True
         elapsed = time.monotonic() - started
 
-        assert elapsed < engine_projects.DELETE_CANCEL_SETTLE_SECONDS, (
-            f"能停下来的任务不该烧完预算：{elapsed:.2f}s")
+        assert elapsed < engine_projects.DELETE_CANCEL_SETTLE_SECONDS, \
+            f"能停下来的任务不该烧完预算：{_timing_line(elapsed)}"
         assert not core.job_dir(job_id).exists()
         assert engine.wait(timeout=10) == 0, "引擎应当被通知取消后正常退出"
         lines = engine.log_lines()
@@ -355,13 +436,54 @@ def test_an_engine_that_ignores_cancel_refuses_the_delete_and_keeps_everything(
         elapsed = time.monotonic() - started
 
         assert engine_projects.DELETE_CANCEL_SETTLE_SECONDS * 0.9 <= elapsed \
-            <= engine_projects.DELETE_CANCEL_SETTLE_SECONDS + 2.0, elapsed
+            <= engine_projects.DELETE_CANCEL_SETTLE_SECONDS + 2.0, _timing_line(elapsed)
         assert core.job_dir(job_id).exists(), "拒绝删除时任务目录必须还在"
         assert core.load_job_state(job_id) is not None
         assert core.load_runtime_state(job_id).get("cancel_requested") is True
         committed = engine.batches()
         time.sleep(0.25)
         assert engine.batches() > committed, "被拒绝的删除不得打断引擎的写入"
+    finally:
+        engine.stop()
+
+
+# ---------------------------------------------------------------------------
+# 5. M-1：引擎正卡在一次慢状态写里时，取消请求不得把删除等待整个顶穿
+# ---------------------------------------------------------------------------
+def test_a_slow_engine_state_write_cannot_stretch_the_delete_wait(delete_env):
+    """Windows 上 7.06 s 的那一段（M-1）。
+
+    删除的第一步是"请求取消"，而请求取消要合并进 ``runtime_state.json``，
+    合并走 ``.runtime-write.lock`` 的**阻塞**获取。Windows 上那是
+    ``msvcrt.locking(LK_LOCK)``：失败后整秒重试、最多十次。于是引擎子进程正
+    在写状态的那几秒，会原封不动地加到删除等待上 —— 3 s 的有界等待一秒都没超，
+    超的是它前面那段没有任何界的东西。
+
+    这里让子进程真的按住同一个 OS 锁 3 s（假引擎放大，见
+    :func:`_hold_state_write_lock`），断言**整段删除**仍然落在预算内。这条在
+    macOS/Linux 上是确定性的，不依赖 runner 抖动；Windows 上把等待从"整秒重试"
+    换成更细的粒度即可通过。
+    """
+    tmp, job_id = delete_env["tmp"], delete_env["job_id"]
+    engine = FakeEngine(tmp, job_id, slow_state_write=True)
+    engine.start()
+    try:
+        engine.wait_running()
+        engine.wait_for_log("state write started")
+
+        started = time.monotonic()
+        with pytest.raises(adapter.AdapterError, match="仍在运行"):
+            adapter.delete_job(job_id)
+        elapsed = time.monotonic() - started
+
+        assert elapsed <= engine_projects.DELETE_CANCEL_SETTLE_SECONDS \
+            + SETTLE_SLACK_SECONDS, _timing_line(elapsed)
+        assert core.job_dir(job_id).exists(), "拒绝删除时任务目录必须还在"
+        assert engine.process.poll() is None, "被拒绝的删除不得打断引擎"
+
+        # 让还没送到的取消请求写完再离开：迟到的状态写不得跑在目录消失之后。
+        _wait_until(lambda: not engine_projects.delete_stop_stats()["cancel_pending"],
+                    what="cancel request still in flight")
     finally:
         engine.stop()
 
