@@ -620,7 +620,7 @@ def inject_pending_restart(job_id, *, filename=None, kwargs=None, base_url=None)
     with _RUNTIME_PENDING_RESTART_LOCK:
         _RUNTIME_PENDING_RESTART[job_id] = payload
     update_runtime_state(
-        job_id, pause_requested=False, exit_requested=False, restart_requested=True,
+        job_id, on_timeout="raise", pause_requested=False, exit_requested=False, restart_requested=True,
         status="running", phase="running",
         event="连接已更改，正在用新连接重新启动任务；已识别的页面与译文会保留"
               "（换模型后部分页面可能按新模型重新读取）",
@@ -651,7 +651,7 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
     if not runtime.get("pause_requested"):
         return
     previous = runtime
-    update_runtime_state(job_id, status="paused", phase="paused",
+    update_runtime_state(job_id, on_timeout="skip", status="paused", phase="paused",
                          event=paused_message or "任务已暂停，可继续处理",
                          event_name="job_paused",
                          event_visibility="user", event_category="lifecycle")
@@ -669,7 +669,7 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
                 # This thread has already reached the pause boundary. Restore
                 # its actual state if a stale observer/heartbeat changed the
                 # label; otherwise the UI loses its Continue action forever.
-                update_runtime_state(job_id, status="paused", phase="paused",
+                update_runtime_state(job_id, on_timeout="skip", status="paused", phase="paused",
                                      phase_label=paused_message or "任务已暂停，可继续处理")
         time.sleep(0.25)
     if load_runtime_state(job_id).get("restart_requested") \
@@ -678,7 +678,7 @@ def _runtime_pause_checkpoint(job_id, paused_message=None):
         raise _WorkerRestartRequested("连接已更改，正在用新连接重新启动任务")
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
-    update_runtime_state(job_id, status="running", phase=previous.get("phase") or "running",
+    update_runtime_state(job_id, on_timeout="skip", status="running", phase=previous.get("phase") or "running",
                          phase_label=previous.get("phase_label") or "正在执行",
                          event="任务已继续", event_name="job_continued",
                          event_visibility="user", event_category="lifecycle")
@@ -688,7 +688,7 @@ def request_job_pause(job_id):
     if not (is_job_worker_alive(job_id) or _job_execution_alive(job_id)):
         return False
     note = "已请求暂停；当前正在进行的请求会先用原连接完成，随后暂停"
-    update_runtime_state(job_id, pause_requested=True, status="pausing",
+    update_runtime_state(job_id, on_timeout="raise", pause_requested=True, status="pausing",
                          event=note, event_name="pause_requested",
                          event_visibility="user", event_category="lifecycle")
     return True
@@ -712,7 +712,7 @@ def continue_job(job_id, *, restart_kwargs=None, base_url=None, filename=None):
     if restart_kwargs is not None and _worker_connection_changed(job_id, restart_kwargs):
         return inject_pending_restart(job_id, filename=filename,
                                       kwargs=restart_kwargs, base_url=base_url)
-    update_runtime_state(job_id, pause_requested=False, exit_requested=False,
+    update_runtime_state(job_id, on_timeout="raise", pause_requested=False, exit_requested=False,
                          restart_requested=False,
                          status="running", phase="running",
                          event="正在继续任务", event_name="continue_requested",
@@ -4338,7 +4338,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
     for _attempt in range(3):
         if _attempt and _runtime_worker_job_id():
             update_runtime_state(
-                _runtime_worker_job_id(),
+                _runtime_worker_job_id(), on_timeout="skip",
                 event=f"翻译请求未完成，正在重试（第 {_attempt + 1}/3 次尝试）",
                 event_name="translation_retry", event_visibility="user",
                 event_category="external_wait", phase="retry",
@@ -5271,7 +5271,7 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
             on_caption(f"↩️ 从第 {done_offset + 1} 段（批次 {start_bi + 1}/{len(batches)}）继续标注...")
     if job_id:
         update_runtime_state(
-            job_id, heartbeat=True, stage="annotation", stage_id="annotation",
+            job_id, on_timeout="skip", heartbeat=True, stage="annotation", stage_id="annotation",
             operation="正在标注", operation_id="annotation", operation_label="正在标注",
             stage_progress={"completed": done_offset, "total": len(pairs), "unit": "段"}
         )
@@ -5362,7 +5362,7 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
                 from folith.annotation_staging import confirm_staged_annotation
                 confirm_staged_annotation(job_id, offset)
                 update_runtime_state(
-                    job_id, heartbeat=True,
+                    job_id, on_timeout="skip", heartbeat=True,
                     stage_progress={"completed": min(offset + len(slice_pairs), len(pairs)),
                                     "total": len(pairs), "unit": "段"}
                 )
@@ -5416,7 +5416,7 @@ def annotate_stage(state, job_id, glossary, provider, api_key, model, target_lan
         run.record_point("milestone", phase="annotation_complete")
     if job_id:
         update_runtime_state(
-            job_id, heartbeat=True,
+            job_id, on_timeout="skip", heartbeat=True,
             stage_progress={"completed": len(pairs), "total": len(pairs), "unit": "段"}
         )
     if on_caption:
@@ -8725,9 +8725,14 @@ class _RuntimeStatusWriter:
                 sync=False,
                 event_name=item.get("event_name"))
         last = events[-1] if events else {}
+        # Progress side (E-6u): a contended lock drops this window only — the
+        # activity events above were already appended to the jsonl, and the next
+        # coalesced window publishes the newest status.  ``on_timeout="skip"``
+        # turns the E-6t ``JobLockTimeout`` into that drop, counted and logged,
+        # instead of an exception a caller might mistake for a failed batch.
         try:
             update_runtime_state(
-                self.job_id,
+                self.job_id, on_timeout="skip",
                 event=last.get("message"),
                 event_name=last.get("event_name"),
                 event_metadata=last.get("event_metadata"),
@@ -8823,7 +8828,181 @@ def _runtime_telemetry_request_finished(job_id, *, purpose=None, operation_id=No
         coalescer.request_finished(purpose=purpose, operation_id=operation_id)
 
 
+# ---------------------------------------------------------------------------
+# E-6u: what a runtime write means when the bounded lock is not available
+# ---------------------------------------------------------------------------
+#
+# E-6t made every ``update_runtime_state`` wait at most two seconds for
+# ``.runtime-write.lock`` and then raise :class:`folith.job_lock.JobLockTimeout`
+# instead of parking the caller (``flock`` on POSIX, ``msvcrt.locking`` for ten
+# whole seconds on Windows).  That closed a real hang, but it also invented one
+# failure surface for every caller.  ``update_runtime_state`` has 44 of them and
+# they mean very different things:
+#
+# * a user waiting on a delete/cancel/pause/continue/launch must learn that the
+#   write did not land — swallowing it would make the UI lie;
+# * a periodic progress/heartbeat tick only has to try again next tick — an
+#   antivirus scan holding the lock must never fail the translation;
+# * a terminal state (completed / interrupted / failed / cancelled /
+#   idle_incomplete) that is dropped leaves the task looking "running" forever,
+#   so it gets bounded retries and, if every attempt fails, an explicit record.
+#
+# The caller therefore *declares* which of the three it is, instead of every one
+# of the 44 sites repeating its own try/except.
 
+#: How a runtime write treats ``folith.job_lock.JobLockTimeout``.
+#:
+#: ``"raise"`` (default) keeps the historical contract: the timeout travels to
+#: the caller, which is how a GUI action reports "please retry later".
+#: ``"skip"`` drops only this tick and returns :data:`RUNTIME_WRITE_SKIPPED`;
+#: ``"retry"`` keeps trying for a bounded number of attempts and then raises.
+RUNTIME_WRITE_TIMEOUT_POLICIES = ("raise", "skip", "retry")
+
+#: Total attempts of a ``"retry"`` write (the first one included).  Every
+#: attempt already waits up to two seconds for the lock, so the worst case is
+#: ``4 x 2 s + 3 x 0.5 s`` (~9.5 s) for a terminal state — long enough to
+#: outlive a short scan, still bounded instead of an unbounded park.
+RUNTIME_WRITE_RETRY_ATTEMPTS = 4
+
+#: Backoff between two ``"retry"`` attempts.  Small on purpose: the contention
+#: is another process's millisecond-scale read/merge/replace, and a long sleep
+#: would make a stuck lock feel like a hang again.
+RUNTIME_WRITE_RETRY_PAUSE_SECONDS = 0.5
+
+#: Returned by an ``on_timeout="skip"`` write instead of the merged state.  A
+#: caller that must retry the *content* on the next tick (not just the next
+#: periodic tick) can compare identity against it.
+RUNTIME_WRITE_SKIPPED = object()
+
+#: How many times each policy path was taken; exposed for diagnostics/tests.
+_RUNTIME_WRITE_STATS = {"skipped": 0, "retried": 0, "lost": 0}
+_RUNTIME_WRITE_STATS_LOCK = threading.Lock()
+
+#: De-bounce for the "progress tick skipped" technical-log line: a scan can hold
+#: the lock for minutes, and one line every few seconds would bury the log.
+_RUNTIME_WRITE_SKIP_LOG_SECONDS = 30.0
+_RUNTIME_WRITE_SKIP_LOGGED_AT: Dict[str, float] = {}
+_RUNTIME_WRITE_SKIP_LOG_LOCK = threading.Lock()
+
+
+def runtime_write_timeout_stats():
+    """Counter snapshot of what happened when the bounded write lock timed out."""
+    with _RUNTIME_WRITE_STATS_LOCK:
+        return dict(_RUNTIME_WRITE_STATS)
+
+
+def _count_runtime_write_outcome(counter):
+    with _RUNTIME_WRITE_STATS_LOCK:
+        _RUNTIME_WRITE_STATS[counter] += 1
+
+
+def _log_runtime_write_skip(job_id, error):
+    """Log a dropped progress tick once per ``RUNTIME_WRITE_SKIP_LOG_SECONDS``."""
+    # Keyed by the task *directory* as well as the id: a test (or a second
+    # output root) reusing a job id must not inherit another log's de-bounce.
+    key = f"{job_dir(job_id)}|{job_id}" if job_id else ""
+    now = time.monotonic()
+    with _RUNTIME_WRITE_SKIP_LOG_LOCK:
+        last = _RUNTIME_WRITE_SKIP_LOGGED_AT.get(key)
+        if last is not None and now - last < _RUNTIME_WRITE_SKIP_LOG_SECONDS:
+            return
+        _RUNTIME_WRITE_SKIP_LOGGED_AT[key] = now
+    _append_runtime_technical_log(
+        job_id,
+        f"runtime state write skipped on this tick: JobLockTimeout ({error}); "
+        "the next progress/heartbeat tick writes the newest values")
+
+
+def _skip_runtime_write(job_id, error):
+    """The ``on_timeout="skip"`` outcome: count it, leave a trace, keep going."""
+    _count_runtime_write_outcome("skipped")
+    _log_runtime_write_skip(job_id, error)
+    return RUNTIME_WRITE_SKIPPED
+
+
+def _record_runtime_write_retry(job_id, attempt):
+    """A terminal write that needed more than one attempt (rare, worth a trace)."""
+    _count_runtime_write_outcome("retried")
+    _append_runtime_technical_log(
+        job_id,
+        f"runtime state write needed {attempt} bounded attempts: "
+        "JobLockTimeout was retried instead of dropping the update")
+
+
+def _record_runtime_write_loss(job_id, error):
+    """A terminal write that timed out on every bounded attempt.  Never silent."""
+    _count_runtime_write_outcome("lost")
+    _append_runtime_technical_log(
+        job_id,
+        f"runtime state write lost after {RUNTIME_WRITE_RETRY_ATTEMPTS} bounded "
+        f"attempts: JobLockTimeout ({error}); the task keeps its last published "
+        "state until an observer or the next run reports it")
+
+
+def _runtime_write_timeout_policy(writer):
+    """Apply the caller-declared ``on_timeout`` policy around one runtime write.
+
+    ``update_runtime_state`` is wrapped instead of every call site: the merge
+    body stays in one place, the default behaviour is unchanged, and a caller
+    states its intent with one keyword.  ``on_timeout`` is consumed here, so the
+    wrapped function still receives only its own parameters.
+    """
+    @wraps(writer)
+    def write_with_policy(*args, **kwargs):
+        policy = kwargs.pop("on_timeout", "raise")
+        if policy not in RUNTIME_WRITE_TIMEOUT_POLICIES:
+            raise ValueError(
+                f"unknown on_timeout policy {policy!r}; "
+                f"expected one of {RUNTIME_WRITE_TIMEOUT_POLICIES}")
+        job_id = args[0] if args else kwargs.get("job_id")
+        if policy == "raise":
+            return writer(*args, **kwargs)
+        if policy == "skip":
+            try:
+                return writer(*args, **kwargs)
+            except _job_lock.JobLockTimeout as error:
+                return _skip_runtime_write(job_id, error)
+        last_error = None
+        for attempt in range(1, RUNTIME_WRITE_RETRY_ATTEMPTS + 1):
+            try:
+                state = writer(*args, **kwargs)
+            except _job_lock.JobLockTimeout as error:
+                last_error = error
+                if attempt < RUNTIME_WRITE_RETRY_ATTEMPTS:
+                    time.sleep(RUNTIME_WRITE_RETRY_PAUSE_SECONDS)
+                continue
+            if attempt > 1:
+                _record_runtime_write_retry(job_id, attempt)
+            return state
+        _record_runtime_write_loss(job_id, last_error)
+        raise last_error
+
+    return write_with_policy
+
+
+def _write_terminal_runtime_state(job_id, *, what, **changes):
+    """Publish a terminal state with bounded retries; report the loss if it fails.
+
+    This is for the two places that cannot let a ``JobLockTimeout`` travel:
+    the worker thread (where the outer ``BaseException`` handler would rebrand a
+    finished job as ``failed``) and the engine supervisor's monitor thread
+    (which must never die noisily).  A terminal state is still never dropped
+    silently: a final failure is counted in ``runtime_write_timeout_stats()``
+    and written to the durable ``runtime_technical.log``, and the caller gets
+    ``None`` so it can re-raise its own exception instead of masking it.
+    """
+    try:
+        return update_runtime_state(job_id, on_timeout="retry", **changes)
+    except _job_lock.JobLockTimeout:
+        _append_runtime_technical_log(
+            job_id,
+            f"terminal runtime state ({what}) could not be published; the task "
+            "keeps its last published state and will be reported as interrupted "
+            "by the next launch/observer")
+        return None
+
+
+@_runtime_write_timeout_policy
 def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
                          event_visibility=None, event_category=None,
@@ -8834,6 +9013,15 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     ``runtime_events.jsonl`` by the caller (the merged status writer does
     that, so the activity log keeps every event while the state file is
     written once per window).
+
+    ``on_timeout`` (E-6u) declares how a ``JobLockTimeout`` from the bounded
+    ``.runtime-write.lock`` acquire is treated: ``"raise"`` (default) lets it
+    travel to the caller — the GUI paths that a user is waiting on; ``"skip"``
+    drops this tick, returns :data:`RUNTIME_WRITE_SKIPPED` and keeps the task
+    alive — the periodic progress/heartbeat paths; ``"retry"`` makes a bounded
+    number of attempts and then raises, recording the loss first — the terminal
+    states.  Every call site states its intent explicitly; see
+    ``RUNTIME_WRITE_TIMEOUT_POLICIES``.
     """
     if not job_id:
         return _runtime_defaults()
@@ -8843,7 +9031,9 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     # after ten, so one slow foreign writer used to park this caller for
     # 4-10 s (M-1: 4.063 s = 4 s + 63 ms inside the delete path). The wait is
     # now an explicit deadline; the lock, the merge and the atomic replace are
-    # unchanged, and a timed-out update raises instead of half-writing.
+    # unchanged, and a timed-out update writes nothing instead of half-writing.
+    # The ``on_timeout`` wrapper above decides whether that timeout raises
+    # (GUI action), is retried (terminal state) or is skipped (progress tick).
     with _RUNTIME_LOCK, _job_lock.exclusive(
             job_dir(job_id) / ".runtime-write.lock",
             timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
@@ -9027,7 +9217,7 @@ def _runtime_mark_lost(job_id, status, message):
     """
     worker = load_runtime_state(job_id).get("worker") or {}
     return update_runtime_state(
-        job_id, status=status, phase=status, phase_label=message,
+        job_id, on_timeout="retry", status=status, phase=status, phase_label=message,
         worker=worker if _job_execution_alive(job_id) else {
             "owner_pid": None, "worker_id": None, "lease_expires_at": None},
         event=message, event_name=status)
@@ -9072,7 +9262,7 @@ def register_engine_owner(job_id, *, pid, worker_id="", token=None):
         # "A new run starts here."  Written once, by the process that owns the
         # launch, before the child can publish anything.
         update_runtime_state(
-            job_id, pause_requested=False, cancel_requested=False,
+            job_id, on_timeout="raise", pause_requested=False, cancel_requested=False,
             exit_requested=False, restart_requested=False,
             event="已启动新的运行", event_name="run_launched",
             event_visibility="technical", event_category="lifecycle")
@@ -9753,40 +9943,62 @@ def _academic_resume_context(state, runtime=None):
 
 
 def _runtime_heartbeat_loop(job_id, stop_event, worker_id=None):
+    """Renew the worker lease on every tick until the worker's stop event fires.
+
+    Two layers keep this thread from dying silently (E-6u):
+
+    * the per-tick guard logs once per failure episode and keeps going — a
+      locked/failed write only costs this tick;
+    * the outermost guard wraps the whole loop, so even an exception raised
+      outside a tick (from ``stop_event.wait`` or from logging itself) leaves a
+      durable technical-log line instead of an unexplained dead heartbeat.
+
+    A ``JobLockTimeout`` never reaches either: the write declares
+    ``on_timeout="skip"``, which drops only this tick and lets the next one
+    publish the newest heartbeat (the lease is renewed from the same state, so
+    a skipped tick cannot extend it either).
+    """
     failure_logged = False
-    while not stop_event.wait(RUNTIME_HEARTBEAT_SECONDS):
+    try:
+        while not stop_event.wait(RUNTIME_HEARTBEAT_SECONDS):
+            try:
+                _workflow_errors.check(job_id)
+                with _RUNTIME_LOCK:
+                    current = load_runtime_state(job_id)
+                    owner_id = (current.get("worker") or {}).get("worker_id")
+                    if worker_id and owner_id and owner_id != worker_id:
+                        return
+                    if current.get("status") not in RUNTIME_ACTIVE_STATUSES | {"stalled"}:
+                        # A transient read can return idle defaults. Only the parent
+                        # worker's stop event determines this thread's lifetime.
+                        # Terminal states must never be resurrected by a heartbeat.
+                        if current.get("status") == "idle" and not failure_logged:
+                            _append_runtime_technical_log(job_id, "heartbeat state unavailable; will retry")
+                            failure_logged = True
+                        continue
+                    changes = _runtime_live_state(current) if current.get("status") == "stalled" else {}
+                    update_runtime_state(job_id, on_timeout="skip", heartbeat=True, **changes)
+                if failure_logged:
+                    _append_runtime_technical_log(job_id, "heartbeat update recovered")
+                    failure_logged = False
+            except _workflow_errors.WorkflowStopped:
+                return
+            except Exception as exc:  # heartbeat failure must not silently kill monitoring
+                if not failure_logged:
+                    frames = traceback.extract_tb(exc.__traceback__)
+                    location = " -> ".join(f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+                                           for frame in frames)
+                    _append_runtime_technical_log(
+                        job_id, f"heartbeat update failed: {type(exc).__name__}"
+                        f" errno={getattr(exc, 'errno', None)} winerror={getattr(exc, 'winerror', None)}"
+                        f" at {location}; will retry")
+                    failure_logged = True
+    except BaseException as exc:  # noqa: BLE001 - the thread must never die unexplained
         try:
-            _workflow_errors.check(job_id)
-            with _RUNTIME_LOCK:
-                current = load_runtime_state(job_id)
-                owner_id = (current.get("worker") or {}).get("worker_id")
-                if worker_id and owner_id and owner_id != worker_id:
-                    return
-                if current.get("status") not in RUNTIME_ACTIVE_STATUSES | {"stalled"}:
-                    # A transient read can return idle defaults. Only the parent
-                    # worker's stop event determines this thread's lifetime.
-                    # Terminal states must never be resurrected by a heartbeat.
-                    if current.get("status") == "idle" and not failure_logged:
-                        _append_runtime_technical_log(job_id, "heartbeat state unavailable; will retry")
-                        failure_logged = True
-                    continue
-                changes = _runtime_live_state(current) if current.get("status") == "stalled" else {}
-                update_runtime_state(job_id, heartbeat=True, **changes)
-            if failure_logged:
-                _append_runtime_technical_log(job_id, "heartbeat update recovered")
-                failure_logged = False
-        except _workflow_errors.WorkflowStopped:
-            return
-        except Exception as exc:  # heartbeat failure must not silently kill monitoring
-            if not failure_logged:
-                frames = traceback.extract_tb(exc.__traceback__)
-                location = " -> ".join(f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
-                                       for frame in frames)
-                _append_runtime_technical_log(
-                    job_id, f"heartbeat update failed: {type(exc).__name__}"
-                    f" errno={getattr(exc, 'errno', None)} winerror={getattr(exc, 'winerror', None)}"
-                    f" at {location}; will retry")
-                failure_logged = True
+            _append_runtime_technical_log(
+                job_id, f"heartbeat thread stopped unexpectedly: {type(exc).__name__}: {exc}")
+        except BaseException:  # noqa: BLE001 - logging must not re-raise out of the thread
+            pass
 
 
 def _runtime_status_callback(job_id, state, label):
@@ -9816,7 +10028,7 @@ def _runtime_status_callback(job_id, state, label):
         "completed_units": completed_units,
         "total_units": total_units,
     })
-    update_runtime_state(job_id, progress=True, event=label,
+    update_runtime_state(job_id, on_timeout="skip", progress=True, event=label,
                          event_name=stage_info.get("stage_id") or operation,
                          event_visibility="user", event_category="progress",
                          **changes)
@@ -9868,7 +10080,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         queued = load_runtime_state(job_id)
         _take_pending_restart(job_id)  # a new worker never inherits an old request
         update_runtime_state(
-            job_id, status="starting", phase="starting",
+            job_id, on_timeout="skip", status="starting", phase="starting",
             phase_label="正在读取最近检查点", heartbeat=True, progress=True,
             event="后台 worker 已接管任务", event_name="worker_started",
             event_visibility="technical", event_category="orchestration",
@@ -9878,7 +10090,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             restart_requested=False,
             worker_connection=_connection_signature_from_kwargs(kwargs))
         update_runtime_state(
-            job_id, status="running", phase="running",
+            job_id, on_timeout="skip", status="running", phase="running",
             phase_label="已恢复 · 正在执行" if queued.get("resume_request_id")
             else "正在执行", heartbeat=True)
         while True:
@@ -9902,7 +10114,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                         raise RuntimeError("重译已保存，但部分段落审校未完成，请在审校队列中重试。")
                 if not _runtime_cancel_requested(job_id):
                     update_runtime_state(
-                        job_id, segment_operation_result="completed",
+                        job_id, on_timeout="skip", segment_operation_result="completed",
                         completed_units=len(indexes), progress=True,
                         event="所选段落审校已完成" if kind == "review" else "所选段落重译已完成",
                         event_name="segment_operation_completed", event_visibility="user",
@@ -9933,7 +10145,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                 flush_runtime_status(job_id)
                 reset_runtime_status(job_id)
                 update_runtime_state(
-                    job_id, pause_requested=False, restart_requested=False,
+                    job_id, on_timeout="skip", pause_requested=False, restart_requested=False,
                     cancel_requested=False, exit_requested=False,
                     worker_connection=_connection_signature_from_kwargs(kwargs),
                     event="已用新连接重新启动任务；已识别的页面与译文会保留。",
@@ -9953,42 +10165,50 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             if _runtime_exit_requested(job_id) and not _runtime_business_complete(result_state):
                 if not segment_operation:
                     trace.finish_run(job_id=job_id, status="interrupted")
-                update_runtime_state(job_id, status="interrupted", phase="interrupted",
-                                     phase_label="已停止以便退出",
-                                     event="任务已停止以便退出；可继续处理。",
-                                     event_name="job_stopped_for_exit", progress=True,
-                                     event_visibility="user", event_category="lifecycle",
-                                     worker={"owner_pid": None, "worker_id": None,
-                                             "lease_expires_at": None})
+                _write_terminal_runtime_state(
+                    job_id, what="job_stopped_for_exit",
+                    status="interrupted", phase="interrupted",
+                    phase_label="已停止以便退出",
+                    event="任务已停止以便退出；可继续处理。",
+                    event_name="job_stopped_for_exit", progress=True,
+                    event_visibility="user", event_category="lifecycle",
+                    worker={"owner_pid": None, "worker_id": None,
+                            "lease_expires_at": None})
             else:
                 if not segment_operation:
                     trace.finish_run(job_id=job_id, status="cancelled")
-                update_runtime_state(job_id, status="cancelled", phase="cancelled",
-                                     phase_label="已取消", event="任务已取消",
-                                     event_name="job_cancelled", progress=True,
-                                     event_visibility="user", event_category="lifecycle",
-                                     worker={"owner_pid": None, "worker_id": None,
-                                             "lease_expires_at": None})
+                _write_terminal_runtime_state(
+                    job_id, what="job_cancelled",
+                    status="cancelled", phase="cancelled", phase_label="已取消",
+                    event="任务已取消",
+                    event_name="job_cancelled", progress=True,
+                    event_visibility="user", event_category="lifecycle",
+                    worker={"owner_pid": None, "worker_id": None,
+                            "lease_expires_at": None})
         elif _runtime_business_complete(result_state):
             if not segment_operation:
                 trace.finish_run(job_id=job_id, status="completed")
-            update_runtime_state(job_id, status="completed", phase="completed",
-                                 phase_label="已完成", event="任务已完成",
-                                 event_name="job_completed", progress=True,
-                                 event_visibility="user", event_category="lifecycle",
-                                 heartbeat=True, overall_progress=1.0,
-                                 worker={"owner_pid": None, "worker_id": None,
-                                         "lease_expires_at": None})
+            _write_terminal_runtime_state(
+                job_id, what="job_completed",
+                status="completed", phase="completed", phase_label="已完成",
+                event="任务已完成",
+                event_name="job_completed", progress=True,
+                event_visibility="user", event_category="lifecycle",
+                heartbeat=True, overall_progress=1.0,
+                worker={"owner_pid": None, "worker_id": None,
+                        "lease_expires_at": None})
         else:
             if not segment_operation:
                 trace.finish_run(job_id=job_id, status="checkpointed")
-            update_runtime_state(job_id, status="idle_incomplete", phase="idle_incomplete",
-                                 phase_label="等待继续", event="阶段已保存，等待继续",
-                                 event_name="job_checkpointed", progress=True,
-                                 event_visibility="technical", event_category="checkpoint",
-                                 heartbeat=True,
-                                 worker={"owner_pid": None, "worker_id": None,
-                                         "lease_expires_at": None})
+            _write_terminal_runtime_state(
+                job_id, what="job_checkpointed",
+                status="idle_incomplete", phase="idle_incomplete",
+                phase_label="等待继续", event="阶段已保存，等待继续",
+                event_name="job_checkpointed", progress=True,
+                event_visibility="technical", event_category="checkpoint",
+                heartbeat=True,
+                worker={"owner_pid": None, "worker_id": None,
+                        "lease_expires_at": None})
         return result
     # 捕获 BaseException 而不是 Exception：worker 只捕 Exception 时，若线程抛出
     # SystemExit 一类的 BaseException，`finally` 不会执行 → 心跳线程继续续租 →
@@ -10033,8 +10253,8 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             error["errno"] = exc.errno
             error["storage_error_type"] = type(exc.storage_error).__name__
         try:
-            update_runtime_state(
-                job_id, status=final_status,
+            _write_terminal_runtime_state(
+                job_id, what="job_failed", status=final_status,
                 phase=final_status,
                 phase_label="已停止以便退出" if exit_requested
                 else ("已取消" if cancelled else "步骤失败"),
@@ -10073,7 +10293,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             _llm_transport.close_thread_clients()
             try:
                 update_runtime_state(
-                    job_id, event="后台运行已释放", event_name="worker_released",
+                    job_id, on_timeout="skip", event="后台运行已释放", event_name="worker_released",
                     event_visibility="technical", event_category="orchestration")
             except _workflow_errors.WorkflowStopped as stopped:
                 if stopped.reason != "disk_full":
@@ -10169,7 +10389,7 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
                 completed_units, total_units = 0, len(segment_operation["indexes"])
             if matching_resume and status != "resume_requested":
                 runtime = update_runtime_state(
-                    job_id, status="resume_requested", phase="resume_requested",
+                    job_id, on_timeout="raise", status="resume_requested", phase="resume_requested",
                     phase_label="正在恢复任务", resume_request_id=resume_request_id,
                     started_at=started_at, operation_started_at=started_at,
                     last_progress_at=started_at, completed_units=completed_units,
@@ -10185,12 +10405,12 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
                 # path; publishing ``queued`` below reads the flags and never
                 # writes them (an engine launch already cleared them).
                 update_runtime_state(
-                    job_id, pause_requested=False, cancel_requested=False,
+                    job_id, on_timeout="raise", pause_requested=False, cancel_requested=False,
                     exit_requested=False, restart_requested=False,
                     event="已启动新的运行", event_name="run_started",
                     event_visibility="technical", event_category="lifecycle")
             update_runtime_state(
-                job_id, status="queued", phase="starting", phase_label="准备中",
+                job_id, on_timeout="raise", status="queued", phase="starting", phase_label="准备中",
                 **context, started_at=runtime.get("started_at") if matching_resume
                 else started_at,
                 operation_started_at=started_at, last_progress_at=started_at,
@@ -10310,7 +10530,7 @@ def request_job_cancel(job_id, *, force=False):
         return False
     alive = is_job_worker_alive(job_id)
     if alive or _job_execution_alive(job_id):
-        update_runtime_state(job_id, status="cancelling", cancel_requested=True,
+        update_runtime_state(job_id, on_timeout="raise", status="cancelling", cancel_requested=True,
                              phase="cancelling", phase_label="正在取消",
                              event="已请求取消任务", event_name="cancel_requested",
                              progress=True)
@@ -10319,7 +10539,7 @@ def request_job_cancel(job_id, *, force=False):
     # If no worker is alive or force cancel was explicitly requested:
     # Immediately transition the job state out of active running status.
     update_runtime_state(
-        job_id, status="cancelled", phase="cancelled", phase_label="已取消",
+        job_id, on_timeout="retry", status="cancelled", phase="cancelled", phase_label="已取消",
         cancel_requested=False, error=None,
         event="任务已取消", event_name="job_cancelled",
         event_visibility="user", event_category="lifecycle",
@@ -10344,7 +10564,7 @@ def request_job_exit(job_id):
     alive = is_job_worker_alive(job_id) or _job_execution_alive(job_id)
     if alive:
         update_runtime_state(
-            job_id, exit_requested=True, cancel_requested=True,
+            job_id, on_timeout="raise", exit_requested=True, cancel_requested=True,
             status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
             event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
             event_name="exit_requested", event_visibility="user",
@@ -10353,7 +10573,7 @@ def request_job_exit(job_id):
     # No live worker owns this task: publish the resumable terminal state
     # directly instead of leaving a stale active status behind.
     update_runtime_state(
-        job_id, status="interrupted", phase="interrupted",
+        job_id, on_timeout="retry", status="interrupted", phase="interrupted",
         phase_label="已停止以便退出", cancel_requested=False,
         exit_requested=True, error=None,
         event="任务已停止以便退出；可继续处理。",
@@ -10389,7 +10609,7 @@ def retry_job_step(job_id):
             scopes.get(operation, "writer")
         invalidate_academic_report(job_id, scope, runtime.get("section_id"))
     update_runtime_state(
-        job_id, status="idle_incomplete", phase="retry_ready", phase_label="等待重试",
+        job_id, on_timeout="raise", status="idle_incomplete", phase="retry_ready", phase_label="等待重试",
         cancel_requested=False, error=None, event="已准备重试当前步骤",
         event_name="retry_requested", worker={"owner_pid": None, "worker_id": None,
                                                "lease_expires_at": None})
@@ -12154,7 +12374,7 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
         _runtime_status_callback(job_id, state, label)
 
     update_runtime_state(
-        job_id, status="running", phase="source_cleanup",
+        job_id, on_timeout="raise", status="running", phase="source_cleanup",
         stage="document_processing", stage_id="document_processing",
         operation="source_cleanup", operation_id="source_cleanup",
         operation_label="重新扫描 PDF 原文", phase_label="正在扫描并纠错原文",
@@ -12348,8 +12568,9 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
         state["performance"] = profiler.persist()
         trace.finish_run(job_id=job_id, status="checkpointed")
         save_job_state(job_id, state)
-        update_runtime_state(
-            job_id, status="idle_incomplete", phase="idle_incomplete",
+        _write_terminal_runtime_state(
+            job_id, what="source_rescan_completed",
+            status="idle_incomplete", phase="idle_incomplete",
             phase_label="原文纠错已完成，等待继续翻译", operation="source_cleanup",
             operation_id="source_cleanup", operation_label="原文纠错已完成",
             error=None, progress=True, heartbeat=True,
@@ -12369,8 +12590,9 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
             provider_error_message(exc, "原文重新扫描失败")
             if provider_status["status"] != "unknown"
             else str(exc)[:500] or "原文重新扫描失败")
-        update_runtime_state(
-            job_id, status="failed", phase="failed", phase_label="原文重新扫描失败",
+        _write_terminal_runtime_state(
+            job_id, what="source_rescan_failed",
+            status="failed", phase="failed", phase_label="原文重新扫描失败",
             error={"type": type(exc).__name__, "message": user_error_message,
                    "stage": "document_processing", "operation": "source_cleanup",
                    "timestamp": _utc_now_iso(),
@@ -13341,7 +13563,7 @@ def _reconcile_vision_connection(job_id, state):
     saved["ocr_online_choice"] = {"choice": "current", "pinned": conflict["pinned_id"],
                                   "current": conflict["current_id"]}
     save_job_state(job_id, state)
-    update_runtime_state(job_id, event=message, event_name="vision_connection_switched",
+    update_runtime_state(job_id, on_timeout="skip", event=message, event_name="vision_connection_switched",
                          event_visibility="user", event_category="orchestration",
                          phase_label=message)
     return message
@@ -13371,7 +13593,7 @@ def _refresh_scan_provider(job_id, stream, state):
     label = _vlm_label(provider)
     stream.swap_provider(provider, label)
     message = f"视觉连接已更换，未识别的页改用『{label or '新连接'}』继续"
-    update_runtime_state(job_id, event=message, event_name="vision_connection_switched",
+    update_runtime_state(job_id, on_timeout="skip", event=message, event_name="vision_connection_switched",
                          event_visibility="user", event_category="orchestration",
                          phase_label=message)
     return True
@@ -13696,7 +13918,7 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
                          event_visibility="user", event_category="progress")
         # 不传 status：暂停请求期间保持 pausing，不能被这里改回 running。
         update_runtime_state(
-            job_id, progress=True,
+            job_id, on_timeout="skip", progress=True,
             stage_progress={"completed": done, "total": total, "unit": "页",
                             "in_flight": []},
             operation_label="视觉识别", phase_label=detail, **extra)
@@ -13710,7 +13932,7 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
         if stream.provider_label:
             message = f"{message}（连接：{stream.provider_label}）"
         update_runtime_state(
-            job_id, phase_label=message, event=message,
+            job_id, on_timeout="skip", phase_label=message, event=message,
             event_name="scan_page_failed" if failed else "scan_page_retry",
             event_visibility="user", event_category="progress",
             event_metadata=({"connection": stream.provider_label}
@@ -13718,16 +13940,19 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
     pause_message = None
     if stream.streak_tripped and not tracker.get("streak"):
         # 连续几页都超时：自动暂停（走同一条暂停路径，最终是「已暂停」），建议换模型。
-        tracker["streak"] = True
         where = f"（{stream.provider_label}）" if stream.provider_label else ""
-        pause_message = (
+        streak_message = (
             f"视觉识别连续 {stream.timeout_streak_limit} 页超时：服务商{where}处理图片太慢或不稳定。"
             "建议在 设置 › 视觉与识别 换一个视觉模型，然后继续任务；已识别的页不会重读。")
-        tracker["streak_message"] = pause_message
-        update_runtime_state(
-            job_id, pause_requested=True, status="pausing", phase_label=pause_message,
-            event=pause_message, event_name="scan_timeout_streak",
-            event_visibility="user", event_category="lifecycle")
+        # 这一拍写不进去（锁被别的进程占着）不能就把自动暂停丢掉：只有请求真的
+        # 落盘才算已宣告，否则下一拍重写，安全停在锁释放后仍然生效。
+        if update_runtime_state(
+                job_id, on_timeout="skip", pause_requested=True,
+                status="pausing", phase_label=streak_message,
+                event=streak_message, event_name="scan_timeout_streak",
+                event_visibility="user", event_category="lifecycle") is not RUNTIME_WRITE_SKIPPED:
+            tracker["streak"] = True
+            tracker["streak_message"] = streak_message
     pause_message = tracker.get("streak_message")
     runtime = load_runtime_state(job_id) or {}
     if (runtime.get("pause_requested") and not runtime.get("cancel_requested")
@@ -13737,7 +13962,7 @@ def _scan_stream_tick(job_id, state, stream, tracker, done, total, retried):
         if runtime.get("status") != "paused" and not tracker.get("pausing"):
             tracker["pausing"] = True
             update_runtime_state(
-                job_id, event="正在暂停：等正在识别的页完成", event_name="scan_pausing",
+                job_id, on_timeout="skip", event="正在暂停：等正在识别的页完成", event_name="scan_pausing",
                 event_visibility="user", event_category="lifecycle")
     _runtime_pause_checkpoint(job_id, paused_message=pause_message)
     if tracker.pop("pausing", False) or tracker.get("streak"):

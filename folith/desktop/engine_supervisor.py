@@ -731,8 +731,14 @@ class EngineSupervisor:
                 "technical_log": getattr(core, "RUNTIME_TECHNICAL_LOG",
                                          "runtime_technical.log"),
             }
-        core.update_runtime_state(
-            self.job_id, status="interrupted", phase="interrupted",
+        # Terminal state (E-6u): bounded retries instead of one bounded attempt.
+        # The monitor thread must never be the place a ``JobLockTimeout`` dies
+        # silently, and the "reopen offers resume" contract depends on this
+        # write; a final loss is counted and written to the technical log by
+        # ``_write_terminal_runtime_state`` rather than swallowed.
+        core._write_terminal_runtime_state(
+            self.job_id, what="engine_process_exited",
+            status="interrupted", phase="interrupted",
             phase_label=message, cancel_requested=False, exit_requested=False,
             error=error, event=message, event_name="engine_process_exited",
             event_visibility="user", event_category="lifecycle",
@@ -755,8 +761,11 @@ class EngineSupervisor:
                 or worker.get("lease_expires_at")):
             return
         try:
+            # Progress/cleanup write (E-6u): a contended lock drops this
+            # attempt only.  The owner block is a convenience for the delete
+            # guards; status and error are authoritative and already written.
             _core().update_runtime_state(
-                self.job_id,
+                self.job_id, on_timeout="skip",
                 worker={"owner_pid": None, "worker_id": None,
                         "lease_expires_at": None})
         except Exception:  # noqa: BLE001 - cleanup must never break the monitor
