@@ -3039,10 +3039,12 @@ def test_editor_is_structurally_ready_for_a_real_ime(client):
 
 
 def test_home_batch_delete_deletes_idle_tasks_and_refuses_running_ones(client):
-    """批量删除：一次确认、逐项执行；运行中的任务被拒并如实列出。
+    """批量删除：一次确认、逐项执行；停不下来的运行中任务被拒并如实列出。
 
-    旧界面支持批量删除；任务多起来以后逐个删太慢。关键是不能因为"批"而丢掉
-    运行中任务的保护。
+    旧界面支持批量删除；任务多起来以后逐个删太慢。E-4b 起"运行中"不再一律
+    直接拒绝：删除会先取消、有界等待，真的停下就删掉；停不下来的才拒绝。
+    这里用一个**只登记了 owner、永远不会响应取消**的引擎进程模拟后者 ——
+    目录与任务必须保留，且原因要如实展示。
     """
     adapter = client["adapter"]
     core = client["core"]
@@ -3056,22 +3058,14 @@ def test_home_batch_delete_deletes_idle_tasks_and_refuses_running_ones(client):
         source = tmp / f"batch-{index}.docx"
         source.write_bytes(_make_docx([f"第 {index} 段。"]))
         ids.append(adapter.import_documents([source], config)[0].job_id)
-    # 让第二个任务处于"运行中"（真实 worker + 挂住的端点）
-    stub = _Stub(tmp, delay=60.0)
-    url = stub.start()
+    # 让第二个任务处于"运行中"：本进程登记了一个活着的引擎 owner，但它永远
+    # 不会落终态；取消只会把它变成 cancelling，所以它正是会"边删边写"的形态。
+    running_source = tmp / "batch-running.docx"
+    running_source.write_bytes(_make_docx(["停不下来的任务。"]))
+    running_id = adapter.import_documents([running_source], config)[0].job_id
+    foreign = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    token = core.register_engine_owner(running_id, pid=foreign.pid)
     try:
-        running_config = adapter.EngineConfig(
-            provider="自定义中转站", model="stub-model", api_key="k",
-            base_url=url, target_lang="简体中文", enable_review=False,
-            enable_report=False, enable_understanding=False,
-            enable_source_cleanup=False)
-        running_source = tmp / "batch-running.docx"
-        running_source.write_bytes(_make_docx(["运行中的任务。"]))
-        running_id = adapter.import_documents([running_source],
-                                             running_config)[0].job_id
-        adapter.start_job(running_id, "batch-running.docx",
-                          running_source.read_bytes(), running_config)
-        assert _pump(app, 120, lambda: adapter.core.is_job_worker_alive(running_id))
         window.refresh_home()
         app.processEvents()
 
@@ -3100,13 +3094,15 @@ def test_home_batch_delete_deletes_idle_tasks_and_refuses_running_ones(client):
 
         remaining = {row.job_id for row in adapter.list_jobs()}
         assert ids[0] not in remaining and ids[1] not in remaining
-        assert running_id in remaining, "运行中的任务不能被删掉"
+        assert running_id in remaining, "停不下来的任务不能被删掉"
         assert any("未能删除" in item["title"] for item in window.failures), \
             window.failures
         assert "运行" in window.failures[-1]["message"]
-        adapter.cancel_job(running_id)
     finally:
-        stub.stop()
+        core.release_engine_owner(running_id, token)
+        foreign.kill()
+        foreign.wait(timeout=10)
+        adapter.cancel_job(running_id)
 
 
 def test_home_batch_move_sends_all_selected_tasks(client, monkeypatch):
