@@ -2706,5 +2706,8 @@
   "未知原因": "Unknown reason",
   "导入资产并校验…": "Import assets and verify…",
   "上一次导入仍在后台进行，请等它完成后再打开导入向导。": "The previous import is still running in the background. Wait for it to finish before opening the import wizard again.",
-  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "The import is still running in the background: closing the wizard does not cancel it. Refresh the Projects page when it finishes to see the result."
+  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "The import is still running in the background: closing the wizard does not cancel it. Refresh the Projects page when it finishes to see the result.",
+  "上一批任务还在删除中，请等它完成后再试。": "The previous batch of tasks is still being deleted; wait for it to finish and try again.",
+  "任务正在删除中，请等删除完成后再退出。": "A task is still being deleted; wait for the deletion to finish before quitting.",
+  "删除任务失败": "Failed to delete the task"
 }
