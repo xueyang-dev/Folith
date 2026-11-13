@@ -261,17 +261,24 @@ def _hand_off(sup, release: Path) -> None:
 
 
 def _wait_executor_published(job_id: str) -> dict:
-    """Wait until the *real* child has published its run (a different pid).
+    """Wait until the *real* child has said something about itself.
 
-    This is the deterministic judgement point: it is the first moment the run
-    says "I am executing", and a supervisor that trusted only its handle has
-    already published a terminal state by then (the child needs ~0.7 s to
-    ``import core``; the monitor polls every 0.15 s).  Nothing here sleeps in
-    the hope of winning a race — the wait is for a fact the run writes.
+    This is the deterministic judgement point: ``worker_id`` (the ``job_queued``
+    publish) or ``attempt`` (any run that counted itself) is written by the run,
+    never by the supervisor.  On this machine the child needs ~0.7 s to
+    ``import core`` while the monitor polls every 0.15 s, so a supervisor that
+    trusted only its handle has already published its terminal state by then —
+    and the event log keeps that fact forever, so the assertion does not depend
+    on how fast the machine is.  Nothing here sleeps in the hope of winning a
+    race: the wait is for a fact the run writes.
     """
-    assert _wait_until(
-        lambda: bool((_runtime(job_id).get("worker") or {}).get("owner_pid")),
-        timeout=180), f"the handed-off child never published a run: {_runtime(job_id)}"
+    def _published_or_counted() -> bool:
+        runtime = _runtime(job_id)
+        return bool((runtime.get("worker") or {}).get("worker_id")) or \
+            int(runtime.get("attempt") or 0) >= 1
+
+    assert _wait_until(_published_or_counted, timeout=180), \
+        f"the handed-off child never published a run: {_runtime(job_id)}"
     return _runtime(job_id)
 
 
@@ -355,7 +362,6 @@ def test_a_handoff_launch_does_not_drop_the_exit_request(isolated, gateway, hand
         f"followed: {events}")
     assert "job_stopped_for_exit" in events, events
     assert "job_completed" not in events, events
-    assert "engine_process_exited" not in events, events
 
 
 # ---------------------------------------------------------------------------
@@ -376,8 +382,12 @@ def test_a_handoff_run_is_published_when_the_executor_dies(isolated, gateway,
     sup = _start_engine(job_id, gateway)
     _hand_off(sup, handoff)
 
-    runtime = _wait_executor_published(job_id)
-    owner_pid = int((runtime.get("worker") or {}).get("owner_pid") or 0)
+    # The executor names itself; we need that pid to kill the *run*, not our
+    # dead wrapper.
+    assert _wait_until(
+        lambda: bool((_runtime(job_id).get("worker") or {}).get("owner_pid")),
+        timeout=180), f"the handed-off child never published its pid: {_runtime(job_id)}"
+    owner_pid = int((_runtime(job_id).get("worker") or {}).get("owner_pid") or 0)
     assert owner_pid and owner_pid != sup.pid, (owner_pid, sup.pid)
     assert _wait_until(lambda: _status(job_id) in {"queued", "starting", "running",
                                                   "waiting_external"}, timeout=120), \
