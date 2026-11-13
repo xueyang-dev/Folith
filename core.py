@@ -13758,13 +13758,21 @@ def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
 
     第一个窗口（还没有任何可译段落时）只要 ``first_window_pages`` 页，让译文尽早
     出现；之后每个窗口 ``window_pages`` 页。
+
+    窗口大小以**已提交的页数**为基准（``previous_pages + window``），不跟识别线程
+    的当前位置走：识别比主线程快时 ``stream.pages_done`` 可能已经远超一个窗口，
+    按它算等于承诺「再识别 5 页就开始翻译」却实际等 25 页——识别越快用户等得越久；
+    而且只要识别侧有人在等翻译侧（测试里的门、将来的背压），就会和这个目标成环，
+    谁都不动（见 ``.loop/reports/M-3.md``）。目标已经达成时 ``wait_for_pages`` 立即
+    返回，提交的就是此刻能定稿的全部段落。
     """
     previous_pages = int((state.get("streaming_ingest") or {}).get("pages_done") or 0)
     window = stream.window_pages if state.get("paras") else stream.first_window_pages
-    target = max(stream.pages_done, previous_pages) + window
+    target = previous_pages + window
     if on_status:
+        # 文案里的页数与实际等待的阈值是同一个数：首窗就是 first_window_pages 页。
         on_status(f"【阶段一】视觉识别：{stream.pages_done}/{stream.pages_total} 页"
-                  f"（满 {min(target, stream.pages_total)} 页后先交给翻译）…")
+                  f"（识别满 {min(target, stream.pages_total)} 页就交给翻译）…")
     tracker = {"done": stream.pages_done, "retried": stream.pages_retried,
                "event_at": stream.pages_done}
     stream.wait_for_pages(
