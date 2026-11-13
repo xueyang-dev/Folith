@@ -14,8 +14,9 @@ Under test:
 * Crash and disk failure recovery:
   - First commit save fails (simulated disk full / crash): Task 0 fails commit,
     subsequent completed tasks were durably staged to disk;
-  - On restart / resume from cursor 0, already-staged tasks are loaded from disk
-    with ZERO duplicate LLM requests;
+  - On restart / resume from cursor 0, every task staged on disk is replayed
+    without a duplicate LLM request, while tasks that were never staged are
+    requested normally (a new request is not a repeated one);
 * Cancellation resilience:
   - In-flight pending futures cancelled; durably staged tasks preserved on disk;
 * Global filtering & field-by-field equality:
@@ -180,89 +181,223 @@ def test_annotation_results_bounded_refill_and_order(tmp_path, monkeypatch):
 # 3. Crash / Save Failure Recovery with Zero Repeat LLM Calls
 # ---------------------------------------------------------------------------
 
-def test_annotation_save_failure_recovery_reuses_staged_results(tmp_path, monkeypatch):
-    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
-    monkeypatch.setattr(core, "ANNOT_BATCH_SIZE", 1)
+SECTION_SOURCES = tuple(f"Section {i} about Aerodynamics." for i in range(4))
+CRASH_RECOVERY_JOB_ID = "job-crash-recovery"
+ANNOTATION_TARGET_LANG = "简体中文"
+ANNOTATION_MODEL = "model"
 
-    state = core.new_job_state("crash_test.docx")
-    state["pipeline_config"] = {"translation_concurrency": 2, "annotation_scheduler": "c4"}
-    state["pairs"] = [
-        {"source": f"Section {i} about Aerodynamics.", "target": f"第{i}节关于空气动力学。"}
-        for i in range(4)
-    ]
 
-    job_id = "job-crash-recovery"
-    job_dir = tmp_path / job_id
-    job_dir.mkdir(parents=True)
-    core.save_job_state(job_id, state)
+def _staged_sections_on_disk(job_dir, sources, *, batch_size):
+    """Section indexes whose results are actually present under .annotation_staging.
 
-    llm_calls = []
+    Read from disk only: the in-memory state of a crashed run is not evidence
+    that a result survived. Each staged file is named after its batch offset and
+    repeats that offset in its payload; offsets are mapped back to section
+    indexes with the same batching the product uses.
+    """
+    staging_dir = Path(job_dir) / ".annotation_staging"
+    if not staging_dir.is_dir():
+        return set()
+    sections_by_offset = {}
+    offset = 0
+    for batch in core.make_batches(list(sources), batch_size=batch_size, max_chars=2600):
+        sections_by_offset[offset] = set(range(offset, offset + len(batch)))
+        offset += len(batch)
+    staged = set()
+    for path in sorted(staging_dir.glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        staged_offset = payload["offset"]
+        assert path.stem == str(staged_offset), (
+            f"staged file {path.name} does not match its payload offset {staged_offset!r}"
+        )
+        assert staged_offset in sections_by_offset, (
+            f"unexpected staged batch offset {staged_offset!r}"
+        )
+        staged.update(sections_by_offset[staged_offset])
+    return staged
 
-    def mock_annotate(pairs, *_args):
-        src = pairs[0]["source"]
-        llm_calls.append(src)
-        # Section 0 is slow (40ms), Section 1 finishes fast (5ms)
-        if "Section 0" in src:
-            time.sleep(0.04)
-        else:
-            time.sleep(0.005)
+
+def _assert_run2_reuses_staged_results(run2_sections, staged_after_run1):
+    """On resume, requesting a never-staged section is fine; repeating a staged one is not.
+
+    Set semantics over section indexes: run 2 works on the *remaining* sections,
+    so its call set is not expected to be empty. What is forbidden is
+    intersecting the sections already durably staged before run 2 started.
+    """
+    repeated = set(run2_sections) & set(staged_after_run1)
+    assert repeated == set(), (
+        "Run 2 repeated LLM calls for sections that were already durably staged: "
+        f"{sorted(repeated)}; run 2 sections={sorted(set(run2_sections))}, "
+        f"staged after run 1={sorted(staged_after_run1)}"
+    )
+
+
+class _FailedFirstCommitScenario:
+    """Run 1 crashes on its first commit after some results are already staged.
+
+    The construction is event driven, never timing driven:
+    * Section 0's request blocks until Section 1's staged file is on disk, so
+      "Section 1 was staged before the failing commit" holds by construction;
+    * Sections 2 and 3 report a non-stageable status in run 1, so the staging
+      directory deterministically holds exactly Sections 0 and 1 afterwards.
+      Run 2 therefore has real new work -- the same shape CI hit (run 2's only
+      call was Section 3, a section run 1 never staged), without needing a slow
+      machine to lose that section.
+    """
+
+    UNSTAGEABLE_IN_RUN1 = (2, 3)
+
+    def __init__(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+        monkeypatch.setattr(core, "ANNOT_BATCH_SIZE", 1)
+
+        self.job_id = CRASH_RECOVERY_JOB_ID
+        self.job_dir = tmp_path / self.job_id
+        self.job_dir.mkdir(parents=True)
+        self.calls = {1: [], 2: []}
+        self.called_sections = {1: set(), 2: set()}
+        self.phase = 1
+        self.fail_save = True
+        self.staged_after_run1 = set()
+        self.recovered_state = None
+
+        state = core.new_job_state("crash_test.docx")
+        state["pipeline_config"] = {"translation_concurrency": 2, "annotation_scheduler": "c4"}
+        state["pairs"] = [
+            {"source": source, "target": f"第{i}节关于空气动力学。"}
+            for i, source in enumerate(SECTION_SOURCES)
+        ]
+        core.save_job_state(self.job_id, state)
+        self._state = state
+
+        self._section1_staged = threading.Event()
+        self._real_save_staged = annotation_staging.save_staged_annotation
+        real_save_state = core.save_job_state
+
+        def flaky_save(jid, current_state):
+            # Fail the very first commit (Section 0's commit).
+            if self.fail_save:
+                raise OSError("Simulated disk write failure on first batch commit")
+            real_save_state(jid, current_state)
+
+        monkeypatch.setattr(core, "annotate_batch", self._mock_annotate)
+        monkeypatch.setattr(annotation_staging, "save_staged_annotation", self._save_staged)
+        monkeypatch.setattr(core, "save_job_state", flaky_save)
+
+    def _mock_annotate(self, pairs, *_args):
+        source = pairs[0]["source"]
+        self.calls[self.phase].append(source)
+        self.called_sections[self.phase].add(SECTION_SOURCES.index(source))
+        if source == SECTION_SOURCES[0]:
+            # Only proceed once Section 1's result is durably on disk. The
+            # timeout is a broken-construction guard, not a race window.
+            if not self._section1_staged.wait(timeout=30):
+                raise RuntimeError("Section 1 was never staged; the construction is broken")
+        if self.phase == 1 and source in {
+            SECTION_SOURCES[i] for i in self.UNSTAGEABLE_IN_RUN1
+        }:
+            return core.AnnotationBatchResult(
+                [], status="request_failed", error="simulated request failure"
+            )
         return core.AnnotationBatchResult([
             {"seg": 0, "src": "Aerodynamics", "tgt": "空气动力学", "type": "domain", "note": "专业术语"}
         ])
 
-    fail_save = True
-    real_save_state = core.save_job_state
+    def _save_staged(self, job_id, offset, bi, items, fingerprint, **kwargs):
+        saved = self._real_save_staged(job_id, offset, bi, items, fingerprint, **kwargs)
+        if saved and offset == 1:
+            self._section1_staged.set()
+        return saved
 
-    def flaky_save(jid, current_state):
-        nonlocal fail_save
-        # Fail the very first commit (Section 0 commit)
-        if fail_save:
-            raise OSError("Simulated disk write failure on first batch commit")
-        real_save_state(jid, current_state)
+    def run1(self):
+        """Run 1: must raise OSError on the first batch commit.
 
-    monkeypatch.setattr(core, "annotate_batch", mock_annotate)
-    monkeypatch.setattr(core, "save_job_state", flaky_save)
+        Returns the section indexes that were requested, and records on disk
+        (``staged_after_run1``) which sections actually made it to staging.
+        """
+        with pytest.raises(OSError, match="Simulated disk write failure"):
+            core.annotate_stage(
+                self._state, self.job_id, [], "DeepSeek", "key",
+                ANNOTATION_MODEL, ANNOTATION_TARGET_LANG,
+            )
+        self.fail_save = False
+        self.staged_after_run1 = _staged_sections_on_disk(
+            self.job_dir, SECTION_SOURCES, batch_size=core.ANNOT_BATCH_SIZE
+        )
+        return set(self.called_sections[1])
 
-    # Run 1: Must raise OSError on first batch commit
-    with pytest.raises(OSError, match="Simulated disk write failure"):
-        core.annotate_stage(state, job_id, [], "DeepSeek", "key", "model", "简体中文")
+    def resume(self, *, model=ANNOTATION_MODEL):
+        """Run 2: reload the durable checkpoint (still offset 0) and resume.
 
-    # In Run 1: Section 0 and Section 1 were executed.
-    calls_in_run1 = list(llm_calls)
-    assert len(calls_in_run1) >= 2
-    assert "Section 0 about Aerodynamics." in calls_in_run1
-    assert "Section 1 about Aerodynamics." in calls_in_run1
+        Returns the section indexes requested by run 2.
+        """
+        self.phase = 2
+        self.recovered_state = core.load_job_state(self.job_id)
+        core.annotate_stage(
+            self.recovered_state, self.job_id, [], "DeepSeek", "key",
+            model, ANNOTATION_TARGET_LANG,
+        )
+        return set(self.called_sections[2])
 
-    # Section 1 finished and was durably staged to disk!
-    staged_file_1 = job_dir / ".annotation_staging" / "1.json"
-    assert staged_file_1.is_file(), "Section 1 must be durably staged on disk"
 
-    # Reload state from disk (where annotations_done_offset is still 0 because save failed)
-    recovered_state = core.load_job_state(job_id)
-    assert recovered_state.get("annotations_done_offset", 0) == 0
+def test_annotation_save_failure_recovery_reuses_staged_results(tmp_path, monkeypatch):
+    scenario = _FailedFirstCommitScenario(tmp_path, monkeypatch)
 
-    # Run 2: Resume with disk functioning normally
-    fail_save = False
-    core.annotate_stage(recovered_state, job_id, [], "DeepSeek", "key", "model", "简体中文")
+    # --- Run 1: commit of Section 0 fails, Section 1 is already staged -------
+    run1_sections = scenario.run1()
+    assert {0, 1} <= run1_sections
 
-    # Check total LLM calls
-    calls_in_run2 = llm_calls[len(calls_in_run1):]
+    staged_after_run1 = scenario.staged_after_run1
+    assert staged_after_run1 == {0, 1}, (
+        "Sections 0 and 1 must be durably staged before the failing commit; "
+        f"staging directory holds {sorted(staged_after_run1)}"
+    )
+    # The commit really failed: the durable checkpoint is still 0.
+    assert core.load_job_state(scenario.job_id).get("annotations_done_offset", 0) == 0
 
-    # CRITICAL ACCEPTANCE: Section 0 and Section 1 were already durably staged;
-    # zero repeat LLM calls occurred on resume!
-    assert "Section 1 about Aerodynamics." not in calls_in_run2, (
+    # --- Run 2: resume with a healthy disk -----------------------------------
+    run2_sections = scenario.resume()
+    calls_in_run2 = scenario.calls[2]
+
+    # Existing guarantee, kept verbatim: a staged Section 1 must not be re-called.
+    assert SECTION_SOURCES[1] not in calls_in_run2, (
         "Section 1 was already durably staged; repeating LLM call is forbidden!"
     )
-    assert len(calls_in_run2) == 0, (
-        f"All completed batches were staged; zero repeat calls expected, got {calls_in_run2}"
+    # Set semantics: run 2 is supposed to request the sections that were never
+    # staged (here Sections 2 and 3) and must not touch any staged one.
+    _assert_run2_reuses_staged_results(run2_sections, staged_after_run1)
+    assert run2_sections == {2, 3}, (
+        f"Run 2 should only request the never-staged sections, got {calls_in_run2}"
     )
 
     # Job completely finished
-    assert recovered_state["annotations_done"]
-    assert recovered_state["annotations_done_offset"] == 4
+    assert scenario.recovered_state["annotations_done"]
+    assert scenario.recovered_state["annotations_done_offset"] == 4
 
     # All staged files cleaned up on final success
-    assert not (job_dir / ".annotation_staging").is_dir() or not list((job_dir / ".annotation_staging").glob("*.json"))
+    staging_dir = scenario.job_dir / ".annotation_staging"
+    assert not staging_dir.is_dir() or not list(staging_dir.glob("*.json"))
+
+
+def test_recovery_set_assertion_detects_repeated_staged_call(tmp_path, monkeypatch):
+    """Negative control: the set assertion must fail when run 2 re-calls a staged section.
+
+    Changing the model between runs invalidates the staged fingerprints, so the
+    product correctly re-requests Sections 0 and 1. This test is about the
+    assertion itself: it must report the repeat instead of passing silently.
+    """
+    scenario = _FailedFirstCommitScenario(tmp_path, monkeypatch)
+    scenario.run1()
+    assert scenario.staged_after_run1 == {0, 1}
+
+    run2_sections = scenario.resume(model="model-v2")
+
+    # The repeat really happened end to end (not a synthetic call list).
+    assert set(run2_sections) & scenario.staged_after_run1 == {0, 1}, (
+        f"expected Sections 0 and 1 to be requested again, got {scenario.calls[2]}"
+    )
+    with pytest.raises(AssertionError, match="already durably staged"):
+        _assert_run2_reuses_staged_results(run2_sections, scenario.staged_after_run1)
 
 
 # ---------------------------------------------------------------------------
