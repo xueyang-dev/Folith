@@ -45,9 +45,11 @@ Usage::
     QT_QPA_PLATFORM=offscreen venv/bin/python scripts/runtime_baseline_runner.py \
         --out /tmp/runtime-baseline --paras 200 --seconds 120
 
-    # real machine, frozen app (the run the baseline report needs):
-    venv/bin/python scripts/runtime_baseline_runner.py --out /tmp/baseline-mac \
-        --paras 10000 --seconds 1800 --mode frozen \
+    # frozen app: flow control only.  It runs the app's own --selftest flow, so
+    # --seconds does not apply (it is refused rather than ignored) and its
+    # tool_share is null, not 0 — see TOOL_SPLIT_UNAVAILABLE.
+    venv/bin/python scripts/runtime_baseline_runner.py --out /tmp/baseline-frozen \
+        --paras 10000 --mode frozen \
         --frozen-app dist/qt-desktop/Folith.app/Contents/MacOS/Folith
 
     # median of several rounds of the same variant (plan: ≥3 rounds × ≥5 min):
@@ -85,6 +87,9 @@ NOT_IMPLEMENTED = {
 #: v2: steps run from Qt event-loop callbacks.
 #: v3: phases (R/I), per-operation latency, S3, and the tool's own share.
 MEASUREMENT_VERSION = 3
+
+#: Interaction window for the source modes when ``--seconds`` is not given.
+DEFAULT_SECONDS = 90.0
 
 #: A round whose "after the translation finished" phase is shorter than this
 #: cannot separate R from I, so the round is void (plan §9 D1).
@@ -499,8 +504,24 @@ def _rate_per_minute(count: int, seconds: float | None) -> float | None:
     return round(count * 60.0 / seconds, 2)
 
 
-def _tier_block(window: dict, seconds: float | None, *, tier: str) -> dict:
-    """Both readings of one tier plus the tool's share of it."""
+TOOL_SPLIT_UNAVAILABLE = (
+    "this mode does not run the harness's instrumentation marks, so the "
+    "\"including tool\" view and the tool's share are not measured here: the "
+    "window only carries the app's own counters, and reporting 0 would claim "
+    "\"the tool added nothing\" instead of \"this path cannot separate it\"")
+
+
+def _tier_block(window: dict, seconds: float | None, *, tier: str,
+                tool_split_measured: bool = True) -> dict:
+    """Both readings of one tier plus the tool's share of it.
+
+    ``tool_split_measured=False`` (the frozen path) reports the including-tool
+    view and the share as ``null`` with a reason.  The frozen arm drives the app
+    through its own scripted flow, which never takes an instrumentation mark, so
+    a ``0.0`` share there is not a measurement — P1-2 measured 25 % and 100 % of
+    its stalls coming from the probe in the source arm, so silently reading the
+    frozen ``0.0`` as "pure product" would invert the comparison.
+    """
     if tier == "slow_100ms":
         product = int(window.get("slow_count") or 0)
         tool = int(window.get("instrumentation_slow_count") or 0)
@@ -508,12 +529,23 @@ def _tier_block(window: dict, seconds: float | None, *, tier: str) -> dict:
         product = int(window.get("severe_count") or 0)
         tool = int(window.get("instrumentation_severe_count") or 0)
     total = product + tool
-    return {
+    block = {
         "excluding_tool": {"count": product, "per_minute": _rate_per_minute(product, seconds)},
+        "tool_split_measured": bool(tool_split_measured),
+    }
+    if not tool_split_measured:
+        block["including_tool"] = {"count": None, "per_minute": None,
+                                  "reason": TOOL_SPLIT_UNAVAILABLE}
+        block["tool_events"] = None
+        block["tool_share"] = None
+        block["tool_share_reason"] = TOOL_SPLIT_UNAVAILABLE
+        return block
+    block.update({
         "including_tool": {"count": total, "per_minute": _rate_per_minute(total, seconds)},
         "tool_events": tool,
         "tool_share": round(tool / total, 4) if total else None,
-    }
+    })
+    return block
 
 
 def _runner_frame_events(window: dict) -> dict:
@@ -563,7 +595,8 @@ def _empty_phase(reason: str) -> dict:
 
 
 def _phase_block(label: str, window: dict, seconds: float | None, *,
-                 window_name: str, source: str) -> dict:
+                 window_name: str, source: str,
+                 tool_split_measured: bool = True) -> dict:
     runner_frames = _runner_frame_events(window)
     product_slow = int(window.get("slow_count") or 0)
     return {
@@ -572,9 +605,12 @@ def _phase_block(label: str, window: dict, seconds: float | None, *,
         "window_source": source,
         "measured": True,
         "observed_s": round(seconds, 3) if seconds is not None else None,
+        "tool_split_measured": bool(tool_split_measured),
         "tiers": {
-            "slow_100ms": _tier_block(window, seconds, tier="slow_100ms"),
-            "severe_500ms": _tier_block(window, seconds, tier="severe_500ms"),
+            "slow_100ms": _tier_block(window, seconds, tier="slow_100ms",
+                                      tool_split_measured=tool_split_measured),
+            "severe_500ms": _tier_block(window, seconds, tier="severe_500ms",
+                                        tool_split_measured=tool_split_measured),
         },
         "runner_frame_events": runner_frames["count"],
         "runner_frame_share_of_product": (
@@ -631,7 +667,8 @@ def _longest_summary(longest, window: dict | None = None, *, residual: bool = Fa
     return entry
 
 
-def _phase_metrics(scenario: dict, run: dict | None) -> dict:
+def _phase_metrics(scenario: dict, run: dict | None, *,
+                   tool_split_measured: bool = True) -> dict:
     """R (翻译中) and I (完成后) from the scenario and run windows (plan §9 D1).
 
     ``scenario`` is the whole measured session; ``run`` is the translating window.
@@ -658,6 +695,10 @@ def _phase_metrics(scenario: dict, run: dict | None) -> dict:
                           "including_tool = product + the sampler's instrumentation "
                           "counters (the harness's own stalls)",
         },
+        # Phase-level, not definition-level: a reader must be able to tell a
+        # measured 0.0 share from a path that cannot separate the tool at all.
+        "tool_split_measured": bool(tool_split_measured),
+        "tool_split_reason": None if tool_split_measured else TOOL_SPLIT_UNAVAILABLE,
     }
 
     if not scenario_measured:
@@ -675,7 +716,7 @@ def _phase_metrics(scenario: dict, run: dict | None) -> dict:
         result["R"] = _phase_block(
             "翻译中", run, run_s, window_name="run_window",
             source="runner checkpoints: translation start → first tick that saw the "
-                   "task settled")
+                   "task settled", tool_split_measured=tool_split_measured)
         i_s = max(0.0, scenario_s - run_s)
         i_window = {
             key: max(0, int(scenario.get(key) or 0) - int(run.get(key) or 0))
@@ -693,7 +734,8 @@ def _phase_metrics(scenario: dict, run: dict | None) -> dict:
             - float(run.get("instrumentation_total_ms") or 0.0))
         result["I"] = _phase_block(
             "完成后", i_window, i_s, window_name="scenario_window - run_window",
-            source="scenario window minus the run window; includes import/settle tail")
+            source="scenario window minus the run window; includes import/settle tail",
+            tool_split_measured=tool_split_measured)
         result["I"]["residual_note"] = (
             "by definition this bucket is everything outside the run window, so it "
             "also contains the import/open/settle tail, not only post-completion time")
@@ -713,7 +755,8 @@ def _phase_metrics(scenario: dict, run: dict | None) -> dict:
             f"not applicable: {reason}")
         result["I"] = _phase_block(
             "完成后", scenario, scenario_s, window_name="scenario_window",
-            source="the whole scenario window (no run window to subtract)")
+            source="the whole scenario window (no run window to subtract)",
+            tool_split_measured=tool_split_measured)
         valid = (scenario_s or 0.0) >= I_PHASE_MIN_SECONDS
         result["I"]["valid"] = valid
         result["I"]["r_applicable"] = False
@@ -924,7 +967,13 @@ class _ScenarioDriver:
                 bar.setValue(0 if bar.value() + step > bar.maximum()
                              else bar.value() + step)
             self.scrolls += 1
-        if now - self._last_edit >= 2.0 and workbench.visible_segment_count():
+        # A row can only be selected once the table actually has rows: right after
+        # open, ``_rows`` is filled before the QTableWidget is resized, and a
+        # selection change then paints a row whose items do not exist yet
+        # (views.py:6097 ``number.text()`` on None).  Editing an unpopulated table
+        # is not the scenario anyway, so the slot is skipped until it is ready.
+        table_ready = bool(workbench.visible_segment_count()) and table.rowCount() > 0
+        if now - self._last_edit >= 2.0 and table_ready:
             self._last_edit = now
             self._phase("edit")
             index = self.edited % max(1, workbench.visible_segment_count())
@@ -1498,7 +1547,14 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
     them as a cross-check, never substituted silently.
     """
     result: dict = {"mode": "source_offscreen" if args.offscreen else "source",
-                    "steps": [], "failures": []}
+                    "steps": [], "failures": [],
+                    "tool_split_measured": True,
+                    "window_control": {
+                        "controlled_by": "the harness interaction window",
+                        "seconds_applied": True,
+                        "seconds": args.seconds,
+                        "settle_timeout": args.settle_timeout,
+                    }}
     paths, app, window, adapter, monitor, jank = _prepare_window(
         args, data_dir, log_dir, result)
     checkpoint = jank.checkpoint() if jank is not None else None
@@ -1515,10 +1571,17 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
             result["failures"].append("scenario did not finish (event loop ended early)")
         job_id = driver.job_id
         state = (adapter.load_state(job_id) or {}) if job_id else {}
+        runtime_status = ((adapter.core.load_runtime_state(job_id) or {}).get("status")
+                          if job_id else "")
         result["translation"] = {
             "settled": driver.settled,
-            "runtime_status": ((adapter.core.load_runtime_state(job_id) or {}).get("status")
-                               if job_id else ""),
+            # ``settled`` is true for a *failed* task too (the driver waits for a
+            # terminal state, not for success).  ``completed`` is the field that
+            # means "the translation produced its result", and ``ok`` uses it: a
+            # run whose model endpoint refused every call must not look like a
+            # measured round.
+            "completed": bool(driver.settled and state.get("p2_done")),
+            "runtime_status": runtime_status,
             "p2_done": bool(state.get("p2_done")),
             "segments": len(state.get("pairs") or []),
             "edited_segments": driver.edited,
@@ -1569,7 +1632,13 @@ def run_source_s3(args: argparse.Namespace, fixtures: list[Path], data_dir: Path
     covers the whole measured window.
     """
     result: dict = {"mode": "source_offscreen" if args.offscreen else "source",
-                    "steps": [], "failures": []}
+                    "steps": [], "failures": [],
+                    "tool_split_measured": True,
+                    "window_control": {
+                        "controlled_by": "the harness event loop",
+                        "seconds_applied": True,
+                        "seconds": args.seconds,
+                    }}
     paths, app, window, adapter, monitor, jank = _prepare_window(
         args, data_dir, log_dir, result)
     operations = OperationRecorder()
@@ -1581,9 +1650,11 @@ def run_source_s3(args: argparse.Namespace, fixtures: list[Path], data_dir: Path
                                operations=operations)
     try:
         _drive_event_loop(app, driver, result)
+        measured_s3 = bool(getattr(driver, "scenario_window", None)) \
+            and bool((driver.scenario_window or {}).get("measured"))
         result["translation"] = {
-            "settled": bool(getattr(driver, "scenario_window", None))
-                        and bool((driver.scenario_window or {}).get("measured")),
+            "settled": measured_s3,
+            "completed": measured_s3,
             "mode": "s3_finished_tasks",
             "cycles": driver.cycles,
             "big_job_id": driver.big_job_id,
@@ -1635,7 +1706,19 @@ def _teardown(app, window) -> None:
 def run_frozen(args: argparse.Namespace, fixture: Path, data_dir: Path,
                log_dir: Path, base_url: str) -> dict:
     """The real baseline path: the frozen app runs its own scripted flow."""
-    result: dict = {"mode": "frozen_selftest", "steps": [], "failures": []}
+    result: dict = {"mode": "frozen_selftest", "steps": [], "failures": [],
+                    # The frozen app runs its own scripted flow; the harness never
+                    # takes an instrumentation mark inside that process, so the
+                    # tool's share is not measured here (P1-2/P1-4 §5.3).
+                    "tool_split_measured": False,
+                    "window_control": {
+                        "controlled_by": "the frozen app's own --selftest flow",
+                        "seconds_applied": False,
+                        "paras_applied": args.paras,
+                        "reason": "run_frozen() hands the app a fixture, not an "
+                                  "interaction window: the measured window is the "
+                                  "one the app's own flow produced",
+                    }}
     report_path = args.out / "selftest.json"
     env = scenario_environment(base_url, data_dir, log_dir)
     env["QT_QPA_PLATFORM"] = "offscreen"
@@ -1665,9 +1748,14 @@ def run_frozen(args: argparse.Namespace, fixture: Path, data_dir: Path,
     result["run_records"] = []
     for job_id in job_ids:
         result["run_records"].extend(read_run_records(data_dir, job_id))
+    frozen_run = report.get("run") or {}
     result["translation"] = {
-        "settled": bool((report.get("run") or {}).get("p2_done")),
-        "segments": (report.get("run") or {}).get("segments"),
+        "settled": bool(frozen_run.get("p2_done")),
+        "completed": bool(report.get("ok") and frozen_run.get("p2_done")),
+        "runtime_status": frozen_run.get("runtime_status"),
+        "error": (frozen_run.get("error") or {}).get("message")
+        if isinstance(frozen_run.get("error"), dict) else frozen_run.get("error"),
+        "segments": frozen_run.get("segments"),
         "edited_segments": None,
     }
     # The selftest entry point now starts the UI health monitor before the flow,
@@ -1705,7 +1793,9 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
                       "reason": "this mode did not collect a translating window"}
     elif "measured" not in run_window:
         run_window = _normalize_window(run_window)
-    phases = _phase_metrics(scenario_window, run_window)
+    tool_split_measured = bool(result.get("tool_split_measured", True))
+    phases = _phase_metrics(scenario_window, run_window,
+                            tool_split_measured=tool_split_measured)
     operations = result.get("operations") or OperationRecorder().report()
     fixture_block = {"kind": "epub", "paragraphs": paras,
                      "path": str(fixtures[0]) if fixtures else ""}
@@ -1743,11 +1833,20 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
                               "polling and other harness-only work) divided by all "
                               "stalls including them",
                 "reported_as": "excluding_tool / including_tool per phase and tier",
+                # A frozen round reports tool_share as null, never as 0: the
+                # app's own scripted flow takes no instrumentation mark, so a
+                # zero there would be "not separable", not "no tool cost".
+                "measured": tool_split_measured,
+                "reason": None if tool_split_measured else TOOL_SPLIT_UNAVAILABLE,
             },
         },
         "started_at": started_at,
         "finished_at": now_iso(),
         "fixture": fixture_block,
+        "window_control": result.get("window_control") or {
+            "controlled_by": "unknown",
+            "seconds_applied": None,
+        },
         "environment": environment,
         "translation": result.get("translation") or {},
         "steps": result.get("steps") or [],
@@ -1776,8 +1875,9 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
         "note": "offscreen/mock numbers are labelled and cannot replace the "
                 "macOS/Windows frozen-app baseline the issue asks for",
     }
+    translation = result.get("translation") or {}
     payload["ok"] = bool(
-        (result.get("translation") or {}).get("settled")
+        translation.get("completed")
         and not result.get("failures"))
     return payload
 
@@ -1797,6 +1897,9 @@ def _summary_line(payload: dict) -> dict:
         "R_valid": run.get("valid"),
         "I_valid": after.get("valid"),
         "discarded_rounds": phases.get("discarded_rounds"),
+        "seconds_applied": (payload.get("window_control") or {}).get("seconds_applied"),
+        "tool_split_measured": (payload.get("measurement") or {})
+        .get("tool_share", {}).get("measured"),
     }
     for label, block in (("R", run), ("I", after)):
         tiers = block.get("tiers") or {}
@@ -1853,6 +1956,15 @@ def aggregate_reports(directory: Path) -> dict:
                             "reason": "; ".join(phases.get("discard_reasons") or [])
                                       or "round was void"})
             continue
+        if not (payload.get("translation") or {}).get("completed"):
+            # Counters from a task that failed (e.g. the model endpoint was not
+            # reachable) are not a measurement of the product, however tidy the
+            # phase arithmetic looks.
+            skipped.append({"report": str(path),
+                            "reason": "translation did not complete "
+                                      f"(runtime_status="
+                                      f"{(payload.get('translation') or {}).get('runtime_status')!r})"})
+            continue
         rows.append({"report": str(path), "name": path.parent.name,
                      "scenario": payload.get("scenario"), "phases": phases})
     medians: dict[str, float | None] = {}
@@ -1891,13 +2003,138 @@ def aggregate_reports(directory: Path) -> dict:
     }
 
 
+def verify_round(directory: Path) -> dict:
+    """Check one finished round against the contract P1-5 depends on (no Qt).
+
+    Written for the P1-5 prep smoke: after a round the operator needs to know, in
+    one command, whether the artifacts the plan's numbers come from actually
+    exist — ``runtime-baseline.json`` with measurement v3, a measured scenario
+    window, a measurable R, the product's own ``gui_jank.json`` and a
+    ``summary.json`` that carries the stage table — plus whether the two wiring
+    facts the run must not lie about hold: ``tool_share`` is null (never 0) on a
+    path that cannot separate the tool, and the round says whether ``--seconds``
+    controlled its window.
+
+    It does not judge the numbers, only that they are *measurable* and honestly
+    labelled.  ``ok`` is the exit verdict; ``aggregate_ready`` additionally says
+    whether :func:`aggregate_reports` will accept this round.
+    """
+    directory = Path(directory).expanduser().resolve()
+    checks: list[dict] = []
+
+    def add(name: str, ok: bool, detail, *, required: bool = True) -> None:
+        checks.append({"check": name, "ok": bool(ok), "required": required,
+                       "detail": detail})
+
+    report_path = directory / "runtime-baseline.json"
+    payload: dict = {}
+    if report_path.is_file():
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            add("report_present", True, str(report_path))
+        except ValueError as exc:
+            add("report_present", False, f"{report_path}: {exc}")
+    else:
+        add("report_present", False, f"{report_path} does not exist")
+    if not payload:
+        return {"directory": str(directory), "ok": False, "checks": checks,
+                "aggregate_ready": False}
+
+    measurement = payload.get("measurement") or {}
+    metrics = payload.get("metrics") or {}
+    phases = metrics.get("phases") or {}
+    window_control = payload.get("window_control") or {}
+    seconds_applied = window_control.get("seconds_applied")
+    mode = (payload.get("environment") or {}).get("mode")
+
+    add("measurement_v3", measurement.get("version") == MEASUREMENT_VERSION,
+        {"version": measurement.get("version"), "expected": MEASUREMENT_VERSION})
+    add("scenario_window_measured", (metrics.get("gui_jank") or {}).get("measured") is True,
+        {"reason": (metrics.get("gui_jank") or {}).get("reason")})
+    r_block = phases.get("R") or {}
+    add("R_valid", r_block.get("valid") is True,
+        {"measured": r_block.get("measured"), "reason": r_block.get("reason")})
+    i_block = phases.get("I") or {}
+    # The frozen arm's window belongs to the app's own flow, so it has no I phase
+    # to validate: required only where --seconds controlled the window.
+    add("I_valid", i_block.get("valid") is True,
+        {"measured": i_block.get("measured"),
+         "reason": i_block.get("reason") or i_block.get("invalid_reason"),
+         "i_phase_s": phases.get("i_phase_s")},
+        required=bool(seconds_applied))
+    translation = payload.get("translation") or {}
+    add("translation_completed", translation.get("completed") is True,
+        {"settled": translation.get("settled"),
+         "completed": translation.get("completed"),
+         "runtime_status": translation.get("runtime_status"),
+         "p2_done": translation.get("p2_done"),
+         "error": translation.get("error")})
+    add("no_failures", not (payload.get("failures") or []),
+        {"failures": (payload.get("failures") or [])[:5]})
+
+    records = metrics.get("run_records") or []
+    add("gui_jank_json_on_disk",
+        any(row.get("gui_jank_file") for row in records),
+        {"runs": len(records),
+         "with_file": sum(1 for row in records if row.get("gui_jank_file"))})
+
+    stage_rows = []
+    for row in records:
+        path = Path(str(row.get("directory") or "")) / "summary.json"
+        try:
+            summary = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        stage_rows.append({"summary": str(path),
+                           "stages": len(summary.get("stages") or {}),
+                           "gui_jank_measured": (summary.get("gui_jank") or {})
+                           .get("measured")})
+    add("product_stages_present",
+        any(row["stages"] > 0 for row in stage_rows),
+        {"summaries": stage_rows})
+
+    # The ruling: a frozen round's tool share is null, not 0.  A 0.0 here would
+    # read as "the tool added nothing" and poison the baseline comparison.
+    shares = []
+    for label in ("R", "I"):
+        for tier_name, tier in ((phases.get(label) or {}).get("tiers") or {}).items():
+            shares.append((f"{label}.{tier_name}", tier.get("tool_share"),
+                           tier.get("tool_split_measured")))
+    split_measured = (measurement.get("tool_share") or {}).get("measured")
+    add("tool_share_honest",
+        bool(split_measured) or all(value is None for _, value, _ in shares),
+        {"tool_split_measured": split_measured,
+         "shares": {name: value for name, value, _ in shares}})
+    add("window_control_recorded", isinstance(seconds_applied, bool),
+        {"seconds_applied": seconds_applied,
+         "controlled_by": window_control.get("controlled_by")})
+
+    verdict = all(item["ok"] for item in checks
+                  if item["required"])
+    return {
+        "directory": str(directory),
+        "ok": verdict,
+        "mode": mode,
+        "seconds_applied": seconds_applied,
+        "tool_split_measured": split_measured,
+        "valid_round": phases.get("valid_round"),
+        "aggregate_ready": bool(phases.get("valid_round"))
+        and translation.get("completed") is True
+        and measurement.get("version") == MEASUREMENT_VERSION,
+        "checks": checks,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Folith runtime baseline runner (S1/S3)")
     parser.add_argument("--out", default=None, help="output directory for this run")
     parser.add_argument("--scenario", default="S1", choices=("S1", "S2", "S3", "S4"))
     parser.add_argument("--paras", type=int, default=200, help="paragraph count (S1)")
-    parser.add_argument("--seconds", type=float, default=90.0,
-                        help="measured interaction window (translation keeps running)")
+    parser.add_argument("--seconds", type=float, default=None,
+                        help="measured interaction window (translation keeps "
+                             "running); source modes default to 90 and the frozen "
+                             "mode refuses it, because the window there belongs to "
+                             "the app's own --selftest flow")
     parser.add_argument("--settle-timeout", type=float, default=300.0,
                         help="how long to wait for the task to settle after interacting")
     parser.add_argument("--timeout", type=float, default=1800.0,
@@ -1919,10 +2156,19 @@ def main(argv: list[str] | None = None) -> int:
                         help="segments of the finished task S3 opens and switches to")
     parser.add_argument("--s3-small-paras", type=int, default=40,
                         help="segments of the second (small) task S3 switches to")
+    parser.add_argument("--verify", default=None,
+                        help="do not measure: check one finished round directory "
+                             "against the P0/P1 report contract (exit 1 if a "
+                             "required artifact or field is missing)")
     parser.add_argument("--aggregate", default=None,
                         help="do not measure: print medians over the rounds under "
                              "this directory (each round is */runtime-baseline.json)")
     args = parser.parse_args(argv)
+
+    if args.verify:
+        verdict = verify_round(Path(args.verify))
+        print(json.dumps(verdict, ensure_ascii=False, indent=2))
+        return 0 if verdict["ok"] else 1
 
     if args.aggregate:
         summary = aggregate_reports(Path(args.aggregate).expanduser().resolve())
@@ -1931,10 +2177,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.out:
         parser.error("--out is required unless --aggregate is used")
-    args.out = Path(args.out).expanduser().resolve()
-    args.out.mkdir(parents=True, exist_ok=True)
+    seconds_provided = args.seconds is not None
     if args.frozen_app:
         args.mode = "frozen"
+    if args.mode == "frozen" and seconds_provided:
+        # Silently ignoring it produced reports whose window (13.9 s in P1-4) had
+        # nothing to do with the requested duration.  Refuse instead: a wrong
+        # window that looks configured is worse than a startup error.
+        parser.error(
+            "--seconds is not applicable to --mode frozen: the frozen arm runs the "
+            "app's own --selftest flow, which owns the measured window (the fixture "
+            "size, --paras, is what changes its length).  Drop --seconds for the "
+            "frozen control arm, and use --mode source for a timed window.")
+    if args.seconds is None:
+        args.seconds = DEFAULT_SECONDS
+    args.out = Path(args.out).expanduser().resolve()
+    args.out.mkdir(parents=True, exist_ok=True)
     started_at = now_iso()
     if args.scenario in NOT_IMPLEMENTED:
         payload = {

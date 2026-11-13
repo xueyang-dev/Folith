@@ -295,6 +295,29 @@ def test_role_from_header_wins_over_the_model():
     assert (role, how) == ("vision", "header")
 
 
+def test_one_model_field_cannot_select_four_roles_replay_auto_does():
+    """Why the runbook sets ``FOLITH_QT_SELFTEST_MODEL=replay/auto``.
+
+    The app has one model field but the distribution has four roles.  A model id
+    that names a role wins over payload sniffing (by design: an explicit hint must
+    not be second-guessed), so pointing it at ``replay/vision`` would replay the
+    vision distribution for translation, review and knowledge-extraction calls
+    too — every one of them would answer with vision latency and none of the
+    other three strata would ever be exercised.  ``replay/auto`` keeps the replay
+    namespace and lets the payload pick the role.
+    """
+    review_prompt = "你是一位独立的翻译审校专家，负责审查机器译文。"
+    assert gateway.infer_role(_chat("replay/vision", review_prompt), {}) == (
+        "vision", "model")
+    assert gateway.infer_role(_chat("replay/auto", review_prompt), {}) == (
+        "review", "content:review")
+    image_review = {"model": "replay/auto", "messages": [{"role": "user", "content": [
+        {"type": "text", "text": review_prompt},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}}]}]}
+    # The image wins over the review marker: the request is an OCR call.
+    assert gateway.infer_role(image_review, {}) == ("vision", "content:image")
+
+
 def test_role_is_sniffed_from_the_payload_when_unnamed():
     image_body = {"model": "auto/x", "messages": [
         {"role": "user", "content": [
