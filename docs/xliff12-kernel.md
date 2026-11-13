@@ -115,10 +115,11 @@
 | `export_patched(document, {id: text})` | 任何只读 id 出现即整批拒绝（即使新值等于原值） |
 | `apply_plan(document, plan)` | `plan.refusals` 非空时整批拒绝 |
 
+三个写入口都**没有"宽松模式"**：拒绝清单只能从计划器取，写入口永不跳过。
 批量比对入口 `plan_export(document, pairs)` 是**计划器不是写入口**：只读行译文
 与文件一致 → 记进 `unchanged`（原样保留，不产生补丁）；不一致 → 记一条
 `ReadonlyRefusal`（`ok=False`）。只读判定以**文件**为准，不信任 pair 自报的
-`readonly`：任一来源说只读且文本要变，就拒绝。
+`readonly`：任一来源说不可写且文本要变，就拒绝。
 
 ### 4.3 零差异证明（两条独立证据，缺一不可）
 

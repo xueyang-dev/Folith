@@ -166,16 +166,15 @@ def plan_export(
 def apply_plan(
     document: XliffDocument,
     plan: ExportPlan,
-    *,
-    strict: bool = True,
 ) -> bytes:
-    """应用计划并返回文件字节。``strict=True``（默认）时存在拒绝即整批失败。
+    """应用计划并返回文件字节；计划里存在拒绝即整批失败（没有"宽松写一半"模式）。
+
+    拒绝清单只能从 :func:`plan_export` 取（计划器负责报告），写入口永远不跳过。
 
     **不改动传入的文档对象**：写回是"原字节 + 文本节点补丁"，因此同一份解析结果
     可以先出计划、再出字节、再复核，三步互不污染。
     """
-    if strict:
-        plan.raise_for_refusals()
+    plan.raise_for_refusals()
     patches = [patch for item in plan.patches for patch in item.patches]
     return render_patches(document.data, patches)
 
@@ -183,8 +182,6 @@ def apply_plan(
 def export_patched(
     document: XliffDocument,
     updates: Mapping[str, str],
-    *,
-    strict: bool = True,
 ) -> bytes:
     """按 ``external_id → 新译文`` 写出；只读 id 出现即拒绝整批。
 
@@ -196,7 +193,7 @@ def export_patched(
         refusal = document.write_refusal(external_id)
         if refusal is not None:
             refusals.append(refusal)
-    if refusals and strict:
+    if refusals:
         raise ReadonlySegmentError(refusals)
     rows = [
         {"external_segment": {"external_id": external_id}, "target": text}
