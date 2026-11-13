@@ -565,6 +565,8 @@ def test_is_zombie_probe_is_bounded(monkeypatch):
     assert kwargs["timeout"] == 5
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="parent_pid() uses a ctypes snapshot on Windows")
 def test_parent_pid_probe_is_bounded(monkeypatch):
     calls = _child_timeout(monkeypatch, desktop_process)
     assert desktop_process.parent_pid(4_000_000) is None
@@ -573,6 +575,8 @@ def test_parent_pid_probe_is_bounded(monkeypatch):
     assert kwargs["timeout"] == 5
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="parent_pid() uses a ctypes snapshot on Windows")
 def test_parent_pid_probe_still_parses_its_output(monkeypatch):
     monkeypatch.setattr(desktop_process, "_run_bounded",
                         lambda argv, **kwargs: SimpleNamespace(
@@ -580,6 +584,8 @@ def test_parent_pid_probe_still_parses_its_output(monkeypatch):
     assert desktop_process.parent_pid(4242) == 4242
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="pids_listening_on_port() routes to netstat on Windows")
 def test_listening_port_probe_is_bounded(tmp_path, monkeypatch):
     lsof = tmp_path / "lsof"
     lsof.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
