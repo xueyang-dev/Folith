@@ -44,6 +44,34 @@ Exit codes are not outcomes
 from ``runtime_state.json`` (:func:`terminal_state`).  ``2`` protocol, ``3``
 start failed, ``4`` internal, ``5`` stop timeout.
 
+The handle is not the run
+-------------------------
+``Popen.poll()`` answers "the process *I* spawned is gone".  That is a different
+statement from "the task ended": a launch that hands the run to a second process
+(``.bat`` / ``cmd /c``, a shell wrapper, an updater re-exec, and on Windows plain
+``os.execv``, which the CRT implements as ``_P_OVERLAY`` -- create a new process,
+exit the caller, keep no pid) exits at once while the real child is still
+importing ``core``.  Publishing a terminal state at that moment is not a cosmetic
+mislabel: it also clears ``cancel_requested`` / ``exit_requested``, i.e. it
+deletes the user's request, and the run then finishes as if nothing had been
+asked (E-6r §5①, E-6s).
+
+The terminal boundary therefore needs a second layer of evidence, and that
+evidence is OS-owned: the write end of the pipe this module created (it can only
+be held by the process that was launched or by a descendant of it, and the
+kernel closes it when that process dies), ``.worker.lock``, and the run's own
+``worker.owner_pid``.  :meth:`EngineSupervisor._await_run_end` waits while any of
+them says "someone is still executing this";
+:meth:`EngineSupervisor._publish_terminal_state` is reached only when none of
+them does.
+
+Both production launch shapes re-execute the application itself (see
+:func:`launch_command`), so there a handle and a run are the same process and an
+exit is the end, with no added delay.  A launcher remains possible --
+:func:`set_launch_command` is how one is declared -- but it is never the default
+and it cannot arrive by accident: :func:`_preflight` refuses a launch shape that
+is not the application itself, with a reason the user can read.
+
 Secret rule
 -----------
 The resolved connection travels only on the child's stdin (the protocol line
@@ -78,11 +106,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import engine_host, engine_protocol
 from .engine_protocol import ConnectionSpec
-from .process import hidden_console_kwargs
+from .process import hidden_console_kwargs, pid_alive
 
 __all__ = [
     "ACTIVE_STATUSES",
     "EXIT_STOP_BUDGET",
+    "STDIO_SETTLE_SECONDS",
     "TERMINAL_STATUSES",
     "EngineOutcome",
     "EngineSupervisor",
@@ -126,6 +155,13 @@ EXIT_STOP_BUDGET = 0.6
 #: thread doing ``Popen.poll()`` plus, once, a ``runtime_state`` read.
 POLL_SECONDS = 0.15
 
+#: How long the output drain thread gets to report the EOF the kernel has
+#: already queued, before "the child's stdio is still held" is believed.
+#: A child that really exited releases its write end at process teardown, so the
+#: blocked ``read`` returns in milliseconds; the bound only keeps a descheduled
+#: thread from being mistaken for a live holder (E-6s).
+STDIO_SETTLE_SECONDS = 0.25
+
 #: How much of the child's merged output is kept for an error report.
 _OUTPUT_TAIL_BYTES = 2048
 
@@ -150,7 +186,15 @@ _command_override: Optional[List[str]] = None
 
 
 def set_launch_command(command: Optional[List[str]]) -> None:
-    """Override how the child is re-executed (tests with a stub entry only)."""
+    """Override how the child is re-executed.
+
+    Tests point this at a stub entry.  It is also the only way to *declare* a
+    launcher -- a command that hands the run to a second process -- because
+    :func:`_preflight` refuses every launch shape that is not the application
+    itself: declaring one is an explicit act, and the supervisor then follows
+    the run by ownership evidence instead of by the handle
+    (:meth:`EngineSupervisor._await_run_end`).  Product code never calls this.
+    """
     global _command_override
     _command_override = list(command) if command else None
 
@@ -162,12 +206,69 @@ def launch_command() -> List[str]:
     PyInstaller passes ``--engine-host`` through to ``main``); source runs
     execute ``qt_client.py`` with the same interpreter, which is the entry
     E-2's tests use.
+
+    Both shapes have the property the terminal boundary depends on: the process
+    that is spawned *is* the process that runs the task.  :func:`_preflight`
+    refuses anything else (:func:`_single_process_launch`), because a wrapper
+    would exit while the real child is still starting and the supervisor would
+    have to guess (E-6s).
     """
     if _command_override is not None:
         return list(_command_override)
     if getattr(sys, "frozen", False):
         return [sys.executable]
     return [sys.executable, str(_SOURCE_ENTRY)]
+
+
+def _single_process_launch(command, *, executable: Optional[str] = None,
+                           entry: Optional[Path] = None) -> bool:
+    """True when ``command`` re-executes this application itself.
+
+    That is the only launch shape whose handle is authoritative: the spawned
+    process is the executor, so its exit is the run's end.  ``executable`` and
+    ``entry`` are the anchors a shape is compared against (``sys.executable``
+    and :data:`_SOURCE_ENTRY`); they are parameters so the rule can be tested
+    without pretending to change the running interpreter.
+    """
+    if not command:
+        return False
+    expected_executable = Path(executable or sys.executable)
+    expected_entry = Path(entry or _SOURCE_ENTRY)
+    try:
+        if Path(command[0]).resolve() != expected_executable.resolve():
+            return False
+        if len(command) == 1:
+            # Frozen build: ``sys.executable`` is the app binary itself.
+            return True
+        if len(command) == 2:
+            return Path(command[1]).resolve() == expected_entry.resolve()
+    except OSError:  # pragma: no cover - an unresolvable path is not a launch
+        return False
+    return False
+
+
+def _launch_shape_reason() -> str:
+    """Refuse a launch shape that would make "my child exited" a guess.
+
+    ``launch_command()`` has exactly two production shapes and both re-execute
+    the application itself.  A wrapper (``.bat`` / ``cmd /c``, a shell script,
+    an updater shim) does not, and a supervisor cannot see the handoff coming:
+    it is told only that *its* process left (E-6r §5①).  Refusing at launch is
+    cheaper than being wrong later, and it is readable: the user gets a
+    sentence, not a task that hangs or a request that vanishes.
+
+    A declared launcher (:func:`set_launch_command`) is not refused -- that is
+    the caller taking responsibility, and the supervisor follows the run by
+    ownership evidence from then on.  Nothing in the product declares one, so
+    this guard is what keeps a launcher out of the production path.
+    """
+    if _command_override is not None:
+        return ""
+    if _single_process_launch(launch_command()):
+        return ""
+    return ("后台引擎的启动方式不受支持：launch_command 只能重新执行本应用本身（单进程）。"
+            "包装进程（.bat / cmd /c / 脚本 / 更新器）会让监管器在任务仍在运行时误判"
+            "运行已结束，并清掉用户的取消或退出请求。")
 
 
 def connection_from_kwargs(kwargs: Any) -> ConnectionSpec:
@@ -291,6 +392,10 @@ class EngineSupervisor:
         self._started_at = time.monotonic()
         self._finished = threading.Event()
         self._output = bytearray()
+        self._output_closed = threading.Event()
+        #: Why the monitor believes the run ended (support/diagnostics only).
+        self._end_evidence = ""
+        self._end_settle_seconds = 0.0
         self._drain = threading.Thread(target=self._drain_output,
                                        name=f"folith-engine-output-{job_id}",
                                        daemon=True)
@@ -322,6 +427,10 @@ class EngineSupervisor:
             "exit_code": self._exit_code,
             "stopping": self._stopping,
             "uptime_seconds": round(time.monotonic() - self._started_at, 2),
+            # Support only: which ownership trace made the monitor wait after
+            # its own handle was gone, and how long the run outlived it (E-6s).
+            "end_evidence": self._end_evidence,
+            "end_settle_seconds": self._end_settle_seconds,
         }
 
     def output_tail(self) -> str:
@@ -417,6 +526,7 @@ class EngineSupervisor:
     def _drain_output(self) -> None:
         stream = self.proc.stdout
         if stream is None:
+            self._output_closed.set()
             return
         try:
             while True:
@@ -428,6 +538,12 @@ class EngineSupervisor:
                     del self._output[:-_OUTPUT_TAIL_BYTES]
         except (OSError, ValueError):  # pragma: no cover - pipe closed under us
             pass
+        finally:
+            # EOF, or a pipe we can no longer read: either way this process is
+            # not holding the child's stdio any more.  ``_await_run_end`` reads
+            # this as ownership evidence (E-6s), so it must be set on every
+            # path, including a broken pipe.
+            self._output_closed.set()
 
     def _bind_worker_id(self) -> None:
         """Tie this registration to the child's own run id, once it has one.
@@ -466,6 +582,10 @@ class EngineSupervisor:
         _remember_exit(self.job_id, self._exit_code)
         try:
             try:
+                # E-6s: the handle exiting is a claim about *my* child, not
+                # about the run.  Never publish a terminal state while the run
+                # still has an owner.
+                self._await_run_end()
                 self._publish_terminal_state()
             except Exception:  # noqa: BLE001 - the monitor must never die noisily
                 pass
@@ -482,8 +602,100 @@ class EngineSupervisor:
             _forget(self)
             self._finished.set()
 
+    def _await_run_end(self) -> None:
+        """Wait until nothing owns the run, not just until the handle exited.
+
+        ``Popen.poll()`` only says "the process this supervisor spawned is
+        gone".  A launch that hands the task to a second process exits at once
+        while the real child is still starting, so that answer is not the run's
+        end: :meth:`_publish_terminal_state` would write ``interrupted`` and
+        clear ``cancel_requested`` / ``exit_requested``, deleting the user's
+        request (E-6r §5①, E-6s).
+
+        The decision is made from OS-owned ownership evidence, never from a
+        sleep and never from a pid guess (:meth:`_live_ownership_evidence`).
+        While any trace is left, the run is still somebody's, and the terminal
+        boundary waits: it is better to publish late (the next launch heals a
+        status nobody closed) than to publish over a live run.
+
+        Returns at once when the child published a terminal status before it
+        exited — the common case, which is why the fast path costs no delay.
+        An unreadable state file raises instead of being read as "no owner":
+        ``_watch``'s handler then publishes nothing at all.
+        """
+        started = time.monotonic()
+        try:
+            while True:
+                runtime = _core().load_runtime_state(self.job_id) or {}
+                if str(runtime.get("status") or "") in TERMINAL_STATUSES:
+                    return
+                evidence = self._live_ownership_evidence(runtime)
+                if not evidence:
+                    return
+                self._end_evidence = evidence
+                self._end_settle_seconds = round(time.monotonic() - started, 3)
+                time.sleep(POLL_SECONDS)
+        finally:
+            self._end_settle_seconds = round(time.monotonic() - started, 3)
+
+    def _live_ownership_evidence(self, runtime: Dict[str, Any]) -> str:
+        """The first trace that still says "someone is executing this run".
+
+        Strongest first.  All three are released by the OS when their holder
+        dies, which is what makes them evidence rather than a stored claim:
+
+        ``engine_stdio_open``
+            the write end of the pipe this supervisor created for the child is
+            still open.  Nothing else in this process ever held it and it is
+            closed by the kernel when every process that inherited it is gone,
+            so its holder is the launched child or a descendant of it.  This is
+            the one trace that exists during the child's cold start, before it
+            has written anything at all.
+        ``worker_lock_held``
+            ``.worker.lock`` is held; the pipeline takes it for a whole run and
+            only the holder releases it (or the OS, when the holder dies).
+        ``worker_owner_alive``
+            the run named its executor in ``runtime_state.worker.owner_pid`` and
+            that process is alive.  Only believed once ``worker_id`` is there:
+            during the cold start the worker block still belongs to the
+            *previous* run, and its pid may since have been recycled.
+        """
+        if self._stdio_still_held():
+            return "engine_stdio_open"
+        try:
+            if _core()._worker_lock_held(self.job_id):
+                return "worker_lock_held"
+        except Exception:  # noqa: BLE001 - a failed probe is not ownership
+            pass
+        worker = runtime.get("worker") or {}
+        if not worker.get("worker_id"):
+            return ""
+        try:
+            owner = int(worker.get("owner_pid") or 0)
+        except (TypeError, ValueError):
+            return ""
+        if owner and owner != self.pid and pid_alive(owner):
+            # ``owner == self.pid`` is the reaped handle: this supervisor
+            # watched it exit, whatever a recycled pid might say.
+            return "worker_owner_alive"
+        return ""
+
+    def _stdio_still_held(self) -> bool:
+        """True while some process still holds the stdio we handed the child."""
+        if self._output_closed.is_set() or self.proc.stdout is None:
+            return False
+        # The kernel queues the EOF the moment the last writer closes it; the
+        # drain thread only has to be scheduled to see it.  One short beat
+        # separates "the holder is gone, the thread is late" (milliseconds)
+        # from "someone still holds the pipe" (a live descendant).
+        self._drain.join(timeout=STDIO_SETTLE_SECONDS)
+        return not self._output_closed.is_set()
+
     def _publish_terminal_state(self) -> None:
         """Never trust the exit code: only ``runtime_state.json`` says success.
+
+        Called only after :meth:`_await_run_end`, i.e. only when the run has no
+        owner left — the handle's exit alone is not enough (E-6s).
 
         A child that published a terminal status already told the truth (that is
         the whole point of exit code ``0`` covering ``failed`` too), so the
@@ -663,7 +875,14 @@ def _preflight(job_id: str) -> str:
 
     E-2 §5.5: the child can only say "already running, or the .worker.lock is
     held".  Checking both here lets the GUI tell the user which one it is.
+
+    The launch shape is checked first, and before anything is spawned: a launch
+    whose process may not be the executor makes every later conclusion about
+    "is the run over" unsound, so it must not reach ``Popen`` at all (E-6s).
     """
+    shape = _launch_shape_reason()
+    if shape:
+        return shape
     core = _core()
     try:
         if core.load_job_state(job_id) is None:
