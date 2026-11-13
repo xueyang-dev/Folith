@@ -8247,6 +8247,18 @@ RUNTIME_ACTIVE_STATUSES = {
     "waiting_external", "cancelling", "pausing", "paused",
 }
 
+#: Active statuses that record a user's *request for a run*, not the existence
+#: of one (E-6a).  ``request_job_pause`` / ``request_job_cancel`` /
+#: ``request_job_exit`` write them from the GUI process while an engine child
+#: is still in its cold start: from the GUI's side the task is owned by the
+#: engine-owner token (E-3), so the request is legitimate, while
+#: ``runtime_state`` still holds the *previous* run's terminal status and no
+#: ``worker_id``.  A run that starts inside that window must not read the label
+#: as "another run owns this task and the request is stale": with
+#: ``.worker.lock`` just acquired nothing else is executing, and the request is
+#: addressed to the run being created.  It must honour the request instead.
+REQUEST_ONLY_STATUSES = frozenset({"pausing", "cancelling"})
+
 _RUNTIME_EVENT_META = {
     "resume_requested": ("user", "lifecycle"),
     "pipeline_resumed": ("user", "progress"),
@@ -9018,9 +9030,21 @@ def register_engine_owner(job_id, *, pid, worker_id="", token=None):
     ``worker_id`` is the child's own run id once it is known; binding it keeps
     the registration tied to *that* run rather than to a pid (see
     :func:`_engine_owner_alive`).
+
+    The **first** registration is also the launch boundary of a run, and it
+    clears the pending pause/cancel/exit/restart requests exactly once
+    (E-6a).  Ordering is the whole point: ``start_engine`` calls this
+    synchronously *before* it returns, so nothing the user (or a script) does
+    after "Start" — in particular a Pause/Cancel click during the child's cold
+    start — can be erased by it; and a request left over from the *previous*
+    run cannot leak into this one.  A later registration of the same run
+    (:func:`_bind_worker_id` passes ``token``) must never clear again: it runs
+    up to a second after launch, i.e. precisely inside the window a user
+    request can appear in.
     """
     if not job_id or not pid:
         return ""
+    launch = token is None
     token = str(token or uuid.uuid4().hex)
     with _RUNTIME_ENGINE_OWNERS_LOCK:
         _RUNTIME_ENGINE_OWNERS[str(job_id)] = {
@@ -9029,6 +9053,14 @@ def register_engine_owner(job_id, *, pid, worker_id="", token=None):
             "worker_id": str(worker_id or ""),
             "registered_at": _utc_now_iso(),
         }
+    if launch:
+        # "A new run starts here."  Written once, by the process that owns the
+        # launch, before the child can publish anything.
+        update_runtime_state(
+            job_id, pause_requested=False, cancel_requested=False,
+            exit_requested=False, restart_requested=False,
+            event="已启动新的运行", event_name="run_launched",
+            event_visibility="technical", event_category="lifecycle")
     return token
 
 
@@ -9926,8 +9958,19 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
 
 
 def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None,
-                     resume_request_id=None, *, segment_operation=None):
-    """Start one resumable pipeline worker; repeated UI reruns are idempotent."""
+                     resume_request_id=None, *, segment_operation=None,
+                     launch_prepared=False):
+    """Start one resumable pipeline worker; repeated UI reruns are idempotent.
+
+    ``launch_prepared`` is set only by the engine child
+    (:mod:`folith.desktop.engine_host`).  A run that starts in another process
+    was *launched* there: ``start_engine`` registered the owner and cleared the
+    pending requests before it returned, so this process is the executor, not
+    the launch.  It must not clear again — the clear here happens ~1 s later,
+    which is exactly the window in which the user's Pause/Cancel click lands
+    (E-6a).  In-process starts (the default) *are* their own launch and clear
+    the previous run's requests here, once.
+    """
     with _RUNTIME_WORKERS_LOCK:
         if _job_execution_alive(job_id):
             return False
@@ -9939,13 +9982,20 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
             if file_bytes is not None:
                 save_source(job_id, file_bytes)
             runtime = load_runtime_state(job_id)
-            status = runtime.get("status") or "idle"
+            stored_status = runtime.get("status") or "idle"
+            # A pause/cancel request written while this engine child was still
+            # importing core leaves ``pausing``/``cancelling`` behind with no
+            # run to own it (``.worker.lock`` was just taken).  The label is the
+            # request, not another run: treat it as the resumable state it
+            # wrapped so this run starts and honours it (E-6a).
+            request_pending = stored_status in REQUEST_ONLY_STATUSES
+            status = "interrupted" if request_pending else stored_status
             matching_resume = bool(resume_request_id) and (
                 status not in RUNTIME_ACTIVE_STATUSES or (
                     status == "resume_requested" and runtime.get("resume_request_id") == resume_request_id))
             if status in RUNTIME_ACTIVE_STATUSES and not matching_resume:
                 return False
-            if not matching_resume:
+            if not matching_resume and not request_pending:
                 runtime = get_job_runtime_status(job_id)
                 if runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
                     return False
@@ -9987,14 +10037,22 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
                     event="已从断点恢复任务", event_name="resume_requested",
                     event_visibility="user", event_category="lifecycle",
                     event_metadata={"resume_request_id": resume_request_id}, **context)
+            if not launch_prepared:
+                # One run starts here, so the requests of the previous run do
+                # not carry over.  This is the *only* clear on the in-process
+                # path; publishing ``queued`` below reads the flags and never
+                # writes them (an engine launch already cleared them).
+                update_runtime_state(
+                    job_id, pause_requested=False, cancel_requested=False,
+                    exit_requested=False, restart_requested=False,
+                    event="已启动新的运行", event_name="run_started",
+                    event_visibility="technical", event_category="lifecycle")
             update_runtime_state(
                 job_id, status="queued", phase="starting", phase_label="准备中",
                 **context, started_at=runtime.get("started_at") if matching_resume
                 else started_at,
                 operation_started_at=started_at, last_progress_at=started_at,
-                last_heartbeat_at=started_at, cancel_requested=False, pause_requested=False,
-                restart_requested=False, error=None,
-                exit_requested=False,
+                last_heartbeat_at=started_at, error=None,
                 attempt=attempt, resume_request_id=resume_request_id or "",
                 segment_operation=segment_operation or {}, segment_operation_result="pending",
                 completed_units=completed_units, total_units=total_units,
@@ -10038,11 +10096,18 @@ def start_segment_worker(job_id, kind, indexes, *, base_url=None, **kwargs):
 
 
 def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
-               resume_request_id=None):
-    """Idempotently request resume and publish the transition before worker start."""
+               resume_request_id=None, *, launch_prepared=False):
+    """Idempotently request resume and publish the transition before worker start.
+
+    ``launch_prepared`` has the same meaning as in :func:`start_job_worker`: an
+    engine child executes a launch that already cleared the pending requests,
+    and clearing again here would drop a pause/cancel the user made while the
+    child was starting (E-6a).
+    """
     with _RUNTIME_WORKERS_LOCK:
         runtime = get_job_runtime_status(job_id)
-        if runtime.get("status") in {"paused", "pausing"} and (
+        status = str(runtime.get("status") or "")
+        if status in {"paused", "pausing"} and (
                 is_job_worker_alive(job_id) or _job_execution_alive(job_id)):
             # A paused worker is still alive: continue it.  Passing the freshly
             # resolved kwargs lets the core restart the worker transparently if
@@ -10051,7 +10116,10 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
                                 base_url=base_url, filename=filename)
         if _job_execution_alive(job_id):
             return False
-        if runtime.get("status") in RUNTIME_ACTIVE_STATUSES:
+        # ``pausing``/``cancelling`` with nothing executing is a request written
+        # during the engine child's cold start, addressed to the run being
+        # resumed — not a run that owns the task (E-6a).
+        if status in RUNTIME_ACTIVE_STATUSES and status not in REQUEST_ONLY_STATUSES:
             return False
         state = load_job_state(job_id) or new_job_state(filename)
         request_id = resume_request_id or uuid.uuid4().hex
@@ -10064,7 +10132,7 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
             pipeline_kwargs["enable_report"] = True
         return start_job_worker(
             job_id, filename, None, pipeline_kwargs, base_url=base_url,
-            resume_request_id=request_id)
+            resume_request_id=request_id, launch_prepared=launch_prepared)
 
 
 def is_job_worker_alive(job_id):
