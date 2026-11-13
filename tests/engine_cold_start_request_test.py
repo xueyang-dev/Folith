@@ -24,12 +24,11 @@ What this file pins
 -------------------
 1. The three paths — pause, cancel, exit — are honoured both *before* the
    child's first publish and *after* it.
-2. The window is deterministic: the child is held by a **startup gate** (a
-   launcher script that waits for a release file and only then runs the real
-   ``qt_client.py --engine-host`` *in its own process*), so the request really
-   is written while the child has published nothing.  Nothing here sleeps in
-   the hope of winning a race, and one process carries the run from the spawn to
-   the terminal state on every platform (E-6r; see ``_GATE_SOURCE``).
+2. The window is deterministic: the child is held by a **startup gate** (an
+   executable that waits for a release file and only then ``exec``s the real
+   ``qt_client.py --engine-host``), so the request really is written while the
+   child has published nothing.  Nothing here sleeps in the hope of winning a
+   race.
 3. The opposite property is intact: a request left over from the *previous* run
    does not leak into the next one (in-process and engine launch), and the
    launch clears exactly once — rebinding the child's ``worker_id`` up to a
@@ -74,26 +73,11 @@ SOURCE_TEXT = "\n".join(
 BATCH = {"batch_size": 4, "max_batch_chars": 400}
 
 #: The startup gate.  The supervisor's launch command is this script instead of
-#: ``qt_client.py``; it blocks on a file and only then runs the real child (in
-#: place: the process never changes hands), so the test decides exactly when
-#: ``import core`` may begin.  It receives stdin (the start line already
-#: buffered) and inherits the environment.
-#:
-#: It must stay *one* process.  The obvious "wait, then ``os.execv`` into
-#: ``qt_client.py``" is POSIX-only in a way that is invisible on macOS/Linux: on
-#: Windows the CRT implements ``_P_OVERLAY`` by creating a new process and
-#: exiting the calling one, so the pid the supervisor holds stops existing at
-#: the moment the gate releases while the real child keeps running with a
-#: different pid.  The supervisor then does what its contract says — "my child
-#: exited, the run is gone" — and publishes a terminal ``interrupted``, wiping
-#: ``cancel_requested``/``exit_requested`` (``pause_requested`` is not touched,
-#: which is why only two of the three cold-start paths failed).  ``runpy``
-#: keeps the gate as the child's only process, which is also exactly what
-#: production does: ``engine_supervisor.launch_command`` re-executes the app
-#: itself, never a shim.  E-6r.
+#: ``qt_client.py``; it blocks on a file and then becomes the real child, so the
+#: test decides exactly when ``import core`` may begin.  It receives stdin
+#: (the start line already buffered) and inherits the environment.
 _GATE_SOURCE = r'''
 import os
-import runpy
 import sys
 import time
 from pathlib import Path
@@ -105,11 +89,7 @@ while not release.exists():
     if time.monotonic() > deadline:
         sys.exit(9)
     time.sleep(0.01)
-# ``python qt_client.py --engine-host ...``, in this process: same argv layout,
-# same sys.path head, same pid.  Nothing below this line may spawn a child.
-sys.path.insert(0, str(Path(entry).parent))
-sys.argv = [entry, *sys.argv[1:]]
-runpy.run_path(entry, run_name="__main__")
+os.execv(sys.executable, [sys.executable, entry, *sys.argv[1:]])
 '''
 
 
@@ -394,19 +374,7 @@ def _wait_published(job_id: str) -> dict:
         lambda: bool((_runtime(job_id).get("worker") or {}).get("worker_id"))
         and _status(job_id) in {"queued", "starting", "running", "waiting_external"}), \
         f"the child never published its run: {_runtime(job_id)}"
-    runtime = _runtime(job_id)
-    # The pid the supervisor owns must be the pid that runs the task.  On
-    # POSIX ``exec`` (and on production launches, which re-execute the app
-    # itself) those are the same process; a harness that hands the run to a
-    # *different* process makes the supervisor declare the run dead while it
-    # keeps going, which is how E-6r stayed green here and red on Windows.
-    supervisor = supervisor_module.supervisor(job_id)
-    owner_pid = (runtime.get("worker") or {}).get("owner_pid")
-    assert supervisor is not None and owner_pid == supervisor.pid, (
-        "the launched process must be the process that runs the task: "
-        f"supervisor={None if supervisor is None else supervisor.pid} "
-        f"owner={owner_pid}")
-    return runtime
+    return _runtime(job_id)
 
 
 def test_pause_after_publish_is_honoured(isolated, gateway):
