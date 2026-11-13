@@ -435,8 +435,12 @@ def test_an_engine_that_ignores_cancel_refuses_the_delete_and_keeps_everything(
             adapter.delete_job(job_id)
         elapsed = time.monotonic() - started
 
+        # M-1：上界曾是 +2.0 s 的"裕量"，而那 2 s 正是被取消请求的阻塞写吃掉的。
+        # 现在取消请求也在这个预算里，上界就只剩一次轮询加探活的开销 —— 收紧，
+        # 因为放宽裕量只会把同一个缺陷再藏一次。
         assert engine_projects.DELETE_CANCEL_SETTLE_SECONDS * 0.9 <= elapsed \
-            <= engine_projects.DELETE_CANCEL_SETTLE_SECONDS + 2.0, _timing_line(elapsed)
+            <= engine_projects.DELETE_CANCEL_SETTLE_SECONDS + SETTLE_SLACK_SECONDS, \
+            _timing_line(elapsed)
         assert core.job_dir(job_id).exists(), "拒绝删除时任务目录必须还在"
         assert core.load_job_state(job_id) is not None
         assert core.load_runtime_state(job_id).get("cancel_requested") is True
