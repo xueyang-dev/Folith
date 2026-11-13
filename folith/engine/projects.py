@@ -540,6 +540,25 @@ def _job_still_running(job_id):
         return True
 
 
+def stop_job_for_delete(job_id):
+    """Cancel one task and wait (bounded) until its directory is safe to remove.
+
+    This is the single-task entry for ``adapter.delete_job`` (the GUI's main
+    delete path) and it reuses the *same* policy as the project cascade:
+    :func:`_job_still_running` for liveness and
+    :data:`DELETE_CANCEL_SETTLE_SECONDS` for the bounded settle.  There is no
+    second liveness vocabulary to drift.
+
+    The cancel is only issued for a task that is running.  An idle task keeps
+    today's behaviour: no extra state write, no wait, the directory is removed
+    immediately.  A task that is still running at the deadline stays in place —
+    the caller must not delete it (the return value is False).
+    """
+    if not _job_still_running(job_id):
+        return True
+    return not _stop_jobs_for_delete([job_id])
+
+
 def _stop_jobs_for_delete(job_ids):
     """Ask every task to stop, then wait a bounded time for them to do it.
 

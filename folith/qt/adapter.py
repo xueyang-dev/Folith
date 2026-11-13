@@ -647,6 +647,39 @@ def job_start_in_flight(job_id: str) -> bool:
         return True
 
 
+def _launch_in_flight(job_id: str) -> bool:
+    """The client launch record, invalidated once the launch durably shows up.
+
+    ``job_start_in_flight`` only knows the record; it exists for the window in
+    which state cannot prove the launch.  Once durable evidence *does* exist the
+    record is redundant — the other probes see the run — and keeping it would
+    refuse a delete with "just started" while the task is plainly running.  A
+    run that already reached a terminal status leaves the record behind for the
+    rest of ``START_WINDOW_SECONDS``; that leftover would keep refusing a
+    delete (or a rescan) for up to five seconds after the engine finished —
+    E-4c's "trace that makes deletion wait".
+
+    An *idle* status is deliberately not proof: a launch that has not written
+    anything yet is exactly the window this record exists for.
+    """
+    if not job_start_in_flight(job_id):
+        return False
+    try:
+        if job_is_alive(job_id) or job_is_active(job_id):
+            forget_launch_requested(job_id)  # durable; the callers see the run
+            return False
+        from folith.desktop.engine_supervisor import TERMINAL_STATUSES
+
+        runtime = core.load_runtime_state(job_id) or {}
+        status = str(runtime.get("status") or "")
+        if status in TERMINAL_STATUSES:
+            forget_launch_requested(job_id)  # the launch already ended
+            return False
+    except Exception:  # noqa: BLE001 - unreadable state must not open the window
+        return True
+    return True
+
+
 def start_job(
     job_id: str,
     filename: str,
@@ -2611,7 +2644,7 @@ def request_source_rescan(job_id: str, *, backend: str, mode: str, language: str
     if job_is_alive(job_id) or core.job_is_active(job_id):
         forget_launch_requested(job_id)  # the launch is durable now; it is "running"
         raise AdapterError("任务正在运行，完成后才能重新扫描。")
-    if job_start_in_flight(job_id):
+    if _launch_in_flight(job_id):
         raise AdapterError("任务正在启动，请等它真正开始或结束后再重新扫描。")
     state = load_state(job_id)
     if not str(state.get("filename") or "").lower().endswith(".pdf"):
@@ -5223,6 +5256,33 @@ def job_is_active(job_id: str) -> bool:
 
 
 def delete_job(job_id: str, *, allow_active: bool = False) -> bool:
+    """Delete one task, stopping a live engine first.
+
+    ``core.delete_job`` refuses only when ``job_is_active`` — a probe that is
+    blind to an engine child during its ~1 s cold start (the child holds
+    ``.worker.lock`` and writes ``runtime_state`` in another process).  Removing
+    the directory in that window races the child's first writes and loses every
+    batch it already committed.  So this path uses the same guard as the
+    project cascade (``folith.engine.projects.stop_job_for_delete``): cancel,
+    bounded settle, delete only once the task really stopped.
+
+    The client launch record (``START_WINDOW_SECONDS``) is checked first, with
+    the same semantics as ``delete_project``: a launch that state cannot show
+    yet is refused instead of raced.
+    """
+    job_id = str(job_id or "").strip()
+    if not job_id:
+        return False
+    if not allow_active:
+        if _launch_in_flight(job_id):
+            raise AdapterError(
+                "任务刚刚启动，还没有真正开始；请等它开始或停止后再删除任务。")
+        from folith.engine import projects as _engine_projects
+
+        if not _engine_projects.stop_job_for_delete(job_id):
+            raise AdapterError(
+                "任务仍在运行；已请求取消，但它在限定时间内没有停下。"
+                "本次没有删除这个任务，请等它停止后再删除。")
     try:
         deleted = _commands.delete_job(job_id, allow_active=allow_active)
     except ValueError as exc:
@@ -5642,7 +5702,7 @@ def delete_project(project_id: str, *, confirm_name: str,
     """
     if cascade:
         starting = [job["job_id"] for job in core.list_project_jobs(project_id)
-                    if job_start_in_flight(job["job_id"])]
+                    if _launch_in_flight(job["job_id"])]
         if starting:
             raise AdapterError(
                 "任务刚刚启动，还没有真正开始；请等它开始或停止后再删除项目。")

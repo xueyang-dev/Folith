@@ -465,29 +465,40 @@ class EngineSupervisor:
         self._exit_code = self.proc.returncode
         _remember_exit(self.job_id, self._exit_code)
         try:
-            self._publish_terminal_state()
-        except Exception:  # noqa: BLE001 - the monitor must never die noisily
-            pass
-        try:
-            _core().release_engine_owner(self.job_id, self.token)
-        except Exception:  # noqa: BLE001 - token release is best effort
-            pass
-        _forget(self)
-        self._finished.set()
+            try:
+                self._publish_terminal_state()
+            except Exception:  # noqa: BLE001 - the monitor must never die noisily
+                pass
+        finally:
+            # Owner cleanup belongs to the terminal boundary, not to a branch:
+            # an engine that ended must leave neither a token nor a pid that
+            # `_job_execution_alive` would keep reading as "still running"
+            # (E-4c).  Doing it in `finally` covers publish failures and the
+            # killed/abandoned path, which both end here.
+            try:
+                _core().release_engine_owner(self.job_id, self.token)
+            except Exception:  # noqa: BLE001 - token release is best effort
+                pass
+            _forget(self)
+            self._finished.set()
 
     def _publish_terminal_state(self) -> None:
         """Never trust the exit code: only ``runtime_state.json`` says success.
 
         A child that published a terminal status already told the truth (that is
-        the whole point of exit code ``0`` covering ``failed`` too), so nothing
-        is written.  A child that died without publishing leaves an active
-        status behind; that is turned into a resumable ``interrupted`` with a
-        visible reason, which is what the "reopen offers resume" contract needs.
+        the whole point of exit code ``0`` covering ``failed`` too), so the
+        status is not rewritten.  Its owner block *is* cleared when it is still
+        there: a finished run must not look alive through a recorded pid, or
+        every delete guard waits for a process that is already gone (E-4c).  A
+        child that died without publishing leaves an active status behind; that
+        is turned into a resumable ``interrupted`` with a visible reason, which
+        is what the "reopen offers resume" contract needs.
         """
         core = _core()
         runtime = core.load_runtime_state(self.job_id) or {}
         status = str(runtime.get("status") or "")
         if status in TERMINAL_STATUSES:
+            self._clear_recorded_owner(runtime)
             return
         code = self._exit_code
         if self._stopping:
@@ -515,6 +526,29 @@ class EngineSupervisor:
             event_visibility="user", event_category="lifecycle",
             progress=True, heartbeat=True,
             worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+
+    def _clear_recorded_owner(self, runtime: Dict[str, Any]) -> None:
+        """Drop a worker block left behind by a run that already is terminal.
+
+        The core clears the block on every terminal write, so this is normally a
+        no-op and writes nothing.  It still has to exist: the supervisor is the
+        last writer for the child it owns, and a recorded owner pid is the one
+        trace that can make a finished task look alive to every delete guard
+        (``_runtime_pid_alive`` is true until the child is reaped).  Only the
+        block is cleared — status, error and events are left exactly as the
+        child published them (E-0/E-2 contract).
+        """
+        worker = runtime.get("worker") or {}
+        if not (worker.get("owner_pid") or worker.get("worker_id")
+                or worker.get("lease_expires_at")):
+            return
+        try:
+            _core().update_runtime_state(
+                self.job_id,
+                worker={"owner_pid": None, "worker_id": None,
+                        "lease_expires_at": None})
+        except Exception:  # noqa: BLE001 - cleanup must never break the monitor
+            pass
 
 
 def _write_all(stream, payload: bytes) -> None:
