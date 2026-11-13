@@ -1,11 +1,16 @@
-"""TU Contract v1：格式无关的双语互操作语义契约（Issue #143）。
+"""TU Contract v1 与 XLIFF 1.2 内核（Issue #143 / P3-3）。
 
-本包是所有 CAT 双语格式适配器（XLIFF / SDLXLIFF / MQXLIFF）的共同地基。
-依赖方向只能是 **适配器 → 契约**：本包（及其子模块）不得 import 任何具体
-格式解析器，也不得 import ``core`` 或任何翻译真值模块——契约层只定义语义、
-数据形状与确定性校验器，不触碰任务状态。
+依赖方向固定为 **适配器 → 内核 → 契约**：
 
-段落真值仍然只有一套：任务 state 的 ``pairs`` + ``pair_signature``。契约层
+- :mod:`folith.interop.tu_contract` / :mod:`folith.interop.structural_diff` 是
+  **格式无关**契约层：只定义语义、数据形状与确定性校验器，不 import 任何具体
+  格式解析器，也不 import ``core`` 或任何翻译真值模块；
+- :mod:`folith.interop.xml_span` 是位置感知的 XML 字节扫描器（只依赖标准库），
+  :mod:`folith.interop.xliff12` / :mod:`folith.interop.xliff12_export` /
+  :mod:`folith.interop.xliff12_ledger` 是 XLIFF 1.2 的内核实现，只依赖契约层与
+  标准库。它们不 import ``core``/``folith.engine``，也不触碰任务状态。
+
+段落真值仍然只有一套：任务 state 的 ``pairs`` + ``pair_signature``。契约层与内核
 描述外部 TU 如何映射到它，绝不另立第二套真值。
 """
 
@@ -53,46 +58,142 @@ from folith.interop.tu_contract import (
     validate_tag_sequence,
     validate_target_tags,
 )
+from folith.interop.xliff12 import (
+    DEFAULT_LOCK_POLICY,
+    InlineSide,
+    KernelImport,
+    LockPolicy,
+    NotWritableError,
+    ReadonlyRefusal,
+    ReadonlySegmentError,
+    Subsegment,
+    SubsegmentState,
+    TargetTagStructureError,
+    TextSlot,
+    UnpatchableSideError,
+    UnknownSegmentError,
+    XliffDocument,
+    XliffFile,
+    XliffStructureError,
+    XliffUnit,
+    build_import,
+    parse_xliff12,
+    plan_target_patches,
+)
+from folith.interop.xliff12_export import (
+    ExportPlan,
+    PlannedPatch,
+    PreservationReport,
+    apply_plan,
+    compare_preservation,
+    export_patched,
+    export_with_verification,
+    markup_signature,
+    plan_export,
+    project_tree,
+    readonly_bytes_report,
+    skeleton_segments,
+    target_text_whitelist,
+    verify_export,
+)
+from folith.interop.xliff12_ledger import (
+    LEDGER_VERSION,
+    LedgerDelta,
+    SegmentLedger,
+)
+from folith.interop.xml_span import (
+    Span,
+    TextPatch,
+    XmlDocument,
+    XmlElement,
+    XmlSpanError,
+    parse_xml_bytes,
+    render_patches,
+)
 
 __all__ = [
+    "DEFAULT_LOCK_POLICY",
     "DUPLICATE_FILE_SCOPE_CODE",
+    "ExportPlan",
     "FILE_SCOPE_CODES",
     "FILE_SCOPE_FALLBACK_CODE",
     "FILE_SCOPE_RULES",
-    "UNIT_SCOPE_CODES",
-    "WARNING_CODES",
     "FileScope",
-    "InlineTag",
-    "ImportReport",
     "IdentityLedger",
+    "ImportReport",
+    "InlineSide",
+    "InlineTag",
+    "KernelImport",
+    "LEDGER_VERSION",
+    "LedgerDelta",
+    "LockPolicy",
+    "NotWritableError",
+    "PlannedPatch",
+    "PreservationReport",
     "PreservedFragment",
+    "ReadonlyRefusal",
+    "ReadonlySegmentError",
     "Rejection",
     "STATUS_ALIASES",
     "STATUS_MAP",
+    "SegmentLedger",
+    "Span",
     "StatusMappingError",
+    "Subsegment",
+    "SubsegmentState",
+    "TargetTagStructureError",
+    "TextPatch",
+    "TextSlot",
+    "UNIT_SCOPE_CODES",
+    "UnpatchableSideError",
+    "UnknownSegmentError",
+    "WARNING_CODES",
+    "XliffDocument",
+    "XliffFile",
+    "XliffStructureError",
+    "XliffUnit",
+    "XmlDocument",
+    "XmlElement",
+    "XmlSpanError",
+    "apply_plan",
+    "build_import",
     "build_import_report",
     "canonical_digest",
     "canonical_snapshot",
     "canonical_source_text",
+    "compare_preservation",
     "compose_external_id",
     "diff_snapshots",
     "duplicate_file_scopes",
     "encode_placeholder",
+    "export_patched",
+    "export_with_verification",
     "file_scope_warnings",
     "identity_key",
     "instance_identity",
     "map_cat_status",
     "map_folith_status",
+    "markup_signature",
     "no_op_verdict",
+    "parse_xliff12",
+    "parse_xml_bytes",
     "pct",
+    "plan_export",
+    "plan_target_patches",
+    "project_tree",
+    "readonly_bytes_report",
     "reconcile_identities",
+    "render_patches",
     "resolve_file_scope",
     "segment_ids",
+    "skeleton_segments",
     "source_digest",
     "split_external_id",
+    "target_text_whitelist",
     "unpct",
     "validate_tag_sequence",
     "validate_target_tags",
+    "verify_export",
     "verify_preserved",
     "whitelist_allows",
 ]
