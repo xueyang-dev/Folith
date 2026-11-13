@@ -94,8 +94,12 @@ def test_lifecycle_main_path_in_both_execution_models(tmp_path, engine_process, 
         assert report["start"]["worker_thread"] is False
         assert report["start"]["alive"] is True
         # ... and the wait ended with the child gone, while the GUI process
-        # never had a worker thread for it.
-        assert report["cancel"]["engine_child"] is None
+        # never had a worker thread for it.  "Gone" is the supervisor's own
+        # registry, so this asserts the settle boundary E-6q fixed: the probe
+        # waits until the monitor published the terminal truth and forgot the
+        # handle, instead of reading `job_is_alive` alone (which turns false a
+        # poll interval earlier, while the handle is still registered).
+        assert report["cancel"]["engine_child"] is None, report["cancel"]
     else:
         assert report["start"]["engine_child"] is None
         assert report["engine_child_observed"] is False
