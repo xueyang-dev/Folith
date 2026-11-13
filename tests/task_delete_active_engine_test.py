@@ -446,8 +446,17 @@ def test_an_engine_that_ignores_cancel_refuses_the_delete_and_keeps_everything(
         assert core.load_job_state(job_id) is not None
         assert core.load_runtime_state(job_id).get("cancel_requested") is True
         committed = engine.batches()
-        time.sleep(0.25)
-        assert engine.batches() > committed, "被拒绝的删除不得打断引擎的写入"
+        # Wait for the next batch instead of sleeping a fixed 0.25 s: the engine
+        # writes every 0.1 s, but on a loaded runner the child may not be
+        # scheduled inside that window, and a fixed sleep then reports "the
+        # engine stopped writing" when it merely had not written yet.  The
+        # assertion still requires an increase; only the waiting has a bound.
+        deadline = time.monotonic() + 10.0
+        while engine.batches() <= committed and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert engine.batches() > committed, (
+            f"被拒绝的删除不得打断引擎的写入（等了 "
+            f"{time.monotonic() - (deadline - 10.0):.1f} s，批次仍停在 {committed}）")
     finally:
         engine.stop()
 
