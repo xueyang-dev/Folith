@@ -219,6 +219,12 @@ if mode == "failed":
     sys.exit(0)
 if mode == "silent":
     sys.exit(3)
+if mode == "record-build-id":
+    # E-2b: prove the identity the parent handed over arrived, without the
+    # child ever running the `git rev-parse` fallback.
+    (target / "child_build_id.txt").write_text(
+        os.environ.get("FOLITH_BUILD_ID", ""), encoding="utf-8")
+    sys.exit(0)
 if mode == "ignore-eof":
     time.sleep(120)
     sys.exit(0)
@@ -888,3 +894,53 @@ def test_a_vanished_gui_leaves_the_child_to_stop_itself(isolated, tmp_path,
     runtime = core.load_runtime_state(job_id)
     assert runtime["status"] == "interrupted", runtime
     assert runtime["worker"]["owner_pid"] in (None, 0), runtime
+
+
+# ---------------------------------------------------------------------------
+# 9. build identity: the child is told, it never probes the toolchain (E-2b)
+# ---------------------------------------------------------------------------
+
+def test_the_child_environment_carries_the_build_identity(isolated, monkeypatch):
+    """A supervised child must not run the ``git rev-parse`` fallback.
+
+    The pipeline records its build id at run start, and
+    ``folith.desktop.paths.build_id()`` falls back to a ``git`` subprocess.  On
+    Windows ``subprocess.run(..., timeout=5)`` does not return when the timeout
+    expires: it kills the direct child, then calls ``communicate()`` again
+    *without* a timeout, and a surviving descendant still holding the pipes
+    keeps the call from ever returning.  The pipeline then never issues its
+    first provider request.
+    """
+    monkeypatch.delenv(engine_host.BUILD_ID_ENV, raising=False)
+    monkeypatch.setattr(supervisor_module, "_known_build_identity",
+                        lambda: "0.8.2+20261107")
+    environment = supervisor_module._child_environment()
+    assert environment[engine_host.BUILD_ID_ENV] == "0.8.2+20261107"
+
+    # A source run has no packaged record.  The parent must still not pay a
+    # subprocess on the start path (``start_engine`` promises not to block);
+    # the child pins its own fallback id instead.
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("start_engine must not spawn a tool")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    monkeypatch.setattr(supervisor_module, "_known_build_identity", lambda: "")
+    environment = supervisor_module._child_environment()
+    assert engine_host.BUILD_ID_ENV not in environment
+
+
+def test_the_supervised_child_actually_receives_the_identity(isolated, stub_child,
+                                                             monkeypatch):
+    data_dir, _log = isolated
+    monkeypatch.setenv(engine_host.BUILD_ID_ENV, "git:0123abc4")
+    monkeypatch.setenv("ENGINE_STUB_MODE", "record-build-id")
+    job_id = "e3buildid01"
+    _create_job(job_id)
+
+    outcome = supervisor_module.start_engine(
+        job_id, mode="resume", connection=_connection("http://127.0.0.1:9/v1"))
+    assert outcome.started, outcome.reason
+    sup = supervisor_module.supervisor(job_id)
+    assert sup is not None and sup.wait_finished(20.0)
+    recorded = (data_dir / job_id / "child_build_id.txt").read_text(encoding="utf-8")
+    assert recorded == "git:0123abc4"

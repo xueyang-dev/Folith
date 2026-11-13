@@ -16,6 +16,7 @@ The child is the real ``qt_client.py --engine-host`` entry, so a regression in
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -61,6 +62,13 @@ def _drain(stream, sink: list[bytes]) -> None:
             stream.close()
         except (OSError, ValueError):
             pass
+
+
+def _tail_text(text: str, limit: int = 60000) -> str:
+    """The end of a child's output (a failure message must stay readable)."""
+    if len(text) <= limit:
+        return text
+    return ("...(truncated)...\n" + text[-limit:])
 
 
 class HostProcess:
@@ -112,6 +120,14 @@ class HostProcess:
     def wait(self, timeout: float = 240.0) -> int:
         try:
             return self.proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # A bare TimeoutExpired says nothing about the child.  Its own last
+            # words are the evidence that says *where* it stopped (E-2b: that is
+            # how the Windows git-probe stall was found), so report them.
+            raise AssertionError(
+                f"engine host did not exit within {timeout}s\n"
+                f"--- child stderr ---\n{_tail_text(self.stderr_text())}\n"
+                f"--- child stdout ---\n{_tail_text(self.stdout_text())}")
         finally:
             self.close_stdin()
             for thread in self._threads:
@@ -272,6 +288,24 @@ def _secret_files(root: Path, secret: bytes) -> list[str]:
     return hits
 
 
+def _recorded_build_ids(root: Path) -> set[str]:
+    """Build ids the child wrote into its own run-configuration trace points."""
+    found: set[str] = set()
+    for path in root.rglob("requests.jsonl"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(item, dict) and item.get("event") == "run_configuration":
+                found.add(str(item.get("build_id") or ""))
+    return found
+
+
 # ---------------------------------------------------------------------------
 # a complete task, in the child process
 # ---------------------------------------------------------------------------
@@ -297,6 +331,16 @@ def test_engine_host_completes_a_task(tmp_path, monkeypatch, gateway):
     assert runtime["status"] == "completed", runtime
     assert exit_flow.worker_lock_held(data_dir, job_id) is False
     assert gateway_log.exists() and gateway_log.stat().st_size > 0
+
+    # E-2b: the child resolved its build identity from the parent (or the
+    # packaged record) instead of running `git rev-parse`.  A `git:`-derived id
+    # here means the probe ran -- the probe that hangs this pipeline on Windows
+    # (a timed-out `subprocess.run` re-enters `communicate()` without a
+    # timeout).  Asserted on every platform so Linux CI catches a regression.
+    build_ids = _recorded_build_ids(data_dir)
+    assert build_ids, "the child recorded no run configuration"
+    assert not [value for value in build_ids if value.startswith("git:")], \
+        build_ids
 
     # E-1's constraint: the branch must run before Qt.  The child's own import
     # trace is the evidence, not an assumption about import order.
@@ -557,3 +601,57 @@ def test_credential_never_reaches_argv_environment_disk_or_output(
     # 3. the same for the reviewer credential path (it shares the wire format).
     reviewer_secret = "sk-e2-reviewer-" + uuid.uuid4().hex
     assert _secret_files(tmp_path, reviewer_secret.encode()) == []
+
+
+# ---------------------------------------------------------------------------
+# build identity: the child pins it, it never probes the toolchain
+# ---------------------------------------------------------------------------
+
+def test_the_engine_child_never_spawns_a_tool_to_identify_itself(monkeypatch):
+    """E-2b: a git probe in the child hangs the pipeline on Windows.
+
+    The pipeline records its build id at run start
+    (``trace.record_run_configuration`` -> ``paths.build_id()``), and
+    ``build_id()`` falls back to ``git rev-parse``.  On Windows
+    ``subprocess.run(..., timeout=5)`` does not give up when the timeout
+    expires: it kills the direct child and calls ``communicate()`` again
+    *without* a timeout, so a surviving descendant still holding the pipes
+    keeps the call from ever returning.  The child then never issues its first
+    provider request and sits at ``completed_units: 0`` until its stdin is
+    closed -- exactly what the Windows regression showed.
+
+    So the engine child must resolve its identity from the parent
+    (``FOLITH_BUILD_ID``) or the packaged build record, never by spawning a tool.
+    """
+    from folith.desktop import engine_host, paths as desktop_paths
+
+    monkeypatch.delenv(engine_host.BUILD_ID_ENV, raising=False)
+    monkeypatch.setattr(desktop_paths, "build_info", lambda: {})
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError(
+            "the engine host must not spawn a tool to identify itself")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    assert engine_host.pin_build_identity() == engine_host.FALLBACK_BUILD_ID
+    # ... and the pipeline's own call now resolves without the probe.
+    assert desktop_paths.build_id() == engine_host.FALLBACK_BUILD_ID
+
+
+def test_the_engine_child_prefers_the_identity_the_parent_passed(monkeypatch):
+    from folith.desktop import engine_host, paths as desktop_paths
+
+    monkeypatch.setenv(engine_host.BUILD_ID_ENV, "git:0123abc4")
+    monkeypatch.setattr(desktop_paths, "build_info",
+                        lambda: {"build_id": "0.8.2+packaged"})
+    assert engine_host.pin_build_identity() == "git:0123abc4"
+
+
+def test_the_engine_child_uses_the_packaged_record_when_it_has_one(monkeypatch):
+    from folith.desktop import engine_host, paths as desktop_paths
+
+    monkeypatch.delenv(engine_host.BUILD_ID_ENV, raising=False)
+    monkeypatch.setattr(desktop_paths, "build_info",
+                        lambda: {"build_id": "0.8.2+20261107"})
+    assert engine_host.pin_build_identity() == "0.8.2+20261107"
+    assert os.environ[engine_host.BUILD_ID_ENV] == "0.8.2+20261107"
