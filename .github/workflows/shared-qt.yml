@@ -68,6 +68,9 @@ jobs:
           tests/mqxliff_fixture_audit_test.py
           tests/qt_task_runner_destroy_test.py
           tests/qt_import_reentrancy_test.py
+          tests/project_delete_active_engine_test.py
+          tests/task_delete_active_engine_test.py
+          tests/engine_terminal_cleanup_test.py
           tests/concept_workflow_test.py tests/qt_concept_dialog_test.py
           tests/application_commands_test.py tests/state_mutation_lock_test.py
           tests/knowledge_async_commit_test.py
