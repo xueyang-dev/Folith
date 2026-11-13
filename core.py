@@ -8844,7 +8844,9 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     # 4-10 s (M-1: 4.063 s = 4 s + 63 ms inside the delete path). The wait is
     # now an explicit deadline; the lock, the merge and the atomic replace are
     # unchanged, and a timed-out update raises instead of half-writing.
-    with _RUNTIME_LOCK, _job_lock.exclusive(job_dir(job_id) / ".runtime-write.lock"):
+    with _RUNTIME_LOCK, _job_lock.exclusive(
+            job_dir(job_id) / ".runtime-write.lock",
+            timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
         current = load_runtime_state(job_id)
         # ``None`` is normally omitted so optional status fields do not erase
         # an existing value accidentally.  ``error`` is different: callers
