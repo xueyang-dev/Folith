@@ -52,6 +52,7 @@ jobs:
       - name: Check shared views and platform boundary
         run: >-
           python -m pytest -q
+          --junitxml=shared-qt-report.xml --durations=15
           tests/translation_scope_test.py tests/qt_source_outline_panel_test.py
           tests/qt_client_window_test.py::test_setup_scope_button_opens_real_dialog_and_saves_a_plan
           tests/qt_platform_ui_test.py tests/qt_i18n_test.py
@@ -76,6 +77,14 @@ jobs:
           tests/knowledge_async_commit_test.py
           tests/desktop_updates_test.py tests/qt_updater_test.py
           tests/windows_update_helper_test.py tests/macos_updater_packaging_test.py
+      - name: Upload shared-qt failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-qt-report-${{ runner.os }}
+          path: shared-qt-report.xml
+          if-no-files-found: ignore
+
       - name: Native Windows pretranslation scope workflow
         if: runner.os == 'Windows'
         env:
