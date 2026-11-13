@@ -204,12 +204,19 @@ def _run(request: engine_protocol.StartRequest, reader: "_StdinLines") -> int:
         return _fail(EXIT_START_FAILED, _sanitize(str(exc), request))
 
     try:
+        # ``launch_prepared``: the run was launched by the GUI's
+        # ``start_engine`` -- ``core.register_engine_owner`` cleared the request
+        # flags *there*, before ``start_engine`` returned.  This process must
+        # not clear again: it reaches these lines ~1 s later, and that window is
+        # exactly when the user's Pause/Cancel/Exit click is written (E-6a).
         if request.mode == engine_protocol.MODE_START:
             started = core.start_job_worker(
-                request.job_id, filename, None, kwargs, base_url=base_url)
+                request.job_id, filename, None, kwargs, base_url=base_url,
+                launch_prepared=True)
         else:
             started = core.resume_job(
-                request.job_id, filename, kwargs, base_url=base_url)
+                request.job_id, filename, kwargs, base_url=base_url,
+                launch_prepared=True)
     except Exception as exc:  # noqa: BLE001 - report, never crash silently
         return _fail(EXIT_START_FAILED, f"{type(exc).__name__}: "
                                         f"{_sanitize(str(exc), request)}")
