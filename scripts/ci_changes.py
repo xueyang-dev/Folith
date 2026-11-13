@@ -80,7 +80,7 @@ RISK_TESTS = (
     # The supervisor and the lifecycle probe are where a Windows-only teardown
     # race lives (E-6q): the probe's own regression test only ever ran in the
     # 150-minute full regression, which is why it stayed red on main for hours.
-    "engine_supervisor", "lifecycle_probe",
+    "engine_supervisor", "lifecycle_probe", "engine_cold_start",
 )
 
 DOC_TEST_MARKERS = re.compile(r'"docs"|docs/|README|release-notes')
