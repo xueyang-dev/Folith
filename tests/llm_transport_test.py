@@ -234,9 +234,16 @@ def test_ui_still_sees_waiting_for_model_while_in_flight():
     try:
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = [pool.submit(_call_in_job, job_id) for _ in range(3)]
-            time.sleep(0.2)
+            # Poll for the state instead of sleeping 0.2 s: the fake call lasts
+            # 0.5 s, so under parallel load the sleep could elapse first and the
+            # job would already be past "waiting_external". The state is what the
+            # test is about; the wall clock was only a way to get there.
+            deadline = time.monotonic() + 5.0
             runtime = core.load_runtime_state(job_id)
-            assert runtime["status"] == "waiting_external"
+            while runtime["status"] != "waiting_external" and time.monotonic() < deadline:
+                time.sleep(0.01)
+                runtime = core.load_runtime_state(job_id)
+            assert runtime["status"] == "waiting_external", runtime
             assert runtime["phase"] == "waiting_llm"
             assert "请求进行中" in runtime["phase_label"]
             for future in futures:

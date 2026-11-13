@@ -73,6 +73,10 @@ RISK_TESTS = (
     # re-entering the import wizard are the two ways a background job can be
     # left running behind the UI. Both must be exercised on Windows too.
     "task_runner", "exit_fallback", "import_reentrancy",
+    # E-2c/E-2d: process spawning has Windows-only failure modes (see the
+    # unbounded communicate() after a timeout) that only the Windows runner can
+    # exercise, so a change here must select the Windows risk job.
+    "subprocess", "subprocess_bounds",
 )
 
 DOC_TEST_MARKERS = re.compile(r'"docs"|docs/|README|release-notes')
