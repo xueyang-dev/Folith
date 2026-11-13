@@ -162,6 +162,22 @@ def test_gui_retry_step_timeout_is_not_swallowed(job, lock_timeouts):
     assert core.load_runtime_state(job)["status"] == "failed"
 
 
+def test_gui_cancel_without_a_worker_reports_instead_of_parking(
+        job, lock_timeouts, monkeypatch):
+    """The terminal ``cancelled`` write on the cancel path is still a GUI action."""
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda job_id: False)
+    monkeypatch.setattr(core, "_job_execution_alive", lambda job_id: False)
+    lock_timeouts.remaining = 1
+
+    with pytest.raises(job_lock.JobLockTimeout) as excinfo:
+        core.request_job_cancel(job, force=True)
+
+    assert "稍后重试" in str(excinfo.value)
+    runtime = core.load_runtime_state(job)
+    assert runtime["status"] == "running", "a refused cancel must not fake 'cancelled'"
+    assert runtime.get("cancel_requested") is not True
+
+
 def test_delete_cancel_timeout_becomes_a_readable_refusal(monkeypatch):
     """A delete whose cancel request cannot be written says so and deletes nothing.
 

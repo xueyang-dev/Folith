@@ -9216,8 +9216,12 @@ def _runtime_mark_lost(job_id, status, message):
     :func:`_runtime_stopped_view` instead (E-4e).
     """
     worker = load_runtime_state(job_id).get("worker") or {}
+    # GUI/action side (E-6u): the only caller today is ``start_job_worker`` (the
+    # user is waiting on "Start") plus the delete/launch observers.  A verdict
+    # that cannot be written must fail that action with a retriable message, not
+    # park it for the terminal retry budget; nothing is written on failure.
     return update_runtime_state(
-        job_id, on_timeout="retry", status=status, phase=status, phase_label=message,
+        job_id, on_timeout="raise", status=status, phase=status, phase_label=message,
         worker=worker if _job_execution_alive(job_id) else {
             "owner_pid": None, "worker_id": None, "lease_expires_at": None},
         event=message, event_name=status)
@@ -10538,8 +10542,11 @@ def request_job_cancel(job_id, *, force=False):
 
     # If no worker is alive or force cancel was explicitly requested:
     # Immediately transition the job state out of active running status.
+    # GUI/action side (E-6u): the user is waiting on Cancel, so a refused write
+    # is reported ("please retry") instead of parking the slot for a retry
+    # budget; the terminal state is either written or explicitly refused.
     update_runtime_state(
-        job_id, on_timeout="retry", status="cancelled", phase="cancelled", phase_label="已取消",
+        job_id, on_timeout="raise", status="cancelled", phase="cancelled", phase_label="已取消",
         cancel_requested=False, error=None,
         event="任务已取消", event_name="job_cancelled",
         event_visibility="user", event_category="lifecycle",
@@ -10572,8 +10579,10 @@ def request_job_exit(job_id):
         return True
     # No live worker owns this task: publish the resumable terminal state
     # directly instead of leaving a stale active status behind.
+    # GUI/action side (E-6u): quitting waits on this write; a refusal is
+    # reported to the exit flow ("停止任务失败"), and the app stays open.
     update_runtime_state(
-        job_id, on_timeout="retry", status="interrupted", phase="interrupted",
+        job_id, on_timeout="raise", status="interrupted", phase="interrupted",
         phase_label="已停止以便退出", cancel_requested=False,
         exit_requested=True, error=None,
         event="任务已停止以便退出；可继续处理。",
