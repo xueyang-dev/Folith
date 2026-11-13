@@ -334,8 +334,19 @@ class BenchSession:
         self.worker_started = True
 
     def worker_running(self) -> bool:
-        import core
-        return bool(core.is_job_worker_alive(self.job_id))
+        """是否还有执行者：本进程 worker 线程，或受监管的引擎子进程。
+
+        The old answer was ``core.is_job_worker_alive``, which only sees worker
+        threads of *this* process.  The benchmark starts the worker in-process
+        today, but its own ``FOLITH_ENGINE_PROCESS=1`` mode would make that probe
+        report "not running" for a live run.  ``adapter.job_is_alive`` is the
+        entry the window uses (``read_models.job_has_live_worker`` →
+        ``core._job_execution_alive``); in the in-process path it returns exactly
+        what the old call did.
+        """
+        from folith.qt import adapter
+
+        return bool(adapter.job_is_alive(self.job_id))
     # -- foreground interactions -----------------------------------------
     def _settle(self, seconds: float) -> None:
         """Let the window finish its pending layout before the measurement.

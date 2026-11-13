@@ -13,6 +13,9 @@ single happy-path probe:
 * ``density``          200 segments and one ~10,000-character segment
 * ``legacy-import``    an old-format data directory is copied in, not overwritten
 * ``task-switch``      switching tasks while one is running keeps it running
+* ``lifecycle-main``   start / pause / continue / cancel / exit on one task;
+   the path E-6 runs in both execution models
+  (``FOLITH_ENGINE_PROCESS=0`` worker thread, ``=1`` engine child)
 
 Usage:
     QT_QPA_PLATFORM=offscreen venv/bin/python scripts/qt_lifecycle_probe.py \
@@ -87,18 +90,233 @@ def make_docx(path: Path, paragraphs: list[str]) -> None:
     document.save(path)
 
 
-def _is_active_or_alive(job_id: str) -> bool:
-    """任务是否"正在处理"：worker 存活，或运行视图处于活动状态（含排队）。"""
+class ProbeTimeout(AssertionError):
+    """The event loop kept turning, but a task never reached the asked state.
+
+    Raised instead of returning ``False``: a lifecycle probe whose timeout is
+    silent turns "the engine child never ran" into "the scenario passed", which
+    is the exact failure these primitives exist to prevent.  The message carries
+    the state snapshot (status, liveness, engine-child handle, last events) so a
+    timeout is evidence, not a bare assertion.
+    """
+
+    def __init__(self, what: str, snapshots: list[dict]) -> None:
+        self.what = what
+        self.snapshots = snapshots
+        super().__init__(f"{what}：超时未达成；当前状态 "
+                         f"{json.dumps(snapshots, ensure_ascii=False, default=str)}")
+
+
+def _probe_adapter():
+    """The client's own adapter, imported lazily (this file also runs as a script)."""
+    from folith.qt import adapter
+
+    return adapter
+
+
+def _runtime_snapshot(job_id: str) -> dict:
+    """What the product says about this task right now — no probe of our own.
+
+    Liveness is ``adapter.job_is_alive`` (the entry ``window.py`` uses: a worker
+    thread of *this* process **or** a supervised engine child), the status comes
+    from ``adapter.runtime_view``.  The engine child's handle and its last exit
+    code are attached for support only — nothing here decides anything from
+    them, because the supervisor already publishes the durable truth.
+    """
+    info: dict = {"job_id": job_id}
     try:
-        from folith.qt import adapter
+        adapter = _probe_adapter()
+        state = adapter.load_state(job_id)
+        runtime = adapter.runtime_view(job_id, state)
+        events = []
+        for item in (runtime.get("events") or ())[-4:]:
+            if isinstance(item, dict):
+                events.append(str(item.get("message") or item.get("event") or item))
+            else:
+                events.append(str(item))
+        info.update(
+            status=str(runtime.get("status") or ""),
+            phase=str(runtime.get("phase") or ""),
+            alive=bool(adapter.job_is_alive(job_id)),
+            # What the *old* predicate would have said.  In engine mode this is
+            # false while ``alive`` is true — the evidence that the thread probe
+            # is blind to a child-owned run.
+            worker_thread=bool(adapter.core.is_job_worker_alive(job_id)),
+            start_in_flight=bool(adapter.job_start_in_flight(job_id)),
+            actions=list(runtime.get("available_actions") or ()),
+            events=events,
+            p1_done=bool(state.get("p1_done")),
+            p2_done=bool(state.get("p2_done")),
+        )
+    except Exception as exc:  # noqa: BLE001 - a snapshot must never raise
+        info["error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        from folith.desktop import engine_supervisor
+
+        child = engine_supervisor.supervisor(job_id)
+        if child is None:
+            info["engine_child"] = None
+            info["last_exit_code"] = engine_supervisor.last_exit_code(job_id)
+        else:
+            describe = child.describe()
+            describe["output_tail"] = child.output_tail()[-500:]
+            info["engine_child"] = describe
+    except Exception as exc:  # noqa: BLE001 - support detail only
+        info["engine_child_error"] = f"{type(exc).__name__}: {exc}"
+    return info
+
+
+def _owner_published(job_id: str) -> bool:
+    """执行者已经接管了这个任务：runtime_state 里有它自己的 ``worker_id``。
+
+    That is the product's own ownership record: ``core.start_job_worker`` writes
+    it in the same update that publishes ``queued``, and the engine supervisor
+    binds its ownership token to it (``EngineSupervisor._bind_worker_id``).
+    A lifecycle action must wait for it: while an engine child is still doing its
+    ~1 s cold start, ``core.start_job_worker`` re-publishes ``queued`` with
+    ``pause_requested=False`` / ``cancel_requested=False``, so a pause or cancel
+    sent earlier is silently overwritten (E-6p report, boundary finding 1).
+
+    Read from the durable state on purpose: asking ``runtime_view`` about an
+    *active* status whose ``worker.owner_pid`` is not written yet makes
+    ``core.get_job_runtime_status`` mark the run ``interrupted`` (boundary
+    finding 2).  The probe must not trip that write while it is only looking.
+    """
+    try:
+        runtime = _probe_adapter().core.load_runtime_state(job_id) or {}
     except Exception:  # noqa: BLE001
         return False
-    if adapter.core.is_job_worker_alive(job_id):
-        return True
-    runtime = adapter.runtime_view(job_id, adapter.load_state(job_id))
-    return str(runtime.get("status") or "") in (
+    worker = runtime.get("worker") or {}
+    status = str(runtime.get("status") or "")
+    return bool(worker.get("worker_id")) and status in (
         "queued", "starting", "running", "waiting_external", "waiting_manual",
-        "resuming", "resume_requested")
+        "resuming", "paused")
+
+
+def _is_processing(job_id: str) -> bool:
+    """任务是否"正在处理"：有执行者、状态在活动集合内，且执行者已发布运行记录。
+
+    The old predicate was ``core.is_job_worker_alive``, which only sees worker
+    threads of *this* process: under ``FOLITH_ENGINE_PROCESS=1`` the worker runs
+    in an engine child and that probe is false forever, so every lifecycle
+    assertion reported "not running".  ``adapter.job_is_alive`` is the client's
+    correct entry (``read_models.job_has_live_worker`` →
+    ``core._job_execution_alive``: a local thread *or* a live owner process),
+    and the status set is the core's own ``RUNTIME_ACTIVE_STATUSES`` — no second
+    classification lives in this script.
+    """
+    try:
+        adapter = _probe_adapter()
+    except Exception:  # noqa: BLE001
+        return False
+    if not adapter.job_is_alive(job_id):
+        status = str((adapter.core.load_runtime_state(job_id) or {}).get("status") or "")
+        if status not in adapter.core.RUNTIME_ACTIVE_STATUSES:
+            return False
+    return _owner_published(job_id)
+
+
+def _execution_finished(job_id: str) -> bool:
+    """没人再执行这个任务了：线程/子进程已消失，且状态离开活动集合。
+
+    This is the "the engine child is gone / the task reached a terminal state"
+    half of both modes, built only from product answers: liveness
+    (``adapter.job_is_alive``), the client's own launch window
+    (``adapter.job_start_in_flight``, so a just-requested start is not mistaken
+    for a finished run) and the runtime status (``adapter.runtime_view``) against
+    the core's ``RUNTIME_ACTIVE_STATUSES``.
+    """
+    try:
+        adapter = _probe_adapter()
+    except Exception:  # noqa: BLE001
+        return True
+    if adapter.job_is_alive(job_id):
+        return False
+    if adapter.job_start_in_flight(job_id):
+        return False
+    runtime = adapter.runtime_view(job_id, adapter.load_state(job_id))
+    return str(runtime.get("status") or "") not in adapter.core.RUNTIME_ACTIVE_STATUSES
+
+
+def _pump_until(pump, seconds: float, predicate, job_ids, *, what: str,
+                report: dict | None, label: str) -> bool:
+    """Turn the caller's event-loop pump until ``predicate`` holds or time runs out.
+
+    The pump is the probe's own ``pump(seconds, predicate)``: ``processEvents``
+    in a loop.  On expiry this raises :class:`ProbeTimeout` with the current
+    snapshots *and* records them in ``report["waits"]``; it never returns False
+    silently.
+    """
+    started = time.monotonic()
+    reached = pump(seconds, predicate)
+    waited = round(time.monotonic() - started, 2)
+    entry = {"label": label or what, "what": what, "waited_s": waited,
+             "timed_out": not reached}
+    if report is not None:
+        report.setdefault("waits", []).append(entry)
+    if reached:
+        return True
+    snapshots = [_runtime_snapshot(job_id) for job_id in job_ids]
+    entry["state"] = snapshots
+    if report is not None:
+        report["last_timeout"] = {"what": what, "state": snapshots}
+    raise ProbeTimeout(what, snapshots)
+
+
+def pump_until_processing(pump, seconds: float, job_ids, *, report: dict | None = None,
+                          label: str = "") -> bool:
+    """事件循环转到每个任务都真的在跑（本进程线程或受监管子进程）。
+
+    Replaces ``pump(60, lambda: core.is_job_worker_alive(...))`` at every start
+    site: in engine mode the only true statement is "a child owns this task",
+    which ``_is_processing`` answers, and a queued child counts as started.
+    """
+    ids = [job_ids] if isinstance(job_ids, str) else list(job_ids)
+    what = "、".join(ids) + " 进入处理中"
+    return _pump_until(pump, seconds,
+                       lambda: all(_is_processing(job) for job in ids),
+                       ids, what=what, report=report,
+                       label=label or "processing")
+
+
+def pump_until_finished(pump, seconds: float, job_ids, *, report: dict | None = None,
+                        label: str = "") -> bool:
+    """事件循环转到执行结束：引擎子进程消失（或线程退出）且状态离开活动集合。
+
+    This is the subprocess-aware "wait for the run to end" primitive: the Qt
+    event loop keeps running (the GUI must stay responsive while the child
+    works), the answer comes from ``adapter``/``runtime_view`` as always, and a
+    timeout reports the child's handle, status and last events instead of
+    returning quietly.
+    """
+    ids = [job_ids] if isinstance(job_ids, str) else list(job_ids)
+    what = "、".join(ids) + " 执行结束"
+    return _pump_until(pump, seconds,
+                       lambda: all(_execution_finished(job) for job in ids),
+                       ids, what=what, report=report,
+                       label=label or "finished")
+
+
+def _exit_settled(pump, seconds: float, job_ids, *, report: dict | None = None,
+                  label: str = "") -> bool:
+    """关窗之后：执行结束**且**任务锁已释放（``adapter.exit_report`` 的答案）。
+
+    ``pump_until_finished`` proves nobody is executing any more; the worker lock
+    is released by the *owner* on its way out, which in engine mode happens in
+    the child.  Reading a "still held" lock as a leak would be a race, so the
+    probe waits on the client's own exit report instead of inventing a rule.
+    """
+    ids = [job_ids] if isinstance(job_ids, str) else list(job_ids)
+    adapter = _probe_adapter()
+    what = "、".join(ids) + " 退出完成（锁已释放）"
+
+    def settled() -> bool:
+        if not all(_execution_finished(job) for job in ids):
+            return False
+        return all(not adapter.exit_report(job).get("worker_lock_held") for job in ids)
+
+    return _pump_until(pump, seconds, settled, ids, what=what, report=report,
+                       label=label or "exit-settled")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
                                  "single-instance", "single-instance-running",
                                  "many-jobs", "density", "legacy-open",
                                  "legacy-import", "task-switch",
-                                 "two-tasks-cancel"))
+                                 "two-tasks-cancel", "lifecycle-main"))
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--out", default=None)
     parser.add_argument("--source-data", default=None,
@@ -135,6 +353,15 @@ def main(argv: list[str] | None = None) -> int:
 
     report: dict = {"scenario": args.scenario, "data_dir": str(data_dir),
                     "started_at": time.time(), "steps": []}
+    # Which execution model this run is evidence for: 0 = worker thread in this
+    # process, 1 = one engine child per task.  Recorded, never inferred later.
+    try:
+        from folith.desktop import engine_supervisor
+
+        report["engine_process"] = engine_supervisor.engine_process_enabled()
+    except Exception:  # noqa: BLE001 - a probe must not die describing itself
+        report["engine_process"] = None
+    report["engine_process_env"] = os.environ.get("FOLITH_ENGINE_PROCESS", "")
 
     def step(name: str, **extra) -> None:
         report["steps"].append({"at": round(time.time() - report["started_at"], 2),
@@ -159,12 +386,62 @@ def main(argv: list[str] | None = None) -> int:
             app.processEvents()
             return bool(predicate()) if predicate is not None else True
 
+        # 生命周期等待原语绑定到这个事件循环：pump 一直转，判据来自 adapter /
+        # runtime_view，超时抛 ProbeTimeout 并把当前状态记进 report["waits"]。
+        def wait_started(seconds: float, job_ids, *, label: str = "") -> bool:
+            return pump_until_processing(pump, seconds, job_ids,
+                                         report=report, label=label)
+
+        def wait_finished(seconds: float, job_ids, *, label: str = "") -> bool:
+            return pump_until_finished(pump, seconds, job_ids,
+                                       report=report, label=label)
+
+        def wait_exit_settled(seconds: float, job_ids, *, label: str = "") -> bool:
+            return _exit_settled(pump, seconds, job_ids, report=report, label=label)
+
         def new_window(config, paths=None):
             paths = paths or adapter.desktop_paths.resolve_paths()
             built = window_module.MainWindow(config, paths, None)
             window_module.install_quit_filter(app, built)
             built.show()
             return built
+
+        def import_files(specs, *, count: int, timeout: float = 120.0,
+                         autostart: bool = False) -> list:
+            """导入后用产品自己的回调等它的导航落定，再打开目标任务。
+
+            ``import_paths`` 的完成回调会在 GUI 线程上异步
+            ``open_job(results[0].job_id)``。 若探针只等 ``list_jobs()`` 的行数
+            （目录一出现就成立）就打开另一个任务，导入那次打开会在后面把它顶掉：
+            探针最终看到的是"另一个任务"，而 ``window.failures`` 还是空的
+            （E-6p 回报里的边界外发现 3）。 这里用 ``on_result`` 等导入回调 +
+            它发起的导航都结束，判据都是窗口自己的状态。
+            """
+            seen: dict = {"callback": False, "results": []}
+
+            def on_result(results) -> None:
+                seen["callback"] = True
+                seen["results"] = list(results)
+
+            window.import_paths([str(item) for item in specs],
+                                autostart=autostart, on_result=on_result)
+
+            def settled() -> bool:
+                return bool(seen["callback"]) and not getattr(
+                    window, "_opening_job_id", "")
+
+            reached = pump(timeout, settled)
+            rows = list(adapter.list_jobs())
+            if not reached:
+                raise ProbeTimeout("导入完成且导航落定",
+                                   [_runtime_snapshot(row.job_id) for row in rows])
+            failed = [item for item in seen["results"] if not item.ok]
+            if failed:
+                raise AssertionError("导入失败：" + "；".join(
+                    f"{item.filename}：{item.error}" for item in failed))
+            if len(rows) != count:
+                raise AssertionError(f"导入后应有 {count} 个任务，实际 {len(rows)}")
+            return rows
 
         if args.scenario == "single-instance":
             from folith.desktop import single_instance
@@ -199,7 +476,8 @@ def main(argv: list[str] | None = None) -> int:
         # "自定义中转站未配置有效的 API 地址"启动失败（本场景曾因此误报）。
         if args.scenario in ("two-tasks-exit", "cancelling-at-exit",
                              "paused-exit", "task-switch", "density",
-                             "single-instance-running", "two-tasks-cancel"):
+                             "single-instance-running", "two-tasks-cancel",
+                             "lifecycle-main"):
             url = stub.start()
             config.base_url = url
 
@@ -325,8 +603,7 @@ def main(argv: list[str] | None = None) -> int:
             paragraphs.append(LONG_TEXT)
             fixture = out_dir / "density.docx"
             make_docx(fixture, paragraphs)
-            window.import_paths([str(fixture)], autostart=False)
-            assert pump(60, lambda: len(adapter.list_jobs()) == 1)
+            import_files([fixture], count=1)
             job_id = adapter.list_jobs()[0].job_id
 
             state = adapter.load_state(job_id)
@@ -400,15 +677,16 @@ def main(argv: list[str] | None = None) -> int:
             window = new_window(config, paths)
             fixture = out_dir / "single-instance.docx"
             make_docx(fixture, [f"第 {n} 段，术语 MT。" for n in range(60)])
-            window.import_paths([str(fixture)], autostart=False)
-            assert pump(60, lambda: len(adapter.list_jobs()) == 1), \
-                f"import failed; window failures: {window.failures!r}"
+            import_files([fixture], count=1)
             job_id = adapter.list_jobs()[0].job_id
             report["job_id"] = job_id
             open_job_and_wait(window, job_id)
             window.start_or_resume()
-            assert pump(60, lambda: adapter.core.is_job_worker_alive(job_id)), \
-                f"worker never started; window failures: {window.failures!r}"
+            # 原来判 "core.is_job_worker_alive"（本进程线程）；子进程模式下恒为假。
+            # 现在判 adapter.job_is_alive：线程或受监管子进程，两者皆真即"在跑"。
+            wait_started(60, job_id, label="single-instance-running")
+            report["engine_child_while_running"] = (
+                _runtime_snapshot(job_id).get("engine_child"))
             before_runtime = adapter.core.load_runtime_state(job_id) or {}
             before_worker = str((before_runtime.get("worker") or {}).get("worker_id") or "")
             before_jobs = sorted(item.name for item in paths.data_dir.iterdir()
@@ -435,7 +713,8 @@ def main(argv: list[str] | None = None) -> int:
             report["jobs_after"] = len(after_jobs)
             report["worker_unchanged"] = bool(before_worker and before_worker == after_worker)
             report["no_new_jobs"] = before_jobs == after_jobs
-            report["still_alive"] = adapter.core.is_job_worker_alive(job_id)
+            # 原来判 "worker 线程还在"；子进程模式下线程本来就不在这个进程里。
+            report["still_alive"] = adapter.job_is_alive(job_id)
             report["second_refused"] = second.returncode == 3
 
             # The task must still be able to finish after the refused launch.
@@ -450,6 +729,12 @@ def main(argv: list[str] | None = None) -> int:
                                 and report["completed_after_refusal"])
             window.close()
             pump(120, lambda: window._closing_accepted)
+            # 子进程在 EOF 之后才退出并放开锁；读最终状态前必须等它真的没了，
+            # 否则子进程模式下会把"还没退出"误读成"锁没释放"。
+            try:
+                wait_exit_settled(args.timeout, job_id, label="single-instance-exit")
+            except ProbeTimeout as exc:
+                report["exit_wait_error"] = str(exc)
             lock.release()
             step("single-instance-running", **{k: report[k] for k in
                                                ("second_refused", "worker_unchanged",
@@ -466,9 +751,7 @@ def main(argv: list[str] | None = None) -> int:
             size = 60 if args.scenario == "paused-exit" else 2
             fixture = out_dir / "lifecycle.docx"
             make_docx(fixture, [f"第 {n} 段，术语 MT。" for n in range(size)])
-            window.import_paths([str(fixture)], autostart=False)
-            assert pump(60, lambda: len(adapter.list_jobs()) == 1), \
-                f"import failed; window failures: {window.failures!r}"
+            import_files([fixture], count=1)
             job_id = adapter.list_jobs()[0].job_id
             report["job_id"] = job_id
 
@@ -485,6 +768,7 @@ def main(argv: list[str] | None = None) -> int:
                 # 只断言 `_closing_accepted` 是不够的：R70 实测过"决定退出、日志写着
                 # exit accepted、窗口却一直开着"的缺陷（嵌套 close 被吞）。必须看窗口真的没了。
                 report["window_hidden"] = pump(120, lambda: not window.isVisible())
+                wait_exit_settled(args.timeout, job_id, label="home-with-jobs-exit")
                 after = adapter.exit_report(job_id)
                 report["closed"] = bool(closed and report["window_hidden"])
                 report["exit_after"] = {key: after.get(key) for key in
@@ -499,8 +783,7 @@ def main(argv: list[str] | None = None) -> int:
 
             open_job_and_wait(window, job_id)
             window.start_or_resume()
-            assert pump(60, lambda: adapter.core.is_job_worker_alive(job_id)), \
-                f"worker never started; window failures: {window.failures!r}"
+            wait_started(60, job_id, label="paused-exit-start")
             window.pause_job()
             paused = pump(180, lambda: adapter.core.load_runtime_state(job_id)
                           .get("status") == "paused")
@@ -517,6 +800,10 @@ def main(argv: list[str] | None = None) -> int:
             window.close()
             closed = pump(args.timeout, lambda: window._closing_accepted)
             report["window_hidden"] = pump(args.timeout, lambda: not window.isVisible())
+            # 关窗只是"通知子进程"（stdin EOF）；退出、写终态、放锁都在子进程里。
+            # 读最终状态之前必须等到执行真的结束，否则子进程模式下会把"还没退出"
+            # 误读成"锁没释放"。
+            wait_exit_settled(args.timeout, job_id, label="paused-exit")
             after = adapter.exit_report(job_id)
             state = adapter.load_state(job_id)
             report["closed"] = bool(closed and report["window_hidden"])
@@ -534,6 +821,83 @@ def main(argv: list[str] | None = None) -> int:
                                     "exit_after", "completed")})
             raise SystemExit(_emit(report, args))
 
+        if args.scenario == "lifecycle-main":
+            # E-6 主路径矩阵：开始 → 暂停 → 继续 → 取消 → 退出，一条路径在
+            # 两种执行模型下都跑（FOLITH_ENGINE_PROCESS=0 线程 / =1 子进程）。
+            # 每个判据都取自 adapter（job_is_alive / runtime_view / exit_report），
+            # 本脚本不另建一套"任务是否在跑"的实现。
+            window = new_window(config)
+            fixture = out_dir / "lifecycle-main.docx"
+            make_docx(fixture, [f"第 {n} 段，术语 MT 与 CAT。" for n in range(40)])
+            import_files([fixture], count=1)
+            job_id = adapter.list_jobs()[0].job_id
+            report["job_id"] = job_id
+            open_job_and_wait(window, job_id)
+
+            # 1) 开始：等的是"有执行者"（线程或子进程），不是"本进程有线程"。
+            window.start_or_resume()
+            wait_started(120, job_id, label="lifecycle-main-start")
+            started = _runtime_snapshot(job_id)
+            report["start"] = {key: started.get(key) for key in
+                               ("status", "alive", "worker_thread", "engine_child",
+                                "p1_done")}
+
+            # 2) 暂停：产品的暂停保留 worker/子进程与锁，状态落到 paused。
+            window.pause_job()
+            report["pause"] = {"paused": pump(180, lambda: str(
+                adapter.runtime_view(job_id).get("status")) == "paused")}
+            paused = _runtime_snapshot(job_id)
+            report["pause"].update({key: paused.get(key) for key in ("status", "alive")})
+
+            # 3) 继续：界面路径与"继续翻译"按钮一致（window.start_or_resume
+            #    在任务仍活时走 continue_job）。等状态离开 paused 且执行侧仍活。
+            window.start_or_resume()
+            report["resume"] = {"resumed": pump(180, lambda: (
+                str(adapter.runtime_view(job_id).get("status")) not in ("paused", "pausing")
+                and _is_processing(job_id)))}
+            resumed = _runtime_snapshot(job_id)
+            report["resume"].update({key: resumed.get(key) for key in ("status", "alive")})
+
+            # 4) 取消：请求只是通知，等到执行真的结束再读状态。
+            window.cancel_job()
+            wait_finished(180, job_id, label="lifecycle-main-cancel")
+            cancelled = _runtime_snapshot(job_id)
+            report["cancel"] = {key: cancelled.get(key) for key in
+                                ("status", "alive", "worker_thread", "engine_child")}
+            report["cancel"]["cancelled"] = report["cancel"]["status"] == "cancelled"
+
+            # 5) 退出：关窗只发通知，子进程退出并放锁之后才读最终报告。
+            window.close()
+            closed = pump(args.timeout, lambda: window._closing_accepted)
+            hidden = pump(args.timeout, lambda: not window.isVisible())
+            wait_exit_settled(args.timeout, job_id, label="lifecycle-main-exit")
+            after = adapter.exit_report(job_id)
+            state = adapter.load_state(job_id)
+            report["exit"] = {
+                "closed": bool(closed and hidden),
+                "lock": after.get("worker_lock_held"),
+                "status": after.get("active_status"),
+                "completed": bool(state.get("p1_done") and state.get("p2_done")),
+            }
+            report["failures"] = list(window.failures)
+            # 两个模式各自的硬证据：子进程模式下"在跑"必须由子进程句柄支撑。
+            report["engine_child_observed"] = bool(
+                (report["start"].get("engine_child") or {}).get("running"))
+            in_engine = bool(report["engine_process"])
+            report["ok"] = bool(
+                report["start"]["alive"]
+                and report["pause"]["paused"]
+                and report["resume"]["resumed"]
+                and report["cancel"]["cancelled"]
+                and report["exit"]["closed"]
+                and not report["exit"]["lock"]
+                and not window.failures
+                and (report["engine_child_observed"] if in_engine else True))
+            step("lifecycle-main", **{key: report[key] for key in
+                                      ("start", "pause", "resume", "cancel",
+                                       "exit", "engine_child_observed")})
+            raise SystemExit(_emit(report, args))
+
         if args.scenario == "two-tasks-cancel":
             # 两个任务同时跑，取消其中一个：另一个必须继续并跑完，
             # 被取消的那个不能被误标为完成。
@@ -544,8 +908,7 @@ def main(argv: list[str] | None = None) -> int:
                 make_docx(fixture, [f"任务 {index} 第 {n} 段，术语 MT。"
                                     for n in range(60)])
                 fixtures.append(fixture)
-            window.import_paths([str(item) for item in fixtures], autostart=False)
-            assert pump(60, lambda: len(adapter.list_jobs()) == 2)
+            import_files(fixtures, count=2)
             job_ids = [row.job_id for row in adapter.list_jobs()]
             report["job_ids"] = job_ids
             observed = []
@@ -554,23 +917,24 @@ def main(argv: list[str] | None = None) -> int:
                 window.start_or_resume()
                 # 第二个任务在第一个仍在跑时启动：可能先排队（queued），
                 # 所以等的是"已经开始处理"而不是"worker 已存活"。
-                started = pump(120, lambda job_id=job_id:
-                               _is_active_or_alive(job_id))
+                started = wait_started(120, job_id, label="two-tasks-cancel-start")
                 state = adapter.load_state(job_id)
                 runtime = adapter.runtime_view(job_id, state)
                 observed.append({
                     "job": job_id, "started": bool(started),
                     "status": runtime.get("status"),
-                    "alive": adapter.core.is_job_worker_alive(job_id),
+                    # 子进程模式下线程判据恒假；adapter.job_is_alive 才看得见子进程。
+                    "alive": adapter.job_is_alive(job_id),
                     "p1_done": bool(state.get("p1_done")),
                     "pairs": len(state.get("pairs") or []),
                     "failures": list(window.failures),
                 })
                 assert started, observed
+            report["observed"] = observed
             # 两个都在处理中：这是"同时运行"的前提，必须成立再往下走。
             both_active = pump(120, lambda: all(
-                _is_active_or_alive(job) for job in job_ids))
-            report["both_started"] = [_is_active_or_alive(job) for job in job_ids]
+                _is_processing(job) for job in job_ids))
+            report["both_started"] = [_is_processing(job) for job in job_ids]
             report["both_active_at_once"] = bool(both_active)
             if not both_active:
                 report["ok"] = False
@@ -581,14 +945,16 @@ def main(argv: list[str] | None = None) -> int:
             # 取消第一个（界面路径），第二个必须继续。
             open_job_and_wait(window, job_ids[0])
             window.cancel_job()
-            assert pump(120, lambda: not adapter.core.is_job_worker_alive(job_ids[0]))
+            # 取消是"通知"，真正停下在子进程/线程里完成；等到执行结束再读状态。
+            wait_finished(120, job_ids[0], label="two-tasks-cancel-cancelled")
             # 状态在运行视图里（state 里没有 status 字段）。
             report["cancelled"] = adapter.runtime_view(
                 job_ids[0], adapter.load_state(job_ids[0])).get("status") or ""
-            report["other_still_alive"] = adapter.core.is_job_worker_alive(job_ids[1])
+            report["other_still_alive"] = adapter.job_is_alive(job_ids[1])
             # 等第二个跑完。
             finished = pump(args.timeout, lambda: (
-                adapter.load_state(job_ids[1]).get("p2_done")))
+                adapter.load_state(job_ids[1]).get("p2_done")
+                and _execution_finished(job_ids[1])))
             state_other = adapter.load_state(job_ids[1])
             pairs = state_other.get("pairs") or []
             report.update({
@@ -619,22 +985,20 @@ def main(argv: list[str] | None = None) -> int:
                 make_docx(fixture, [f"任务 {index} 第 {n} 段，术语 MT。"
                                     for n in range(size)])
                 fixtures.append(fixture)
-            window.import_paths([str(item) for item in fixtures], autostart=False)
-            assert pump(60, lambda: len(adapter.list_jobs()) == 2)
+            import_files(fixtures, count=2)
             job_ids = [row.job_id for row in adapter.list_jobs()]
             report["job_ids"] = job_ids
 
             if args.scenario == "task-switch":
                 open_job_and_wait(window, job_ids[0])
                 window.start_or_resume()
-                assert pump(60, lambda: adapter.core.is_job_worker_alive(job_ids[0]))
+                wait_started(60, job_ids[0], label="task-switch-start-1")
                 # A second task is started while the first one runs, then the
                 # window switches back and forth: neither may be disturbed.
                 open_job_and_wait(window, job_ids[1])
                 window.start_or_resume()
-                assert pump(60, lambda: adapter.core.is_job_worker_alive(job_ids[1]))
-                both_active = [job for job in job_ids
-                               if adapter.core.is_job_worker_alive(job)]
+                wait_started(60, job_ids[1], label="task-switch-start-2")
+                both_active = [job for job in job_ids if adapter.job_is_alive(job)]
                 # "任务切换"响应：在一个任务仍在跑时切换到另一个任务。
                 started = time.monotonic()
                 open_job_and_wait(window, job_ids[0])
@@ -646,8 +1010,7 @@ def main(argv: list[str] | None = None) -> int:
                 pump(1.0)
                 window.show_home()
                 pump(1.0)
-                still_active = [job for job in job_ids
-                                if adapter.core.is_job_worker_alive(job)]
+                still_active = [job for job in job_ids if adapter.job_is_alive(job)]
                 runtime_after = {}
                 completed_after = []
                 for job in job_ids:
@@ -666,6 +1029,9 @@ def main(argv: list[str] | None = None) -> int:
                 # R70：只断言"决定退出"会漏掉"窗口一直开着、进程不退"的缺陷
                 assert pump(args.timeout, lambda: not window.isVisible()), \
                     "退出流程走完之后窗口必须真的关闭"
+                # 关窗只发通知；退出/终态/放锁发生在执行者那一侧（子进程模式下
+                # 在子进程里）。读最终报告前先等到执行结束。
+                wait_exit_settled(args.timeout, job_ids, label="task-switch-exit")
                 final = {job: adapter.exit_report(job) for job in job_ids}
                 report["final"] = {job: {"safe": info.get("safe_to_exit"),
                                          "lock": info.get("worker_lock_held"),
@@ -699,12 +1065,9 @@ def main(argv: list[str] | None = None) -> int:
                 for job in job_ids:
                     open_job_and_wait(window, job)
                     window.start_or_resume()
-                    assert pump(60, lambda job=job:
-                                adapter.core.is_job_worker_alive(job)), \
-                        f"worker never started for {job}; window failures: " \
-                        f"{window.failures!r}"
+                    wait_started(60, job, label="cancelling-at-exit-start")
                 report["active_before"] = [job for job in job_ids
-                                           if adapter.core.is_job_worker_alive(job)]
+                                           if adapter.job_is_alive(job)]
                 for job in job_ids:
                     adapter.cancel_job(job)
                 pump(1.0)
@@ -714,6 +1077,8 @@ def main(argv: list[str] | None = None) -> int:
                 open_job_and_wait(window, job_ids[0])
                 window.close()
                 closed = pump(args.timeout, lambda: window._closing_accepted)
+                wait_exit_settled(args.timeout, job_ids,
+                                  label="cancelling-at-exit")
                 final = {job: adapter.exit_report(job) for job in job_ids}
                 report["final"] = {job: {"safe": info.get("safe_to_exit"),
                                          "lock": info.get("worker_lock_held"),
@@ -742,10 +1107,9 @@ def main(argv: list[str] | None = None) -> int:
             for job in job_ids:
                 open_job_and_wait(window, job)
                 window.start_or_resume()
-                assert pump(60, lambda job=job:
-                            adapter.core.is_job_worker_alive(job)), job
+                wait_started(60, job, label="two-tasks-exit-start")
             report["active_before"] = [job for job in job_ids
-                                       if adapter.core.is_job_worker_alive(job)]
+                                       if adapter.job_is_alive(job)]
             report["exit_report_before"] = {
                 job: adapter.exit_report(job).get("safe_to_exit")
                 for job in job_ids}
@@ -753,6 +1117,7 @@ def main(argv: list[str] | None = None) -> int:
             window.close()
             closed = pump(args.timeout, lambda: window._closing_accepted)
             report["closed"] = closed
+            wait_exit_settled(args.timeout, job_ids, label="two-tasks-exit")
             final = {job: adapter.exit_report(job) for job in job_ids}
             report["final"] = {job: {"safe": info.get("safe_to_exit"),
                                      "lock": info.get("worker_lock_held"),
