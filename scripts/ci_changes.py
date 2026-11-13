@@ -77,6 +77,10 @@ RISK_TESTS = (
     # unbounded communicate() after a timeout) that only the Windows runner can
     # exercise, so a change here must select the Windows risk job.
     "subprocess", "subprocess_bounds",
+    # The supervisor and the lifecycle probe are where a Windows-only teardown
+    # race lives (E-6q): the probe's own regression test only ever ran in the
+    # 150-minute full regression, which is why it stayed red on main for hours.
+    "engine_supervisor", "lifecycle_probe",
 )
 
 DOC_TEST_MARKERS = re.compile(r'"docs"|docs/|README|release-notes')
