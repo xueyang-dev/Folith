@@ -204,3 +204,28 @@ def test_bounded_acquire_honours_a_sub_second_deadline(tmp_path):
 
     assert 0.2 <= elapsed < 0.75, (
         f"a 0.25 s bounded acquire took {elapsed:.3f} s")
+
+
+def test_bounded_primitive_measured_wait_on_this_platform(tmp_path):
+    """Platform-level measurement, independent of ``update_runtime_state``.
+
+    Kept separate on purpose: when the call site is temporarily reverted to the
+    blocking acquire (rollback verification), this test still measures the
+    *bounded* primitive on the same runner, so a single failing artifact carries
+    both the old one's wait and the new one's.
+    """
+    path = tmp_path / ".runtime-write.lock"
+    bound = job_lock.DEFAULT_TIMEOUT_SECONDS
+
+    with _LockHolder(path, HOLD_SECONDS):
+        started = time.monotonic()
+        with pytest.raises(job_lock.JobLockTimeout):
+            job_lock.acquire_bounded(path, timeout=bound)
+        elapsed = time.monotonic() - started
+
+    warnings.warn(
+        f"E-6t bounded primitive measured wait: acquire_bounded gave up after "
+        f"{elapsed:.3f} s while another process held the lock {HOLD_SECONDS:g} s "
+        f"(declared bound {bound:g} s)", stacklevel=1)
+    assert bound - 0.1 <= elapsed <= bound + SLACK_SECONDS, (
+        f"a {bound:g} s bounded acquire took {elapsed:.3f} s")
