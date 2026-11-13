@@ -11,6 +11,7 @@ import threading
 import time
 from datetime import datetime
 from datetime import timezone
+from folith import job_lock as _job_lock
 from folith import project as _project
 from folith import translation_memory as _tm_scope
 from folith.engine.locks import _serialized_job_mutation
@@ -563,6 +564,8 @@ def _new_delete_stop_stats():
         "deadline_hit": False,
         "still_running": [],
         "cancel_pending": False,
+        # E-6u: why a cancel request itself could not be written ("" = none).
+        "cancel_error": "",
     }
 
 
@@ -593,17 +596,25 @@ def _pending_delete_cancels():
 def _deliver_cancel(job_ids, deadline):
     """Ask every task to stop, waiting for the request only until ``deadline``.
 
-    ``core.request_job_cancel`` is a state write, and its lock is acquired
-    *blocking*: on Windows a failed ``msvcrt.locking(LK_LOCK)`` retries a
-    second later, up to ten times, so an engine that is mid-write can hold the
-    caller for whole seconds before it has even been told to stop (M-1).  The
-    request is delivered on a helper thread so the caller's wait is finite; a
-    request that misses the deadline keeps running and still lands.
+    ``core.request_job_cancel`` is a state write under the bounded
+    ``.runtime-write.lock`` (E-6t: two seconds, then ``JobLockTimeout``).  A
+    foreign writer can therefore make the request *fail* instead of waiting;
+    E-6u treats the entry as a GUI action, so the failure travels back to the
+    interface — but this helper delivers it on a thread so the caller's wait
+    stays finite.  The failures are returned instead of swallowed: the delete
+    message must not claim "cancel requested" when nothing was written.
     """
+    failures = []
+
     def send():
         for job_id in job_ids:
             try:
                 _c.request_job_cancel(job_id, force=True)
+            except _job_lock.JobLockTimeout as exc:
+                # Retriable conflict, exactly as ``job_lock`` documents: report
+                # it so the user is told to retry instead of watching a task
+                # that never received the request disappear.
+                failures.append(str(exc))
             except Exception:  # noqa: BLE001 - a deleted/broken task must not block the rest
                 pass
 
@@ -615,6 +626,7 @@ def _deliver_cancel(job_ids, deadline):
                                      if t.is_alive()]
         _DELETE_CANCEL_THREADS.append(worker)
     worker.join(max(0.0, deadline - time.monotonic()))
+    return failures
 
 
 def delete_stop_stats():
@@ -657,7 +669,18 @@ def stop_job_for_delete(job_id):
     """
     if not _job_still_running(job_id):
         return True
-    return not _stop_jobs_for_delete([job_id])
+    still_running = _stop_jobs_for_delete([job_id])
+    conflict = _DELETE_STOP_STATS.get("cancel_error")
+    if still_running and conflict:
+        # The request itself never reached the task (or is still stuck waiting
+        # for the bounded lock): this is a retriable conflict, not "the task
+        # ignored the cancel".  Raise the user-readable message so the GUI can
+        # tell the user to retry instead of deleting a task on a false premise
+        # (E-6u).
+        raise ValueError(
+            f"删除前无法写入取消请求：{conflict}"
+            "本次没有删除这个任务，请稍后重试。")
+    return not still_running
 
 
 def _stop_jobs_for_delete(job_ids):
@@ -686,9 +709,11 @@ def _stop_jobs_for_delete(job_ids):
             stats["probes"] += 1
 
     began = time.monotonic()
-    _deliver_cancel(job_ids, min(deadline,
-                                 began + DELETE_CANCEL_REQUEST_SECONDS))
+    cancel_failures = _deliver_cancel(
+        job_ids, min(deadline, began + DELETE_CANCEL_REQUEST_SECONDS))
     stats["cancel_seconds"] = time.monotonic() - began
+    if cancel_failures:
+        stats["cancel_error"] = cancel_failures[0]
 
     settle_began = time.monotonic()
     running = [job_id for job_id in job_ids if probe(job_id)]
@@ -706,6 +731,13 @@ def _stop_jobs_for_delete(job_ids):
         # we just removed.  Report it as still running — the caller refuses, so
         # the task (and the write) stay consistent.
         running = list(job_ids)
+        if not stats["cancel_error"]:
+            # E-6u: with the bounded lock the request can also be stuck behind a
+            # foreign writer.  Say so, so the refusal is actionable ("retry
+            # later") instead of reading as "the task ignored the cancel".
+            stats["cancel_error"] = (
+                "另一个 Folith 进程正在写这个任务的状态，取消请求一直在等状态锁"
+                "（最多 2 秒）；")
 
     stats["still_running"] = list(running)
     _DELETE_STOP_STATS.update(stats)
@@ -757,10 +789,11 @@ def delete_project(project_id, *, confirm_name, move_jobs_to=None, cascade=False
                 names = "、".join(
                     str((job["state"] or {}).get("filename") or job["job_id"])
                     for job in jobs if job["job_id"] in still_running)
+                reason = _DELETE_STOP_STATS.get("cancel_error")
                 raise ValueError(
                     f"有 {len(still_running)} 个任务仍在运行（{names}）；"
-                    "已请求取消，但它们在限定时间内没有停下。"
-                    "本次没有删除任何任务或项目，请等这些任务停止后再删除项目。")
+                    + (reason if reason else "已请求取消，但它们在限定时间内没有停下。")
+                    + "本次没有删除任何任务或项目，请稍后重试。")
             for jid in job_ids:
                 _c.delete_job(jid, allow_active=True)
                 deleted_jobs.append(jid)
