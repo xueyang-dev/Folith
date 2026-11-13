@@ -30,7 +30,9 @@ def test_tesseract_page_passes_hidden_console_flag(monkeypatch):
         captured.update(kwargs)
         return SimpleNamespace(returncode=1, stdout="", stderr="forced failure")
 
-    monkeypatch.setattr(ocr_tesseract.subprocess, "run", fake_run)
+    # E-2d: the page OCR call now goes through run_bounded(); same fake shape,
+    # same assertion (the hidden-console flags must still reach the child).
+    monkeypatch.setattr(ocr_tesseract, "_run_bounded", fake_run)
     blocks, error = ocr_tesseract._ocr_page_with_tesseract(
         "tesseract.exe", b"not-a-real-png", "eng")
     assert blocks is None

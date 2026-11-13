@@ -41,6 +41,7 @@ from folith import translation_evidence
 from folith import workbench_rows as _workbench_rows
 from folith import retrospective as _retrospective
 from folith import source_languages as _source_languages
+from folith.subprocess_bounds import run_bounded as _run_bounded
 # Architecture Phase 1/3: the shared, frontend-neutral application layer.  Qt only
 # translates `EngineConfig` into it and adapts desktop-specific values back out.
 from folith.application import (
@@ -5426,10 +5427,12 @@ def _git_dirty() -> str:
     if desktop_paths.is_frozen():
         return "unknown"
     try:
-        import subprocess
-
         from folith.desktop.process import hidden_console_kwargs
-        result = subprocess.run(
+        # Bounded (E-2d): exactly the ``build_id()`` shape -- a ``git`` launcher
+        # that leaves a grandchild holding the pipes froze this call for good on
+        # Windows, inside the GUI thread's diagnostics path.  Same argv, same 5 s
+        # bound, same "unknown" fallback on a non-zero exit or a timeout.
+        result = _run_bounded(
             ["git", "-C", str(root), "status", "--porcelain"],
             capture_output=True, text=True, timeout=5, check=False,
             **hidden_console_kwargs())

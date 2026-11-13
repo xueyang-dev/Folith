@@ -13,6 +13,8 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from ..subprocess_bounds import run_bounded as _run_bounded
+
 TIMEOUT_SECONDS = 30.0
 
 
@@ -101,7 +103,10 @@ def capture(pid: int, directory: Path, data_dir: Path, snapshot: dict) -> dict:
     _write_report(directory, report)
     if sys.platform == "darwin":
         try:
-            result = subprocess.run(
+            # Bounded (E-2d): a watchdog that blocks inside its own capture is a
+            # deaf watchdog -- ``except TimeoutExpired`` never runs if the call
+            # never returns.  Same argv, same 8 s bound, same None fallback.
+            result = _run_bounded(
                 ["/usr/bin/sample", str(pid), "1", "10", "-file", str(directory / "native-sample.txt")],
                 capture_output=True, timeout=8,
             )
@@ -127,7 +132,10 @@ def capture(pid: int, directory: Path, data_dir: Path, snapshot: dict) -> dict:
             command = ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"]
         else:
             command = ["ps", "-p", str(pid), "-o", "%cpu=,rss=,state="]
-        result = subprocess.run(
+        # Bounded (E-2d): with ``subprocess.run(timeout=3)`` a surviving
+        # descendant held the capture pipes open and the 3 s bound never fired;
+        # the watchdog itself then looked dead.  Same argv, bound and fallback.
+        result = _run_bounded(
             command, capture_output=True, text=True, errors="replace", timeout=3,
             **({"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}),
         )

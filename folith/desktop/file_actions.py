@@ -11,12 +11,12 @@ the platform's file manager directly; no extra bridge is required.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .process import hidden_console_kwargs
+from ..subprocess_bounds import run_bounded as _run_bounded
 
 REVEAL = "reveal"
 OPEN = "open"
@@ -91,8 +91,12 @@ def _run(action: str, path: str | Path, *, directory: bool = False) -> FileActio
         if argv is None:  # Windows "open"
             os.startfile(str(resolved))  # type: ignore[attr-defined]  # noqa: S606
             return FileAction(action=action, path=str(resolved), ok=True)
-        result = subprocess.run(argv, capture_output=True, text=True, timeout=20,
-                                check=False, **hidden_console_kwargs())
+        # Bounded (E-2d): ``open``/``xdg-open`` hand the path to a real
+        # application that may keep the inherited pipes open; with
+        # ``subprocess.run(timeout=20)`` that froze the GUI thread that clicked
+        # the button.  Same argv, same 20 s bound, same failure record.
+        result = _run_bounded(argv, capture_output=True, text=True, timeout=20,
+                              check=False, **hidden_console_kwargs())
     except Exception as exc:  # noqa: BLE001 - a failed file action must not crash the UI
         return FileAction(action=action, path=str(resolved), ok=False, argv=argv or [],
                           detail=f"{type(exc).__name__}: {exc}")

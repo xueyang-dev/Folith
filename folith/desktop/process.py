@@ -16,6 +16,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ..subprocess_bounds import run_bounded as _run_bounded
+
 _POSIX_LSOF_CANDIDATES = ("/usr/sbin/lsof", "/usr/bin/lsof", "/bin/lsof")
 
 
@@ -104,7 +106,10 @@ def _is_zombie(pid: int) -> bool:
         pass
     ps = shutil.which("ps") or "/bin/ps"
     try:
-        result = subprocess.run(
+        # Bounded (E-2d): a ``ps`` wrapper leaving a grandchild behind cannot
+        # delay this probe any more; the 5 s bound and the ``False`` fallback
+        # are unchanged.
+        result = _run_bounded(
             [ps, "-o", "stat=", "-p", str(pid)],
             capture_output=True, text=True, timeout=5, check=False,
             **hidden_console_kwargs(),
@@ -123,7 +128,8 @@ def parent_pid(pid: int) -> int | None:
         return _windows_parent_pid(pid)
     ps = shutil.which("ps") or "/bin/ps"
     try:
-        result = subprocess.run(
+        # Bounded (E-2d): same 5 s bound, same None fallback on failure.
+        result = _run_bounded(
             [ps, "-o", "ppid=", "-p", str(pid)],
             capture_output=True, text=True, timeout=5, check=False,
             **hidden_console_kwargs(),
@@ -173,7 +179,8 @@ def pids_listening_on_port(port: int) -> set[int] | None:
     if lsof is None:
         return None
     try:
-        result = subprocess.run(
+        # Bounded (E-2d): same 10 s bound, same None ("unverified") fallback.
+        result = _run_bounded(
             [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
             capture_output=True, text=True, timeout=10, check=False,
             **hidden_console_kwargs(),
@@ -271,7 +278,10 @@ def _windows_listeners_on_port(port: int) -> set[int] | None:  # pragma: no cove
     if netstat is None:
         return None
     try:
-        result = subprocess.run(
+        # Bounded (E-2d): bytes mode is deliberate (``_decode_console_output``
+        # applies the OEM code page); the 15 s bound and the None fallback are
+        # unchanged.
+        result = _run_bounded(
             [netstat, "-ano", "-p", "tcp"],
             capture_output=True, timeout=15, check=False,
             **hidden_console_kwargs(),
