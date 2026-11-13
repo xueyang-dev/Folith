@@ -7,6 +7,7 @@ name defined here.  Anything still owned by ``core`` is read late-bound through
 
 import json
 import shutil
+import threading
 import time
 from datetime import datetime
 from datetime import timezone
@@ -519,8 +520,108 @@ def _project_backup_dir():
 # cannot be interrupted by any wait, so waiting longer only freezes the window —
 # exactly what the non-blocking UI work exists to prevent.  On timeout the delete
 # is refused with a reason instead of racing the writer.
+#
+# The budget covers the **whole** stop, asking included (M-1).  It used to start
+# after the cancel request, and the request is itself a cross-process write:
+# it merges into ``runtime_state.json`` under ``.runtime-write.lock`` with a
+# *blocking* acquire, which on Windows is ``msvcrt.locking(LK_LOCK)`` — retries
+# in whole seconds, ten of them.  A Windows Full Regression therefore saw a
+# 3 s delete take 7.063 s, of which 4.06 s was the request and 3.0 s the wait:
+# the constant bounded a wait nobody was actually waiting for yet.
 DELETE_CANCEL_SETTLE_SECONDS = 3.0
 DELETE_CANCEL_POLL_SECONDS = 0.05
+
+#: How much of the budget the cancel request itself may occupy.
+#:
+#: The request is a *notification*, not a precondition: it is safe for it to
+#: land late, because the caller refuses the delete whenever the task is still
+#: running.  Past this cap it keeps going on a helper thread and the rest of the
+#: budget goes to watching for the stop — the engine often sees the request
+#: during that window anyway, since it reads ``cancel_requested`` between
+#: batches.  Whatever happens, the caller never waits on another process's
+#: state write for longer than this.
+DELETE_CANCEL_REQUEST_SECONDS = 0.5
+
+# Wall-clock split of the last bounded stop, written by
+# :func:`_stop_jobs_for_delete` and read by :func:`delete_stop_stats`.
+#
+# M-1 needed this: a Windows Full Regression reported the delete taking 7.06 s
+# against a 3 s budget, and the single total could not say *which* step
+# overspent.  The suspicion was the settle loop; the loop is capped by
+# construction (``deadline``), so the missing time had to be the cancel request
+# itself — a cross-process ``runtime_state`` write.  Keeping the split here lets
+# a failing assertion (or a CI log) name the step instead of guessing.  The
+# shape mirrors ``core._RUNTIME_PERSIST_STATS``: one dict, updated in place.
+def _new_delete_stop_stats():
+    """A fresh timing split; these keys are the contract tests read."""
+    return {
+        "budget_seconds": DELETE_CANCEL_SETTLE_SECONDS,
+        "cancel_seconds": 0.0,
+        "settle_seconds": 0.0,
+        "probe_seconds": 0.0,
+        "probes": 0,
+        "deadline_hit": False,
+        "still_running": [],
+        "cancel_pending": False,
+    }
+
+
+#: The split of the most recent bounded stop.
+_DELETE_STOP_STATS = _new_delete_stop_stats()
+
+#: Cancel requests still in flight (see :data:`DELETE_CANCEL_REQUEST_SECONDS`).
+#: Live threads only; finished ones are dropped when the list is read.
+_DELETE_CANCEL_THREADS: list = []
+_DELETE_CANCEL_THREADS_LOCK = threading.Lock()
+
+
+def _pending_delete_cancels():
+    """Whether a cancel request has not finished writing yet.
+
+    A request still in flight is the one state the caller must not ignore: it
+    cannot prove the engine was asked to stop, and a *late* ``runtime_state``
+    write must never land after the task directory is gone — that would
+    re-create the task as a half-written directory, the exact resurrection race
+    ``delete_project`` guards against.
+    """
+    with _DELETE_CANCEL_THREADS_LOCK:
+        _DELETE_CANCEL_THREADS[:] = [t for t in _DELETE_CANCEL_THREADS
+                                     if t.is_alive()]
+        return bool(_DELETE_CANCEL_THREADS)
+
+
+def _deliver_cancel(job_ids, deadline):
+    """Ask every task to stop, waiting for the request only until ``deadline``.
+
+    ``core.request_job_cancel`` is a state write, and its lock is acquired
+    *blocking*: on Windows a failed ``msvcrt.locking(LK_LOCK)`` retries a
+    second later, up to ten times, so an engine that is mid-write can hold the
+    caller for whole seconds before it has even been told to stop (M-1).  The
+    request is delivered on a helper thread so the caller's wait is finite; a
+    request that misses the deadline keeps running and still lands.
+    """
+    def send():
+        for job_id in job_ids:
+            try:
+                _c.request_job_cancel(job_id, force=True)
+            except Exception:  # noqa: BLE001 - a deleted/broken task must not block the rest
+                pass
+
+    worker = threading.Thread(target=send, name="folith-delete-cancel",
+                              daemon=True)
+    worker.start()
+    with _DELETE_CANCEL_THREADS_LOCK:
+        _DELETE_CANCEL_THREADS[:] = [t for t in _DELETE_CANCEL_THREADS
+                                     if t.is_alive()]
+        _DELETE_CANCEL_THREADS.append(worker)
+    worker.join(max(0.0, deadline - time.monotonic()))
+
+
+def delete_stop_stats():
+    """The timing split of the most recent bounded stop (see the dict above)."""
+    stats = dict(_DELETE_STOP_STATS)
+    stats["cancel_pending"] = _pending_delete_cancels()
+    return stats
 
 
 def _job_still_running(job_id):
@@ -566,19 +667,48 @@ def _stop_jobs_for_delete(job_ids):
     unconditional: asking a task that is already idle is harmless (it just
     publishes the terminal state), while gating it on a local-thread probe is
     exactly the bug that let a running engine be deleted without any notice.
+
+    One deadline covers the asking *and* the waiting (M-1).  The request itself
+    is a cross-process state write whose lock is taken blocking — on Windows it
+    retries in whole seconds — so treating it as "free" is what let a 3 s bound
+    report 7.06 s.  It gets :data:`DELETE_CANCEL_REQUEST_SECONDS` at most, and a
+    request that misses that cap keeps running on its own thread.
     """
-    for job_id in job_ids:
-        try:
-            _c.request_job_cancel(job_id, force=True)
-        except Exception:  # noqa: BLE001 - a deleted/broken task must not block the rest
-            pass
-    running = [job_id for job_id in job_ids if _job_still_running(job_id)]
-    if not running:
-        return []
     deadline = time.monotonic() + DELETE_CANCEL_SETTLE_SECONDS
+    stats = _new_delete_stop_stats()
+
+    def probe(job_id):
+        began = time.monotonic()
+        try:
+            return _job_still_running(job_id)
+        finally:
+            stats["probe_seconds"] += time.monotonic() - began
+            stats["probes"] += 1
+
+    began = time.monotonic()
+    _deliver_cancel(job_ids, min(deadline,
+                                 began + DELETE_CANCEL_REQUEST_SECONDS))
+    stats["cancel_seconds"] = time.monotonic() - began
+
+    settle_began = time.monotonic()
+    running = [job_id for job_id in job_ids if probe(job_id)]
     while running and time.monotonic() < deadline:
-        time.sleep(DELETE_CANCEL_POLL_SECONDS)
-        running = [job_id for job_id in running if _job_still_running(job_id)]
+        time.sleep(min(DELETE_CANCEL_POLL_SECONDS,
+                       max(0.0, deadline - time.monotonic())))
+        running = [job_id for job_id in running if probe(job_id)]
+    stats["settle_seconds"] = time.monotonic() - settle_began
+    stats["deadline_hit"] = bool(running)
+
+    if not running and _pending_delete_cancels():
+        # The request is still writing.  Two things follow, and both say "do not
+        # remove the directory": we cannot prove the engine was ever asked to
+        # stop, and a late ``runtime_state`` write would re-create the directory
+        # we just removed.  Report it as still running — the caller refuses, so
+        # the task (and the write) stay consistent.
+        running = list(job_ids)
+
+    stats["still_running"] = list(running)
+    _DELETE_STOP_STATS.update(stats)
     return running
 
 

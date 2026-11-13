@@ -81,6 +81,12 @@ RISK_TESTS = (
     # race lives (E-6q): the probe's own regression test only ever ran in the
     # 150-minute full regression, which is why it stayed red on main for hours.
     "engine_supervisor", "lifecycle_probe", "engine_cold_start",
+    # M-1: deleting a task first asks the engine to stop, and that request is a
+    # cross-process ``runtime_state`` write.  On Windows its lock retries in
+    # whole seconds and pushed a 3 s delete to 7.06 s — a 150-minute full
+    # regression found it once in seven runs, so the delete paths only ever got
+    # a signal from the job that takes longest to say anything.
+    "task_delete", "project_delete",
 )
 
 DOC_TEST_MARKERS = re.compile(r'"docs"|docs/|README|release-notes')

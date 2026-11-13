@@ -34,6 +34,10 @@ What this file pins
    does not leak into the next one (in-process and engine launch), and the
    launch clears exactly once — rebinding the child's ``worker_id`` up to a
    second later must not clear again, because that is inside the window.
+4. The supervisor's terminal boundary is not the handle's exit: while the run
+   is alive, no ``engine_process_exited`` may appear (E-6s, taking over E-6r
+   §5-4).  A supervisor that concluded "the run is over" while the child was
+   still executing would erase the very request these tests write.
 
 The child is the repository's real entry (``qt_client.py --engine-host``); the
 rancher is the real ``folith.desktop.engine_supervisor``; the model endpoint is
@@ -286,6 +290,11 @@ def test_pause_during_cold_start_is_honoured(isolated, gateway, startup_gate):
     events = _events(job_id)
     assert "job_paused" in events, events
     assert "job_completed" not in events, events
+    # E-6s: the supervisor must never conclude "the run is over" while the child
+    # is still executing.  This event name is its terminal boundary, so its
+    # presence here means the supervisor split from the process that runs the
+    # task (an ``exec``/launcher that changes pid, E-6r).
+    assert "engine_process_exited" not in events, events
     # Ordering is the contract: the launch precedes the request, the request
     # precedes the child's own publish, and the pause follows.
     assert events.index("run_launched") < events.index("pause_requested"), events
@@ -356,6 +365,8 @@ def test_cancel_during_cold_start_is_honoured(isolated, gateway, startup_gate):
     events = _events(job_id)
     assert "job_cancelled" in events, events
     assert "job_completed" not in events, events
+    # E-6s: no terminal state may be published for a run that is still alive.
+    assert "engine_process_exited" not in events, events
 
 
 def test_exit_during_cold_start_is_honoured(isolated, gateway, startup_gate):
@@ -383,6 +394,9 @@ def test_exit_during_cold_start_is_honoured(isolated, gateway, startup_gate):
     assert "job_stopped_for_exit" in events, events
     assert "job_completed" not in events, events
     assert "job_cancelled" not in events, "an exit stop must not read as a cancel"
+    # E-6s: the terminal write here belongs to the child, never to the
+    # supervisor's handle (that would also have cleared ``exit_requested``).
+    assert "engine_process_exited" not in events, events
 
 
 # ---------------------------------------------------------------------------
