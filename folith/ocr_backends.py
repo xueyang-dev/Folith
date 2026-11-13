@@ -34,6 +34,8 @@ from pathlib import Path
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from folith.subprocess_bounds import run_bounded as _run_bounded
+
 TESSERACT_BACKEND = "tesseract"
 PADDLEOCR_BACKEND = "paddleocr"
 ONLINE_OCR_BACKEND = "online"
@@ -94,9 +96,14 @@ class TesseractBackend(OCRBackend):
         if not root and Path(self.command).is_file():
             try:
                 from folith.desktop.process import hidden_console_kwargs
-                result = subprocess.run([self.command, "--list-langs"], capture_output=True,
-                                        text=True, encoding="utf-8", errors="replace", timeout=10,
-                                        **hidden_console_kwargs())
+                # Bounded (E-2d): same wrapper/grandchild hazard as the page
+                # OCR call; this probe sits on ``runtime_info()`` and used to be
+                # able to block for good on Windows.  Same argv, same 10 s
+                # bound, same ``(OSError, TimeoutExpired) -> ""`` fallback.
+                result = _run_bounded([self.command, "--list-langs"],
+                                      capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace", timeout=10,
+                                      **hidden_console_kwargs())
                 match = re.search(r'in "([^"]+)"', (result.stdout or "") + (result.stderr or ""))
                 root = match.group(1) if match else ""
             except (OSError, subprocess.TimeoutExpired):

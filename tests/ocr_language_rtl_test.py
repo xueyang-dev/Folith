@@ -19,6 +19,7 @@ import pytest
 
 import core
 from folith import ocr_cache
+from folith import ocr_tesseract
 from folith import source_cleanup
 from folith.ocr_language import (
     OCR_LANGUAGE_REGISTRY,
@@ -118,7 +119,10 @@ def test_tesseract_command_uses_the_explicit_language(monkeypatch):
         seen["argv"] = argv
         return _Proc()
 
-    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    # E-2d: the page OCR call goes through run_bounded(); the seam moved with it
+    # (the fake still receives the argv and returns a CompletedProcess-shaped
+    # object, so the assertions below are unchanged).
+    monkeypatch.setattr(ocr_tesseract, "_run_bounded", fake_run)
     blocks, error = core._ocr_page_with_tesseract(
         "tesseract", b"png", "ara", direction="rtl")
     assert error is None

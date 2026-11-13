@@ -7,7 +7,15 @@ import tempfile
 from pathlib import Path
 from folith import ocr_language as _ocr_language
 from folith.desktop.process import hidden_console_kwargs as _hidden_console_kwargs
+from folith.subprocess_bounds import run_bounded as _run_bounded
 OCR_CONFIDENCE_THRESHOLD_DEFAULT = 88.0
+#: Per-page bound for the Tesseract call.  This is the riskiest native call in
+#: the product (one page, 120 s): with ``subprocess.run(timeout=120)`` on Windows
+#: an escaped grandchild holding the pipes froze the OCR worker for good, so the
+#: call goes through :func:`folith.subprocess_bounds.run_bounded`.  The value is
+#: a named constant so a test can exercise the *real* call end to end without
+#: waiting two minutes; the shipped bound must stay 120 s.
+TESSERACT_PAGE_TIMEOUT = 120.0
 
 def _ocr_join_lines(left, right, direction="ltr"):
     left = re.sub(r"\s+", " ", str(left or "").strip())
@@ -187,10 +195,17 @@ def _ocr_page_with_tesseract(command, png_bytes, language, direction=None, psm=N
         tmp.flush()
         tmp_path = tmp.name
     try:
-        proc = subprocess.run(
+        # Bounded (E-2d): capture goes to temporary files, never pipes, so a
+        # tesseract launcher that left a grandchild behind cannot hold this call
+        # open; the only wait is ``Popen.wait(timeout=)`` and the whole tree is
+        # killed when the bound expires.  Command line, decoding and the
+        # ``TimeoutExpired`` -> "超过 120 秒" mapping are unchanged, so the OCR
+        # result itself is untouched.
+        proc = _run_bounded(
             [command, tmp_path, "stdout", "-l", language, "--psm",
              str(resolved_psm), "tsv"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=TESSERACT_PAGE_TIMEOUT,
             **_hidden_console_kwargs(),
         )
         if proc.returncode != 0:

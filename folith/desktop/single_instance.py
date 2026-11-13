@@ -26,6 +26,7 @@ from pathlib import Path
 from . import paths as desktop_paths
 from . import process as proc_util
 from .paths import DesktopPaths
+from ..subprocess_bounds import run_bounded as _run_bounded
 
 RECORD_VERSION = 1
 
@@ -206,14 +207,16 @@ def _activate_bundle() -> bool:
     """Fallback: ask LaunchServices to activate the app bundle (frozen builds)."""
     if not getattr(sys, "frozen", False):
         return False
-    import subprocess
 
     bundle = Path(sys.executable).resolve()
     for parent in bundle.parents:
         if parent.suffix == ".app":
             try:
-                subprocess.run(["open", str(parent)], check=False, timeout=10,
-                               capture_output=True)
+                # Bounded (E-2d): on the second-launch path, before any window
+                # exists; ``open`` must not be able to freeze the launch.  Same
+                # argv, same 10 s bound, same False fallback.
+                _run_bounded(["open", str(parent)], check=False, timeout=10,
+                             capture_output=True)
                 return True
             except Exception:  # pragma: no cover - defensive
                 return False

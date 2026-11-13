@@ -82,7 +82,7 @@ def test_open_directory_records_the_command(tmp_path, monkeypatch):
         calls.append(list(argv))
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(file_actions.subprocess, "run", fake_run)
+    monkeypatch.setattr(file_actions, "_run_bounded", fake_run)
     if os.name == "nt":  # pragma: no cover - Windows-only path
         monkeypatch.setattr(file_actions.os, "startfile",
                             lambda target: opened.append(target))
@@ -104,7 +104,7 @@ def test_successful_action_records_the_command(delivered, monkeypatch):
         calls.append(list(argv))
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(file_actions.subprocess, "run", fake_run)
+    monkeypatch.setattr(file_actions, "_run_bounded", fake_run)
     result = file_actions.reveal_in_file_manager(delivered)
     assert result.ok is True
     if sys.platform == "darwin":
@@ -123,7 +123,7 @@ def test_failed_command_surfaces_the_reason(delivered, monkeypatch):
             raise OSError("boom")
         monkeypatch.setattr(file_actions.os, "startfile", fail_open)
     else:
-        monkeypatch.setattr(file_actions.subprocess, "run", lambda argv, **kwargs: SimpleNamespace(
+        monkeypatch.setattr(file_actions, "_run_bounded", lambda argv, **kwargs: SimpleNamespace(
             returncode=2, stdout="", stderr="boom"))
     result = file_actions.open_with_default_app(delivered)
     assert result.ok is False
@@ -136,7 +136,7 @@ def test_explorer_exit_status_is_not_a_failure(delivered, monkeypatch, command, 
     # launchers' non-zero status is still a real failure.
     argv = [command, f"/select,{delivered}"]
     monkeypatch.setattr(file_actions, "command_for", lambda action, path: argv)
-    monkeypatch.setattr(file_actions.subprocess, "run", lambda argv, **kwargs: SimpleNamespace(
+    monkeypatch.setattr(file_actions, "_run_bounded", lambda argv, **kwargs: SimpleNamespace(
         returncode=1, stdout="", stderr=""))
     result = file_actions.reveal_in_file_manager(delivered)
     assert result.ok is ok
@@ -150,7 +150,7 @@ def test_exceptions_never_escape(delivered, monkeypatch):
     def explode(argv, **kwargs):
         raise OSError("no launcher")
 
-    monkeypatch.setattr(file_actions.subprocess, "run", explode)
+    monkeypatch.setattr(file_actions, "_run_bounded", explode)
     result = file_actions.reveal_in_file_manager(delivered)
     assert result.ok is False and "no launcher" in result.describe()
 
