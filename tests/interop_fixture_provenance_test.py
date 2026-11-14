@@ -17,16 +17,22 @@ import pytest
 from scripts.release_preflight import ROOT, _ref_blob, _ref_files
 
 _DIGEST = re.compile(r"`([a-f0-9]{64})`")
-_ROW = re.compile(r"^\| `([^`]+\.(?:sdlxliff|mqxliff))` \|")
+_ROW = re.compile(r"^\| `([^`]+\.(?:sdlxliff|mqxliff|xlf))` \|")
 #: A row whose digests are abbreviated ("`d9fc637c…`") is a narrative summary, not
 #: a record: SOURCES.md keeps one to show what line-ending normalisation did. Only
 #: rows that state the full 64 hex characters are treated as records.
 _ABBREVIATED = re.compile(r"`[a-f0-9]{4,}\.\.\.?`|`[a-f0-9]{4,}…`")
 
 
-@pytest.mark.parametrize("extension", ["sdlxliff", "mqxliff"])
-def test_documented_fixture_digests_match_committed_blobs(extension):
-    directory = f"tests/fixtures/{extension}"
+@pytest.mark.parametrize(
+    ("directory", "extension"),
+    [
+        ("tests/fixtures/sdlxliff", "sdlxliff"),
+        ("tests/fixtures/mqxliff", "mqxliff"),
+        ("tests/fixtures/xliff12", "xlf"),
+    ],
+)
+def test_documented_fixture_digests_match_committed_blobs(directory, extension):
     paths = [
         path for path in _ref_files("HEAD")
         if path.startswith(f"{directory}/") and path.endswith(f".{extension}")
