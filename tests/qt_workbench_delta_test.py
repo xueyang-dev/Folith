@@ -221,6 +221,77 @@ def test_a_batch_delta_updates_rows_without_reading_the_state(client, monkeypatc
     assert workbench.segment_row_text(403, 2) == "新提交403"
 
 
+def test_a_batch_that_arrives_before_the_first_render_still_fills_the_grid(client):
+    """P1-5e: the grid must not stay empty because a delta came too early.
+
+    The first feed of a run can arrive before the workbench has ever rendered
+    its rows, so ``segment_list.rowCount()`` is 0 while ``_rows`` already holds
+    the committed batch.  Applying the delta by position then addressed cells
+    that did not exist (``setItem`` is a silent no-op beyond ``rowCount()``), the
+    paint raised, and the whole incremental update was abandoned -- the grid
+    stayed empty for the rest of the translation.
+
+    ``apply_delta`` now treats "the grid has a different number of rows than the
+    model" as "does not line up" and returns False, so the caller reloads the
+    authoritative state.  What is pinned here is the user-visible outcome: after
+    such a delta the grid has the rows.
+    """
+    window, core, app = client["window"], client["core"], client["app"]
+    job_id = _open(client)
+    workbench = window.workbench
+    state = core.load_job_state(job_id)
+
+    # Exactly the state the first feed sees: the model has rows, the grid has not
+    # been rendered yet.
+    workbench.segment_list.setRowCount(0)
+    assert len(workbench._rows) > 0, "the fixture must have rows in the model"
+
+    indexes = list(range(400, 404))
+    _append_record(core, job_id, seq=1, offset=indexes[0],
+                   pairs=_changed_pairs(state, indexes))
+    window._poll_workbench()
+
+    assert _pump(app, 60, lambda: workbench.segment_list.rowCount() > 0
+                 and not window._state_load_in_flight), (
+        "the grid stayed empty after a delta that arrived before the first render: "
+        f"rowCount={workbench.segment_list.rowCount()} rows={len(workbench._rows)}")
+    assert workbench.segment_list.rowCount() == len(workbench._rows)
+    # Nothing is dropped: the fallback resets the delta cursor and rebuilds the
+    # model from the full state plus the journal suffix, so the batch comes back
+    # on the next tick instead of being skipped by an already-advanced cursor.
+    assert _pump(app, 60, lambda: workbench.segment_row_text(400, 2) == "新提交400"), (
+        "the batch was lost by the fallback: the grid filled from the snapshot but "
+        f"row 400 is {workbench.segment_row_text(400, 2)!r}")
+
+
+def test_painting_a_row_the_grid_does_not_have_is_not_swallowed(client):
+    """Under test the out-of-range paint is a hard failure, not a silent skip.
+
+    Production logs and returns False instead (see the next test); the test
+    environment must hear about it, because "the grid did not have the row" is
+    always a bug in the caller.
+    """
+    _open(client)
+    window = client["window"]
+    workbench = window.workbench
+    workbench.segment_list.setRowCount(0)
+    workbench._painted.clear()          # the cells are gone; the cache is not
+    with pytest.raises(RuntimeError, match="no cell at position 0"):
+        workbench._paint_row(0, workbench._rows[0])
+
+
+def test_painting_a_missing_row_in_production_reports_instead_of_raising(
+        client, monkeypatch):
+    _open(client)
+    window = client["window"]
+    workbench = window.workbench
+    workbench.segment_list.setRowCount(0)
+    workbench._painted.clear()
+    # Outside a test run the same condition must not take the update down.
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert workbench._paint_row(0, workbench._rows[0]) is False
+
+
 def test_only_the_batch_rows_are_repainted_and_no_heights_for_untouched_rows(client):
     window, core, app = client["window"], client["core"], client["app"]
     job_id = _open(client)
