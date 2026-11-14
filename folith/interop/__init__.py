@@ -58,6 +58,16 @@ from folith.interop.tu_contract import (
     validate_tag_sequence,
     validate_target_tags,
 )
+from folith.interop.xliff12_dialect import (
+    LINE_ENDING_RULE,
+    MQXLIFF,
+    SDLXLIFF,
+    DialectConfig,
+    DialectWriteError,
+    export_unchanged,
+    prove_readonly,
+    write_target,
+)
 from folith.interop.xliff12 import (
     DEFAULT_LOCK_POLICY,
     InlineSide,
@@ -113,6 +123,11 @@ from folith.interop.xml_span import (
 
 __all__ = [
     "DEFAULT_LOCK_POLICY",
+    "DialectConfig",
+    "DialectWriteError",
+    "LINE_ENDING_RULE",
+    "MQXLIFF",
+    "SDLXLIFF",
     "DUPLICATE_FILE_SCOPE_CODE",
     "ExportPlan",
     "FILE_SCOPE_CODES",
@@ -166,6 +181,7 @@ __all__ = [
     "diff_snapshots",
     "duplicate_file_scopes",
     "encode_placeholder",
+    "export_unchanged",
     "export_patched",
     "export_with_verification",
     "file_scope_warnings",
@@ -181,6 +197,7 @@ __all__ = [
     "plan_export",
     "plan_target_patches",
     "project_tree",
+    "prove_readonly",
     "readonly_bytes_report",
     "reconcile_identities",
     "render_patches",
@@ -196,4 +213,5 @@ __all__ = [
     "verify_export",
     "verify_preserved",
     "whitelist_allows",
+    "write_target",
 ]

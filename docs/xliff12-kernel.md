@@ -153,8 +153,10 @@ SDLXLIFF 的锁定在**子段**上（`trans-unit/sdl:seg-defs/sdl:seg@locked="tr
   一条可见警告 `PARTIAL_SUBSEGMENT_LOCK`（要求调用方按 `subsegments=True`
   逐段处理，否则会覆盖锁定子段）。
 
-P3-3 只实现到接口与构造样本 + 真实 QuotesSample 的两条单段锁定；完整的 SDLXLIFF
-读写配置属 P3-4。
+P3-3 只实现到接口与构造样本 + 真实 QuotesSample 的两条单段锁定。P3-4 的只读配置
+在 `folith/interop/xliff12_dialect.py`：`SDLXLIFF` 只认 `sdl:seg` 的锁定和
+`conf`，`MQXLIFF` 只认 `trans-unit` 上的 `locked` / `status`。两份都不提供译文
+写回，`write_target` 直接拒绝。
 
 ## 6. 身份账本
 
