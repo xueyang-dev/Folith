@@ -500,6 +500,78 @@ def test_report_declares_measurement_v3_and_the_phase_contract():
             assert phase in operations[name]["phases"]
 
 
+def _verify_with_run_counts(tmp_path, counts, *, mode="source"):
+    """Write a minimal round whose R phase sampled *counts* and verify it."""
+    import json as _json
+
+    payload = _report(result={
+        "gui_jank": _window(),
+        "run_window": _window(observed_s=12.0),
+        "translation": {"settled": True, "completed": True},
+        "operations_skipped": {"scroll_not_scrollable": 3,
+                               "edit_table_not_ready": 5},
+    })
+    payload["environment"]["mode"] = mode
+    payload["environment"]["offscreen"] = mode.endswith("_offscreen")
+    spec = payload["metrics"]["operations"]["operations"]
+    for name, count in counts.items():
+        spec[name]["phases"]["run"] = {"measured": count > 0, "count": count,
+                                       "p95": 1.0 if count else None}
+    (tmp_path / "runtime-baseline.json").write_text(
+        _json.dumps(payload), encoding="utf-8")
+    verdict = runner.verify_round(tmp_path)
+    check = next((item for item in verdict["checks"]
+                  if item["check"] == "run_phase_operations_sampled"), None)
+    return verdict, check
+
+
+def test_a_source_round_that_sampled_no_run_phase_operations_fails_verify(tmp_path):
+    """P1-5e: zero scroll/select/type while translating must fail the round.
+
+    Those three only run when the grid has rows, so zero samples is not "the user
+    did not scroll" -- it is "the grid was empty", and such a round's R numbers
+    cannot be compared with the other arm's.
+    """
+    verdict, check = _verify_with_run_counts(
+        tmp_path, {"scroll": 0, "select_segment": 0, "type_echo": 0})
+    assert check["ok"] is False, check
+    assert check["detail"]["samples_in_R"] == {"scroll": 0, "select_segment": 0,
+                                               "type_echo": 0}
+    # The skip counters travel with the report so the reason is visible.
+    assert check["detail"]["skipped"]["scroll_not_scrollable"] == 3
+    assert verdict["ok"] is False
+
+
+def test_a_source_round_with_run_phase_operations_passes_that_check(tmp_path):
+    _verdict, check = _verify_with_run_counts(
+        tmp_path, {"scroll": 2288, "select_segment": 134, "type_echo": 134})
+    assert check["ok"] is True, check
+
+
+def test_an_offscreen_source_round_is_gated_too(tmp_path):
+    """The smoke leg is ``source_offscreen``; the gate must cover it as well."""
+    _verdict, check = _verify_with_run_counts(
+        tmp_path, {"scroll": 0, "select_segment": 0, "type_echo": 0},
+        mode="source_offscreen")
+    assert check is not None and check["ok"] is False, check
+
+
+def test_a_frozen_round_is_not_asked_for_run_phase_operations(tmp_path):
+    """The frozen arm's flow is the app's own; this gate is a source-round gate."""
+    verdict, _check = _verify_with_run_counts(
+        tmp_path, {"scroll": 0, "select_segment": 0, "type_echo": 0},
+        mode="frozen")
+    assert not any(item["check"] == "run_phase_operations_sampled"
+                   for item in verdict["checks"])
+
+
+def test_the_report_records_which_operations_were_skipped():
+    payload = _report(result={"operations_skipped": {"scroll_not_scrollable": 4,
+                                                     "edit_table_not_ready": 7}})
+    assert payload["operations_skipped"] == {"scroll_not_scrollable": 4,
+                                             "edit_table_not_ready": 7}
+
+
 def test_a_real_window_run_does_not_carry_the_offscreen_limits(monkeypatch):
     """A real-window round must not describe itself as offscreen (P1-5).
 
