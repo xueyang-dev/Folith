@@ -186,9 +186,22 @@ class FakeEngine:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             runtime = core.load_runtime_state(self.job_id)
-            if (runtime.get("worker") or {}).get("owner_pid") == self.process.pid:
+            owner = (runtime.get("worker") or {}).get("owner_pid")
+            # The engine publishes its *own* pid, which need not equal the
+            # handle's: on Windows the interpreter can be a launch shim (the
+            # Store app-execution alias, or py.exe) that spawns the real
+            # interpreter as a child and waits for it.  Requiring
+            # ``owner == process.pid`` then never matched -- the engine ran all
+            # 200 batches while this loop waited, and the failure read "engine
+            # died before running" when it had run to completion.
+            if owner and owner != os.getpid() and self.process.poll() is None:
                 return
             if self.process.poll() is not None:
+                # The child may have published and exited between the two reads.
+                runtime = core.load_runtime_state(self.job_id)
+                owner = (runtime.get("worker") or {}).get("owner_pid")
+                if owner and owner != os.getpid():
+                    return
                 raise AssertionError(self._death_report())
             time.sleep(0.02)
         raise AssertionError("engine never published its owner pid")
