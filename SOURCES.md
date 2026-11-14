@@ -4,7 +4,7 @@
 合规检查使用。它只陈述**可核对的事实**；不构成法律意见。若需要正式的法律结论，
 须由人复核。
 
-最后更新：2026-11-12。两类方言样本的固定上游链接和许可副本见各目录 README。
+最后更新：2026-11-14。方言样本和通用 XLIFF 1.2 样本的固定上游链接、许可副本见各目录 README。
 
 ## 它是什么 / 不是什么
 
@@ -36,6 +36,21 @@
 | `mt.mqxliff` | `ikuehirata/MT-quality-review` → `sample_and_materials/mt.mqxliff` | 11.6.8 | `9c228773a9cf10d2954e9578b45e46ff76491294cdd9233ceb4d1fe367eb9754` | `9c228773a9cf10d2954e9578b45e46ff76491294cdd9233ceb4d1fe367eb9754` |
 | `pe.mqxliff` | `ikuehirata/MT-quality-review` → `sample_and_materials/pe.mqxliff` | 11.6.8 | `12b338dc75b8083161072c83b774015cc9d5842ff677a8d1108ff42686921566` | `12b338dc75b8083161072c83b774015cc9d5842ff677a8d1108ff42686921566` |
 | `translation_status.mqxliff` | `ikuehirata/mqxliff-viewer` → `sample/translation_status_sample.xlsx_jpn.mqxliff` | 11.6.8 | `381f331e8c000a8bd76a422662c52c541611fd5d1b26cbcc4aaba81d7bcf2e44` | `381f331e8c000a8bd76a422662c52c541611fd5d1b26cbcc4aaba81d7bcf2e44` |
+
+## 通用 XLIFF 1.2（`tests/fixtures/xliff12/`，G4-E）
+
+不是 SDLXLIFF，也不是 MQXLIFF。许可文本在 `tests/fixtures/xliff12/licenses/`。
+固定提交和「为什么有一份字节被发布门禁豁免」写在该目录 README，这里只列指纹。
+`derived/` 下两份是把 `validators.en.xlf` 改坏得到的，不是上游原件。
+
+| 文件 | 上游 | 许可证 | 入库 blob SHA-256 | 上游原件 SHA-256 |
+|---|---|---|---|---|
+| `validators.en.xlf` | `symfony/symfony` @ `681f04c9fff0b6a15d02962a9175161b38962171` → `src/Symfony/Component/Validator/Resources/translations/validators.en.xlf` | MIT | `45160ab0fb875a18ac52fd271f315849352b333d5bda601f2640f2f3609ba14f` | `45160ab0fb875a18ac52fd271f315849352b333d5bda601f2640f2f3609ba14f` |
+| `messages.fr.xlf` | `angular/angular` @ `651c34735d011882b537c2ea2603467d00de8f67` → `adev/src/content/examples/i18n/src/locale/messages.fr.xlf` | MIT | `27edbf868bb8d98c82cba47008d4eece7f059fc13634d25501a34fa103680d10` | `27edbf868bb8d98c82cba47008d4eece7f059fc13634d25501a34fa103680d10` |
+| `test1_es.xlf` | `okapiframework/Okapi` @ `51e134847b52532d6875e3985c842d45f39e1556` → `okapi/filters/xliff/src/test/resources/test1_es.xlf` | Apache-2.0 | `c27fe5f204c8a0e256e6fcc58c74d503880e82139238b5ab5c962f1afbca2ba2` | `c27fe5f204c8a0e256e6fcc58c74d503880e82139238b5ab5c962f1afbca2ba2` |
+| `manual-alttrans.xlf` | 同一 Okapi 提交 → `okapi/filters/xliff/src/test/resources/Manual-12-AltTrans.xlf`（入库改名，字节未改） | Apache-2.0 | `703c334a66e57d7abb28582191322f2af2e7302ac13d550cb10135835fb9acaa` | `703c334a66e57d7abb28582191322f2af2e7302ac13d550cb10135835fb9acaa` |
+| `validators.en.damaged.xlf` | 由本表 `validators.en.xlf` 删掉第一处 `</source>` 的结束 `>` 得到 | MIT（派生，非上游原件） | `4e51b6377704d9f10fa4caf44cd30263715ab4a8d51da79e2c276a0b4cced032` | `45160ab0fb875a18ac52fd271f315849352b333d5bda601f2640f2f3609ba14f` |
+| `validators.en.unknown-namespace.xlf` | 由 `validators.en.xlf` 在第一处 `source` 结束标签后插入外来命名空间元素得到 | MIT（派生，非上游原件） | `f5b2292d8fe84672c9967d1c9bba19f6f5a8b5efd4b9f5def2f8fcae74627e07` | `45160ab0fb875a18ac52fd271f315849352b333d5bda601f2640f2f3609ba14f` |
 
 ## 入库时的换行规范化
 
@@ -106,14 +121,15 @@ CRLF 工作区字节原样写进暂存区（实测入库 blob 35384 B → 暂存
 
 ## 还缺什么（计划 D8 的要求）
 
-- [ ] **至少 2 个真实的通用 XLIFF 1.2 文件**（不是 SDLXLIFF/MQXLIFF）：导入后不做修改
-      直接导出，结构 diff 为空。目前仓库只有方言样本。
+- [x] **至少 2 个真实的通用 XLIFF 1.2 文件**（不是 SDLXLIFF/MQXLIFF）：见上面的
+      「通用 XLIFF 1.2」一节。四个上游文件都已入库；`derived/` 两份是改坏的副本，
+      不算这一条。
 
 ## 如何核对
 
 ```bash
 # 逐文件重算入库指纹
-for f in tests/fixtures/sdlxliff/*.sdlxliff tests/fixtures/mqxliff/*.mqxliff; do
+for f in tests/fixtures/sdlxliff/*.sdlxliff tests/fixtures/mqxliff/*.mqxliff tests/fixtures/xliff12/*.xlf tests/fixtures/xliff12/derived/*.xlf; do
   shasum -a 256 "$f"
 done
 
