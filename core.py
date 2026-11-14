@@ -10341,6 +10341,18 @@ def request_job_exit(job_id):
     """
     if not job_id:
         return False
+    # The engine host asks again when its stdin reaches EOF, and that call can
+    # land *while* the worker is finishing: the worker has already published
+    # ``interrupted`` with ``exit_requested`` set, but it is still inside its
+    # ``finally``, so ``is_job_worker_alive`` is still true.  The "alive" branch
+    # then flips the terminal state back to ``cancelling``, and the supervisor
+    # later publishes ``interrupted`` with ``exit_requested=False`` -- the run
+    # loses the flag that says "resume me" (found on Windows, E-6a follow-up).
+    # The exit is already durable, so confirm it instead of restating it.
+    runtime = load_runtime_state(job_id) or {}
+    if str(runtime.get("status") or "") == "interrupted" \
+            and runtime.get("exit_requested") is True:
+        return True
     alive = is_job_worker_alive(job_id) or _job_execution_alive(job_id)
     if alive:
         update_runtime_state(

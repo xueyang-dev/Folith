@@ -370,6 +370,52 @@ def test_cancel_during_cold_start_is_honoured(isolated, gateway, startup_gate):
     assert "engine_process_exited" not in events, events
 
 
+def test_the_exit_fallback_cannot_undo_the_terminal_state(isolated, monkeypatch):
+    """The engine host's stdin-EOF fallback must not flip a finished run back.
+
+    On Windows the child reaches EOF *while* the worker is finishing: the worker
+    has published ``interrupted`` with ``exit_requested`` set, but it is still in
+    its ``finally``, so ``is_job_worker_alive`` is still true.  The "alive" branch
+    then rewrote the state as ``cancelling`` and the supervisor later published
+    ``interrupted`` with ``exit_requested=False`` -- the run lost the flag that
+    offers "resume".  This pins the ordering without depending on the race.
+    """
+    job_id = "e6aexiteof1"
+    _create_job(job_id)
+    core.update_runtime_state(
+        job_id, status="interrupted", phase="interrupted", phase_label="已停止以便退出",
+        exit_requested=True, cancel_requested=False, event="任务已停止以便退出；可继续处理。",
+        event_name="job_stopped_for_exit", event_visibility="user",
+        event_category="lifecycle", progress=True, heartbeat=True,
+        worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+    # The worker is still inside ``finally``: the thread answer is still "alive".
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda _job: True)
+
+    assert core.request_job_exit(job_id) is True
+
+    final = _runtime(job_id)
+    assert final.get("status") == "interrupted", final
+    assert final.get("exit_requested") is True, final
+    assert "cancelling" not in _events(job_id), _events(job_id)
+
+
+def test_a_live_run_still_asks_the_worker_to_stop(isolated, monkeypatch):
+    """The guard must not turn the exit request into a no-op for a live run."""
+    job_id = "e6aexitaliv1"
+    _create_job(job_id)
+    core.update_runtime_state(job_id, status="running", phase="running",
+                              phase_label="正在翻译", exit_requested=False,
+                              cancel_requested=False)
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda _job: True)
+
+    assert core.request_job_exit(job_id) is True
+
+    after = _runtime(job_id)
+    assert after.get("status") == "cancelling", after
+    assert after.get("exit_requested") is True, after
+    assert after.get("cancel_requested") is True, after
+
+
 def test_exit_during_cold_start_is_honoured(isolated, gateway, startup_gate):
     """Start -> Quit immediately: the run stops resumable (``interrupted``)."""
     data_dir, _log_dir = isolated
