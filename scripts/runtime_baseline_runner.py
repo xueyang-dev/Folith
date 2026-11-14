@@ -121,6 +121,56 @@ LIMITS = (
 )
 
 
+def limits_for(offscreen: bool) -> list[str]:
+    """The limits that actually apply to *this* run's window.
+
+    ``LIMITS`` describes an offscreen QPA.  A run in a real window does not have
+    those limits and does have a different one (no frozen product), so printing
+    the offscreen list there would describe a run that was not performed.
+    """
+    if offscreen:
+        return list(LIMITS)
+    return [
+        "source run in a real window: not a frozen product (no .app bundle or DMG)",
+        "this harness drives the window from Python; a real user's input timing differs",
+        "one machine per run: a baseline needs the same scenarios on macOS and Windows",
+        "per-operation latency is the synchronous GUI-thread span of the call; work a "
+        "later paint/timer does is outside it",
+        "the broadcast of rendered frames is not measured; frame pacing is approximate",
+    ]
+
+
+def motion_state() -> dict:
+    """What the animation switch was, in the same order the product reads it.
+
+    ``folith.qt.motion.reduce_motion`` prefers ``FOLITH_REDUCE_MOTION``, then
+    treats offscreen/non-interactive QPA as "reduced", then asks the system.
+    The system branch cannot be read from here, so it is reported as unknown
+    rather than assumed either way.
+    """
+    raw = (os.environ.get("FOLITH_REDUCE_MOTION") or "").strip()
+    if raw:
+        reduced = raw.lower() not in ("0", "false", "no")
+        source = "FOLITH_REDUCE_MOTION"
+    elif os.environ.get("FOLITH_QT_NONINTERACTIVE") == "1" \
+            or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+        reduced = True
+        source = "forced by the offscreen/non-interactive QPA"
+    else:
+        return {"reduce_motion": None, "motion_enabled": None, "env_value": None,
+                "source": "system setting: this harness cannot read it from here"}
+    return {"reduce_motion": reduced, "motion_enabled": not reduced,
+            "env_value": raw, "source": source}
+
+
+def note_for(offscreen: bool) -> str:
+    if offscreen:
+        return ("offscreen/mock numbers are labelled and cannot replace the "
+                "macOS/Windows frozen-app baseline the issue asks for")
+    return ("source run in a real window; still not a frozen product, so it cannot "
+            "replace the frozen-app baseline the issue asks for")
+
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -1786,6 +1836,14 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
     the R/I phase blocks, per-operation percentiles and the "not measured"
     markers — is testable without a Qt window (P0-6).
     """
+    _motion = motion_state()
+    # Older callers (and the tests) hand over only ``mode``; keep answering the
+    # same way for them instead of silently switching them to real-window limits.
+    _offscreen = environment.get("offscreen")
+    if _offscreen is None:
+        _offscreen = str(environment.get("mode") or "").endswith("_offscreen")
+    else:
+        _offscreen = bool(_offscreen)
     scenario_window = _normalize_window(result.get("gui_jank") or {})
     run_window = result.get("run_window") or {}
     if not isinstance(run_window, dict) or not run_window:
@@ -1870,10 +1928,11 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
             "ui_health": result.get("ui_health") or {},
             "run_records": result.get("run_records") or [],
         },
-        "limits": list(LIMITS),
+        "limits": limits_for(_offscreen),
         "real_machine_baseline": False,
-        "note": "offscreen/mock numbers are labelled and cannot replace the "
-                "macOS/Windows frozen-app baseline the issue asks for",
+        "motion": _motion,
+        "motion_enabled": _motion.get("motion_enabled"),
+        "note": note_for(_offscreen),
     }
     translation = result.get("translation") or {}
     payload["ok"] = bool(
@@ -2203,7 +2262,7 @@ def main(argv: list[str] | None = None) -> int:
             "measurement": {"version": MEASUREMENT_VERSION,
                             "discarded_rounds": 1,
                             "note": "not implemented: no round was measured"},
-            "limits": list(LIMITS),
+            "limits": limits_for(bool(args.offscreen)),
             "started_at": started_at,
             "finished_at": now_iso(),
         }

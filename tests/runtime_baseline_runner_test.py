@@ -500,6 +500,46 @@ def test_report_declares_measurement_v3_and_the_phase_contract():
             assert phase in operations[name]["phases"]
 
 
+def test_a_real_window_run_does_not_carry_the_offscreen_limits(monkeypatch):
+    """A real-window round must not describe itself as offscreen (P1-5).
+
+    The report used to print the offscreen limit list unconditionally, so a
+    round measured in a real window with animations on carried a limit that did
+    not apply to it -- and, worse, hid the one that does (no frozen product).
+    """
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    payload = _report(environment={"mode": "source", "offscreen": False})
+    joined = " ".join(payload["limits"]).lower()
+    assert "offscreen" not in joined, payload["limits"]
+    assert "frozen product" in joined, payload["limits"]
+    assert "offscreen" not in payload["note"].lower(), payload["note"]
+    assert payload["real_machine_baseline"] is False, \
+        "a source run is still not a frozen product"
+    # The offscreen list is still what an offscreen round reports.
+    offscreen = _report(environment={"mode": "source_offscreen", "offscreen": True})
+    assert "offscreen" in " ".join(offscreen["limits"]).lower()
+
+
+def test_report_records_whether_animations_were_on(monkeypatch):
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    on = _report(environment={"mode": "source", "offscreen": False})
+    assert on["motion_enabled"] is True, on["motion"]
+    assert on["motion"]["source"] == "FOLITH_REDUCE_MOTION"
+
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
+    off = _report(environment={"mode": "source", "offscreen": False})
+    assert off["motion_enabled"] is False, off["motion"]
+
+    # Unset + a real window: the system decides, and guessing would be a lie.
+    monkeypatch.delenv("FOLITH_REDUCE_MOTION", raising=False)
+    monkeypatch.delenv("FOLITH_QT_NONINTERACTIVE", raising=False)
+    unknown = _report(environment={"mode": "source", "offscreen": False})
+    assert unknown["motion_enabled"] is None, unknown["motion"]
+    assert "system" in unknown["motion"]["source"]
+
+
 def test_report_without_a_measured_window_is_not_a_zero_measurement():
     """F5 at the report level: no window must not become an all-zero R and I."""
     payload = _report(result={"gui_jank": {}, "translation": {"settled": False}})
