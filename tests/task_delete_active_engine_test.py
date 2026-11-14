@@ -57,14 +57,15 @@ SETTLE_SLACK_SECONDS = 0.6
 def _hold_state_write_lock(child_core, job_dir, log, committed: int) -> None:
     """Emulate one slow Windows ``update_runtime_state`` in the engine child.
 
-    ``core.update_runtime_state`` merges under ``.runtime-write.lock`` with a
-    *blocking* acquire, and on Windows that acquire is
+    ``core.update_runtime_state`` merges under ``.runtime-write.lock``.  Before
+    E-6t that acquire was *blocking*, and on Windows the primitive is
     ``msvcrt.locking(LK_LOCK)``: it retries in whole seconds and gives up only
-    after ten.  A state write that takes seconds in the engine therefore makes
-    the GUI's own ``request_job_cancel`` — the first step of every delete — wait
-    whole seconds before it can even ask the task to stop.  Holding the same OS
-    lock for a fixed window reproduces that stage deterministically, instead of
-    waiting for a Windows runner where one write happens to be slow (M-1).
+    after ten, so a state write that took seconds in the engine made the GUI's
+    own ``request_job_cancel`` — the first step of every delete — wait whole
+    seconds before it could even ask the task to stop.  The acquire is bounded
+    now (``job_lock.acquire_bounded``), but holding the same OS lock for a fixed
+    window still reproduces the contention deterministically, instead of waiting
+    for a Windows runner where one write happens to be slow (M-1).
     """
     hold = child_core._job_lock.acquire(job_dir / ".runtime-write.lock")
     try:
@@ -76,6 +77,28 @@ def _hold_state_write_lock(child_core, job_dir, log, committed: int) -> None:
 
 
 def _run_engine_worker(argv: list[str]) -> int:
+    """Entry point for the fake engine child.
+
+    Wrapped so a crash before the child publishes its pid always leaves a
+    reason in ``engine.log``: on Windows the parent saw an empty stderr and no
+    state, which made "the engine died" impossible to diagnose (E-6u follow-up).
+    """
+    try:
+        return _run_engine_worker_body(argv)
+    except BaseException:
+        import traceback
+
+        output_dir = Path(argv[1]) if len(argv) > 1 else Path(".")
+        try:
+            with (output_dir / "engine.log").open("a", encoding="utf-8") as stream:
+                stream.write("worker crashed before publishing:\n")
+                stream.write(traceback.format_exc())
+        except OSError:
+            pass
+        raise
+
+
+def _run_engine_worker_body(argv: list[str]) -> int:
     import core as child_core
 
     mode, output_dir, job_id = argv[0], Path(argv[1]), argv[2]
@@ -163,13 +186,54 @@ class FakeEngine:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             runtime = core.load_runtime_state(self.job_id)
-            if (runtime.get("worker") or {}).get("owner_pid") == self.process.pid:
+            owner = (runtime.get("worker") or {}).get("owner_pid")
+            # The engine publishes its *own* pid, which need not equal the
+            # handle's: on Windows the interpreter can be a launch shim (the
+            # Store app-execution alias, or py.exe) that spawns the real
+            # interpreter as a child and waits for it.  Requiring
+            # ``owner == process.pid`` then never matched -- the engine ran all
+            # 200 batches while this loop waited, and the failure read "engine
+            # died before running" when it had run to completion.
+            if owner and owner != os.getpid() and self.process.poll() is None:
                 return
             if self.process.poll() is not None:
-                raise AssertionError(
-                    f"engine died before running: {self.process.stderr.read()!r}")
+                # The child may have published and exited between the two reads.
+                runtime = core.load_runtime_state(self.job_id)
+                owner = (runtime.get("worker") or {}).get("owner_pid")
+                if owner and owner != os.getpid():
+                    return
+                raise AssertionError(self._death_report())
             time.sleep(0.02)
         raise AssertionError("engine never published its owner pid")
+
+    def _death_report(self) -> str:
+        """Everything we have about a child that exited before publishing.
+
+        A bare ``stderr`` was empty on Windows while the child was dying, which
+        left the reason unknown; the child now also writes its traceback to
+        ``engine.log``, and this report carries the exit code, the file's tail,
+        and the state the job was left in.
+        """
+        assert self.process is not None
+        code = self.process.poll()
+        stderr = b""
+        try:
+            stderr = self.process.stderr.read() if self.process.stderr else b""
+        except Exception as exc:  # noqa: BLE001 - reporting must never mask the failure
+            stderr = f"<unreadable: {exc}>".encode()
+        log_path = self.output_dir / "engine.log"
+        tail = ""
+        if log_path.is_file():
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+            tail = "\n".join(text.splitlines()[-20:])
+        runtime = core.load_runtime_state(self.job_id) or {}
+        return (
+            f"engine died before running (exit={code})\n"
+            f"  argv={self.process.args!r}\n"
+            f"  stderr={stderr.decode('utf-8', 'replace')!r}\n"
+            f"  engine.log tail:\n{tail or '    <missing>'}\n"
+            f"  runtime status={runtime.get('status')!r} "
+            f"worker={runtime.get('worker')!r}")
 
     def batches(self) -> int:
         pairs = core.job_dir(self.job_id) / "pairs.jsonl"
@@ -381,6 +445,27 @@ def test_a_registered_engine_that_has_not_published_a_status_is_not_deleted(
 # 3b. window.delete_jobs 走的是同一条守卫，并把拒绝原因如实展示
 # ---------------------------------------------------------------------------
 
+class _SyncRunner:
+    """Inline stand-in for ``TaskRunner``: this case is about the batch wording.
+
+    E-4e moved the per-task loop onto ``self.runner``; that the *thread* is a
+    worker (and therefore that the GUI never freezes) is
+    ``task_delete_async_gui_test.py``'s claim.  Here the runner runs inline so
+    one call is enough to reach the "batch finished" UI updates.
+    """
+
+    def submit(self, fn, *args, on_done=None, on_error=None, label="", **kwargs):
+        try:
+            value = fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - mirror TaskRunner's contract
+            if on_error is not None:
+                on_error(str(exc), repr(exc))
+            return None
+        if on_done is not None:
+            on_done(value)
+        return None
+
+
 def test_window_delete_jobs_reports_the_guarded_refusal(delete_env, monkeypatch):
     pytest.importorskip("PySide6")
     import types
@@ -404,13 +489,18 @@ def test_window_delete_jobs_reports_the_guarded_refusal(delete_env, monkeypatch)
     notices: list[str] = []
     stub = types.SimpleNamespace(
         _current_job_id="",
+        _delete_in_flight=False,
+        runner=_SyncRunner(),
         stack=None,
         _confirm=lambda *a, **k: True,
         refresh_home=lambda: None,
         _failure=lambda title, message, task=True: failures.append((title, message)),
         _notice=lambda message, task=True: notices.append(message),
     )
-    window_module.MainWindow.delete_jobs(stub, [JOB_ID, "e4b-other-job"])
+    # E-4e 把 worker/on_done 拆成了独立方法；未绑定的调用需要一个 stub 上的绑定。
+    stub._delete_jobs_async = types.MethodType(
+        window_module.MainWindow._delete_jobs_async, stub)
+    assert window_module.MainWindow.delete_jobs(stub, [JOB_ID, "e4b-other-job"]) is True
 
     assert called == [JOB_ID, "e4b-other-job"]
     assert failures, "被守卫拒绝的任务必须显示原因，而不是静默"
@@ -445,8 +535,17 @@ def test_an_engine_that_ignores_cancel_refuses_the_delete_and_keeps_everything(
         assert core.load_job_state(job_id) is not None
         assert core.load_runtime_state(job_id).get("cancel_requested") is True
         committed = engine.batches()
-        time.sleep(0.25)
-        assert engine.batches() > committed, "被拒绝的删除不得打断引擎的写入"
+        # Wait for the next batch instead of sleeping a fixed 0.25 s: the engine
+        # writes every 0.1 s, but on a loaded runner the child may not be
+        # scheduled inside that window, and a fixed sleep then reports "the
+        # engine stopped writing" when it merely had not written yet.  The
+        # assertion still requires an increase; only the waiting has a bound.
+        deadline = time.monotonic() + 10.0
+        while engine.batches() <= committed and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert engine.batches() > committed, (
+            f"被拒绝的删除不得打断引擎的写入（等了 "
+            f"{time.monotonic() - (deadline - 10.0):.1f} s，批次仍停在 {committed}）")
     finally:
         engine.stop()
 
@@ -458,10 +557,11 @@ def test_a_slow_engine_state_write_cannot_stretch_the_delete_wait(delete_env):
     """Windows 上 7.06 s 的那一段（M-1）。
 
     删除的第一步是"请求取消"，而请求取消要合并进 ``runtime_state.json``，
-    合并走 ``.runtime-write.lock`` 的**阻塞**获取。Windows 上那是
-    ``msvcrt.locking(LK_LOCK)``：失败后整秒重试、最多十次。于是引擎子进程正
+    合并走 ``.runtime-write.lock``。修复前那是**阻塞**获取，Windows 上即
+    ``msvcrt.locking(LK_LOCK)``：失败后整秒重试、最多十次（E-6t 已改成
+    ``job_lock.acquire_bounded`` 的非阻塞轮询 + 截止时间）。于是引擎子进程正
     在写状态的那几秒，会原封不动地加到删除等待上 —— 3 s 的有界等待一秒都没超，
-    超的是它前面那段没有任何界的东西。
+    超的是它前面那段没有任何界的东西。这条用例继续守住删除预算本身。
 
     这里让子进程真的按住同一个 OS 锁 3 s（假引擎放大，见
     :func:`_hold_state_write_lock`），断言**整段删除**仍然落在预算内。这条在

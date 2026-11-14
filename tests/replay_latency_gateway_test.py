@@ -441,11 +441,18 @@ def test_same_seed_replays_the_same_plan(replay_server, tmp_path):
         url = replay_server(distribution, seed=99, time_scale=0.001, log_path=log)
         for index in range(6):
             _post(url, _chat("replay/translation", f"same-{index}"))
+        # Six concurrent requests are served in whatever order they finish, so
+        # the file is read only after all six records exist and the plan is
+        # compared by content_key rather than by append order.  Keying it also
+        # catches the failure that order-insensitivity would hide: the same
+        # prompt drawing a different stratum on the second run.
+        gateway._await_records(log, 6, timeout=5.0)  # noqa: SLF001 - test helper
         entries = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line]
-        plans.append([(e["role"], e["planned_s"], e["outcome"]) for e in entries])
+        plans.append({e["content_key"]: (e["role"], e["planned_s"], e["outcome"])
+                      for e in entries})
     assert plans[0] == plans[1]
     assert len(plans[0]) == 6
-    assert len({row[1] for row in plans[0]}) > 1, "the draws must not all be the same value"
+    assert len({row[1] for row in plans[0].values()}) > 1, "the draws must not all be the same value"
 
 
 def test_retry_of_the_same_prompt_draws_again(replay_server, tmp_path):

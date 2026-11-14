@@ -8838,7 +8838,15 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     if not job_id:
         return _runtime_defaults()
     now = _utc_now_iso()
-    with _RUNTIME_LOCK, _job_lock.exclusive(job_dir(job_id) / ".runtime-write.lock"):
+    # Bounded acquire (E-6t). On Windows the blocking primitive is
+    # ``msvcrt.locking(LK_LOCK)``: it retries in whole seconds and gives up only
+    # after ten, so one slow foreign writer used to park this caller for
+    # 4-10 s (M-1: 4.063 s = 4 s + 63 ms inside the delete path). The wait is
+    # now an explicit deadline; the lock, the merge and the atomic replace are
+    # unchanged, and a timed-out update raises instead of half-writing.
+    with _RUNTIME_LOCK, _job_lock.exclusive(
+            job_dir(job_id) / ".runtime-write.lock",
+            timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
         current = load_runtime_state(job_id)
         # ``None`` is normally omitted so optional status fields do not erase
         # an existing value accidentally.  ``error`` is different: callers
@@ -10333,6 +10341,18 @@ def request_job_exit(job_id):
     """
     if not job_id:
         return False
+    # The engine host asks again when its stdin reaches EOF, and that call can
+    # land *while* the worker is finishing: the worker has already published
+    # ``interrupted`` with ``exit_requested`` set, but it is still inside its
+    # ``finally``, so ``is_job_worker_alive`` is still true.  The "alive" branch
+    # then flips the terminal state back to ``cancelling``, and the supervisor
+    # later publishes ``interrupted`` with ``exit_requested=False`` -- the run
+    # loses the flag that says "resume me" (found on Windows, E-6a follow-up).
+    # The exit is already durable, so confirm it instead of restating it.
+    runtime = load_runtime_state(job_id) or {}
+    if str(runtime.get("status") or "") == "interrupted" \
+            and runtime.get("exit_requested") is True:
+        return True
     alive = is_job_worker_alive(job_id) or _job_execution_alive(job_id)
     if alive:
         update_runtime_state(
@@ -13750,13 +13770,21 @@ def _advance_scan_stream(job_id, state, stream, *, filename, segmentation_mode,
 
     第一个窗口（还没有任何可译段落时）只要 ``first_window_pages`` 页，让译文尽早
     出现；之后每个窗口 ``window_pages`` 页。
+
+    窗口大小以**已提交的页数**为基准（``previous_pages + window``），不跟识别线程
+    的当前位置走：识别比主线程快时 ``stream.pages_done`` 可能已经远超一个窗口，
+    按它算等于承诺「再识别 5 页就开始翻译」却实际等 25 页——识别越快用户等得越久；
+    而且只要识别侧有人在等翻译侧（测试里的门、将来的背压），就会和这个目标成环，
+    谁都不动（见 ``.loop/reports/M-3.md``）。目标已经达成时 ``wait_for_pages`` 立即
+    返回，提交的就是此刻能定稿的全部段落。
     """
     previous_pages = int((state.get("streaming_ingest") or {}).get("pages_done") or 0)
     window = stream.window_pages if state.get("paras") else stream.first_window_pages
-    target = max(stream.pages_done, previous_pages) + window
+    target = previous_pages + window
     if on_status:
+        # 文案里的页数与实际等待的阈值是同一个数：首窗就是 first_window_pages 页。
         on_status(f"【阶段一】视觉识别：{stream.pages_done}/{stream.pages_total} 页"
-                  f"（满 {min(target, stream.pages_total)} 页后先交给翻译）…")
+                  f"（识别满 {min(target, stream.pages_total)} 页就交给翻译）…")
     tracker = {"done": stream.pages_done, "retried": stream.pages_retried,
                "event_at": stream.pages_done}
     stream.wait_for_pages(

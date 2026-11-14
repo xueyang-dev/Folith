@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 import fitz
 import pytest
@@ -18,6 +19,9 @@ from folith.document_understanding import (VisualDocumentAssembler, page_worker_
 PAGES = 45
 #: 段落在这些页的页尾被截断、下一页小写续写。19 → 20 正好跨第一个识别窗口。
 CUT_PAGES = {19, 33}
+#: 「翻译先于识别结束」类用例的每页阅读耗时：离线替身瞬时读完整本 45 页只要几十毫秒，
+#: 那样"翻译是否先开始"就只是调度运气。放慢到 50 ms/页，翻译开始时已读页数稳定在个位数。
+READ_PACE_S = 0.05
 
 
 def scanned_pdf(pages=PAGES):
@@ -44,11 +48,25 @@ def page_blocks(index):
 
 
 class PacedVisionProvider:
-    """读页替身：第 20 页以后的页要等翻译开始才返回，证明翻译没有等识别读完。"""
+    """读页替身：只记录识别线程读到哪一页，从不回头等翻译。
+
+    ``page_seconds`` 是「每页阅读耗时」，0 表示瞬时返回。离线替身读一页只要几毫秒，
+    需要把「翻译在识别读完之前开始」当成页序契约来钉的用例把它放慢，契约才有意义
+    （真实视觉模型每页 5–40 s，见 ``.loop/reports/M-3.md`` 里的测量）。
+
+    旧版本在这里 ``translation_started.wait(20)``：第 26 页会把识别线程扣住，而首窗
+    目标又按识别线程的位置算，两边互等，于是成了一条与超时值无关的环形等待。门已经
+    拆掉：替身不再为翻译侧阻塞，也没有任何"到点即判"的墙钟断言，契约改由
+    ``run_job_pipeline`` 返回后的页数断言来钉。
+    """
 
     cache_identity = None
+    #: 每页阅读耗时（秒）；0 = 瞬时返回。
+    page_seconds = 0.0
 
-    def __init__(self, translation_started):
+    def __init__(self, translation_started=None):
+        #: 既有调用点（fixture、``.loop/reports/M-3-repro.py``）还会传「翻译已开始」
+        #: 事件：保留参数只为不破坏它们。本替身只当它不存在——等它就是原来那个环。
         self.translation_started = translation_started
         self.max_page_requested = -1
         self.lock = threading.Lock()
@@ -57,8 +75,8 @@ class PacedVisionProvider:
     def understand_page(self, envelope):
         with self.lock:
             self.max_page_requested = max(self.max_page_requested, envelope.page_index)
-        if envelope.page_index >= 25:
-            assert self.translation_started.wait(20), "翻译没有在识别完成前开始"
+        if self.page_seconds:
+            time.sleep(self.page_seconds)
         return PageUnderstanding(page_blocks(envelope.page_index), "vlm",
                                  {"model": "vision-fixture"})
 
@@ -92,10 +110,12 @@ def streaming_job(tmp_path, monkeypatch):
 
 def test_translation_starts_before_recognition_finishes(streaming_job):
     vision, started, args = streaming_job
+    vision.page_seconds = READ_PACE_S
     source = scanned_pdf()
     state = core.run_job_pipeline("stream", "scan.pdf", source, **args)
 
     assert started.is_set()
+    # 识别还在跑（45 页里只读了开头几页）翻译就开始了——页序契约，不是墙钟门。
     assert vision.pages_read_before_translation < PAGES
     assert state["streaming_ingest"]["status"] == "complete"
     assert state["streaming_ingest"]["pages_done"] == PAGES
@@ -200,8 +220,12 @@ def test_short_unpunctuated_lines_are_not_joined_across_pages():
 
 def test_each_window_extends_digests_synopsis_and_terms(streaming_job):
     vision, started, args = streaming_job
+    vision.page_seconds = READ_PACE_S
     args = {**args, "enable_understanding": True, "auto_term": True}
     state = core.run_job_pipeline("knowledge", "scan.pdf", scanned_pdf(), **args)
+    # 先交首批再补画像/理解/术语；识别 45 页没读完翻译已经开工（旧版本靠
+    # translation_started.wait(20) 扣住识别线程，首窗目标一漂就成环，见 M-3.md）。
+    assert started.is_set() and vision.pages_read_before_translation < PAGES
     assert state["streaming_ingest"]["status"] == "complete" and state["p2_done"]
     units = state["semantic_units"]
     # 语义单元按窗口追加，首尾相接覆盖全部翻译单元——批次划分据此不跨窗口。
@@ -382,6 +406,57 @@ def test_translation_starts_after_first_window_not_twenty(slow_job, monkeypatch)
     # 单线程慢读：第一次提交恰在 5 页（至多多一两页在途）；下一窗口再加 20 页。
     assert 5 <= commits[0] <= 7
     assert commits[1] == 30 or commits[1] - commits[0] >= 20
+
+
+def test_first_window_target_does_not_follow_the_recognition_thread(streaming_job, monkeypatch):
+    """识别线程已经跑到第 25 页时，首窗仍然只要 5 页，不为「顺手多读的页」多等。
+
+    旧写法 ``target = max(stream.pages_done, 已提交页数) + 首窗``：识别越快、首批译文越晚，
+    而且识别侧一旦有人在等翻译侧（旧版 provider 里的 ``translation_started.wait(20)``）
+    就成环——目标落在被门扣住的那一页上，永远不可达（见 ``.loop/reports/M-3.md``）。
+    """
+    vision, started, args = streaming_job
+    started.set()  # 本用例不看翻译放行，只看首窗的页数目标
+    vision.page_seconds = READ_PACE_S
+    waits, commits, seen, statuses = [], [], {}, []
+
+    original_start = core._start_scan_stream
+    original_advance = core._advance_scan_stream
+
+    def start_ahead(job_id, filename, file_bytes, **kwargs):
+        stream = original_start(job_id, filename, file_bytes, **kwargs)
+        # 页数同步点（不是墙钟）：让识别线程先读完 25 页，主线程才进首窗等待。
+        stream.wait_for_pages(25)
+        seen["pages_done"] = stream.pages_done
+        real_wait = stream.wait_for_pages
+
+        def record(pages, on_tick=None):
+            waits.append(int(pages))
+            return real_wait(pages, on_tick=on_tick)
+
+        stream.wait_for_pages = record
+        return stream
+
+    def spy(job_id, state, *a, **k):
+        result = original_advance(job_id, state, *a, **k)
+        commits.append(state["streaming_ingest"]["pages_done"])
+        return result
+
+    monkeypatch.setattr(core, "_start_scan_stream", start_ahead)
+    monkeypatch.setattr(core, "_advance_scan_stream", spy)
+    state = core.run_job_pipeline("ahead", "scan.pdf", scanned_pdf(),
+                                  **{**args, "on_status": statuses.append})
+
+    assert seen["pages_done"] >= 25
+    # 首窗目标 = 已提交页数(0) + 5；旧写法是 25 + 5 = 30。
+    assert waits[0] == 5
+    # 首批提交的就是识别到此刻能定稿的页（在途上限 4 页 = 2 worker × 2）；旧写法会
+    # 一路等到第 30 页。
+    assert commits[0] <= seen["pages_done"] + 4
+    # 文案里的页数与实际等待的阈值是同一个数。
+    hint = next(text for text in statuses if "就交给翻译" in text)
+    assert f"识别满 {waits[0]} 页就交给翻译" in hint
+    assert state["streaming_ingest"]["status"] == "complete" and state["p2_done"]
 
 
 def test_progress_moves_per_page_and_pause_does_not_deadlock(slow_job):
