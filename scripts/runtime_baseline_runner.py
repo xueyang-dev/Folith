@@ -895,6 +895,11 @@ class _ScenarioDriver:
         self.settled = False
         self.job_id = ""
         self.edited = self.pages = self.scrolls = self.panels = 0
+        # "The grid was not ready" is a *fact about the round*, not a silent skip:
+        # an empty grid produces 0 scroll/select/type samples, and that is exactly
+        # how P1-5e stayed invisible until the numbers were read by hand.
+        self.skipped = {"scroll_not_scrollable": 0, "edit_table_not_ready": 0}
+        self._last_edit_skip = 0.0
         # Phase windows (measurement v3).  ``run_window`` stays None unless a
         # translating phase actually existed and the sampler was usable.
         self.run_window: dict | None = None
@@ -1009,20 +1014,30 @@ class _ScenarioDriver:
         workbench = self.window.workbench
         table = workbench.segment_list
         bar = table.verticalScrollBar()
-        if now - self._last_scroll >= 0.1 and bar.maximum() > 0:
-            self._last_scroll = now
-            self._phase("scroll")
-            step = max(bar.maximum() // 12, 1)
-            with OperationTimer(self.operations, "scroll", phase=phase, clock=self.clock):
-                bar.setValue(0 if bar.value() + step > bar.maximum()
-                             else bar.value() + step)
-            self.scrolls += 1
+        if now - self._last_scroll >= 0.1:
+            if bar.maximum() > 0:
+                self._last_scroll = now
+                self._phase("scroll")
+                step = max(bar.maximum() // 12, 1)
+                with OperationTimer(self.operations, "scroll", phase=phase,
+                                    clock=self.clock):
+                    bar.setValue(0 if bar.value() + step > bar.maximum()
+                                 else bar.value() + step)
+                self.scrolls += 1
+            else:
+                # Counted, not skipped silently: a grid with no range means the
+                # rows are not on screen, which changes what the round measured.
+                self.skipped["scroll_not_scrollable"] += 1
         # A row can only be selected once the table actually has rows: right after
         # open, ``_rows`` is filled before the QTableWidget is resized, and a
         # selection change then paints a row whose items do not exist yet
         # (views.py:6097 ``number.text()`` on None).  Editing an unpopulated table
         # is not the scenario anyway, so the slot is skipped until it is ready.
         table_ready = bool(workbench.visible_segment_count()) and table.rowCount() > 0
+        if now - self._last_edit >= 2.0 and not table_ready \
+                and now - self._last_edit_skip >= 1.0:
+            self._last_edit_skip = now
+            self.skipped["edit_table_not_ready"] += 1
         if now - self._last_edit >= 2.0 and table_ready:
             self._last_edit = now
             self._phase("edit")
@@ -1649,6 +1664,7 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
     finally:
         result["wall_time_s"] = round(time.monotonic() - started, 2)
         result["operations"] = operations.report()
+        result["operations_skipped"] = dict(driver.skipped)
         result["run_window"] = driver.run_window or {
             "measured": False,
             "reason": ("no translating window was observed: the scenario never "
@@ -1928,6 +1944,7 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
             "ui_health": result.get("ui_health") or {},
             "run_records": result.get("run_records") or [],
         },
+        "operations_skipped": result.get("operations_skipped") or {},
         "limits": limits_for(_offscreen),
         "real_machine_baseline": False,
         "motion": _motion,
@@ -2164,6 +2181,25 @@ def verify_round(directory: Path) -> dict:
         bool(split_measured) or all(value is None for _, value, _ in shares),
         {"tool_split_measured": split_measured,
          "shares": {name: value for name, value, _ in shares}})
+    # P1-5e: "the grid was not ready" used to be a silent skip, so a round whose
+    # table never populated looked like a round that simply did not scroll.  These
+    # three operations only happen while the grid has rows; a source round that
+    # sampled none of them during R measured an empty table, and its R numbers
+    # cannot be compared with the other arm's.
+    if str(mode or "").startswith("source"):
+        op_spec = (metrics.get("operations") or {}).get("operations") or {}
+        run_samples = {}
+        for name in ("scroll", "select_segment", "type_echo"):
+            run_phase = (((op_spec.get(name) or {}).get("phases") or {})
+                         .get("run") or {})
+            run_samples[name] = run_phase.get("count")
+        add("run_phase_operations_sampled",
+            all(isinstance(count, int) and count > 0
+                for count in run_samples.values()),
+            {"samples_in_R": run_samples,
+             "skipped": payload.get("operations_skipped") or {},
+             "why": ("scroll/select/type need rows in the grid; a zero means the "
+                      "grid was empty while translating (P1-5e)")})
     add("window_control_recorded", isinstance(seconds_applied, bool),
         {"seconds_applied": seconds_applied,
          "controlled_by": window_control.get("controlled_by")})
