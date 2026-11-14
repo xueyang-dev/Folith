@@ -8838,7 +8838,15 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     if not job_id:
         return _runtime_defaults()
     now = _utc_now_iso()
-    with _RUNTIME_LOCK, _job_lock.exclusive(job_dir(job_id) / ".runtime-write.lock"):
+    # Bounded acquire (E-6t). On Windows the blocking primitive is
+    # ``msvcrt.locking(LK_LOCK)``: it retries in whole seconds and gives up only
+    # after ten, so one slow foreign writer used to park this caller for
+    # 4-10 s (M-1: 4.063 s = 4 s + 63 ms inside the delete path). The wait is
+    # now an explicit deadline; the lock, the merge and the atomic replace are
+    # unchanged, and a timed-out update raises instead of half-writing.
+    with _RUNTIME_LOCK, _job_lock.exclusive(
+            job_dir(job_id) / ".runtime-write.lock",
+            timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
         current = load_runtime_state(job_id)
         # ``None`` is normally omitted so optional status fields do not erase
         # an existing value accidentally.  ``error`` is different: callers
@@ -10333,6 +10341,18 @@ def request_job_exit(job_id):
     """
     if not job_id:
         return False
+    # The engine host asks again when its stdin reaches EOF, and that call can
+    # land *while* the worker is finishing: the worker has already published
+    # ``interrupted`` with ``exit_requested`` set, but it is still inside its
+    # ``finally``, so ``is_job_worker_alive`` is still true.  The "alive" branch
+    # then flips the terminal state back to ``cancelling``, and the supervisor
+    # later publishes ``interrupted`` with ``exit_requested=False`` -- the run
+    # loses the flag that says "resume me" (found on Windows, E-6a follow-up).
+    # The exit is already durable, so confirm it instead of restating it.
+    runtime = load_runtime_state(job_id) or {}
+    if str(runtime.get("status") or "") == "interrupted" \
+            and runtime.get("exit_requested") is True:
+        return True
     alive = is_job_worker_alive(job_id) or _job_execution_alive(job_id)
     if alive:
         update_runtime_state(
