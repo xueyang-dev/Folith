@@ -159,6 +159,58 @@ def test_new_commit_does_not_drop_heights_from_an_unfinished_paint_pass(client, 
     assert bench.segment_row_text(second, 2) == '另一项更新。' * 20
 
 
+def test_a_failed_save_never_reads_the_state_on_the_gui_thread(client, monkeypatch):
+    """P2-11：保存失败后「以磁盘为准」的那次刷新不在 GUI 线程整份读状态。
+
+    失败路径原来调 ``refresh_workbench(force=True)``，同步做完
+    ``adapter.load_state``（解析 + 深拷贝）：10,000 段任务上单次 ~1.1 s，而重试
+    循环恰好会反复落到这条路径上。现在改走 ``refresh_workbench_soon()``——
+    整份状态由 worker 读，随后的 apply 仍然是 forced（准备页、交付、段落行都重算）。
+    """
+    import threading
+
+    window, adapter, core, app = (client[key] for key in
+                                  ("window", "adapter", "core", "app"))
+    job = _book_job(client, segments=200)
+    open_job_and_wait(window, job)
+    window.timer.stop()
+    gui = threading.get_ident()
+
+    gui_loads = []
+    real_load = core.load_job_state
+
+    def counting(job_id):
+        if threading.get_ident() == gui:
+            gui_loads.append(job_id)
+        return real_load(job_id)
+
+    def refuse(*_args, **_kwargs):
+        raise adapter.AdapterError("任务正在后台处理，请稍后重试。")
+
+    # ``force`` 是「照磁盘重画」的宽度标记：它必须还在，只是读盘换了线程。
+    forced = []
+    real_refresh = window.refresh_workbench
+
+    def spy(**kwargs):
+        if kwargs.get("force"):
+            forced.append(threading.get_ident())
+        return real_refresh(**kwargs)
+
+    monkeypatch.setattr(core, "load_job_state", counting)
+    monkeypatch.setattr(adapter, "submit_edit", refuse)
+    monkeypatch.setattr(window, "refresh_workbench", spy)
+
+    index = window.workbench.current_index()
+    window.workbench.target_edit.setPlainText("人工修改，但这次一定落不了盘")
+    window.submit_edit(index)
+    window.flush_edits_now()
+    assert _pump(app, 10, lambda: not window.edits_pending()
+                 and not window._state_load_in_flight)
+
+    assert gui_loads == [], "保存失败后不该在 GUI 线程整份读状态"
+    assert forced == [gui], "以磁盘为准的 forced 刷新仍然要在 GUI 线程落地"
+
+
 def test_poll_projects_review_off_thread_and_only_applies_widgets_on_gui(client, monkeypatch):
     import threading
     window, adapter, core, app = client['window'], client['adapter'], client['core'], client['app']
