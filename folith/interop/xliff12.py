@@ -831,11 +831,10 @@ def _direct_child(element: XmlElement, local_name: str) -> XmlElement | None:
 
 
 def _ancestor_chain_by_path(
-    document: XmlDocument,
+    by_path: Mapping[tuple[int, ...], XmlElement],
     path: tuple[int, ...],
 ) -> tuple[XmlElement, ...]:
-    """从根到 ``path`` 的元素链（含两端）。"""
-    by_path = {element.path: element for element in document.elements}
+    """使用当前解析的索引获取 ``path`` 的祖先链。"""
     chain: list[XmlElement] = []
     for length in range(1, len(path) + 1):
         prefix = path[:length]
@@ -994,7 +993,7 @@ def parse_xliff12(
     units: list[XliffUnit] = []
     seen: dict[str, int] = {}
     for element in xml.iter_local("trans-unit"):
-        chain = _ancestor_chain_by_path(xml, element.path)
+        chain = _ancestor_chain_by_path(by_path, element.path)
         file_element = next(
             (item for item in reversed(chain) if item.local_name == FILE_TAG), None)
         if file_element is None:

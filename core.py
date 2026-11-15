@@ -15380,3 +15380,323 @@ def review_handoff_export(job_id, fmt="json", *, max_text_chars=None):
         return _review_export.export_json(
             state, job_id, max_text_chars=max_text_chars)
     raise ValueError(f"不支持的审校导出格式：{fmt}")
+
+
+def _xliff_dialect(filename, document):
+    """Identify read-only dialects by both suffix and declared namespace."""
+    suffix = Path(str(filename)).suffix.lower()
+    if suffix not in {".xlf", ".xliff", ".sdlxliff", ".mqxliff"}:
+        raise ValueError("请选择 XLIFF 1.2、SDLXLIFF 或 MQXLIFF 文件。")
+    from folith.interop.xliff12_dialect import MQXLIFF, SDLXLIFF
+
+    sdl_namespaces = set(SDLXLIFF.preserved_namespaces) - set(MQXLIFF.preserved_namespaces)
+    mq_namespaces = set(MQXLIFF.preserved_namespaces) - set(SDLXLIFF.preserved_namespaces)
+    dialects = set()
+    if suffix == ".sdlxliff":
+        dialects.add("sdlxliff")
+    if suffix == ".mqxliff":
+        dialects.add("mqxliff")
+    for element in document.xml.elements:
+        for attr in element.attrs:
+            if attr.qname == "xmlns" or attr.qname.startswith("xmlns:"):
+                if attr.value in sdl_namespaces:
+                    dialects.add("sdlxliff")
+                elif attr.value in mq_namespaces:
+                    dialects.add("mqxliff")
+    if len(dialects) > 1:
+        raise ValueError("文件同时声明 SDLXLIFF 和 MQXLIFF，无法安全确定方言。")
+    return next(iter(dialects), "xliff12")
+
+
+def _xliff_parse_projection(filename, payload):
+    from folith import interop
+
+    document = interop.parse_xliff12(payload)
+    dialect = _xliff_dialect(filename, document)
+    if dialect != "xliff12":
+        config = interop.SDLXLIFF if dialect == "sdlxliff" else interop.MQXLIFF
+        document = interop.parse_xliff12(payload, policy=config.policy)
+    ledger = interop.SegmentLedger()
+    # One row per <trans-unit>: the kernel's subsegment rows reuse the whole unit
+    # source for every subsegment, which would show a source/target pair that the
+    # file does not contain. Partial subsegment locks are kept by making the whole
+    # unit read-only instead of silently dropping the lock.
+    projection = interop.build_import(document, subsegments=False, ledger=ledger)
+    pairs = [copy.deepcopy(row) for row in projection.pairs]
+    partial_locked = []
+    for unit, pair in zip(document.units, pairs):
+        locks = [segment.locked for segment in unit.subsegments]
+        if any(locks) and not all(locks):
+            pair["readonly"] = True
+            pair["readonly_reason"] = "partial_subsegment_lock"
+            partial_locked.append(unit.external_id)
+    if partial_locked:
+        projection.report.warnings.append(
+            f"有 {len(partial_locked)} 个单元只有部分子段被锁定；这些单元整体按只读导入，"
+            "无法编辑其中未锁定的部分。")
+    if dialect != "xliff12":
+        for pair in pairs:
+            if not pair.get("readonly"):
+                pair["readonly"] = True
+                pair["readonly_reason"] = "dialect_readonly"
+    return dialect, document, projection, ledger, pairs
+
+
+def _xliff_languages(document, target_lang=None):
+    """Read one unambiguous language pair from all file elements, without guessing."""
+    elements = {element.path: element for element in document.xml.elements}
+    values = {"source-language": [], "target-language": []}
+    for item in document.files:
+        element = elements[item.path]
+        for key in values:
+            attr = element.attr(key)
+            values[key].append(str(attr.value).strip() if attr else "")
+    result = {}
+    for key, languages in values.items():
+        known = {normalize_language(value) for value in languages if value}
+        if len(known) > 1 or (known and any(not value for value in languages)):
+            raise ValueError(f"XLIFF 各 <file> 的 {key} 不一致或部分缺失，无法确定任务语言。")
+        result[key] = next((value for value in languages if value), "")
+    explicit = str(target_lang or "").strip()
+    declared = result["target-language"]
+    if explicit and declared:
+        from folith.textual import language_tag
+        requested_tag = language_tag(explicit)
+        comparable = requested_tag if requested_tag != "und" else explicit
+        if normalize_language(comparable) != normalize_language(declared):
+            raise ValueError(f"目标语言 {explicit!r} 与文件声明 {declared!r} 不一致。")
+    return result["source-language"], declared or explicit
+
+
+def _xliff_refuse_stale_status(document, changed_ids):
+    """Refuse target changes when untouched status attributes could become stale.
+
+    The kernel's preservation verifier does not permit attribute patches. Until
+    it can verify status changes, reject even unknown status values rather than
+    guessing whether they still describe the changed translation.
+    """
+    wanted = set(changed_ids)
+    if not wanted:
+        return
+    by_path = {element.path: element for element in document.xml.elements}
+    status_attrs = {"approved", "state", "status", "state-qualifier"}
+    for unit in document.units:
+        ids = {unit.external_id, *(segment.external_id for segment in unit.subsegments)}
+        affected = wanted & ids
+        if not affected:
+            continue
+        unit_path = unit.source.element.path[:-1]
+        candidates = [by_path[unit_path[:length]] for length in range(1, len(unit_path) + 1)
+                      if unit_path[:length] in by_path]
+        if unit.target is not None:
+            pending = [unit.target.element]
+            while pending:
+                element = pending.pop()
+                candidates.append(element)
+                pending.extend(element.children)
+        for element in candidates:
+            for attr in element.attrs:
+                if attr.local_name in status_attrs:
+                    raise ValueError(
+                        f"单元 {sorted(affected)[0]} 的 <{element.qname}> 含状态属性 "
+                        f"{attr.qname}={attr.value!r}；修改译文后状态会过期，"
+                        "当前不支持安全更新该状态，请原样导出或先在来源工具处理。")
+
+
+def import_xliff_task(filename, file_bytes, *, project_id=None, target_lang=None):
+    """Import XLIFF bytes into a task; publish only after all files are ready.
+
+    Returns the task id, dialect, import report and excluded units. Reopening the
+    same document/context leaves its edits intact. Parse and IO run on the caller.
+    """
+    name = Path(str(filename or "")).name
+    if not name or not isinstance(file_bytes, (bytes, bytearray)) or not file_bytes:
+        raise ValueError("XLIFF 文件名或内容为空。")
+    payload = bytes(file_bytes)
+    dialect, document, projection, ledger, pairs = _xliff_parse_projection(name, payload)
+    source_lang, target_lang = _xliff_languages(document, target_lang)
+    resolved_project, _ = task_project_id_for_new_job(project_id)
+    job_id = resolve_task_id(payload, project_id=resolved_project, target_lang=target_lang,
+                             source_lang=source_lang)
+    digest = hashlib.sha256(payload).hexdigest()
+    report = projection.report.to_json()
+    excluded = list(projection.excluded)
+    with job_state_mutation_lock(job_id):
+        existing = load_job_state(job_id)
+        if existing is not None:
+            metadata = existing.get("xliff") or {}
+            if metadata.get("source_sha256") != digest or metadata.get("dialect") != dialect:
+                raise ValueError("已有任务与此 XLIFF 文件或方言不一致，无法安全复用。")
+            raw = load_source(job_id)
+            if raw is None or hashlib.sha256(raw).hexdigest() != digest:
+                raise ValueError("任务内原始 XLIFF 文件缺失或已损坏。")
+            return {"job_id": job_id, "filename": existing.get("filename", name),
+                    "dialect": dialect, "report": metadata.get("report", {}),
+                    "excluded": metadata.get("excluded", []), "created": False}
+        destination = job_dir(job_id)
+        if destination.exists():
+            raise FileExistsError(f"任务目录已存在但状态不可读取：{destination}")
+        state = new_job_state(name)
+        state.update(project_id=resolved_project, source_lang=source_lang, target_lang=target_lang,
+                     pairs=pairs, paras=[pair["source"] for pair in pairs],
+                     p1_done=True, snapshot_revision=1,
+                     xliff={"version": 1, "dialect": dialect,
+                            "source_sha256": digest, "report": report,
+                            "excluded": excluded, "ledger": ledger.to_json()})
+        assign_missing_segment_uids(state, job_id=job_id)
+        # Stage as a sibling on the same filesystem: readers cannot see state.json
+        # without source.bin. No existing task is ever removed on failure.
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".folith-xliff-", dir=OUTPUT_DIR.parent))
+        try:
+            (staging / "source.bin").write_bytes(payload)
+            (staging / "state.json").write_text(_job_repo.encode_state(state), encoding="utf-8")
+            os.rename(staging, destination)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+    return {"job_id": job_id, "filename": name, "dialect": dialect,
+            "report": report, "excluded": excluded, "created": True}
+
+
+def export_xliff_task(job_id, destination, *, write_targets=False):
+    """Atomically export original bytes, or verified generic target changes.
+
+    SDLXLIFF and MQXLIFF permit only byte-identical export. A target write
+    validates the complete projection against the immutable original first.
+    """
+    from folith import interop
+
+    job_id = str(job_id or "")
+    if not job_id or Path(job_id).name != job_id or job_id in {".", ".."}:
+        raise ValueError("任务标识无效。")
+    output = Path(destination).expanduser()
+    resolved = output.resolve()
+    root = OUTPUT_DIR.resolve()
+    if resolved == root or root in resolved.parents:
+        raise ValueError("不能导出到 Folith 内部任务目录。")
+    # A hard link to an internal source must not become an overwrite path.
+    if output.exists():
+        for item in OUTPUT_DIR.iterdir() if OUTPUT_DIR.is_dir() else ():
+            original = item / "source.bin"
+            if original.is_file() and os.path.samefile(output, original):
+                raise ValueError("导出目标指向内部原始文件。")
+    with job_state_mutation_lock(job_id):
+        state = load_job_state(job_id)
+        if state is None:
+            raise ValueError(f"找不到任务 {job_id}")
+        meta = state.get("xliff")
+        if not isinstance(meta, dict) or meta.get("version") != 1:
+            raise ValueError("任务不是可导出的 XLIFF 任务。")
+        payload = load_source(job_id)
+        if payload is None or hashlib.sha256(payload).hexdigest() != meta.get("source_sha256"):
+            raise ValueError("任务内原始 XLIFF 文件缺失或已损坏。")
+        dialect, document, projection, _, original_pairs = _xliff_parse_projection(
+            state.get("filename", ""), payload)
+        if dialect != meta.get("dialect"):
+            raise ValueError("任务方言与原始文件不一致。")
+        changed = 0
+        result = payload
+        if write_targets:
+            if dialect != "xliff12":
+                raise ValueError(f"{dialect} 仅支持原字节导出，不支持译文写回。")
+            pairs = state.get("pairs")
+            if not isinstance(pairs, list) or len(pairs) != len(original_pairs):
+                raise ValueError("段落数量已变，无法安全映射 XLIFF 单元。")
+            for pair, original in zip(pairs, original_pairs):
+                if not isinstance(pair, dict) or pair.get("external_segment") != original.get("external_segment") or pair.get("source") != original.get("source"):
+                    raise ValueError("段落身份、源文或锁定信息已变，无法安全导出。")
+                if original.get("readonly") and pair.get("target") != original.get("target"):
+                    raise ValueError(f"锁定段 {original['external_segment']['external_id']} 的译文已变，不能写回。")
+            plan = interop.plan_export(document, pairs)
+            plan.raise_for_refusals()
+            _xliff_refuse_stale_status(document, plan.changed_ids)
+            result = interop.apply_plan(document, plan)
+            verification = interop.verify_export(document, result)
+            if not verification["ok"]:
+                raise ValueError(f"XLIFF 导出保全校验失败：{verification['first_difference'] or verification['unexplained']}")
+            changed = len(plan.changed_ids)
+    # A same-directory temporary file plus replace leaves an existing destination
+    # untouched if planning, writing or replacement fails.
+    fd, temporary = tempfile.mkstemp(prefix=".folith-xliff-", suffix=".tmp", dir=output.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(result)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _atomic_file.replace_file(Path(temporary), output)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    return {"path": str(output), "dialect": dialect, "changed_count": changed}
+
+
+def apply_entity_repair_skipping_readonly(job_id, source_form, target, preview, *, actor="user"):
+    """Apply the confirmed full entity preview, skipping currently read-only rows.
+
+    The complete preview is re-created and compared under the state transaction
+    lock before any changes. Returns ``(state, changed_indexes, skipped_count)``.
+    The registry and review/delivery side effects match ``apply_entity_repair``;
+    only the selected read-only rows are omitted from the translation changes.
+    """
+    from folith import consistency
+
+    with job_state_mutation_lock(job_id):
+        if _job_execution_alive(job_id):
+            raise RuntimeError("任务仍在执行，请等待后台处理结束")
+        state = load_job_state(job_id)
+        if state is None:
+            raise ValueError("找不到任务")
+        current = preview_entity_repair(state, source_form, target)
+        if current != preview:
+            raise ValueError("译文已变化，请重新查看修改预览")
+        registry = _entity_registry.EntityRegistry(state.get("entity_registry") or [])
+        record = registry._find(source_form)
+        record["accepted_variants"] = []
+        registry.lock(source_form, consistency.spelling(target), entity_type=record["entity_type"])
+        state["entity_registry"] = registry.to_list()
+        skipped_indexes = {change["index"] for change in current
+                           if state["pairs"][change["index"]].get("readonly")}
+        if skipped_indexes:
+            # Concept decisions can suppress the ordinary consistency queue. Do
+            # not claim this repair succeeded unless every skipped occurrence
+            # remains visible as a conflict after the editable changes. Check
+            # before the truth-change helper touches annotation sidecars.
+            simulated = copy.deepcopy(state)
+            for change in current:
+                if change["index"] not in skipped_indexes:
+                    simulated["pairs"][change["index"]]["target"] = change["after"]
+            canonical_source = record["source_form"]
+            visible = {index for finding in entity_consistency_queue(simulated)
+                       if finding.get("source") == canonical_source
+                       for index in finding.get("segment_indexes") or []}
+            if not skipped_indexes <= visible:
+                raise ValueError("只读段的实体冲突无法保留在一致性队列中，请先检查概念决策。")
+        indexes = []
+        skipped = 0
+        for change in current:
+            index = change["index"]
+            pair = state["pairs"][index]
+            if is_excluded(pair):
+                raise ValueError("预览包含已排除的段落，请重新查看预览")
+            if pair.get("readonly"):
+                skipped += 1
+                continue
+            pair.setdefault("_translation_edit_restore", {
+                key: pair.get(key) for key in (
+                    "target", "reviewed", "review_status", "target_provenance", "from_tm")})
+            pair.update(target=change["after"], human_edited=True, reviewed=False,
+                        review_status="not_reviewed", target_provenance="human_edit", from_tm=False)
+            for key in ("accepted_target", "human_accepted", "accepted_by_human"):
+                pair.pop(key, None)
+            indexes.append(index)
+        if indexes:
+            _recount_reviewed_segments(state)
+            _mark_translation_truth_changed(
+                job_id, state, indexes, f"人工统一实体译名：{source_form} → {target}",
+                actor=actor, action="entity_consistency_repair")
+        else:
+            _invalidate_final_delivery_state(state)
+        _refresh_entity_consistency(state, actor=actor)
+        _recheck_delivery_invariants_for_segments(state, indexes, actor=actor)
+        save_job_state(job_id, state)
+        return state, indexes, skipped

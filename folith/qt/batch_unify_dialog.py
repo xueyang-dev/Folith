@@ -674,6 +674,9 @@ def open_batch_unify_dialog(window) -> None:
                     else:
                         status = i18n.tr(
                             "已统一 {v0} 项，失败 {v1} 项。", v0=len(ok_items), v1=0)
+                    skipped = sum(r.get("skipped", 0) for r in results)
+                    if skipped:
+                        status += "  " + i18n.tr('已跳过 {v0} 个锁定段。', v0=skipped)
                     active.set_busy(False)
                     active.set_status(status)
                     active._sync()
@@ -685,12 +688,13 @@ def open_batch_unify_dialog(window) -> None:
                 rest = remaining[1:]
 
                 def on_ok(_result, _repair=repair) -> None:
+                    skipped = _result[2] if isinstance(_result, tuple) and len(_result) == 3 else 0
                     results.append({"source": _repair["source"],
                                     "target": _repair["target"],
-                                    "ok": True, "error": ""})
+                                    "ok": True, "error": "", "skipped": skipped})
                     target = live()
-                    if target is not None:
-                        # 应用成功：立即从树中移除该行，防止二次点击报假错
+                    if target is not None and not skipped:
+                        # 留下仍包含只读冲突的行，不把部分修复当成已解决。
                         target.mark_applied(_repair["source"])
                     apply_next(rest)
 

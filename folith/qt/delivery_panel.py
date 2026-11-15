@@ -812,6 +812,7 @@ class DeliveryWorkspace(QWidget):
     deliverWithRiskRequested = Signal()
     fixBlockingRequested = Signal()
     exportCopyRequested = Signal()
+    bilingualExportRequested = Signal(bool)
     openFileRequested = Signal(str)
     revealFileRequested = Signal(str)
     saveFileCopyRequested = Signal(str)
@@ -849,6 +850,20 @@ class DeliveryWorkspace(QWidget):
         self.header.fix_button.clicked.connect(self.fixBlockingRequested.emit)
         self.header.export_button.clicked.connect(self.exportCopyRequested.emit)
         layout.addWidget(self.header)
+        self.bilingual_actions = QWidget(self)
+        bilingual_layout = QHBoxLayout(self.bilingual_actions)
+        bilingual_layout.setContentsMargins(0, 0, 0, 0)
+        self.bilingual_original = style_module.ElideButton(i18n.tr('原样导出双语文件…'))
+        style_module.set_button(self.bilingual_original, "secondary")
+        self.bilingual_original.clicked.connect(lambda: self.bilingualExportRequested.emit(False))
+        self.bilingual_targets = style_module.ElideButton(i18n.tr('导出双语文件并写入译文…'))
+        style_module.set_button(self.bilingual_targets, "secondary")
+        self.bilingual_targets.clicked.connect(lambda: self.bilingualExportRequested.emit(True))
+        bilingual_layout.addWidget(self.bilingual_original)
+        bilingual_layout.addWidget(self.bilingual_targets)
+        bilingual_layout.addStretch(1)
+        self.bilingual_actions.setVisible(False)
+        layout.addWidget(self.bilingual_actions)
         layout.addSpacing(theme_module.SPACE["md"])
 
         self.notice = style_module.NoticeStrip("", tone="warn", parent=self)
@@ -887,6 +902,11 @@ class DeliveryWorkspace(QWidget):
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         super().resizeEvent(event)
         self._sync_width()
+
+    def set_bilingual_dialect(self, dialect: str) -> None:
+        """Only generic XLIFF may offer writing the current targets back."""
+        self.bilingual_actions.setVisible(dialect in {"xliff12", "sdlxliff", "mqxliff"})
+        self.bilingual_targets.setVisible(dialect == "xliff12")
 
     # ---- 对外只读入口（窗口层、测试共用） ----
     def model(self) -> DeliveryModel:
