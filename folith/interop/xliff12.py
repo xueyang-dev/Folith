@@ -104,6 +104,14 @@ class XliffStructureError(ValueError):
     """文件层结构不可用（整文件拒绝；不产出部分结果）。"""
 
 
+class UnknownInlineNamespace(XliffStructureError):
+    """``<source>`` / ``<target>`` / ``<mrk>`` 的行内内容里有未知命名空间元素。
+
+    这是单元级拒绝（``UNKNOWN_NAMESPACE``），不是整文件拒绝。规范允许的扩展点
+    （例如 ``<trans-unit>`` 里 ``<target>`` 之后）不走这个错误。
+    """
+
+
 class UnknownSegmentError(ValueError):
     """外部 id 不在本文档里；写入入口不接受"大概就是它"。"""
 
@@ -225,6 +233,18 @@ DEFAULT_LOCK_POLICY = LockPolicy()
 
 #: 整元素作为**不可分割载荷**的 inline 标签：内容是原始代码，不是可翻译文本。
 _WHOLE_PAYLOAD_TAGS = frozenset({"ph", "x", "it", "bin"})
+#: 行内内容里允许出现的命名空间。XLIFF 1.2 与 xml 是规范本身；SDL / memoQ 的
+#: URI 在方言配置里声明过，不算未知。扩展点上的其他命名空间不在这里判断。
+XLIFF_12_NAMESPACE = "urn:oasis:names:tc:xliff:document:1.2"
+XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace"
+SDLXLIFF_NAMESPACE = "http://sdl.com/FileTypes/SdlXliff/1.0"
+MQXLIFF_NAMESPACE = "MQXliff"
+KNOWN_INLINE_NAMESPACES = frozenset({
+    XLIFF_12_NAMESPACE,
+    XML_NAMESPACE,
+    SDLXLIFF_NAMESPACE,
+    MQXLIFF_NAMESPACE,
+})
 #: 跨兄弟节点配对的"半个"标签（XLIFF 1.2 的序列模型，不是树模型）。
 _OPEN_TAGS = frozenset({"bpt", "bx"})
 _CLOSE_TAGS = frozenset({"ept", "ex"})
@@ -354,6 +374,52 @@ def _iter_descendants(element: XmlElement) -> Iterator[XmlElement]:
         yield from _iter_descendants(child)
 
 
+def _namespace_bindings(document: XmlDocument, element: XmlElement) -> dict[str, str]:
+    """沿当前文档的子节点路径，收集从根到元素的 ``xmlns`` 绑定。"""
+    node = document.root
+    nodes = [node]
+    for child_index in element.path:
+        node = node.children[child_index]
+        nodes.append(node)
+    bindings: dict[str, str] = {}
+    for node in nodes:
+        for attr in node.attrs:
+            if attr.qname == "xmlns":
+                bindings[""] = str(attr.value)
+            elif attr.qname.startswith("xmlns:"):
+                bindings[attr.qname.split(":", 1)[1]] = str(attr.value)
+    return bindings
+
+
+def _inline_namespace_is_unknown(document: XmlDocument, element: XmlElement) -> bool:
+    """行内元素的命名空间不在已知集合里。
+
+    没有前缀、也没有默认 ``xmlns`` 的元素不当成未知：测试样本和一部分旧文件
+    不声明 XLIFF 命名空间，本地名仍按 XLIFF 1.2 的行内标签处理。
+    """
+    bindings = _namespace_bindings(document, element)
+    if element.prefix == "xml":
+        # xml 前缀自带标准绑定；显式重绑定到别的 URI 不能绕过检查。
+        return bindings.get("xml", XML_NAMESPACE) != XML_NAMESPACE
+    if element.prefix:
+        uri = bindings.get(element.prefix, "")
+    else:
+        uri = bindings.get("", "")
+        if uri == "":
+            return False
+    return uri not in KNOWN_INLINE_NAMESPACES
+
+
+def _reject_unknown_inline(document: XmlDocument, element: XmlElement) -> None:
+    offset = element.start.start
+    line = document.data.count(b"\n", 0, offset) + 1
+    raise UnknownInlineNamespace(
+        f"行内内容含未知命名空间元素 <{element.qname}>"
+        f"（文件偏移 {offset}，第 {line} 行）；"
+        f"改写可能损坏格式，该单元拒绝"
+    )
+
+
 def _flatten_into(document: XmlDocument, element: XmlElement, builder: _SideBuilder) -> None:
     for chunk in document.chunks(element):
         if chunk.is_text:
@@ -366,7 +432,14 @@ def _flatten_into(document: XmlDocument, element: XmlElement, builder: _SideBuil
         child = chunk.element
         if child is None:  # pragma: no cover - 防御
             raise XliffStructureError("内部错误：标记块没有元素")
+        if _inline_namespace_is_unknown(document, child):
+            _reject_unknown_inline(document, child)
         name = child.local_name
+        if name in _WHOLE_PAYLOAD_TAGS or name in _OPEN_TAGS or name in _CLOSE_TAGS:
+            # 载荷虽作为整体保留，其后代仍属于行内内容，不能绕过命名空间检查。
+            for descendant in _iter_descendants(child):
+                if _inline_namespace_is_unknown(document, descendant):
+                    _reject_unknown_inline(document, descendant)
         if child.self_closing or name in _WHOLE_PAYLOAD_TAGS:
             builder.add_tag("self_closing", _payload(document, child), "",
                             chunk.span)
@@ -873,7 +946,10 @@ def parse_xliff12(
     文件级拒绝（``XliffStructureError``）：不是 XML、根元素不是 ``xliff``、
     ``version`` 不是 ``1.2``、没有任何 ``<file>``、编码不是 ASCII 兼容。
     单元级拒绝（返回在 ``document.rejections``）：缺 ``@id``、缺直接子
-    ``<source>``、标签序列不自洽、状态不可映射、同一文件重复 ``@id``。
+    ``<source>``、标签序列不自洽、状态不可映射、同一文件重复 ``@id``、
+    ``<source>`` / ``<target>`` / ``<mrk>`` 行内的未知命名空间元素
+    （``UNKNOWN_NAMESPACE``，含元素名、文件偏移和行号）。规范扩展点上的
+    外来元素原样保留，不拒绝。
     """
     try:
         xml = parse_xml_bytes(data)
@@ -963,6 +1039,11 @@ def parse_xliff12(
             source = _flatten_side(xml, source_element)
             target = _flatten_side(xml, target_element) if target_element is not None else None
             digest = canonical_digest(source.text, source.tags)
+        except UnknownInlineNamespace as exc:
+            rejections.append(Rejection(
+                scope="unit", code="UNKNOWN_NAMESPACE",
+                reason=str(exc), unit_ref=external_id))
+            continue
         except (XliffStructureError, ValueError) as exc:
             rejections.append(Rejection(
                 scope="unit", code="TAG_STRUCTURE_INVALID",
@@ -977,6 +1058,11 @@ def parse_xliff12(
             subsegments = _subsegments_for(
                 xml, element, target_element, file.scope.scope, unit_id, policy
             ) if target_element is not None else ()
+        except UnknownInlineNamespace as exc:
+            rejections.append(Rejection(
+                scope="unit", code="UNKNOWN_NAMESPACE",
+                reason=str(exc), unit_ref=external_id))
+            continue
         except (XliffStructureError, ValueError) as exc:
             rejections.append(Rejection(
                 scope="unit", code="TAG_STRUCTURE_INVALID",
