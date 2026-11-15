@@ -696,6 +696,11 @@ def start_job(
     Returns True when the worker started or was already running; raises
     :class:`AdapterError` with the concrete reason otherwise.
     """
+    # Imported bilingual pairs cannot be passed through the translation pipeline,
+    # which rebuilds batches without preserving their readonly flags or identities.
+    if "xliff" in load_state(job_id):
+        from . import i18n
+        raise AdapterError(i18n.tr("双语文件任务暂不支持启动或续跑整篇翻译。"))
     # Desktop pre-flight: the client refuses to start with an incomplete model
     # connection and says exactly what is missing (a desktop-dialog policy, not
     # part of the shared command).
@@ -778,6 +783,9 @@ def continue_job(job_id: str, config: "EngineConfig | None" = None, *,
     lets the shared command resolve the effective connection against the task
     state and restart a paused worker when it differs (issue #222).
     """
+    if "xliff" in load_state(job_id):
+        from . import i18n
+        raise AdapterError(i18n.tr("双语文件任务暂不支持启动或续跑整篇翻译。"))
     if config is None:
         started = _commands.continue_job(job_id)
     else:
@@ -801,6 +809,9 @@ def stop_job_for_exit(job_id: str) -> bool:
 
 
 def retry_job(job_id: str) -> bool:
+    if "xliff" in load_state(job_id):
+        from . import i18n
+        raise AdapterError(i18n.tr("双语文件任务暂不支持启动或续跑整篇翻译。"))
     retried = _commands.retry_job(job_id)
     if retried:
         _note_launch_requested(job_id)
@@ -849,6 +860,18 @@ def drafts_signature(job_id: str) -> str:
 #: localized status text, which is injected below.  The old class had exactly
 #: these fields, so every existing caller keeps working.
 SegmentRow = _workbench_rows.WorkbenchRow
+
+
+def segment_is_readonly(state: dict, index: int) -> bool:
+    """Read the lock from the authoritative pair, including for virtual rows."""
+    pairs = (state or {}).get("pairs") or []
+    return (0 <= index < len(pairs) and isinstance(pairs[index], dict)
+            and bool(pairs[index].get("readonly")))
+
+
+def _readonly_error() -> AdapterError:
+    from . import i18n
+    return AdapterError(i18n.tr("此段已锁定，不能修改或重新生成。"))
 
 
 def _pair_status(pair: dict) -> str:
@@ -938,8 +961,15 @@ def segment_text(job_id: str, index: int, state: dict | None = None) -> tuple[st
     return "", ""
 
 
-def save_draft(job_id: str, segment_uid: str, text: str, baseline: str = "") -> None:
-    """Persist an uncommitted edit so a crash or a quit cannot lose it."""
+def save_draft(job_id: str, segment_uid: str, text: str, baseline: str = "", *,
+               state: dict | None = None) -> None:
+    """Persist a draft, reusing the workbench snapshot when one is available."""
+    state = state if state is not None else load_state(job_id)
+    for index, pair in enumerate(state.get("pairs") or []):
+        if isinstance(pair, dict) and (core.segment_uid(pair) or str(index)) == str(segment_uid):
+            if pair.get("readonly"):
+                raise _readonly_error()
+            break
     drafts = core.load_translation_drafts(job_id)
     current = drafts.get(str(segment_uid)) or {}
     if str(current.get("text") or "") == str(text):
@@ -1017,7 +1047,8 @@ def submit_edit(job_id: str, index: int, text: str, *, actor: str = "user",
     自己重新读取；这里再读一遍意味着在后台线程里多解析、多深拷贝一次整份状态
     （一本书几十 MB），期间界面线程拿不到 GIL。
     """
-    state = state if state is not None else core.load_job_state(job_id)
+    supplied_state = state is not None
+    state = state if supplied_state else core.load_job_state(job_id)
     if state is None:
         raise AdapterError(f"找不到任务 {job_id}")
     pairs = state.get("pairs") or []
@@ -1028,6 +1059,10 @@ def submit_edit(job_id: str, index: int, text: str, *, actor: str = "user",
             "可以先继续翻译，或在运行结束后再修改。")
     if not (0 <= index < len(pairs)):
         raise AdapterError("段落索引超出范围，请刷新后重试。")
+    # The supplied state may be stale; check the latest lock before writing.
+    latest = (core.load_job_state(job_id) or {}) if supplied_state else state
+    if segment_is_readonly(latest, index) or segment_is_readonly(state, index):
+        raise _readonly_error()
     uid = core.segment_uid(pairs[index]) or str(index)
     try:
         new_state = core.save_translation_edit(job_id, index, text, actor=actor)
@@ -1184,6 +1219,8 @@ def stage_batch_replacement(job_id: str, query: str, replacement: str, *,
         if item["after"] == item["before"]:
             continue
         pair = pairs[index]
+        if pair.get("readonly"):
+            continue
         drafts.append({
             "segment_index": index,
             "segment_uid": str(pair.get("segment_uid") or ""),
@@ -1230,9 +1267,12 @@ def replace_term_targets(job_id: str, source_term: str, old_target: str,
     立即丢弃（记录可追溯），绝不悄悄写入。人工改写/人工确认的段由批量采用
     入口默认跳过，逐条报告原因。
     """
+    state = load_state(job_id)
+    locked = {i for i, pair in enumerate(state.get("pairs") or [])
+              if isinstance(pair, dict) and pair.get("readonly")}
     staged = core.stage_term_revision(
         job_id, source_term, old_target, new_target, forbidden=forbidden,
-        exclusions=exclusions)
+        exclusions=sorted({int(index) for index in exclusions} | locked))
     created = [item for item in staged.get("created") or []
                if str(item.get("candidate_id") or "")]
     selected_set = {int(index) for index in selected}
@@ -1275,6 +1315,8 @@ def exclude_fragments(job_id: str, indexes: Sequence[int]) -> int:
 
 def exclude_segment(job_id: str, index: int, *, reason: str = "人工排除") -> dict:
     """把一段排除在翻译与交付之外（原文与当时的译文都完整保留，可恢复）。"""
+    if segment_is_readonly(load_state(job_id), int(index)):
+        raise _readonly_error()
     try:
         return core.mutate_translation_segments(
             job_id, int(index), "exclude",
@@ -1498,6 +1540,8 @@ def retranslate_segment(job_id: str, index: int, config: EngineConfig,
     pairs = state.get("pairs") or []
     if not (0 <= int(index) < len(pairs)):
         raise AdapterError("段落索引超出范围，请刷新后重试。")
+    if segment_is_readonly(state, int(index)):
+        raise _readonly_error()
     target_lang = str(state.get("target_lang") or config.target_lang)
     reviewer = {}
     if config.reviewer_mode == "separate" and config.reviewer_provider:
@@ -1561,6 +1605,13 @@ def adopt_candidate(job_id: str, candidate_id: str, note: str = "") -> dict:
 
     过期、错段、已排除的候选不会被写入；调用方必须看 ``committed``，不能假定成功。
     """
+    from folith import translation_candidates as _candidates
+    state = load_state(job_id)
+    candidate = _candidates.by_id(state, candidate_id)
+    if candidate is not None:
+        index = _candidates.resolve_segment_index(state, candidate)
+        if index is not None and segment_is_readonly(state, index):
+            raise _readonly_error()
     try:
         result = core.adopt_translation_candidate(
             job_id, str(candidate_id or ""), actor="user", note=note)
@@ -1855,6 +1906,8 @@ def suggest_translation(job_id: str, index: int, instruction: str,
     if not 0 <= index < len(pairs):
         raise AdapterError("这一段已不存在，请重新选择段落。")
     pair = pairs[index]
+    if pair.get("readonly"):
+        raise _readonly_error()
     source = str(pair.get("source") or "")
     # 基线必须在模型调用**之前**取：调用期间用户可能已经改了这一段，
     # 那时这个候选就是迟到的结果，只能标记过期而不能覆盖新稿。
@@ -2732,7 +2785,12 @@ def apply_entity_repair(job_id: str, source: str, target: str,
     """只应用用户看过的那组 before/after（核心会拒绝与预览不一致的改动）。"""
     if not preview:
         raise AdapterError("没有可应用的修改。")
+    state = load_state(job_id)
+    has_readonly = any(isinstance(pair, dict) and pair.get("readonly")
+                       for pair in state.get("pairs") or [])
     try:
+        if state.get("xliff") or has_readonly:
+            return core.apply_entity_repair_skipping_readonly(job_id, source, target, list(preview))
         return core.apply_entity_repair(job_id, source, target, list(preview))
     except (RuntimeError, ValueError) as exc:
         raise AdapterError(str(exc) or type(exc).__name__) from exc
@@ -2923,6 +2981,10 @@ STRUCTURE_OPERATIONS = ("source_edit", "split", "merge", "insert", "delete")
 
 
 def _structure_call(job_id: str, index: int, operation: str, **fields) -> dict:
+    state = load_state(job_id)
+    if operation != "insert" and (segment_is_readonly(state, int(index)) or
+            (operation == "merge" and segment_is_readonly(state, int(index) + 1))):
+        raise _readonly_error()
     try:
         return core.mutate_translation_segments(
             job_id, int(index), operation, actor="user", **fields)
@@ -2964,6 +3026,8 @@ def restore_original_translation(job_id: str, index: int) -> dict:
     if not (0 <= int(index) < len(pairs)):
         raise AdapterError("段落索引超出范围，请刷新后重试。")
     pair = pairs[int(index)]
+    if pair.get("readonly"):
+        raise _readonly_error()
     if not (pair.get("human_edited") or pair.get("_translation_edit_restore")):
         raise AdapterError("这一段没有人工修改过，没有可恢复的原译。")
     uid = core.segment_uid(pair) or str(index)
