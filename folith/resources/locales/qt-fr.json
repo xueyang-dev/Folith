@@ -2710,5 +2710,10 @@
   "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "L'importation est toujours en cours en arrière-plan : fermer l'assistant ne l'annule pas. Actualisez la page Projets une fois terminée pour voir le résultat.",
   "上一批任务还在删除中，请等它完成后再试。": "Le lot de tâches précédent est encore en cours de suppression ; attendez qu'il se termine et réessayez.",
   "任务正在删除中，请等删除完成后再退出。": "Une tâche est en cours de suppression ; attendez la fin de la suppression avant de quitter.",
-  "删除任务失败": "Échec de la suppression de la tâche"
+  "删除任务失败": "Échec de la suppression de la tâche",
+  "无法取消任务": "Impossible d’annuler la tâche",
+  "无法暂停任务": "Impossible de mettre la tâche en pause",
+  "无法继续任务": "Impossible de poursuivre la tâche",
+  "无法重试": "Impossible de réessayer",
+  "任务当前不可取消。": "Cette tâche ne peut pas être annulée pour le moment."
 }
