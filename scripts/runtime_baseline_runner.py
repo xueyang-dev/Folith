@@ -645,6 +645,111 @@ class _R_OnlyAssembled(Exception):
     block, so the settling branch below must not overwrite it."""
 
 
+def _tile_finished_state(state: dict, copies: int) -> dict:
+    """Copy a *finished* task's state ``copies`` times, renumbering positions.
+
+    Plan D1 needs a finished 10,000-segment task.  The whole-document projections
+    (review queue, delivery gate, terms) are what the I phase costs, so a task
+    holding only translations would measure a lighter document: the template's
+    findings, review evidence and aggregates are tiled at the same density.
+    """
+    import copy as _copy
+
+    tiled = _copy.deepcopy(state)
+    base_paras = list(state.get("paras") or [])
+    base_pairs = list(state.get("pairs") or [])
+    base_findings = list(state.get("findings") or [])
+    base_evidence = list(state.get("review_evidence") or [])
+    base_actions = list(state.get("human_actions") or [])
+    size = len(base_pairs)
+    if size <= 0 or copies <= 1:
+        return tiled
+    max_batch = max([int(item.get("batch") or 0) for item in base_evidence] or [0]) + 1
+
+    paras, pairs = list(base_paras), list(base_pairs)
+    findings, evidence, actions = (list(base_findings), list(base_evidence),
+                                   list(base_actions))
+    for copy_index in range(1, copies):
+        offset = copy_index * size
+        paras.extend(_copy.deepcopy(base_paras))
+        pairs.extend(_copy.deepcopy(base_pairs))
+        for item in base_findings:
+            item2 = _copy.deepcopy(item)
+            for key in ("segment_index", "segment_id"):
+                if isinstance(item2.get(key), int):
+                    item2[key] = item2[key] + offset
+            findings.append(item2)
+        for item in base_evidence:
+            item2 = _copy.deepcopy(item)
+            ids = item2.get("segment_ids")
+            if isinstance(ids, list):
+                item2["segment_ids"] = [int(value) + offset for value in ids
+                                        if isinstance(value, int)]
+            if isinstance(item2.get("batch"), int):
+                item2["batch"] = item2["batch"] + copy_index * max_batch
+            evidence.append(item2)
+        for item in base_actions:
+            item2 = _copy.deepcopy(item)
+            if isinstance(item2.get("finding_id"), str):
+                item2["finding_id"] = f"{item2['finding_id']}#c{copy_index}"
+            actions.append(item2)
+    tiled.update({"paras": paras, "pairs": pairs, "findings": findings,
+                  "review_evidence": evidence, "human_actions": actions})
+    stats = dict(tiled.get("review_stats") or {})
+    for key, value in list(stats.items()):
+        if isinstance(value, int):
+            stats[key] = value * copies
+    tiled["review_stats"] = stats
+    for key in ("tm_used_count", "tm_recovered_count"):
+        if isinstance(tiled.get(key), int):
+            tiled[key] = tiled[key] * copies
+    return tiled
+
+
+def _seed_tiled_task(adapter, template_job: str, target_segments: int, *,
+                     fixture: Path, filename: str) -> dict:
+    """Write a finished task of ~``target_segments`` segments from a template.
+
+    The template is a task the engine really finished; this only repeats its
+    state, renumbered, through the product's own state writer.  What is measured
+    afterwards (opening and driving a finished big task) is unchanged, and the
+    report says the task was seeded rather than produced by the pipeline.
+    """
+    import math
+
+    core = adapter.core
+    template = core.load_job_state(template_job) or {}
+    size = len(template.get("pairs") or [])
+    if size <= 0:
+        raise RuntimeError(
+            f"seed template {template_job} has no pairs: is it finished?")
+    copies = max(1, int(math.ceil(float(target_segments) / float(size))))
+    tiled = _tile_finished_state(template, copies)
+    tiled["p2_done"] = True
+    tiled["p3_done"] = True
+    tiled["stage"] = template.get("stage") or "REPORT_GENERATED"
+    tiled["filename"] = filename
+    created = adapter.import_documents(
+        [fixture], adapter.EngineConfig(target_lang=template.get("target_lang") or "简体中文"))
+    job_id = created[0].job_id
+    # The new task has its own revision and journal: carrying the template's over
+    # would be rejected by the product's snapshot guard (and point at another
+    # task's journal).  Everything else is the template's, tiled.
+    shell = core.load_job_state(job_id) or {}
+    for key in ("snapshot_revision", "journal_cursor", "state_journal", "project_id"):
+        tiled[key] = shell.get(key, template.get(key))
+    for key in ("segment_structure_history", "segment_structure_undo_log"):
+        tiled.pop(key, None)
+    core.save_job_state(job_id, tiled)
+    try:
+        core.update_runtime_state(job_id, status="completed")
+    except Exception:  # noqa: BLE001 - the state is what the UI reads
+        pass
+    return {"job_id": job_id, "template": template_job, "copies": copies,
+            "segments": len(tiled.get("pairs") or []),
+            "findings": len(tiled.get("findings") or [])}
+
+
 def _task_fingerprint(adapter, job_id: str) -> dict:
     """Segments and a content digest, so two arms can prove the same load.
 
@@ -1337,6 +1442,8 @@ class _TaskSwitchDriver:
                  settle_timeout, result, operations=None, clock=time.monotonic,
                  reuse_tasks: bool = False):
         self.reuse_tasks = bool(reuse_tasks)
+        self.seed_template = ""
+        self.seed_segments = 0
         self.tasks_marker_path = None
         self.build_time_scale = None
         self._build_started: float | None = None
@@ -1967,6 +2074,33 @@ def run_source_s3(args: argparse.Namespace, fixtures: list[Path], data_dir: Path
     started = time.monotonic()
     marker_path = data_dir / "s3-tasks.json"
     marker: dict = {}
+    if getattr(args, "seed_template", "") and int(getattr(args, "seed_segments", 0) or 0):
+        # D1 wants a *finished* big task, not a pipeline run.  Seed it here, while
+        # nothing is importing: doing it inside the driver raced the import of the
+        # small task and the product refused the second write.
+        seeded = _seed_tiled_task(
+            adapter, str(args.seed_template), int(args.seed_segments),
+            fixture=fixtures[0],
+            filename=f"seeded-{int(args.seed_segments)}-segments.epub")
+        small = adapter.import_documents(
+            [fixtures[1]], adapter.EngineConfig(
+                target_lang=str((adapter.load_state(seeded["job_id"]) or {})
+                                .get("target_lang") or "简体中文")))[0].job_id
+        fingerprint = _task_fingerprint(adapter, seeded["job_id"])
+        marker = {
+            "schema": 1,
+            "jobs": [seeded["job_id"], small],
+            "big_job_id": seeded["job_id"],
+            "small_job_id": small,
+            "fingerprint": fingerprint,
+        }
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text(json.dumps(marker, ensure_ascii=False, indent=2),
+                               encoding="utf-8")
+        result["seeded"] = seeded
+        result["steps"].append({"step": "task_seeded", "ok": True, **seeded})
+        # The tasks now exist: the driver only has to open and drive them.
+        args.reuse_tasks = True
     if marker_path.is_file():
         try:
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -1984,6 +2118,8 @@ def run_source_s3(args: argparse.Namespace, fixtures: list[Path], data_dir: Path
                                reuse_tasks=bool(getattr(args, "reuse_tasks", False)))
     driver.tasks_marker_path = marker_path
     driver.build_time_scale = getattr(args, "build_time_scale", None)
+    driver.seed_template = str(getattr(args, "seed_template", "") or "")
+    driver.seed_segments = int(getattr(args, "seed_segments", 0) or 0)
     try:
         _drive_event_loop(app, driver, result)
         measured_s3 = bool(getattr(driver, "scenario_window", None)) \
@@ -2217,6 +2353,7 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
             "run_records": result.get("run_records") or [],
         },
         "r_only": bool(result.get("r_only")),
+        "seeded": result.get("seeded") or {},
         "tasks": result.get("tasks") or {},
         "operations_skipped": result.get("operations_skipped") or {},
         "limits": limits_for(_offscreen),
@@ -2530,6 +2667,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", default="source", choices=("source", "frozen"))
     parser.add_argument("--frozen-app", default=None,
                         help="frozen Folith executable (implies --mode frozen)")
+    parser.add_argument("--seed-template", default="",
+                        help="S3: job id of a finished task in this data dir; the "
+                             "big task is tiled from its state instead of translated")
+    parser.add_argument("--seed-segments", type=int, default=0,
+                        help="S3: target segment count for the seeded task "
+                             "(0 = off; 10000 is the plan's 10,000-segment task)")
     parser.add_argument("--reuse-tasks", action="store_true",
                         help="S3: keep the data dir and skip import+build when the "
                              "finished tasks are already recorded there")
@@ -2619,18 +2762,31 @@ def main(argv: list[str] | None = None) -> int:
     for directory in (data_dir, log_dir):
         # --reuse-tasks keeps the built tasks (10,000 segments of translation are
         # not something to rebuild per round); everything else starts clean.
-        if not (getattr(args, "reuse_tasks", False) and directory.is_dir()):
+        keep = bool(getattr(args, "reuse_tasks", False)
+                    or getattr(args, "seed_template", ""))
+        if not (keep and directory.is_dir()):
             shutil.rmtree(directory, ignore_errors=True)
         directory.mkdir(parents=True, exist_ok=True)
 
     if args.scenario == "S3":
         segments = max(2, int(args.s3_segments))
-        fixtures = [
-            build_epub(args.out / "fixtures" / f"s3-{segments}p.epub", segments),
-            build_epub(args.out / "fixtures" / f"s3-{max(1, args.s3_small_paras)}p.epub",
-                       max(1, args.s3_small_paras)),
-        ]
-        paras = segments
+        if getattr(args, "seed_template", ""):
+            # The big task is seeded from a template.  Two distinct fixtures: the
+            # product de-duplicates imports, so re-importing the same file for the
+            # shell and for the small task would hand back one job twice.
+            fixtures = [
+                build_epub(args.out / "fixtures" / "s3-shell.epub", 2),
+                build_epub(args.out / "fixtures" / f"s3-{max(1, args.s3_small_paras)}p.epub",
+                           max(1, args.s3_small_paras)),
+            ]
+            paras = int(getattr(args, "seed_segments", 0) or segments)
+        else:
+            fixtures = [
+                build_epub(args.out / "fixtures" / f"s3-{segments}p.epub", segments),
+                build_epub(args.out / "fixtures" / f"s3-{max(1, args.s3_small_paras)}p.epub",
+                           max(1, args.s3_small_paras)),
+            ]
+            paras = segments
     else:
         fixtures = [build_epub(args.out / "fixtures" / f"s1-{args.paras}p.epub", args.paras)]
         paras = args.paras

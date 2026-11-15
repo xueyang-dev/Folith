@@ -594,6 +594,50 @@ def test_the_cli_exposes_the_round2_flags(capsys):
         assert flag in out, flag
 
 
+def _finished_state(segments: int = 3):
+    return {
+        "paras": [f"原文{i}" for i in range(segments)],
+        "pairs": [{"source": f"原文{i}", "target": f"译文{i}", "reviewed": True}
+                  for i in range(segments)],
+        "findings": [{"segment_index": i + 1, "segment_id": i + 1,
+                      "summary": f"问题{i}"} for i in range(segments)],
+        "review_evidence": [{"batch": i, "segment_ids": [i]} for i in range(segments)],
+        "human_actions": [{"finding_id": f"segment-mutation:{i}"}
+                          for i in range(segments)],
+        "review_stats": {"reviewed_segments": segments, "actionable": segments},
+        "tm_used_count": 2,
+        "p2_done": True,
+    }
+
+
+def test_the_tiler_renumbers_positions_and_keeps_the_density():
+    """Condition: findings/review evidence/aggregates are tiled, not dropped.
+
+    The I phase is dominated by the whole-document projections, so a 10,000-segment
+    task holding only translations would measure a lighter document than the one
+    the engine produces.
+    """
+    tiled = runner._tile_finished_state(_finished_state(3), 2)
+    assert len(tiled["pairs"]) == 6
+    assert len(tiled["paras"]) == 6
+    assert len(tiled["findings"]) == 6
+    assert [item["segment_index"] for item in tiled["findings"]] == [1, 2, 3, 4, 5, 6]
+    assert [item["segment_id"] for item in tiled["findings"]] == [1, 2, 3, 4, 5, 6]
+    assert [item["segment_ids"] for item in tiled["review_evidence"]] == [[0], [1], [2], [3], [4], [5]]
+    assert tiled["review_stats"]["actionable"] == 6
+    assert tiled["tm_used_count"] == 4
+    # The copy's actions must not collide with the template's.
+    ids = [item["finding_id"] for item in tiled["human_actions"]]
+    assert len(set(ids)) == len(ids), ids
+
+
+def test_the_tiler_leaves_a_single_copy_alone():
+    original = _finished_state(3)
+    tiled = runner._tile_finished_state(original, 1)
+    assert len(tiled["pairs"]) == 3
+    assert tiled["review_stats"]["actionable"] == 3
+
+
 def _verify_with_run_counts(tmp_path, counts, *, mode="source"):
     """Write a minimal round whose R phase sampled *counts* and verify it."""
     import json as _json
