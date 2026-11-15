@@ -29,14 +29,27 @@ _IMAGE_CACHE: collections.OrderedDict[Tuple[Any, ...], bytes] = collections.Orde
 _SEGMENT_PAGE_CACHE: Dict[Tuple[Any, ...], Tuple[Optional[int], List[Any]]] = {}
 
 
+#: PDF 文件头（`%PDF-1.x`）。判断格式只需要这几个字节。
+PDF_MAGIC = b"%PDF"
+
+
 def has_pdf_source(job_id: str) -> bool:
-    """Return whether a valid PDF source document is available for the job."""
+    """Return whether a valid PDF source document is available for the job.
+
+    只读文件头，不整份读 ``source.bin``：这条判断在打开任务的 GUI 线程上跑
+    （``views._load_pdf``），而紧随其后的 ``pdf_page_count`` 为了渲染本来就要把
+    整份读一遍。扫描版 PDF 常见 20–50 MB，白读一遍是纯浪费（P2-14）。
+    读不到文件（缺失、权限）当没有源文件。
+    """
     if not job_id or not fitz:
         return False
-    source = core.load_source(job_id)
-    if not source or not isinstance(source, (bytes, bytearray)):
+    path = core.job_dir(job_id) / "source.bin"
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(len(PDF_MAGIC))
+    except OSError:
         return False
-    return source.startswith(b"%PDF")
+    return head == PDF_MAGIC
 
 
 def open_pdf_doc(job_id: str):

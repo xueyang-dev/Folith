@@ -7,6 +7,39 @@ import core
 from folith import pdf_preview
 
 
+def test_has_pdf_source_reads_only_the_header(tmp_path: Path, monkeypatch):
+    """P2-14：格式判断只读文件头，不整份读 ``source.bin``。
+
+    这条判断在打开任务的 GUI 线程上跑（``views._load_pdf``），而紧随其后的
+    ``pdf_page_count`` 为了渲染本来就要整份读一遍；扫描版 PDF 常见 20–50 MB。
+    """
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    job_id = "pdf-header-only"
+    core.save_source(job_id, b"%PDF-1.7\n" + b"x" * 200_000)
+
+    def boom(_job_id):
+        raise AssertionError("可用性判断不应整份读源文件")
+
+    monkeypatch.setattr(core, "load_source", boom)
+    assert pdf_preview.has_pdf_source(job_id) is True
+    assert pdf_preview.has_pdf_source("missing-job") is False
+    assert pdf_preview.has_pdf_source("") is False
+
+
+def test_has_pdf_source_rejects_other_formats(tmp_path: Path, monkeypatch):
+    """只读文件头不改变判定：非 PDF、空源文件都不算有 PDF。"""
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path)
+    epub = "pdf-header-epub"
+    core.save_source(epub, b"PK\x03\x04 not a pdf")
+    assert pdf_preview.has_pdf_source(epub) is False
+    empty = "pdf-header-empty"
+    core.save_source(empty, b"")
+    assert pdf_preview.has_pdf_source(empty) is False
+    only_magic = "pdf-header-magic"
+    core.save_source(only_magic, b"%PDF")
+    assert pdf_preview.has_pdf_source(only_magic) is True
+
+
 @pytest.fixture
 def sample_pdf_job(tmp_path: Path, monkeypatch):
     """Create a temporary job directory with a multi-page sample PDF."""
