@@ -397,9 +397,10 @@ def _inline_namespace_is_unknown(document: XmlDocument, element: XmlElement) -> 
     没有前缀、也没有默认 ``xmlns`` 的元素不当成未知：测试样本和一部分旧文件
     不声明 XLIFF 命名空间，本地名仍按 XLIFF 1.2 的行内标签处理。
     """
-    if element.prefix == "xml":
-        return False
     bindings = _namespace_bindings(document, element)
+    if element.prefix == "xml":
+        # xml 前缀自带标准绑定；显式重绑定到别的 URI 不能绕过检查。
+        return bindings.get("xml", XML_NAMESPACE) != XML_NAMESPACE
     if element.prefix:
         uri = bindings.get(element.prefix, "")
     else:

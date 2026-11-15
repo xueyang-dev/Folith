@@ -298,6 +298,16 @@ def test_namespace_bindings_do_not_leak_between_documents(monkeypatch):
     assert len(parse_xliff12(known).units) == 1
 
 
+def test_reserved_xml_prefix_cannot_be_rebound_to_unknown_namespace():
+    valid = _tiny(_unit("1", '<xml:x/>', "译文"))
+    invalid = _tiny(_unit("1", '<xml:x xmlns:xml="urn:example:foreign"/>', "译文"))
+    assert len(parse_xliff12(valid).units) == 1
+    rejected = parse_xliff12(invalid)
+    assert not rejected.units
+    assert [item.code for item in rejected.rejections] == ["UNKNOWN_NAMESPACE"]
+    assert "<xml:x>" in rejected.rejections[0].reason
+
+
 def test_dialect_namespace_inside_source_is_not_unknown():
     """方言配置声明过的命名空间出现在 source 里，不算未知，字节也不改。"""
     assert set(SDLXLIFF.preserved_namespaces) <= set(KNOWN_INLINE_NAMESPACES)
