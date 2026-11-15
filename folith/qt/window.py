@@ -2774,8 +2774,26 @@ class MainWindow(QMainWindow):
             return False
         return True
 
+    def _job_action_failed(self, title: str, exc: BaseException) -> None:
+        """Surface a job action that raised instead of letting the click vanish.
+
+        The runtime-state lock is bounded (#410): a contended write raises
+        ``JobLockTimeout`` instead of parking the GUI thread forever, so these
+        buttons can now fail.  Before this, the exception died inside the Qt slot
+        and the user's click simply did nothing.
+        """
+        self._failure(title, str(exc) or type(exc).__name__,
+                      detail=f"{type(exc).__name__}: {exc}", task=False)
+
     def pause_job(self) -> None:
-        if self._current_job_id and adapter.pause_job(self._current_job_id):
+        if not self._current_job_id:
+            return
+        try:
+            paused = adapter.pause_job(self._current_job_id)
+        except Exception as exc:  # noqa: BLE001 - surface it, never swallow a click
+            self._job_action_failed(i18n.tr('无法暂停任务'), exc)
+            return
+        if paused:
             self._notice(i18n.tr('已请求暂停；当前操作结束后暂停。关闭或退出应用后仍可继续。'))
             self.refresh_workbench(force=True)
         else:
@@ -2788,9 +2806,16 @@ class MainWindow(QMainWindow):
         连接透明地重新启动 worker：已识别的页面与译文保留，改动立即生效。
         """
         job_id = self._current_job_id
-        if job_id and adapter.continue_job(
+        if not job_id:
+            return
+        try:
+            resumed = adapter.continue_job(
                 job_id, self.config,
-                user_defaults=dict(self.stored_task_defaults)):
+                user_defaults=dict(self.stored_task_defaults))
+        except Exception as exc:  # noqa: BLE001 - surface it, never swallow a click
+            self._job_action_failed(i18n.tr('无法继续任务'), exc)
+            return
+        if resumed:
             self._notice(i18n.tr('正在继续任务。'))
             self.refresh_workbench(force=True)
         else:
@@ -2805,12 +2830,29 @@ class MainWindow(QMainWindow):
                 i18n.tr('取消后已完成的进度会保留，可以稍后继续。\n\n确定取消当前任务吗？'),
                 yes=i18n.tr('取消任务'), no=i18n.tr('继续运行')):
             return
-        adapter.cancel_job(job_id)
+        try:
+            cancelled = adapter.cancel_job(job_id)
+        except Exception as exc:  # noqa: BLE001 - surface it, never swallow a click
+            self._job_action_failed(i18n.tr('无法取消任务'), exc)
+            return
+        if not cancelled:
+            # The adapter can refuse without raising; the old code still told the
+            # user "cancelling" and left the task running.
+            self._notice(i18n.tr('任务当前不可取消。'), error=True)
+            return
         self._notice(i18n.tr('已请求取消；正在等待当前步骤结束。'))
         self.refresh_workbench(force=True)
 
     def retry_job(self) -> None:
-        if self._current_job_id and adapter.retry_job(self._current_job_id):
+        if not self._current_job_id:
+            self._notice(i18n.tr('当前没有可重试的失败步骤。'), error=True)
+            return
+        try:
+            retried = adapter.retry_job(self._current_job_id)
+        except Exception as exc:  # noqa: BLE001 - surface it, never swallow a click
+            self._job_action_failed(i18n.tr('无法重试'), exc)
+            return
+        if retried:
             self._notice(i18n.tr('已准备重试当前步骤，请点击「开始 / 继续翻译」。'))
             self.refresh_workbench(force=True)
         else:

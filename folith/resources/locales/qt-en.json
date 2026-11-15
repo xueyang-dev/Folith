@@ -2709,5 +2709,10 @@
   "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "The import is still running in the background: closing the wizard does not cancel it. Refresh the Projects page when it finishes to see the result.",
   "上一批任务还在删除中，请等它完成后再试。": "The previous batch of tasks is still being deleted; wait for it to finish and try again.",
   "任务正在删除中，请等删除完成后再退出。": "A task is still being deleted; wait for the deletion to finish before quitting.",
-  "删除任务失败": "Failed to delete the task"
+  "删除任务失败": "Failed to delete the task",
+  "无法取消任务": "Cannot cancel the task",
+  "无法暂停任务": "Cannot pause the task",
+  "无法继续任务": "Cannot continue the task",
+  "无法重试": "Cannot retry",
+  "任务当前不可取消。": "This task cannot be cancelled right now."
 }
