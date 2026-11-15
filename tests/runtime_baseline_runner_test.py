@@ -500,6 +500,100 @@ def test_report_declares_measurement_v3_and_the_phase_contract():
             assert phase in operations[name]["phases"]
 
 
+def test_the_r_window_parser_accepts_start_end_seconds():
+    assert runner._parse_r_window("120:720") == (120.0, 720.0)
+    assert runner._parse_r_window(None) is None
+    assert runner._parse_r_window("") is None
+    for bad in ("120", "720:120", "-1:60", "a:b"):
+        with pytest.raises(SystemExit):
+            runner._parse_r_window(bad)
+
+
+def test_an_r_only_round_leaves_i_to_s3_and_is_not_void():
+    """Plan D1: R here, I on S3.  A round without an I phase must not be voided.
+
+    The void rule exists to catch a round that was supposed to measure I and
+    could not; an R-only round never had one.
+    """
+    phases = runner._phase_metrics(
+        _window(), _window(),
+        r_only={"r_only": True, "r_window": {"start_s": 120.0, "end_s": 720.0,
+                                            "measured_s": 600.0}})
+    assert phases["valid_round"] is True, phases["discard_reasons"]
+    assert phases["discarded_rounds"] == 0
+    assert phases["R"]["valid"] is True
+    assert phases["I"]["provided_by"] == "S3"
+    assert phases["I"]["valid"] is True
+    assert phases["r_window"]["start_s"] == 120.0
+    assert phases["i_phase_s"] is None
+
+
+def test_a_normal_round_with_a_short_completion_phase_is_still_void():
+    """The r-only branch must not weaken the rule it bypasses."""
+    phases = runner._phase_metrics(_window(observed_s=61.0), _window(observed_s=60.0))
+    assert phases["valid_round"] is False
+    assert phases["discarded_rounds"] == 1
+
+
+def test_verify_accepts_an_r_only_round_and_keeps_the_r_sample_gate(tmp_path):
+    import json as _json
+
+    phases = runner._phase_metrics(
+        _window(), _window(),
+        r_only={"r_only": True, "r_window": {"start_s": 120.0, "end_s": 720.0,
+                                            "measured_s": 600.0}})
+    payload = _report(result={"gui_jank": _window(), "run_window": _window(observed_s=600.0),
+                              "translation": {"settled": True, "completed": True,
+                                              "mode": "r_only"}})
+    payload["metrics"]["phases"] = phases
+    payload["environment"]["mode"] = "source"
+    spec = payload["metrics"]["operations"]["operations"]
+    for name in ("scroll", "select_segment", "type_echo"):
+        spec[name]["phases"]["run"] = {"measured": True, "count": 10, "p95": 1.0}
+    (tmp_path / "runtime-baseline.json").write_text(_json.dumps(payload), encoding="utf-8")
+    verdict = runner.verify_round(tmp_path)
+    by_name = {item["check"]: item for item in verdict["checks"]}
+    assert by_name["I_valid"]["ok"] is True
+    assert by_name["I_valid"]["required"] is False
+    assert by_name["r_window_recorded"]["ok"] is True
+    assert by_name["i_phase_provided_by_s3"]["ok"] is True
+    # The R-phase sample gate is unchanged by the r-only mode.
+    assert by_name["run_phase_operations_sampled"]["ok"] is True
+    for name in ("scroll", "select_segment", "type_echo"):
+        spec[name]["phases"]["run"] = {"measured": False, "count": 0}
+    (tmp_path / "runtime-baseline.json").write_text(_json.dumps(payload), encoding="utf-8")
+    verdict = runner.verify_round(tmp_path)
+    gate = {item["check"]: item for item in verdict["checks"]}[
+        "run_phase_operations_sampled"]
+    assert gate["ok"] is False
+
+
+def test_the_task_fingerprint_proves_two_arms_used_the_same_load():
+    class _Adapter:
+        def __init__(self, sources):
+            self._state = {"pairs": [{"source": text, "target": ""} for text in sources]}
+
+        def load_state(self, _job_id):
+            return self._state
+
+    same_a = runner._task_fingerprint(_Adapter(["甲", "乙"]), "job")
+    same_b = runner._task_fingerprint(_Adapter(["甲", "乙"]), "job")
+    other = runner._task_fingerprint(_Adapter(["甲", "丙"]), "job")
+    assert same_a["segments"] == 2
+    assert same_a["digest"] == same_b["digest"]
+    assert same_a["digest"] != other["digest"]
+
+
+def test_the_cli_exposes_the_round2_flags(capsys):
+    """--help is the parser itself, so the flags are checked where they live."""
+    with pytest.raises(SystemExit) as exc:
+        runner.main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    for flag in ("--r-only", "--r-window", "--reuse-tasks", "--build-time-scale"):
+        assert flag in out, flag
+
+
 def _verify_with_run_counts(tmp_path, counts, *, mode="source"):
     """Write a minimal round whose R phase sampled *counts* and verify it."""
     import json as _json
