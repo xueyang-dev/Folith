@@ -24,6 +24,7 @@ import threading
 import time
 import weakref
 from collections.abc import Callable
+from types import SimpleNamespace
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QRectF, QSize, QSizeF, Qt, QTimer, Signal
@@ -38,6 +39,7 @@ from folith.desktop import single_instance
 
 from . import i18n, platform_ui, preferences
 from . import import_wizard
+from . import xliff_io
 from . import adapter
 from . import bootstrap
 from . import dialogs
@@ -525,6 +527,7 @@ class MainWindow(QMainWindow):
         self.workbench.suggestRequested.connect(self.suggest_translation)
         self.workbench.analyzeRequested.connect(self.analyze_segment)
         self.workbench.exportRequested.connect(self.export_copy)
+        self.workbench.delivery.bilingualExportRequested.connect(self.export_bilingual_file)
         self.workbench.saveSnapshotRequested.connect(self.save_snapshot)
         self.workbench.editSubmitted.connect(self.submit_edit)
         self.workbench.revealRequested.connect(self.reveal_path)
@@ -1184,7 +1187,8 @@ class MainWindow(QMainWindow):
             self, i18n.tr('导入文档'), str(Path.home()),
             # The picker advertises exactly the formats the shared application
             # contract (and therefore the core ingestion path) accepts.
-            i18n.tr('文档 ({v0})', v0=" ".join(f"*{item}" for item in adapter.SOURCE_SUFFIXES)))
+            i18n.tr('文档 ({v0})', v0=" ".join(
+                f"*{item}" for item in (*adapter.SOURCE_SUFFIXES, *sorted(xliff_io.BILINGUAL_SUFFIXES)))))
         if not paths:
             # Cancelling must not leave a half-created task behind.
             self._notice(i18n.tr('已取消导入，没有创建任何任务。'))
@@ -1212,6 +1216,26 @@ class MainWindow(QMainWindow):
     def import_paths(self, paths: list[str], *,
                      autostart: bool | None = None, open_result: bool = True,
                      on_result=None) -> None:
+        bilingual = [path for path in paths if Path(path).suffix.lower() in xliff_io.BILINGUAL_SUFFIXES]
+        if bilingual:
+            paths = [path for path in paths if path not in bilingual]
+            bilingual_callback = on_result
+            if paths and on_result is not None:
+                all_results = []
+                completed = []
+                original_callback = on_result
+
+                def collect(results):
+                    all_results.extend(results)
+                    completed.append(True)
+                    if len(completed) == 2:
+                        original_callback(all_results)
+
+                bilingual_callback = on_result = collect
+            self.import_bilingual_paths(bilingual, open_result=open_result,
+                                        on_result=bilingual_callback)
+            if not paths:
+                return
         self._imports_active += 1
         if self._import_activity is None:
             self._import_activity = components.ButtonActivity(
@@ -1229,10 +1253,7 @@ class MainWindow(QMainWindow):
             self._import_activity.show_progress_after(3000, long_import)
 
         def finished() -> None:
-            self._imports_active -= 1
-            if self._imports_active == 0:
-                self._import_activity.close()
-                self._import_activity = None
+            self._finish_import_activity()
 
         project = self.home.project_filter.currentData() or None
         start_now = autostart
@@ -1282,13 +1303,112 @@ class MainWindow(QMainWindow):
 
         def failed(message: str, detail: str) -> None:
             finished()
-            self._failure(i18n.tr('导入失败'), message, detail, task=False)
+            if on_result is not None:
+                on_result([SimpleNamespace(filename=Path(path).name, ok=False, error=message)
+                           for path in paths])
+            else:
+                self._failure(i18n.tr('导入失败'), message, detail, task=False)
 
         self.runner.submit(adapter.import_documents, paths, self.config,
                            project_id=project,
                            user_defaults=self.stored_task_defaults,
                            on_done=done,
                            on_error=failed, label="import")
+
+    def _finish_import_activity(self) -> None:
+        self._imports_active -= 1
+        if self._imports_active == 0 and self._import_activity is not None:
+            self._import_activity.close()
+            self._import_activity = None
+
+    def import_bilingual_paths(self, paths: list[str], *, open_result: bool = True,
+                               on_result=None) -> None:
+        """Read, parse and persist bilingual files entirely in the task runner."""
+        self._imports_active += 1
+        project = self.home.project_filter.currentData() or None
+        self.home.set_status(i18n.tr('正在导入双语文件…'))
+
+        def done(outcomes) -> None:
+            self._finish_import_activity()
+            self.home.set_status("")
+            successful = [item["result"] for item in outcomes if item.get("result")]
+            failed = [item for item in outcomes if item.get("error")]
+            self.refresh_home()
+            if on_result is not None:
+                on_result([SimpleNamespace(
+                    filename=(item.get("result") or {}).get("filename") or Path(item.get("path") or "").name,
+                    ok=bool(item.get("result")), error=item.get("error", ""))
+                    for item in outcomes])
+            if failed and on_result is None:
+                self._failure(i18n.tr('部分双语文件未导入'),
+                              "\n".join(i18n.tr_dynamic(item["error"]) for item in failed),
+                              task=False)
+            if successful:
+                rejected = [item for result in successful
+                            for item in (result.get("report") or {}).get("rejections", [])]
+                warnings = [str(item) for result in successful
+                            for item in (result.get("report") or {}).get("warnings", [])]
+                excluded = sum(len(result.get("excluded") or []) for result in successful)
+                notice = i18n.tr('已导入 {v0} 个双语文件。', v0=len(successful))
+                if excluded:
+                    notice += " " + i18n.tr('另有 {v0} 个单元按「不翻译」排除，不会进入工作台。',
+                                            v0=excluded)
+                self._notice(notice, task=False)
+                if rejected or warnings:
+                    details = "\n".join(
+                        [f"{item.get('unit_ref', '')}: {i18n.tr_dynamic(item.get('reason', ''))}"
+                         for item in rejected]
+                        + [i18n.tr_dynamic(item) for item in warnings])
+                    self._failure(
+                        i18n.tr('部分双语单元未导入') if rejected else i18n.tr('双语文件导入有提示'),
+                        details, task=False)
+                if open_result:
+                    self.open_job(successful[0]["job_id"])
+
+        def failed(message: str, detail: str) -> None:
+            self._finish_import_activity()
+            self.home.set_status("")
+            if on_result is not None:
+                on_result([SimpleNamespace(filename=Path(path).name, ok=False, error=message)
+                           for path in paths])
+            else:
+                self._failure(i18n.tr('双语文件导入失败'), i18n.tr_dynamic(message), detail, task=False)
+
+        self.runner.submit(xliff_io.import_files, paths, project_id=project,
+                           on_done=done, on_error=failed, label="import-xliff")
+
+    def export_bilingual_file(self, write_targets: bool = False, destination: str = "") -> None:
+        """Choose a destination natively; all file processing runs in TaskRunner."""
+        job_id = self._current_job_id
+        state = self._cached_state or {}
+        dialect = (state.get("xliff") or {}).get("dialect", "")
+        if not job_id or dialect not in {"xliff12", "sdlxliff", "mqxliff"}:
+            return
+        if write_targets and dialect != "xliff12":
+            return
+        if write_targets and (self.edits_pending() or self.workbench._dirty or
+                              any(row.has_draft for row in self.workbench._all_rows)):
+            self._notice(i18n.tr('请先提交所有草稿并等待保存完成，再导出译文。'),
+                         error=True, job_id=job_id)
+            return
+        if not destination:
+            if _automation():
+                return
+            name = Path(str(state.get("filename") or "export.xlf")).name
+            destination, _ = QFileDialog.getSaveFileName(
+                self, i18n.tr('保存双语文件'), name,
+                i18n.tr('双语文件 (*.xlf *.xliff *.sdlxliff *.mqxliff)'))
+            if not destination:
+                return
+
+        def done(_result) -> None:
+            self._notice(i18n.tr('双语文件已导出。'), job_id=job_id)
+
+        def failed(message: str, detail: str) -> None:
+            self._failure(i18n.tr('双语文件导出失败'), i18n.tr_dynamic(message), detail, job_id=job_id)
+
+        self.runner.submit(xliff_io.export_file, job_id, destination, write_targets=write_targets,
+                           on_done=done, on_error=failed, label="export-xliff")
 
     def open_job_checks(self, job_id: str) -> None:
         """从「需要处理」进入任务：只打开任务，检查与修复不自己弹出来（会挡住操作键），
@@ -1497,6 +1617,8 @@ class MainWindow(QMainWindow):
             with timing.phase("workbench.load"):
                 self.workbench.load(job_id, self.config, state, rows, snapshots,
                                     prepared=prepared)
+                self.workbench.delivery.set_bilingual_dialect(
+                    (state.get("xliff") or {}).get("dialect", ""))
             self._cached_models = (state, {
                 "rows": rows, "runtime": prepared["runtime"], "snapshots": snapshots,
                 "review": prepared["review"], "delivery": prepared["delivery"]})
@@ -3493,18 +3615,25 @@ class MainWindow(QMainWindow):
         job_id = self._current_job_id
         if not job_id:
             return
-        if not self._confirm(
-                i18n.tr('统一译名'),
-                i18n.tr('将把「{v0}」统一译为「{v1}」，共修改 {v2} 段；受影响段落的审校和标注会失效，需要重新审校。\n\n确定统一吗？',
-                        v0=source, v1=target, v2=len(preview)),
-                yes=i18n.tr('统一译名'), no=i18n.tr('取消')):
+        locked = sum(1 for item in preview if isinstance(item.get("index"), int)
+                     and adapter.segment_is_readonly(self.workbench._state, item["index"]))
+        message = i18n.tr('将把「{v0}」统一译为「{v1}」，共修改 {v2} 段；受影响段落的审校和标注会失效，需要重新审校。\n\n确定统一吗？',
+                          v0=source, v1=target, v2=len(preview) - locked)
+        if locked:
+            message += "\n" + i18n.tr('另有 {v0} 个锁定段会跳过。', v0=locked)
+        if not self._confirm(i18n.tr('统一译名'), message,
+                             yes=i18n.tr('统一译名'), no=i18n.tr('取消')):
             return
         try:
-            adapter.apply_entity_repair(job_id, source, target, preview)
+            result = adapter.apply_entity_repair(job_id, source, target, preview)
         except adapter.AdapterError as exc:
             self._failure(i18n.tr('无法统一译名'), str(exc))
             return
-        self._notice(i18n.tr('已统一「{v0}」的译名，并记录为人工决定。', v0=source))
+        skipped = result[2] if isinstance(result, tuple) and len(result) == 3 else 0
+        notice = i18n.tr('已统一「{v0}」的译名，并记录为人工决定。', v0=source)
+        if skipped:
+            notice += " " + i18n.tr('已跳过 {v0} 个锁定段。', v0=skipped)
+        self._notice(notice)
         self.refresh_workbench(force=True)
 
     def accept_entity_variants(self, source: str) -> None:

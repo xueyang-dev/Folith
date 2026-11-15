@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+from collections.abc import Mapping as _RuntimeMapping
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 DIFF_ADDED = "added"
@@ -52,7 +53,7 @@ def _canonical_value(value: Any) -> Any:
     这里不能用 :func:`canonical_snapshot`：``extra`` 的值是普通数据
     （``tail`` 字符串、``nsmap`` 映射……），不是节点，没有 ``name`` 契约。
     """
-    if isinstance(value, Mapping):
+    if isinstance(value, _RuntimeMapping):
         return {str(key): _canonical_value(item)
                 for key, item in sorted(value.items(),
                                         key=lambda pair: str(pair[0]))}
@@ -71,7 +72,7 @@ def canonical_snapshot(node: Any) -> Any:
         return None
     if isinstance(node, list):
         return [canonical_snapshot(item) for item in node]
-    if not isinstance(node, Mapping):
+    if not isinstance(node, _RuntimeMapping):
         return node
     name = str(node.get("name") or "")
     if not name:
@@ -169,7 +170,7 @@ def diff_snapshots(
 
 
 def _summary(node: Any) -> Any:
-    if isinstance(node, Mapping):
+    if isinstance(node, _RuntimeMapping):
         return {"name": node.get("name"), "attrs": node.get("attrs") or {},
                 "text": node.get("text"),
                 "children": len(node.get("children") or []),

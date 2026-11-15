@@ -193,6 +193,10 @@ def decode_attr_value(raw: bytes, encoding: str) -> str:
         decoded = raw.decode(encoding)
     except UnicodeDecodeError as exc:
         raise XmlSpanError(f"属性字节不能按 {encoding} 解码：{exc}")
+    if b"&" not in raw:
+        # No entity references: the regex scan below would only re-apply the
+        # literal-whitespace rule, so the cheap path is exactly equivalent.
+        return _LITERAL_WS_RE.sub(" ", decoded)
     pieces: list[str] = []
     cursor = 0
     for match in _ENTITY_RE.finditer(decoded):

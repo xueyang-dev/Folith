@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import i18n, platform_ui
-from . import adapter
+from . import adapter, xliff_io
 from folith.workbench_rows import DOMAINS as _DOMAIN_NAMES
 from . import components
 from . import motion
@@ -1008,9 +1008,9 @@ class HomeView(QWidget):
         self.setAcceptDrops(True)
         self.drop_tile = components.DropTile(
             # .md 与 .markdown 是同一种格式：只写一次 MD（试用截图里出现过「MD · MARKDOWN」）。
-            " · ".join(dict.fromkeys(
-                "MD" if suffix == ".markdown" else suffix.lstrip(".").upper()
-                for suffix in adapter.SOURCE_SUFFIXES)))
+            " · ".join(dict.fromkeys([
+                *("MD" if suffix == ".markdown" else suffix.lstrip(".").upper()
+                  for suffix in adapter.SOURCE_SUFFIXES), "XLIFF"])))
         self.drop_tile.clicked.connect(self.importRequested.emit)
         self.drop_tile.attentionNeeded.connect(self._reveal_drop_tile)
         # 虚线格装在一个与任务卡**外框一样大**的格子里，四周留出与卡片相同的投影留白：
@@ -1122,7 +1122,7 @@ class HomeView(QWidget):
     def _importable(path: str) -> bool:
         from pathlib import Path
 
-        return Path(path).suffix.lower() in adapter.SOURCE_SUFFIXES
+        return Path(path).suffix.lower() in (*adapter.SOURCE_SUFFIXES, *xliff_io.BILINGUAL_SUFFIXES)
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt 命名
         paths = self._dropped_paths(event)
@@ -6261,7 +6261,7 @@ class WorkbenchView(QWidget):
         # * 停滞任务核心也提供 cancel，因此取消按钮必须跟着动作走——否则用户
         #   在"暂无运行信号"时反而看不到取消入口。
         actions = set(runtime.get("available_actions") or [])
-        self.start_button.setVisible("resume" in actions)
+        self.start_button.setVisible("resume" in actions and not self._state.get("xliff"))
         self.start_button.setText(
             "继续翻译" if self._state.get("p1_done") else "开始翻译")
         # 暂停只在"管线确实在跑"时出现，但不能只认 `running`：每次请求模型时状态会
@@ -6273,7 +6273,7 @@ class WorkbenchView(QWidget):
         self.pause_button.setEnabled(not pausing)
         self.pause_button.setText(i18n.tr('正在暂停…') if pausing else i18n.tr('暂停'))
         self.cancel_button.setVisible(running or "cancel" in actions)
-        self.retry_button.setVisible("retry" in actions)
+        self.retry_button.setVisible("retry" in actions and not self._state.get("xliff"))
         if notice:
             self.run_status.set_state(tone=tone, line=notice[1],
                                       line_tone="failed" if notice[2] else None)
@@ -6650,13 +6650,14 @@ class WorkbenchView(QWidget):
         """结构菜单：哪些操作此刻可用，由这一段和最近一次操作决定。"""
         pairs = self._state.get("pairs") or []
         has_pair = 0 <= row.index < len(pairs)
-        editable = has_pair and not row.excluded
-        empty = has_pair and not str(pairs[row.index].get("source") or "").strip() \
+        editable = has_pair and not row.excluded and not adapter.segment_is_readonly(self._state, row.index)
+        empty = editable and not str(pairs[row.index].get("source") or "").strip() \
             and not str(pairs[row.index].get("target") or "").strip()
         has_next = has_pair and row.index + 1 < len(pairs)
         self._structure_actions["source_edit"].setEnabled(editable)
         self._structure_actions["split"].setEnabled(editable)
-        self._structure_actions["merge"].setEnabled(editable and has_next)
+        self._structure_actions["merge"].setEnabled(
+            editable and has_next and not adapter.segment_is_readonly(self._state, row.index + 1))
         self._structure_actions["insert"].setEnabled(has_pair)
         self._structure_actions["delete"].setEnabled(bool(empty))
         undo = adapter.structure_undo_info(self._state)
@@ -6705,11 +6706,15 @@ class WorkbenchView(QWidget):
             return
         position = next((index for index, item in enumerate(self._rows)
                          if item.index == row.index), -1)
-        self.submit_button.setEnabled(not row.excluded)
-        self.copy_source_button.setEnabled(not row.excluded)
+        readonly = adapter.segment_is_readonly(self._state, row.index)
+        editable = not row.excluded and not readonly
+        self.target_edit.setReadOnly(readonly)
+        self.submit_button.setEnabled(editable)
+        self.copy_source_button.setEnabled(editable)
         self.review_button.setEnabled(not row.excluded)
-        self.retranslate_button.setEnabled(not row.excluded)
-        self._sync_exclude_action(enabled=not row.excluded, excluded=bool(row.excluded))
+        self.retranslate_button.setEnabled(editable)
+        self.assist_retranslate.setEnabled(editable)
+        self._sync_exclude_action(enabled=editable, excluded=bool(row.excluded))
         self._sync_structure_menu(row)
         self.pdf_panel.set_segment(row.index)
         self.source_panel.set_segment(row.index)
@@ -6721,6 +6726,8 @@ class WorkbenchView(QWidget):
         # 段号已经在操作栏标题里（"第 N 段"），这一行只说位置与状态。
         parts = [f"{position + 1}/{len(self._rows)}" if position >= 0 else "—",
                  row.status]
+        if readonly:
+            parts.append(i18n.tr("已锁定（只读）"))
         if row.human_edited and row.status != i18n.tr("人工修改"):
             parts.append(i18n.tr("人工修改"))
         if row.has_draft:
@@ -6864,7 +6871,8 @@ class WorkbenchView(QWidget):
         if self._dirty and self._loaded_uid:
             self.flush_draft()
         self._current_index = row.index
-        text = row.draft_text if row.has_draft else row.target
+        text = (row.draft_text if row.has_draft and not
+                adapter.segment_is_readonly(self._state, row.index) else row.target)
         self._set_editor_text(row.source, text,
                               language=self._state.get("target_lang"))
         self._loaded_uid = row.segment_uid
@@ -7166,7 +7174,8 @@ class WorkbenchView(QWidget):
         row = self._rows[position]
         if row.segment_uid != self._loaded_uid:
             return      # 浮层还承载着上一段，换段交给 _load_selected_row()
-        expected = (row.draft_text if row.has_draft else row.target) or ""
+        expected = (row.draft_text if row.has_draft and not
+                    adapter.segment_is_readonly(self._state, row.index) else row.target) or ""
         text = self.target_edit.toPlainText()
         if text == expected:
             return
@@ -7234,7 +7243,8 @@ class WorkbenchView(QWidget):
                 break
         try:
             self.draftSaved.emit(self.job_id, self._loaded_uid, text)
-            adapter.save_draft(self.job_id, self._loaded_uid, text, committed)
+            adapter.save_draft(self.job_id, self._loaded_uid, text, committed,
+                               state=self._state)
         except Exception as exc:  # noqa: BLE001 - never lose the text silently
             self.segment_status.set_status(i18n.tr('草稿保存失败：{v0}', v0=exc), "error")
             return False
@@ -7363,9 +7373,9 @@ class WorkbenchView(QWidget):
             row = next((item for item in self._all_rows
                         if item.index == self._current_index), None)
             if row is not None:
-                self._sync_exclude_action(enabled=not row.excluded,
-                                          excluded=bool(row.excluded))
-                self.restore_button.setVisible(bool(row.human_edited) and not row.excluded)
+                editable = not row.excluded and not adapter.segment_is_readonly(self._state, row.index)
+                self._sync_exclude_action(enabled=editable, excluded=bool(row.excluded))
+                self.restore_button.setVisible(bool(row.human_edited) and editable)
             self.view_source_button.setVisible(
                 bool(getattr(self, "_source_available", False))
                 or bool(getattr(self, "_source_format_known", False)))
@@ -7374,7 +7384,7 @@ class WorkbenchView(QWidget):
 
     def _copy_source_to_target(self) -> None:
         """把原文放进编辑器（只改未提交内容，不写业务真值）。"""
-        if self._current_index < 0:
+        if self._current_index < 0 or adapter.segment_is_readonly(self._state, self._current_index):
             return
         row = next((item for item in self._all_rows
                     if item.index == self._current_index), None)
@@ -7539,7 +7549,7 @@ class WorkbenchView(QWidget):
         self.segment_list.selectRow(position)
 
     def _submit(self) -> None:
-        if self._current_index < 0:
+        if self._current_index < 0 or adapter.segment_is_readonly(self._state, self._current_index):
             return
         self.flush_draft()
         self.editSubmitted.emit(self._current_index)
