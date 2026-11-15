@@ -267,6 +267,37 @@ def test_inline_unknown_namespace_rejects_only_that_unit():
     assert build_import(document).report.rejections == list(document.rejections)
 
 
+@pytest.mark.parametrize("payload", [
+    '<ph id="1">{foreign}</ph>',
+    '<bpt id="1">{foreign}</bpt><ept id="1">end</ept>',
+    '<bpt id="1">start</bpt><ept id="1">{foreign}</ept>',
+])
+def test_unknown_namespace_inside_opaque_inline_payload_is_rejected(payload):
+    foreign = '<vendor:note xmlns:vendor="urn:example:foreign">x</vendor:note>'
+    data = _tiny(_unit("1", payload.format(foreign=foreign), "译文"))
+    result = parse_xliff12(data)
+    assert not result.units
+    assert [item.code for item in result.rejections] == ["UNKNOWN_NAMESPACE"]
+    assert "<vendor:note>" in result.rejections[0].reason
+
+
+def test_namespace_bindings_do_not_leak_between_documents(monkeypatch):
+    """模拟对象 ID 重用：不同文档的同一路径仍按各自的绑定判断。"""
+    import folith.interop.xliff12 as xliff12
+
+    monkeypatch.setattr(xliff12, "id", lambda _document: 1, raising=False)
+    content = _unit("1", '<vendor:x/>', "译文")
+    known = _tiny(content).replace(b'<xliff version=',
+        b'<xliff xmlns:vendor="MQXliff" version=', 1)
+    unknown = _tiny(content).replace(b'<xliff version=',
+        b'<xliff xmlns:vendor="urn:example:foreign" version=', 1)
+    assert len(parse_xliff12(known).units) == 1
+    rejected = parse_xliff12(unknown)
+    assert rejected.units == ()
+    assert [item.code for item in rejected.rejections] == ["UNKNOWN_NAMESPACE"]
+    assert len(parse_xliff12(known).units) == 1
+
+
 def test_dialect_namespace_inside_source_is_not_unknown():
     """方言配置声明过的命名空间出现在 source 里，不算未知，字节也不改。"""
     assert set(SDLXLIFF.preserved_namespaces) <= set(KNOWN_INLINE_NAMESPACES)

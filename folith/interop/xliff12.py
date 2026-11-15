@@ -245,8 +245,6 @@ KNOWN_INLINE_NAMESPACES = frozenset({
     SDLXLIFF_NAMESPACE,
     MQXLIFF_NAMESPACE,
 })
-# 一次解析里反复按 path 找祖先。只留最近一份，避免每个行内元素都重建索引。
-_PATH_INDEX: tuple[int, dict[tuple[int, ...], XmlElement]] = (0, {})
 #: 跨兄弟节点配对的"半个"标签（XLIFF 1.2 的序列模型，不是树模型）。
 _OPEN_TAGS = frozenset({"bpt", "bx"})
 _CLOSE_TAGS = frozenset({"ept", "ex"})
@@ -376,26 +374,15 @@ def _iter_descendants(element: XmlElement) -> Iterator[XmlElement]:
         yield from _iter_descendants(child)
 
 
-def _elements_by_path(document: XmlDocument) -> dict[tuple[int, ...], XmlElement]:
-    global _PATH_INDEX
-    key = id(document)
-    if _PATH_INDEX[0] != key:
-        _PATH_INDEX = (key, {item.path: item for item in document.elements})
-    return _PATH_INDEX[1]
-
-
 def _namespace_bindings(document: XmlDocument, element: XmlElement) -> dict[str, str]:
-    """从根走到该元素，收集仍生效的 ``xmlns`` 绑定。"""
-    by_path = _elements_by_path(document)
-    nodes: list[XmlElement] = []
-    path: tuple[int, ...] = element.path
-    while True:
-        nodes.append(by_path[path])
-        if not path:
-            break
-        path = path[:-1]
+    """沿当前文档的子节点路径，收集从根到元素的 ``xmlns`` 绑定。"""
+    node = document.root
+    nodes = [node]
+    for child_index in element.path:
+        node = node.children[child_index]
+        nodes.append(node)
     bindings: dict[str, str] = {}
-    for node in reversed(nodes):
+    for node in nodes:
         for attr in node.attrs:
             if attr.qname == "xmlns":
                 bindings[""] = str(attr.value)
@@ -447,6 +434,11 @@ def _flatten_into(document: XmlDocument, element: XmlElement, builder: _SideBuil
         if _inline_namespace_is_unknown(document, child):
             _reject_unknown_inline(document, child)
         name = child.local_name
+        if name in _WHOLE_PAYLOAD_TAGS or name in _OPEN_TAGS or name in _CLOSE_TAGS:
+            # 载荷虽作为整体保留，其后代仍属于行内内容，不能绕过命名空间检查。
+            for descendant in _iter_descendants(child):
+                if _inline_namespace_is_unknown(document, descendant):
+                    _reject_unknown_inline(document, descendant)
         if child.self_closing or name in _WHOLE_PAYLOAD_TAGS:
             builder.add_tag("self_closing", _payload(document, child), "",
                             chunk.span)
