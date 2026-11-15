@@ -2730,5 +2730,10 @@
   "已跳过 {v0} 个锁定段。": "Übersprungene gesperrte Segmente: {v0}.",
   "请先提交所有草稿并等待保存完成，再导出译文。": "Bitte alle Entwürfe absenden und warten, bis sie gespeichert sind, bevor die Übersetzung exportiert wird.",
   "无法读取或解析双语文件。": "Die zweisprachige Datei kann nicht gelesen oder analysiert werden.",
-  "无法导出双语文件；请检查文件、状态和保存位置。": "Die zweisprachige Datei kann nicht exportiert werden; bitte Datei, Status und Speicherort prüfen."
+  "无法导出双语文件；请检查文件、状态和保存位置。": "Die zweisprachige Datei kann nicht exportiert werden; bitte Datei, Status und Speicherort prüfen.",
+  "无法取消任务": "Aufgabe kann nicht abgebrochen werden",
+  "无法暂停任务": "Aufgabe kann nicht pausiert werden",
+  "无法继续任务": "Aufgabe kann nicht fortgesetzt werden",
+  "无法重试": "Wiederholen nicht möglich",
+  "任务当前不可取消。": "Die Aufgabe kann derzeit nicht abgebrochen werden."
 }

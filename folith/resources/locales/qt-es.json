@@ -2730,5 +2730,10 @@
   "已跳过 {v0} 个锁定段。": "Se omitieron {v0} segmentos bloqueados.",
   "请先提交所有草稿并等待保存完成，再导出译文。": "Envía todos los borradores y espera a que terminen de guardarse antes de exportar la traducción.",
   "无法读取或解析双语文件。": "No se puede leer o analizar el archivo bilingüe.",
-  "无法导出双语文件；请检查文件、状态和保存位置。": "No se puede exportar el archivo bilingüe; comprueba el archivo, su estado y la ubicación de guardado."
+  "无法导出双语文件；请检查文件、状态和保存位置。": "No se puede exportar el archivo bilingüe; comprueba el archivo, su estado y la ubicación de guardado.",
+  "无法取消任务": "No se puede cancelar la tarea",
+  "无法暂停任务": "No se puede pausar la tarea",
+  "无法继续任务": "No se puede continuar la tarea",
+  "无法重试": "No se puede reintentar",
+  "任务当前不可取消。": "La tarea no se puede cancelar en este momento."
 }

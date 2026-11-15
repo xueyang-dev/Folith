@@ -2730,5 +2730,10 @@
   "已跳过 {v0} 个锁定段。": "Nombre de segments verrouillés ignorés : {v0}.",
   "请先提交所有草稿并等待保存完成，再导出译文。": "Veuillez soumettre tous les brouillons et attendre la fin de leur enregistrement avant d’exporter la traduction.",
   "无法读取或解析双语文件。": "Impossible de lire ou d’analyser le fichier bilingue.",
-  "无法导出双语文件；请检查文件、状态和保存位置。": "Impossible d’exporter le fichier bilingue ; vérifiez le fichier, son état et l’emplacement d’enregistrement."
+  "无法导出双语文件；请检查文件、状态和保存位置。": "Impossible d’exporter le fichier bilingue ; vérifiez le fichier, son état et l’emplacement d’enregistrement.",
+  "无法取消任务": "Impossible d’annuler la tâche",
+  "无法暂停任务": "Impossible de mettre la tâche en pause",
+  "无法继续任务": "Impossible de poursuivre la tâche",
+  "无法重试": "Impossible de réessayer",
+  "任务当前不可取消。": "Cette tâche ne peut pas être annulée pour le moment."
 }

@@ -2729,5 +2729,10 @@
   "已跳过 {v0} 个锁定段。": "Skipped {v0} locked segment(s).",
   "请先提交所有草稿并等待保存完成，再导出译文。": "Please submit all drafts and wait for them to finish saving before exporting the translation.",
   "无法读取或解析双语文件。": "Unable to read or parse the bilingual file.",
-  "无法导出双语文件；请检查文件、状态和保存位置。": "Unable to export the bilingual file; check the file, its status, and the save location."
+  "无法导出双语文件；请检查文件、状态和保存位置。": "Unable to export the bilingual file; check the file, its status, and the save location.",
+  "无法取消任务": "Cannot cancel the task",
+  "无法暂停任务": "Cannot pause the task",
+  "无法继续任务": "Cannot continue the task",
+  "无法重试": "Cannot retry",
+  "任务当前不可取消。": "This task cannot be cancelled right now."
 }
