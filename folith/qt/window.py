@@ -258,6 +258,9 @@ class MainWindow(QMainWindow):
         self._delta_projection_in_flight = False
         #: A poll was requested while a slow projection held the read slot.
         self._pending_poll = False
+        #: The next poll must read the whole state on the worker and apply it as
+        #: a forced refresh (``refresh_workbench_soon``, P2-11).
+        self._force_full_poll = False
         #: A self-healing re-poll is already scheduled.
         self._repoll_pending = False
         #: A job the feed cannot be used for any more (unknown schema/mutation).
@@ -2189,6 +2192,13 @@ class MainWindow(QMainWindow):
             # stops being true (the observed flake in the 2026-11-11 A/B).
             self._pending_poll = True
             return
+        if self._force_full_poll:
+            # ``refresh_workbench_soon`` asked for the disk truth without
+            # blocking the GUI thread (P2-11): run the whole-state read now,
+            # on the worker, instead of letting the delta feed short-circuit it.
+            self._force_full_poll = False
+            self._poll_workbench_full(force=True)
+            return
         if self._delta_ready(job_id):
             self._poll_workbench_delta(job_id)
             return
@@ -2482,13 +2492,15 @@ class MainWindow(QMainWindow):
                            label="poll-projections")
 
     # -- legacy path ------------------------------------------------------
-    def _poll_workbench_full(self) -> None:
+    def _poll_workbench_full(self, *, force: bool = False) -> None:
         """Timer path: read a changed state off the GUI thread, then refresh.
 
         Every batch the pipeline writes changes the state; parsing and copying it
         on the GUI thread froze the workbench for ~0.35 s per batch on a book.
         Explicit ``refresh_workbench()`` calls stay synchronous (callers expect
-        the fresh state at once).
+        the fresh state at once) unless they go through
+        ``refresh_workbench_soon()``; ``force`` carries that request here so the
+        apply is exactly as wide as a forced synchronous refresh would have been.
         """
         job_id = self._current_job_id
         if not job_id or self._state_load_in_flight:
@@ -2501,7 +2513,9 @@ class MainWindow(QMainWindow):
                 and self._cached_models is not None
                 and self._cached_models[0] is cached_state
                 and not self._delivery_cache.due(job_id)):
-            self.refresh_workbench()
+            # The signature did not move: the disk state *is* the cached one, so
+            # a forced re-apply does not need to read it again.
+            self.refresh_workbench(force=force, preloaded=True)
             return
         cached_at_start = self._cached_signature
         self._state_load_in_flight = True
@@ -2544,7 +2558,7 @@ class MainWindow(QMainWindow):
             self._cached_signature = signature
             self._cached_models = (state, models)
             self._cached_models_key = models_key
-            self.refresh_workbench(preloaded=True, models=models)
+            self.refresh_workbench(force=force, preloaded=True, models=models)
             self._repoll_if_changed(job_id, signature)
             self._flush_pending_poll()
 
@@ -2554,6 +2568,32 @@ class MainWindow(QMainWindow):
 
         self.runner.submit(read, on_done=done, on_error=failed,
                            label="poll-state")
+
+    def refresh_workbench_soon(self) -> None:
+        """Re-read the task from disk **without** blocking the GUI thread (P2-11).
+
+        For callers whose only requirement is "the disk is the truth again" and
+        who do not need the fresh state in hand when the call returns: a failed
+        save has to undo its optimistic row, but nobody reads the state it
+        returns.  Doing that read synchronously cost a full ``load_job_state``
+        (parse + deep copy) on the GUI thread -- ~1.1 s per failed save on a
+        10,000-segment task, and the failure path is exactly where a retry loop
+        keeps landing.
+
+        The whole-state read happens on the worker (``_poll_workbench_full``);
+        the apply that follows is as wide as ``refresh_workbench(force=True)``
+        (setup panel, delivery re-validation, rows), so callers keep the
+        behaviour they had.  A read already in flight still serialises: the flag
+        makes the *next* poll take the full path.
+        """
+        job_id = self._current_job_id
+        if not job_id or self._opening_job_id:
+            return
+        # The incremental cursor must restart from the snapshot this read
+        # produces, otherwise the next delta lands on rows it already replaced.
+        self._drop_delta_state()
+        self._force_full_poll = True
+        self._poll_workbench()
 
     def refresh_workbench(self, *, force: bool = False, preloaded: bool = False,
                           prepared: dict | None = None,
@@ -2968,7 +3008,10 @@ class MainWindow(QMainWindow):
                 if not any(queued_job == job_id and queued_index == index
                            for queued_job, queued_index, _ in self._edit_queue):
                     self.workbench.settle_saved(index)
-                self.refresh_workbench(force=True)  # show what is really on disk
+                # Show what is really on disk, but read it on the worker: the
+                # synchronous version blocked the GUI for a full state load on
+                # every failed save (P2-11).
+                self.refresh_workbench_soon()
             self._failure(i18n.tr('无法提交'), message, detail, job_id=job_id)
             self._save_next_edit()
 
