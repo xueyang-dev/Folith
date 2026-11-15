@@ -862,7 +862,7 @@ def test_external_evidence_attack_and_prompt_scan():
         if path == "scripts/audit_sdlxliff.py" and \
                 'SDL_NS_PREFIX = "http://sdl.com/FileTypes/SdlXliff"' in line:
             continue
-        if path == "folith/interop/xliff12_dialect.py" and \
+        if path in ("folith/interop/xliff12_dialect.py", "folith/interop/xliff12.py") and \
                 '"http://sdl.com/FileTypes/SdlXliff/1.0"' in line:
             continue
         # Verified DOI/repository URLs belong in the deterministic literature
