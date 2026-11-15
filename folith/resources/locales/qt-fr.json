@@ -2735,5 +2735,7 @@
   "无法暂停任务": "Impossible de mettre la tâche en pause",
   "无法继续任务": "Impossible de poursuivre la tâche",
   "无法重试": "Impossible de réessayer",
-  "任务当前不可取消。": "Cette tâche ne peut pas être annulée pour le moment."
+  "任务当前不可取消。": "Cette tâche ne peut pas être annulée pour le moment.",
+  "双语文件导入有提示": "Le fichier bilingue a été importé avec des avertissements",
+  "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "{v0} unité(s) supplémentaire(s) ont été exclues comme « ne pas traduire » ; elles n'apparaissent pas dans l'espace de travail."
 }

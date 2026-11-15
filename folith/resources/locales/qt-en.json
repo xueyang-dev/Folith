@@ -2734,5 +2734,7 @@
   "无法暂停任务": "Cannot pause the task",
   "无法继续任务": "Cannot continue the task",
   "无法重试": "Cannot retry",
-  "任务当前不可取消。": "This task cannot be cancelled right now."
+  "任务当前不可取消。": "This task cannot be cancelled right now.",
+  "双语文件导入有提示": "The bilingual file was imported with notices",
+  "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "{v0} more unit(s) were excluded as \"do not translate\" and do not appear in the workbench."
 }
