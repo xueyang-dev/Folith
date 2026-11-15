@@ -640,6 +640,161 @@ def _runner_frame_events(window: dict) -> dict:
     }
 
 
+class _R_OnlyAssembled(Exception):
+    """Control-flow marker: an R-only round has already built its translation
+    block, so the settling branch below must not overwrite it."""
+
+
+def _tile_finished_state(state: dict, copies: int) -> dict:
+    """Copy a *finished* task's state ``copies`` times, renumbering positions.
+
+    Plan D1 needs a finished 10,000-segment task.  The whole-document projections
+    (review queue, delivery gate, terms) are what the I phase costs, so a task
+    holding only translations would measure a lighter document: the template's
+    findings, review evidence and aggregates are tiled at the same density.
+    """
+    import copy as _copy
+
+    tiled = _copy.deepcopy(state)
+    base_paras = list(state.get("paras") or [])
+    base_pairs = list(state.get("pairs") or [])
+    base_findings = list(state.get("findings") or [])
+    base_evidence = list(state.get("review_evidence") or [])
+    base_actions = list(state.get("human_actions") or [])
+    size = len(base_pairs)
+    if size <= 0 or copies <= 1:
+        return tiled
+    max_batch = max([int(item.get("batch") or 0) for item in base_evidence] or [0]) + 1
+
+    paras, pairs = list(base_paras), list(base_pairs)
+    findings, evidence, actions = (list(base_findings), list(base_evidence),
+                                   list(base_actions))
+    for copy_index in range(1, copies):
+        offset = copy_index * size
+        paras.extend(_copy.deepcopy(base_paras))
+        pairs.extend(_copy.deepcopy(base_pairs))
+        for item in base_findings:
+            item2 = _copy.deepcopy(item)
+            for key in ("segment_index", "segment_id"):
+                if isinstance(item2.get(key), int):
+                    item2[key] = item2[key] + offset
+            findings.append(item2)
+        for item in base_evidence:
+            item2 = _copy.deepcopy(item)
+            ids = item2.get("segment_ids")
+            if isinstance(ids, list):
+                item2["segment_ids"] = [int(value) + offset for value in ids
+                                        if isinstance(value, int)]
+            if isinstance(item2.get("batch"), int):
+                item2["batch"] = item2["batch"] + copy_index * max_batch
+            evidence.append(item2)
+        for item in base_actions:
+            item2 = _copy.deepcopy(item)
+            if isinstance(item2.get("finding_id"), str):
+                item2["finding_id"] = f"{item2['finding_id']}#c{copy_index}"
+            actions.append(item2)
+    tiled.update({"paras": paras, "pairs": pairs, "findings": findings,
+                  "review_evidence": evidence, "human_actions": actions})
+    stats = dict(tiled.get("review_stats") or {})
+    for key, value in list(stats.items()):
+        if isinstance(value, int):
+            stats[key] = value * copies
+    tiled["review_stats"] = stats
+    for key in ("tm_used_count", "tm_recovered_count"):
+        if isinstance(tiled.get(key), int):
+            tiled[key] = tiled[key] * copies
+    return tiled
+
+
+def _seed_tiled_task(adapter, template_job: str, target_segments: int, *,
+                     fixture: Path, filename: str) -> dict:
+    """Write a finished task of ~``target_segments`` segments from a template.
+
+    The template is a task the engine really finished; this only repeats its
+    state, renumbered, through the product's own state writer.  What is measured
+    afterwards (opening and driving a finished big task) is unchanged, and the
+    report says the task was seeded rather than produced by the pipeline.
+    """
+    import math
+
+    core = adapter.core
+    template = core.load_job_state(template_job) or {}
+    size = len(template.get("pairs") or [])
+    if size <= 0:
+        raise RuntimeError(
+            f"seed template {template_job} has no pairs: is it finished?")
+    copies = max(1, int(math.ceil(float(target_segments) / float(size))))
+    tiled = _tile_finished_state(template, copies)
+    tiled["p2_done"] = True
+    tiled["p3_done"] = True
+    tiled["stage"] = template.get("stage") or "REPORT_GENERATED"
+    tiled["filename"] = filename
+    created = adapter.import_documents(
+        [fixture], adapter.EngineConfig(target_lang=template.get("target_lang") or "简体中文"))
+    job_id = created[0].job_id
+    # The new task has its own revision and journal: carrying the template's over
+    # would be rejected by the product's snapshot guard (and point at another
+    # task's journal).  Everything else is the template's, tiled.
+    shell = core.load_job_state(job_id) or {}
+    for key in ("snapshot_revision", "journal_cursor", "state_journal", "project_id"):
+        tiled[key] = shell.get(key, template.get(key))
+    for key in ("segment_structure_history", "segment_structure_undo_log"):
+        tiled.pop(key, None)
+    core.save_job_state(job_id, tiled)
+    try:
+        core.update_runtime_state(job_id, status="completed")
+    except Exception:  # noqa: BLE001 - the state is what the UI reads
+        pass
+    return {"job_id": job_id, "template": template_job, "copies": copies,
+            "segments": len(tiled.get("pairs") or []),
+            "findings": len(tiled.get("findings") or [])}
+
+
+def _task_fingerprint(adapter, job_id: str) -> dict:
+    """Segments and a content digest, so two arms can prove the same load.
+
+    The digest is over the committed source texts, in order: same fixture plus
+    same seed must produce the same value on both arms, and a different value is
+    the honest evidence that the load was not the same.
+    """
+    import hashlib
+
+    try:
+        state = adapter.load_state(job_id) or {}
+    except Exception as exc:  # noqa: BLE001 - the report is the evidence
+        return {"job_id": job_id, "segments": None, "digest": None,
+                "error": f"{type(exc).__name__}: {exc}"}
+    pairs = list(state.get("pairs") or [])
+    sources = [str(pair.get("source") or "") for pair in pairs]
+    digest = hashlib.sha256("\n".join(sources).encode("utf-8")).hexdigest()[:16]
+    return {"job_id": job_id, "segments": len(pairs),
+            "translated": sum(1 for pair in pairs
+                              if str(pair.get("target") or "").strip()),
+            "digest": f"sha256:{digest}"}
+
+
+def _parse_r_window(value) -> tuple[float, float] | None:
+    """``--r-window START:END`` in seconds after the translation started.
+
+    The round measures only that slice of the run (plan D1: R here, I on S3).
+    Both versions must use the same bounds, so the pair is echoed into the report
+    and checked there.
+    """
+    if value in (None, "", False):
+        return None
+    text = str(value).strip()
+    if ":" not in text:
+        raise SystemExit(f"--r-window must be START:END seconds, got {text!r}")
+    start_text, end_text = text.split(":", 1)
+    try:
+        start, end = float(start_text), float(end_text)
+    except ValueError:
+        raise SystemExit(f"--r-window must be START:END seconds, got {text!r}")
+    if not (0.0 <= start < end):
+        raise SystemExit(f"--r-window needs 0 <= START < END, got {text!r}")
+    return (start, end)
+
+
 def _empty_phase(reason: str) -> dict:
     return {"measured": False, "reason": reason}
 
@@ -718,7 +873,8 @@ def _longest_summary(longest, window: dict | None = None, *, residual: bool = Fa
 
 
 def _phase_metrics(scenario: dict, run: dict | None, *,
-                   tool_split_measured: bool = True) -> dict:
+                   tool_split_measured: bool = True,
+                   r_only: dict | None = None) -> dict:
     """R (翻译中) and I (完成后) from the scenario and run windows (plan §9 D1).
 
     ``scenario`` is the whole measured session; ``run`` is the translating window.
@@ -728,6 +884,11 @@ def _phase_metrics(scenario: dict, run: dict | None, *,
 
     S3 has no translating window at all (its tasks are already finished): R is
     then reported as not applicable and I covers the whole scenario window.
+
+    ``r_only`` marks a round that measures only R (plan D1 puts I on S3).  Such a
+    round has no completion phase by construction, so I is reported as provided by
+    S3 and the round stays valid: the void rule exists to catch a round that was
+    supposed to measure I and could not, not a round that never had one.
     """
     scenario_measured = _window_is_measured(scenario)
     run_measured = bool(run) and _window_is_measured(run)
@@ -789,6 +950,26 @@ def _phase_metrics(scenario: dict, run: dict | None, *,
         result["I"]["residual_note"] = (
             "by definition this bucket is everything outside the run window, so it "
             "also contains the import/open/settle tail, not only post-completion time")
+        if (r_only or {}).get("r_only"):
+            # Plan D1: I is measured on S3 (a finished 10,000-segment task), so an
+            # R-only round has no completion phase of its own.  Reporting it as
+            # "short" would void a round that did exactly what it was asked.
+            result["R"]["valid"] = True
+            result["I"] = {
+                **_empty_phase("由 S3 提供：本轮只测 R 阶段"),
+                "provided_by": "S3",
+                "valid": True,
+            }
+            result["I"]["residual_note"] = (
+                "D1 puts the completion phase on S3 (a finished 10,000-segment "
+                "task); this round's R window is the whole measurement")
+            result["r_only"] = True
+            result["r_window"] = dict((r_only or {}).get("r_window") or {})
+            result["i_phase_s"] = None
+            result["valid_round"] = True
+            result["discarded_rounds"] = 0
+            result["discard_reasons"] = []
+            return result
         valid = i_s >= I_PHASE_MIN_SECONDS
         result["I"]["valid"] = valid
         result["R"]["valid"] = True
@@ -879,7 +1060,8 @@ class _ScenarioDriver:
     """
 
     def __init__(self, *, app, window, adapter, jank, fixture, seconds,
-                 settle_timeout, result, operations=None, clock=time.monotonic):
+                 settle_timeout, result, operations=None, clock=time.monotonic,
+                 r_only: bool = False, r_window=(0.0, 0.0)):
         self.app = app
         self.window = window
         self.adapter = adapter
@@ -895,6 +1077,13 @@ class _ScenarioDriver:
         self.settled = False
         self.job_id = ""
         self.edited = self.pages = self.scrolls = self.panels = 0
+        # R-only rounds measure one fixed slice of the run (plan D1).
+        self.r_only = bool(r_only)
+        self.r_window = (float(r_window[0]), float(r_window[1]))
+        self._translation_started_at: float | None = None
+        self._r_window_opened_at: float | None = None
+        self._r_window_opened_elapsed: float | None = None
+        self.r_window_info: dict | None = None
         # "The grid was not ready" is a *fact about the round*, not a silent skip:
         # an empty grid produces 0 scroll/select/type samples, and that is exactly
         # how P1-5e stayed invisible until the numbers were read by hand.
@@ -992,13 +1181,73 @@ class _ScenarioDriver:
                             clock=self.clock):
             self.window.start_or_resume()
         self.result["steps"].append({"step": "translate_started", "ok": True})
-        self._open_run_window(now)
-        self._interact_until = now + self.seconds
+        if self.r_only:
+            # Plan D1: measure a fixed slice of the run instead of "until the task
+            # settles".  The window opens later, in _tick_r_only; the loop has to
+            # stay alive until its end.
+            self._translation_started_at = now
+            self._interact_until = now + self.r_window[1] + 5.0
+        else:
+            self._open_run_window(now)
+            self._interact_until = now + self.seconds
         self._last_scroll = self._last_edit = self._last_page = now
         self._last_panel = now
         self.state = "interact"
 
+    def _tick_r_only(self, now: float) -> bool:
+        """Open/close the fixed R slice.  True means this tick was consumed.
+
+        ``start_s``/``end_s`` are measured from the moment the translation
+        started, so both arms measure the same part of the run.
+        """
+        start_s, end_s = self.r_window
+        elapsed = now - float(self._translation_started_at or now)
+        if not self._run_open and self._r_window_opened_at is None \
+                and elapsed >= start_s:
+            self._open_run_window(now)
+            self._r_window_opened_at = now
+            self._r_window_opened_elapsed = elapsed
+            # The cadences restart inside the window: the first samples must
+            # belong to R, not to the warm-up before it.
+            self._last_scroll = self._last_edit = self._last_page = now
+            self._last_panel = now
+            self.result["steps"].append({"step": "r_window_opened", "ok": True,
+                                         "at_s": round(elapsed, 2)})
+            return False
+        if self._run_open and self._r_window_opened_at is not None \
+                and now - self._r_window_opened_at >= (end_s - start_s):
+            self._close_run_window(now)
+            info = {"start_s": float(start_s), "end_s": float(end_s),
+                    "measured_s": round(max(0.0, now - self._r_window_opened_at), 3),
+                    "opened_at_s": round(float(self._r_window_opened_elapsed
+                                               if self._r_window_opened_elapsed is not None
+                                               else start_s), 2)}
+            self.r_window_info = info
+            self.result["r_window"] = info
+            self.result["steps"].append({"step": "r_window_closed", "ok": True, **info})
+            self._stop_task()
+            self._finish(settled=True)
+            return True
+        return False
+
+    def _stop_task(self) -> None:
+        """Stop the run on purpose: the round's window is over, not the task."""
+        try:
+            already = bool(self.job_id) and _job_settled(self.adapter, self.job_id)
+        except Exception:  # noqa: BLE001 - a predicate failure is not a reason to hang
+            already = True
+        if already:
+            return
+        try:
+            self.window.cancel_job()
+        except Exception as exc:  # noqa: BLE001 - recorded, the round still ends
+            self.result["failures"].append(f"stop_task: {type(exc).__name__}: {exc}")
+        else:
+            self.result["steps"].append({"step": "task_stopped", "ok": True})
+
     def _tick_interact(self, now: float) -> None:
+        if self.r_only and self._tick_r_only(now):
+            return
         if now >= self._interact_until:
             self._phase("settle")
             self._settle_started = now
@@ -1190,7 +1439,14 @@ class _TaskSwitchDriver:
     """
 
     def __init__(self, *, app, window, adapter, jank, fixtures, seconds,
-                 settle_timeout, result, operations=None, clock=time.monotonic):
+                 settle_timeout, result, operations=None, clock=time.monotonic,
+                 reuse_tasks: bool = False):
+        self.reuse_tasks = bool(reuse_tasks)
+        self.seed_template = ""
+        self.seed_segments = 0
+        self.tasks_marker_path = None
+        self.build_time_scale = None
+        self._build_started: float | None = None
         self.app = app
         self.window = window
         self.adapter = adapter
@@ -1229,12 +1485,49 @@ class _TaskSwitchDriver:
 
     # -- event-loop callbacks ---------------------------------------------
     def begin(self) -> None:
+        if self.reuse_tasks and self._reuse_existing():
+            return
         self.state = "import"
         self.result["steps"].append({"step": "import_dispatched", "ok": True,
                                      "fixtures": len(self.fixtures)})
         self._known = self._instrumented(
             lambda: {row.job_id for row in self.adapter.list_jobs()})
         self._dispatch_import()
+
+    def _reuse_existing(self) -> bool:
+        """Skip import+build when the finished tasks are already on disk.
+
+        The build is 10,000 segments of translation; plan D1 only needs the
+        *finished* task, so it is built once and reused across rounds.
+        """
+        marker = self.result.get("tasks_marker") or {}
+        jobs = [str(item) for item in (marker.get("jobs") or []) if item]
+        if not jobs:
+            return False
+        known = {row.job_id for row in
+                 self._instrumented(lambda: self.adapter.list_jobs())}
+        if not set(jobs) <= known:
+            self.result["steps"].append({
+                "step": "reuse_rejected", "ok": False,
+                "reason": "the recorded tasks are not in the data dir any more",
+                "jobs": jobs})
+            return False
+        self.job_ids = list(jobs)
+        self._known = set(known)
+        self.big_job_id = marker.get("big_job_id") or jobs[0]
+        self.small_job_id = marker.get("small_job_id") or (jobs[-1] if len(jobs) > 1 else "")
+        self.result["job_id"] = self.big_job_id
+        fingerprint = dict(marker.get("fingerprint") or {})
+        self.result["tasks"] = {"built": False, "reused": True,
+                                "jobs": list(self.job_ids),
+                                "segments": fingerprint.get("segments"),
+                                "digest": fingerprint.get("digest"),
+                                "job_id": fingerprint.get("job_id"),
+                                "fingerprint": fingerprint}
+        self.result["steps"].append({"step": "tasks_reused", "ok": True,
+                                     "jobs": self.job_ids})
+        self._start_measurement(self.clock())
+        return True
 
     def tick(self) -> bool:
         if self.finished:
@@ -1279,6 +1572,8 @@ class _TaskSwitchDriver:
         self._start_build(now)
 
     def _start_build(self, now: float) -> None:
+        if self._build_started is None:
+            self._build_started = now
         self._build_target = self.job_ids[self._build_index]
         self._open_span_start = now
         self._open_deadline = now + min(120.0, self.build_timeout)
@@ -1311,12 +1606,43 @@ class _TaskSwitchDriver:
             if self._build_index < len(self.job_ids):
                 self._start_build(now)
                 return
+            self._record_tasks(now)
             self._start_measurement(now)
             return
         if now - self._settle_started > self.build_timeout:
             self._fail("the task did not finish translating inside the build budget")
 
     # -- measured phase ----------------------------------------------------
+    def _record_tasks(self, now: float) -> None:
+        """Remember what was built (segments, digest) and reuse it next round."""
+        fingerprint = _task_fingerprint(self.adapter, self.big_job_id)
+        self.result["tasks"] = {
+            "built": True,
+            "reused": False,
+            "build_seconds": round(max(0.0, now - float(self._build_started or now)), 2),
+            "build_time_scale": getattr(self, "build_time_scale", None),
+            "jobs": list(self.job_ids),
+            "big_job_id": self.big_job_id,
+            "small_job_id": self.small_job_id,
+            "segments": fingerprint.get("segments"),
+            "digest": fingerprint.get("digest"),
+            "fingerprint": fingerprint,
+        }
+        path = getattr(self, "tasks_marker_path", None)
+        if path:
+            try:
+                Path(path).write_text(json.dumps({
+                    "schema": 1,
+                    "jobs": list(self.job_ids),
+                    "big_job_id": self.big_job_id,
+                    "small_job_id": self.small_job_id,
+                    "fingerprint": fingerprint,
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
+                self.result["steps"].append({"step": "tasks_recorded", "ok": True,
+                                             "path": str(path)})
+            except OSError as exc:
+                self.result["failures"].append(f"tasks marker not written: {exc}")
+
     def _start_measurement(self, now: float) -> None:
         """Take the measurement checkpoint *after* the tasks are finished."""
         self._measure_checkpoint = self._checkpoint()
@@ -1611,15 +1937,27 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
     so R and I come from one run.  The product's own run record is kept next to
     them as a cross-check, never substituted silently.
     """
+    r_window = _parse_r_window(getattr(args, "r_window", None))
+    r_only = bool(getattr(args, "r_only", False)) and r_window is not None
+    window_control = {
+        "controlled_by": "the harness interaction window",
+        "seconds_applied": True,
+        "seconds": args.seconds,
+        "settle_timeout": args.settle_timeout,
+    }
+    if r_only:
+        # The round is bounded by a fixed slice of the run, not by --seconds.
+        window_control = {
+            "controlled_by": "the --r-window bounds (translation start + start_s .. end_s)",
+            "seconds_applied": True,
+            "seconds": float(r_window[1]),
+            "r_window": [float(r_window[0]), float(r_window[1])],
+        }
     result: dict = {"mode": "source_offscreen" if args.offscreen else "source",
                     "steps": [], "failures": [],
                     "tool_split_measured": True,
-                    "window_control": {
-                        "controlled_by": "the harness interaction window",
-                        "seconds_applied": True,
-                        "seconds": args.seconds,
-                        "settle_timeout": args.settle_timeout,
-                    }}
+                    "r_only": r_only,
+                    "window_control": window_control}
     paths, app, window, adapter, monitor, jank = _prepare_window(
         args, data_dir, log_dir, result)
     checkpoint = jank.checkpoint() if jank is not None else None
@@ -1629,7 +1967,8 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
     driver = _ScenarioDriver(app=app, window=window, adapter=adapter, jank=jank,
                              fixture=fixture, seconds=args.seconds,
                              settle_timeout=args.settle_timeout, result=result,
-                             operations=operations)
+                             operations=operations, r_only=r_only,
+                             r_window=r_window or (0.0, 0.0))
     try:
         _drive_event_loop(app, driver, result)
         if not driver.finished:
@@ -1638,6 +1977,27 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
         state = (adapter.load_state(job_id) or {}) if job_id else {}
         runtime_status = ((adapter.core.load_runtime_state(job_id) or {}).get("status")
                           if job_id else "")
+        if r_only:
+            # An R-only round ends *by design* while the task is still running:
+            # "completed" here means "this round did what it was asked", not "the
+            # translation finished".  The stop is reported, never hidden.
+            result["translation"] = {
+                "settled": True,
+                "completed": True,
+                "mode": "r_only",
+                "interrupted_by_harness": True,
+                "r_window": result.get("r_window") or {},
+                "runtime_status": runtime_status,
+                "p2_done": bool(state.get("p2_done")),
+                "segments": len(state.get("pairs") or []),
+                "edited_segments": driver.edited,
+                "page_switches": driver.pages,
+                "scroll_events": driver.scrolls,
+                "panel_events": driver.panels,
+            }
+            if job_id:
+                result["run_records"] = read_run_records(paths.data_dir, job_id)
+            raise _R_OnlyAssembled()
         result["translation"] = {
             "settled": driver.settled,
             # ``settled`` is true for a *failed* task too (the driver waits for a
@@ -1656,6 +2016,8 @@ def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
         }
         if job_id:
             result["run_records"] = read_run_records(paths.data_dir, job_id)
+    except _R_OnlyAssembled:
+        pass
     except Exception as exc:  # noqa: BLE001 - the JSON is the evidence
         import traceback
 
@@ -1710,10 +2072,54 @@ def run_source_s3(args: argparse.Namespace, fixtures: list[Path], data_dir: Path
     operations = OperationRecorder()
 
     started = time.monotonic()
+    marker_path = data_dir / "s3-tasks.json"
+    marker: dict = {}
+    if getattr(args, "seed_template", "") and int(getattr(args, "seed_segments", 0) or 0):
+        # D1 wants a *finished* big task, not a pipeline run.  Seed it here, while
+        # nothing is importing: doing it inside the driver raced the import of the
+        # small task and the product refused the second write.
+        seeded = _seed_tiled_task(
+            adapter, str(args.seed_template), int(args.seed_segments),
+            fixture=fixtures[0],
+            filename=f"seeded-{int(args.seed_segments)}-segments.epub")
+        small = adapter.import_documents(
+            [fixtures[1]], adapter.EngineConfig(
+                target_lang=str((adapter.load_state(seeded["job_id"]) or {})
+                                .get("target_lang") or "简体中文")))[0].job_id
+        fingerprint = _task_fingerprint(adapter, seeded["job_id"])
+        marker = {
+            "schema": 1,
+            "jobs": [seeded["job_id"], small],
+            "big_job_id": seeded["job_id"],
+            "small_job_id": small,
+            "fingerprint": fingerprint,
+        }
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text(json.dumps(marker, ensure_ascii=False, indent=2),
+                               encoding="utf-8")
+        result["seeded"] = seeded
+        result["steps"].append({"step": "task_seeded", "ok": True, **seeded})
+        # The tasks now exist: the driver only has to open and drive them.
+        args.reuse_tasks = True
+    if marker_path.is_file():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            result["failures"].append(f"tasks marker unreadable: {exc}")
+            marker = {}
+    if marker:
+        # The build is 10,000 segments of translation: reuse it when asked, and
+        # report what it contained so both arms can be compared.
+        result["tasks_marker"] = marker
     driver = _TaskSwitchDriver(app=app, window=window, adapter=adapter, jank=jank,
                                fixtures=fixtures, seconds=args.seconds,
                                settle_timeout=args.settle_timeout, result=result,
-                               operations=operations)
+                               operations=operations,
+                               reuse_tasks=bool(getattr(args, "reuse_tasks", False)))
+    driver.tasks_marker_path = marker_path
+    driver.build_time_scale = getattr(args, "build_time_scale", None)
+    driver.seed_template = str(getattr(args, "seed_template", "") or "")
+    driver.seed_segments = int(getattr(args, "seed_segments", 0) or 0)
     try:
         _drive_event_loop(app, driver, result)
         measured_s3 = bool(getattr(driver, "scenario_window", None)) \
@@ -1868,8 +2274,10 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
     elif "measured" not in run_window:
         run_window = _normalize_window(run_window)
     tool_split_measured = bool(result.get("tool_split_measured", True))
-    phases = _phase_metrics(scenario_window, run_window,
-                            tool_split_measured=tool_split_measured)
+    phases = _phase_metrics(
+        scenario_window, run_window, tool_split_measured=tool_split_measured,
+        r_only={"r_only": bool(result.get("r_only")),
+                "r_window": result.get("r_window") or {}})
     operations = result.get("operations") or OperationRecorder().report()
     fixture_block = {"kind": "epub", "paragraphs": paras,
                      "path": str(fixtures[0]) if fixtures else ""}
@@ -1944,6 +2352,9 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
             "ui_health": result.get("ui_health") or {},
             "run_records": result.get("run_records") or [],
         },
+        "r_only": bool(result.get("r_only")),
+        "seeded": result.get("seeded") or {},
+        "tasks": result.get("tasks") or {},
         "operations_skipped": result.get("operations_skipped") or {},
         "limits": limits_for(_offscreen),
         "real_machine_baseline": False,
@@ -2042,7 +2453,9 @@ def aggregate_reports(directory: Path) -> dict:
                                       f"{(payload.get('translation') or {}).get('runtime_status')!r})"})
             continue
         rows.append({"report": str(path), "name": path.parent.name,
-                     "scenario": payload.get("scenario"), "phases": phases})
+                     "scenario": payload.get("scenario"), "phases": phases,
+                     "r_only": bool(phases.get("r_only")),
+                     "tasks_digest": (payload.get("tasks") or {}).get("digest")})
     medians: dict[str, float | None] = {}
     samples: dict[str, list[float]] = {}
     for row in rows:
@@ -2133,11 +2546,28 @@ def verify_round(directory: Path) -> dict:
     i_block = phases.get("I") or {}
     # The frozen arm's window belongs to the app's own flow, so it has no I phase
     # to validate: required only where --seconds controlled the window.
+    r_only = bool(phases.get("r_only")) \
+        or str((payload.get("translation") or {}).get("mode") or "") == "r_only"
     add("I_valid", i_block.get("valid") is True,
         {"measured": i_block.get("measured"),
          "reason": i_block.get("reason") or i_block.get("invalid_reason"),
-         "i_phase_s": phases.get("i_phase_s")},
-        required=bool(seconds_applied))
+         "i_phase_s": phases.get("i_phase_s"),
+         "provided_by": i_block.get("provided_by")},
+        # Plan D1 measures I on S3, so an R-only round has no I of its own and
+        # must not be voided for the phase it never had.
+        required=bool(seconds_applied) and not r_only)
+    if r_only:
+        window = phases.get("r_window") or {}
+        start_s, end_s = window.get("start_s"), window.get("end_s")
+        add("r_window_recorded",
+            isinstance(start_s, (int, float)) and isinstance(end_s, (int, float))
+            and float(end_s) > float(start_s)
+            and float(window.get("measured_s") or 0) > 0,
+            {"r_window": window,
+             "why": "both arms must measure the same slice of the run"})
+        add("i_phase_provided_by_s3", i_block.get("provided_by") == "S3",
+            {"provided_by": i_block.get("provided_by"),
+             "note": "D1: the completion phase is measured on S3, not here"})
     translation = payload.get("translation") or {}
     add("translation_completed", translation.get("completed") is True,
         {"settled": translation.get("settled"),
@@ -2237,6 +2667,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", default="source", choices=("source", "frozen"))
     parser.add_argument("--frozen-app", default=None,
                         help="frozen Folith executable (implies --mode frozen)")
+    parser.add_argument("--seed-template", default="",
+                        help="S3: job id of a finished task in this data dir; the "
+                             "big task is tiled from its state instead of translated")
+    parser.add_argument("--seed-segments", type=int, default=0,
+                        help="S3: target segment count for the seeded task "
+                             "(0 = off; 10000 is the plan's 10,000-segment task)")
+    parser.add_argument("--reuse-tasks", action="store_true",
+                        help="S3: keep the data dir and skip import+build when the "
+                             "finished tasks are already recorded there")
+    parser.add_argument("--build-time-scale", type=float, default=None,
+                        help="S3: time scale the tasks are built at (the build is "
+                             "not part of any measured rate)")
+    parser.add_argument("--r-only", action="store_true",
+                        help="measure one fixed slice of the run (plan D1: R here, "
+                             "I on S3) and stop the task when the window ends")
+    parser.add_argument("--r-window", default=None,
+                        help="START:END seconds after the translation started, "
+                             "e.g. 120:720; requires --r-only")
     parser.add_argument("--offscreen", action="store_true",
                         help="force QT_QPA_PLATFORM=offscreen for the window")
     parser.add_argument("--data-dir", default=None)
@@ -2312,17 +2760,33 @@ def main(argv: list[str] | None = None) -> int:
     data_dir = Path(args.data_dir).expanduser().resolve() if args.data_dir else args.out / "data"
     log_dir = Path(args.log_dir).expanduser().resolve() if args.log_dir else args.out / "logs"
     for directory in (data_dir, log_dir):
-        shutil.rmtree(directory, ignore_errors=True)
+        # --reuse-tasks keeps the built tasks (10,000 segments of translation are
+        # not something to rebuild per round); everything else starts clean.
+        keep = bool(getattr(args, "reuse_tasks", False)
+                    or getattr(args, "seed_template", ""))
+        if not (keep and directory.is_dir()):
+            shutil.rmtree(directory, ignore_errors=True)
         directory.mkdir(parents=True, exist_ok=True)
 
     if args.scenario == "S3":
         segments = max(2, int(args.s3_segments))
-        fixtures = [
-            build_epub(args.out / "fixtures" / f"s3-{segments}p.epub", segments),
-            build_epub(args.out / "fixtures" / f"s3-{max(1, args.s3_small_paras)}p.epub",
-                       max(1, args.s3_small_paras)),
-        ]
-        paras = segments
+        if getattr(args, "seed_template", ""):
+            # The big task is seeded from a template.  Two distinct fixtures: the
+            # product de-duplicates imports, so re-importing the same file for the
+            # shell and for the small task would hand back one job twice.
+            fixtures = [
+                build_epub(args.out / "fixtures" / "s3-shell.epub", 2),
+                build_epub(args.out / "fixtures" / f"s3-{max(1, args.s3_small_paras)}p.epub",
+                           max(1, args.s3_small_paras)),
+            ]
+            paras = int(getattr(args, "seed_segments", 0) or segments)
+        else:
+            fixtures = [
+                build_epub(args.out / "fixtures" / f"s3-{segments}p.epub", segments),
+                build_epub(args.out / "fixtures" / f"s3-{max(1, args.s3_small_paras)}p.epub",
+                           max(1, args.s3_small_paras)),
+            ]
+            paras = segments
     else:
         fixtures = [build_epub(args.out / "fixtures" / f"s1-{args.paras}p.epub", args.paras)]
         paras = args.paras
