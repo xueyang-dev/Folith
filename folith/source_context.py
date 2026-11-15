@@ -34,29 +34,45 @@ _KINDS = {".docx": "docx", ".epub": "epub", ".txt": "text",
           ".md": "markdown", ".markdown": "markdown"}
 
 # ================= 可用性 =================
+#
+# 这几个判断都只要任务状态里的 ``filename`` 一个字段。打开任务的路径上
+# （``MainWindow._apply_open_job → views.load → _load_pdf``）后台线程已经把整份
+# 状态读好了，GUI 线程再 ``core.load_job_state`` 一次，就是一次 10,000 段状态的
+# 反序列化 + 深拷贝，白等约 1 s（P2-13）。所以带 ``state`` 的调用方把状态递进来，
+# 只有真的没有状态时才回退读盘——回退路径不该出现在 GUI 线程上。
 
-def source_suffix(job_id: str) -> str:
-    """任务源文件的流式格式后缀；不是流式格式（或没有文件名）返回空串。"""
-    if not job_id:
-        return ""
-    state = core.load_job_state(job_id) or {}
-    name = str(state.get("filename") or "").lower()
+def suffix_from_filename(filename: Any) -> str:
+    """文件名 → 流式格式后缀；不是流式格式（或没有文件名）返回空串。"""
+    name = str(filename or "").lower()
     for suffix in STREAMING_SUFFIXES:
         if name.endswith(suffix):
             return suffix
     return ""
 
 
-def has_streaming_source(job_id: str) -> bool:
-    """任务是否带着一份可以读出上下文的流式源文件。"""
-    if not job_id or not source_suffix(job_id):
+def source_suffix(job_id: str, state: dict | None = None) -> str:
+    """任务源文件的流式格式后缀；不是流式格式（或没有文件名）返回空串。
+
+    ``state``：调用方**已经加载好**的任务状态。给了就只读其中的 ``filename``，
+    不再自己 ``core.load_job_state``；不给才回退读盘（后台线程、冷路径、测试）。
+    """
+    if not job_id:
+        return ""
+    if state is not None:
+        return suffix_from_filename(state.get("filename"))
+    return suffix_from_filename((core.load_job_state(job_id) or {}).get("filename"))
+
+
+def has_streaming_source(job_id: str, state: dict | None = None) -> bool:
+    """任务是否带着一份可以读出上下文的流式源文件（``state`` 同 ``source_suffix``）。"""
+    if not job_id or not source_suffix(job_id, state):
         return False
     source = core.load_source(job_id)
     return bool(source) and isinstance(source, (bytes, bytearray))
 
 
-def source_kind(job_id: str) -> str:
-    return _KINDS.get(source_suffix(job_id), "")
+def source_kind(job_id: str, state: dict | None = None) -> str:
+    return _KINDS.get(source_suffix(job_id, state), "")
 
 
 # ================= 解析 =================
@@ -69,13 +85,14 @@ def _path_for(job_id: str) -> Path:
     return Path(core.job_dir(job_id)) / "source.bin"
 
 
-def load_blocks(job_id: str) -> list[dict]:
+def load_blocks(job_id: str, state: dict | None = None) -> list[dict]:
     """解析任务源文件为顺序块；结果按 (任务, 源文件 mtime) 缓存。
 
     每个块：``{"text", "role" ("heading"|"body"), "level"?, "line"?, "title"}``，
     ``title`` 是该块所在的标题路径（元组，EPUB 为章节名）；解析失败返回空表。
+    ``state``：调用方已加载好的任务状态，省掉一次状态读盘（P2-13）。
     """
-    suffix = source_suffix(job_id)
+    suffix = source_suffix(job_id, state)
     if not suffix:
         return []
     path = _path_for(job_id)
@@ -304,15 +321,16 @@ def i18n_line(line: int | None) -> str:
     return f"第 {line} 行" if line else ""
 
 
-def locate_segment(job_id: str, segment_text: str, start_hint: int = 0) -> dict:
+def locate_segment(job_id: str, segment_text: str, start_hint: int = 0,
+                  state: dict | None = None) -> dict:
     """在第 ``start_hint`` 块之后（再回卷）找包含这段原文的位置。
 
     返回 ``{"kind", "found", "title", "blocks", "hint"}``：``blocks`` 是匹配块
     前后各 ``CONTEXT_RADIUS`` 个相邻块，匹配到的块带 ``highlight: True``。
     """
-    kind = source_kind(job_id)
+    kind = source_kind(job_id, state)
     empty = {"kind": kind, "found": False, "title": "", "blocks": [], "hint": ""}
-    blocks = load_blocks(job_id)
+    blocks = load_blocks(job_id, state)
     if not blocks:
         return {**empty, "hint": "无法读取源文件，或源文档没有可定位的正文。"}
     queries = _candidate_queries(segment_text)

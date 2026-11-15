@@ -2304,17 +2304,23 @@ def segment_pdf_location(job_id: str, index: int, state: dict | None = None,
 # （标题路径 / 章节 / 行号 + 相邻段落，高亮匹配块），解析与定位在
 # ``folith.source_context``，与 PDF 的「如实说明、不假装」是同一条规矩。
 
-def source_context_available(job_id: str) -> bool:
+def source_context_available(job_id: str, state: dict | None = None) -> bool:
+    """任务是否带流式源文件。
+
+    ``state``：调用方已加载好的任务状态。打开任务的路径上（``_load_pdf``）必须
+    传进来——不传的话 ``source_context`` 会为了读 ``filename`` 一个字段在 GUI
+    线程整份 ``load_job_state``，10,000 段任务约 1 s（P2-13）。
+    """
     from folith import source_context
 
-    return source_context.has_streaming_source(job_id)
+    return source_context.has_streaming_source(job_id, state)
 
 
-def source_document_blocks(job_id: str) -> list[dict]:
+def source_document_blocks(job_id: str, state: dict | None = None) -> list[dict]:
     """解析（并缓存）任务流式源文件的顺序块；给面板后台预热用。"""
     from folith import source_context
 
-    return source_context.load_blocks(job_id)
+    return source_context.load_blocks(job_id, state)
 
 
 def segment_source_context(job_id: str, index: int,
@@ -2331,9 +2337,9 @@ def segment_source_context(job_id: str, index: int,
     elif 0 <= index < len(paras):
         text = str(paras[index] or "")
     if not text:
-        return {"kind": source_context.source_kind(job_id), "found": False,
+        return {"kind": source_context.source_kind(job_id, state), "found": False,
                 "title": "", "blocks": [], "hint": "这一段没有原文，无法定位。"}
-    return source_context.locate_segment(job_id, text)
+    return source_context.locate_segment(job_id, text, state=state)
 
 
 # ================= 收尾（恢复进度 / 补跑失败步骤 / 实体译名统一） =================

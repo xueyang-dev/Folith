@@ -5548,13 +5548,20 @@ class WorkbenchView(QWidget):
         self.review_panel.apply(view)
 
     def _load_pdf(self, job_id: str) -> None:
-        """PDF 有「原页」，流式源有「原位置」上下文；切换任务时判断一次（#61）。"""
+        """PDF 有「原页」，流式源有「原位置」上下文；切换任务时判断一次（#61）。
+
+        ``self._state`` 是打开任务时后台线程刚读好的那份状态（``load`` 里
+        ``_replace_state`` 已先执行），所以这里把它递给可用性判断：为了看一个
+        ``filename`` 在 GUI 线程上再整份 ``load_job_state`` 一次，10,000 段任务
+        就是约 1 s 的卡顿，而这条路径每次打开任务都会走（P2-13）。
+        """
+        state = self._state if isinstance(self._state, dict) else {}
         try:
             self._pdf_ok = adapter.pdf_available(job_id)
         except Exception:  # noqa: BLE001 - 读不出原文时当作没有原页
             self._pdf_ok = False
         try:
-            self._stream_ok = adapter.source_context_available(job_id)
+            self._stream_ok = adapter.source_context_available(job_id, state=state)
         except Exception:  # noqa: BLE001 - 读不出源文件时当作没有上下文
             self._stream_ok = False
         self._source_available = self._pdf_ok or self._stream_ok

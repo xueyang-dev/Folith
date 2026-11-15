@@ -73,6 +73,21 @@ def test_adapter_availability_and_context(docx_job, legacy_job):
     assert adapter.source_document_blocks(docx_job), "预热解析能拿到顺序块"
 
 
+def test_adapter_availability_takes_the_state_it_is_given(docx_job, monkeypatch):
+    """P2-13：适配层同样只认递进来的状态，不自己再读一遍。"""
+    loaded = []
+    real_load = core.load_job_state
+    monkeypatch.setattr(core, "load_job_state",
+                        lambda job: (loaded.append(job), real_load(job))[1])
+    warm = adapter.load_state(docx_job)
+    loaded.clear()
+
+    assert adapter.source_context_available(docx_job, state=warm) is True
+    assert adapter.segment_source_context(docx_job, 0, state=warm)["found"] is True
+    assert adapter.source_document_blocks(docx_job, state=warm), "预热解析也能带状态"
+    assert loaded == [], "递了状态就不该再读任务状态"
+
+
 @pytest.fixture(scope="module")
 def qapp():
     from PySide6.QtWidgets import QApplication
@@ -194,6 +209,48 @@ def test_workbench_explains_when_no_source_survived(client):
     assert not workbench.view_source_button.isHidden(), "解释而非隐藏"
     assert not workbench.view_source_button.isEnabled()
     assert "目前支持" in workbench.view_source_button.toolTip()
+
+
+def test_opening_a_task_never_reloads_the_state_on_the_gui_thread(client, monkeypatch):
+    """P2-13 的钉子：``_apply_open_job`` 期间 GUI 线程不再 ``load_job_state``。
+
+    这条栈在第二轮 S3 的两臂里都是持锁排行第一名：18 次 / 60 s、单次约 1.1 s，
+    起因是 ``_load_pdf`` 为了读一个 ``filename`` 整份加载 10,000 段状态。
+    退回旧实现（``_load_pdf`` 不把状态递下去）时本测试变红：
+    ``source_context.source_suffix`` 收到 ``state=None``，随即读盘。
+    """
+    import threading
+
+    from folith import source_context
+    from folith.qt.selftest import open_job_and_wait
+
+    job_id = _seed(client, "note.docx", _docx_bytes())
+
+    gui_calls: list = []
+    real_suffix = source_context.source_suffix
+
+    def spy(job, state=None):
+        if threading.current_thread() is threading.main_thread():
+            gui_calls.append(state)
+        return real_suffix(job, state)
+
+    gui_loads: list = []
+    real_load = core.load_job_state
+
+    def counting(job):
+        if threading.current_thread() is threading.main_thread():
+            gui_loads.append(job)
+        return real_load(job)
+
+    monkeypatch.setattr(source_context, "source_suffix", spy)
+    monkeypatch.setattr(core, "load_job_state", counting)
+    open_job_and_wait(client["window"], job_id)
+
+    assert gui_calls, "打开任务必须走到源文件可用性判断"
+    assert all(state is not None for state in gui_calls), \
+        "GUI 线程上的可用性判断必须用已经读好的状态"
+    assert gui_loads == [], "打开任务期间 GUI 线程不该再整份读一次任务状态"
+    assert client["window"].workbench._stream_ok is True
 
 
 if __name__ == "__main__":

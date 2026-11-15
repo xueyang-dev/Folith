@@ -154,6 +154,45 @@ def test_missing_segment_says_so(job_factory):
     assert context["blocks"] == []
 
 
+def test_availability_uses_the_state_the_caller_already_has(job_factory, monkeypatch):
+    """P2-13：手里有状态时，可用性判断不再整份 ``load_job_state``。
+
+    打开任务的路径上（``_apply_open_job → views.load → _load_pdf``）后台线程刚把
+    整份状态读好；这里为了读一个 ``filename`` 再读一次，10,000 段任务就是约 1 s
+    的 GUI 线程卡顿。回退读盘只留给真的没有状态的调用方。
+    """
+    job_id = job_factory("report.docx", _docx_bytes())
+    loaded = []
+    real_load = core.load_job_state
+    monkeypatch.setattr(core, "load_job_state",
+                        lambda job: (loaded.append(job), real_load(job))[1])
+
+    warm = core.load_job_state(job_id)          # 后台线程读好的那一份
+    loaded.clear()
+
+    assert source_context.source_suffix(job_id, warm) == ".docx"
+    assert source_context.source_kind(job_id, warm) == "docx"
+    assert source_context.has_streaming_source(job_id, warm) is True
+    assert source_context.load_blocks(job_id, warm), "带状态也能解析源文件"
+    located = source_context.locate_segment(job_id, SENTENCE, state=warm)
+    assert located["found"] and located["title"] == "Report › Findings"
+    assert loaded == [], "带状态时不该再读一次任务状态"
+
+    # 没有状态的调用方行为不变：回退读盘。
+    assert source_context.source_suffix(job_id) == ".docx"
+    assert loaded == [job_id]
+
+
+def test_a_state_without_a_streaming_filename_says_no(job_factory):
+    """拿到的状态不是流式格式时直接说没有，不读盘也不读源文件字节。"""
+    job_id = job_factory("paper.pdf", b"%PDF-1.4 fake")
+    state = {"filename": "paper.pdf"}
+    assert source_context.source_suffix(job_id, state) == ""
+    assert source_context.source_kind(job_id, state) == ""
+    assert source_context.has_streaming_source(job_id, state) is False
+    assert source_context.has_streaming_source(job_id, {}) is False
+
+
 def test_unreadable_source_is_honest(job_factory):
     job_id = job_factory("broken.docx", b"PK\x03\x04 not a real docx")
     context = source_context.locate_segment(job_id, SENTENCE)
