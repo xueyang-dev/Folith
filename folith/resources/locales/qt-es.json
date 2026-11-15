@@ -2707,5 +2707,8 @@
   "未知原因": "Motivo desconocido",
   "导入资产并校验…": "Importar activos y verificar…",
   "上一次导入仍在后台进行，请等它完成后再打开导入向导。": "La importación anterior sigue en segundo plano. Espera a que termine antes de volver a abrir el asistente de importación.",
-  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "La importación sigue en segundo plano: cerrar el asistente no la cancela. Actualiza la página Proyectos cuando termine para ver el resultado."
+  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "La importación sigue en segundo plano: cerrar el asistente no la cancela. Actualiza la página Proyectos cuando termine para ver el resultado.",
+  "上一批任务还在删除中，请等它完成后再试。": "El lote anterior de tareas todavía se está eliminando; espera a que termine e inténtalo de nuevo.",
+  "任务正在删除中，请等删除完成后再退出。": "Se está eliminando una tarea; espera a que termine antes de salir.",
+  "删除任务失败": "No se pudo eliminar la tarea"
 }

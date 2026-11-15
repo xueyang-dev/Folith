@@ -2707,5 +2707,8 @@
   "未知原因": "Unbekannter Grund",
   "导入资产并校验…": "Assets importieren und prüfen…",
   "上一次导入仍在后台进行，请等它完成后再打开导入向导。": "Der vorherige Import läuft noch im Hintergrund. Warten Sie, bis er abgeschlossen ist, bevor Sie den Importassistenten erneut öffnen.",
-  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "Der Import läuft noch im Hintergrund: Das Schließen des Assistenten bricht ihn nicht ab. Aktualisieren Sie nach Abschluss die Seite „Projekte“, um das Ergebnis zu sehen."
+  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "Der Import läuft noch im Hintergrund: Das Schließen des Assistenten bricht ihn nicht ab. Aktualisieren Sie nach Abschluss die Seite „Projekte“, um das Ergebnis zu sehen.",
+  "上一批任务还在删除中，请等它完成后再试。": "Der vorherige Stapel von Aufgaben wird noch gelöscht; warte, bis er fertig ist, und versuche es dann erneut.",
+  "任务正在删除中，请等删除完成后再退出。": "Eine Aufgabe wird noch gelöscht; warte, bis das Löschen fertig ist, bevor du beendest.",
+  "删除任务失败": "Aufgabe konnte nicht gelöscht werden"
 }

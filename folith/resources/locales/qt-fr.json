@@ -2707,5 +2707,8 @@
   "未知原因": "Raison inconnue",
   "导入资产并校验…": "Importer des actifs et vérifier…",
   "上一次导入仍在后台进行，请等它完成后再打开导入向导。": "L'importation précédente est toujours en cours en arrière-plan. Attendez qu'elle se termine avant de rouvrir l'assistant d'importation.",
-  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "L'importation est toujours en cours en arrière-plan : fermer l'assistant ne l'annule pas. Actualisez la page Projets une fois terminée pour voir le résultat."
+  "导入仍在后台进行：关闭向导不会取消它，完成后请刷新「项目」页查看结果。": "L'importation est toujours en cours en arrière-plan : fermer l'assistant ne l'annule pas. Actualisez la page Projets une fois terminée pour voir le résultat.",
+  "上一批任务还在删除中，请等它完成后再试。": "Le lot de tâches précédent est encore en cours de suppression ; attendez qu'il se termine et réessayez.",
+  "任务正在删除中，请等删除完成后再退出。": "Une tâche est en cours de suppression ; attendez la fin de la suppression avant de quitter.",
+  "删除任务失败": "Échec de la suppression de la tâche"
 }

@@ -54,6 +54,23 @@ BATCH_LIMIT = 200  # 20 s: more than every test needs, less than a hung CI run
 # ---------------------------------------------------------------------------
 
 def _run_engine_worker(argv: list[str]) -> int:
+    """Entry point for the fake engine child (crash reasons land in engine.log)."""
+    try:
+        return _run_engine_worker_body(argv)
+    except BaseException:
+        import traceback
+
+        output_dir = Path(argv[1]) if len(argv) > 1 else Path(".")
+        try:
+            with (output_dir / "engine.log").open("a", encoding="utf-8") as stream:
+                stream.write("worker crashed before publishing:\n")
+                stream.write(traceback.format_exc())
+        except OSError:
+            pass
+        raise
+
+
+def _run_engine_worker_body(argv: list[str]) -> int:
     import core as child_core
 
     mode, output_dir, job_id = argv[0], Path(argv[1]), argv[2]
@@ -133,13 +150,48 @@ class FakeEngine:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             runtime = core.load_runtime_state(self.job_id)
-            if (runtime.get("worker") or {}).get("owner_pid") == self.process.pid:
+            owner = (runtime.get("worker") or {}).get("owner_pid")
+            # The engine publishes its *own* pid, which need not equal the
+            # handle's: on Windows the interpreter can be a launch shim (the
+            # Store app-execution alias, or py.exe) that spawns the real
+            # interpreter as a child and waits for it.  Requiring
+            # ``owner == process.pid`` then never matched -- the engine ran all
+            # 200 batches while this loop waited, and the failure read "engine
+            # died before running" when it had run to completion.
+            if owner and owner != os.getpid() and self.process.poll() is None:
                 return
             if self.process.poll() is not None:
+                # The child may have published and exited between the two reads.
+                runtime = core.load_runtime_state(self.job_id)
+                owner = (runtime.get("worker") or {}).get("owner_pid")
+                if owner and owner != os.getpid():
+                    return
                 raise AssertionError(
-                    f"engine died before running: {self.process.stderr.read()!r}")
+                    self._death_report())
             time.sleep(0.02)
         raise AssertionError("engine never published its owner pid")
+
+    def _death_report(self) -> str:
+        """Exit code, argv, stderr, engine.log tail and the state left behind."""
+        assert self.process is not None
+        code = self.process.poll()
+        try:
+            stderr = self.process.stderr.read() if self.process.stderr else b""
+        except Exception as exc:  # noqa: BLE001
+            stderr = f"<unreadable: {exc}>".encode()
+        log_path = self.output_dir / "engine.log"
+        tail = ""
+        if log_path.is_file():
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+            tail = "\n".join(text.splitlines()[-20:])
+        runtime = core.load_runtime_state(self.job_id) or {}
+        return (
+            f"engine died before running (exit={code})\n"
+            f"  argv={self.process.args!r}\n"
+            f"  stderr={stderr.decode('utf-8', 'replace')!r}\n"
+            f"  engine.log tail:\n{tail or '    <missing>'}\n"
+            f"  runtime status={runtime.get('status')!r} "
+            f"worker={runtime.get('worker')!r}")
 
     def batches(self) -> int:
         pairs = core.job_dir(self.job_id) / "pairs.jsonl"
@@ -338,7 +390,18 @@ def test_deleting_a_project_with_idle_jobs_does_not_wait(tmp_path, monkeypatch):
                                  cascade=True)
     elapsed = time.monotonic() - started
     assert result["deleted_jobs"] == job_ids
-    assert elapsed < 1.0, f"没有运行中的任务却等了 {elapsed:.2f}s"
+    # The failure this guards against is "paid the settle wait anyway", so the
+    # bound is the settle itself.  A bare 1.0 s was a wall-clock guess: on a
+    # loaded Windows runner three idle deletes plus their directory removal
+    # already take ~1.1 s without waiting for anything.
+    assert elapsed < engine_projects.DELETE_CANCEL_SETTLE_SECONDS, (
+        f"没有运行中的任务却等了 {elapsed:.2f}s（等于付出了 "
+        f"{engine_projects.DELETE_CANCEL_SETTLE_SECONDS} s 的收尾等待）")
+    # 墙钟只是外圈。真正要证的是"没有进入等待"：分段统计里 settle 必须接近 0，
+    # 且没有撞到 deadline —— 这两条与 runner 快慢无关。
+    stats = engine_projects.delete_stop_stats()
+    assert stats["deadline_hit"] is False, f"空闲删除撞到了收尾 deadline：{stats}"
+    assert stats["settle_seconds"] < 0.5, f"空闲删除却进了收尾等待：{stats}"
     for job_id in job_ids:
         assert not core.job_dir(job_id).exists()
 

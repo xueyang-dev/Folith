@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -369,6 +370,52 @@ def test_cancel_during_cold_start_is_honoured(isolated, gateway, startup_gate):
     assert "engine_process_exited" not in events, events
 
 
+def test_the_exit_fallback_cannot_undo_the_terminal_state(isolated, monkeypatch):
+    """The engine host's stdin-EOF fallback must not flip a finished run back.
+
+    On Windows the child reaches EOF *while* the worker is finishing: the worker
+    has published ``interrupted`` with ``exit_requested`` set, but it is still in
+    its ``finally``, so ``is_job_worker_alive`` is still true.  The "alive" branch
+    then rewrote the state as ``cancelling`` and the supervisor later published
+    ``interrupted`` with ``exit_requested=False`` -- the run lost the flag that
+    offers "resume".  This pins the ordering without depending on the race.
+    """
+    job_id = "e6aexiteof1"
+    _create_job(job_id)
+    core.update_runtime_state(
+        job_id, status="interrupted", phase="interrupted", phase_label="已停止以便退出",
+        exit_requested=True, cancel_requested=False, event="任务已停止以便退出；可继续处理。",
+        event_name="job_stopped_for_exit", event_visibility="user",
+        event_category="lifecycle", progress=True, heartbeat=True,
+        worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+    # The worker is still inside ``finally``: the thread answer is still "alive".
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda _job: True)
+
+    assert core.request_job_exit(job_id) is True
+
+    final = _runtime(job_id)
+    assert final.get("status") == "interrupted", final
+    assert final.get("exit_requested") is True, final
+    assert "cancelling" not in _events(job_id), _events(job_id)
+
+
+def test_a_live_run_still_asks_the_worker_to_stop(isolated, monkeypatch):
+    """The guard must not turn the exit request into a no-op for a live run."""
+    job_id = "e6aexitaliv1"
+    _create_job(job_id)
+    core.update_runtime_state(job_id, status="running", phase="running",
+                              phase_label="正在翻译", exit_requested=False,
+                              cancel_requested=False)
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda _job: True)
+
+    assert core.request_job_exit(job_id) is True
+
+    after = _runtime(job_id)
+    assert after.get("status") == "cancelling", after
+    assert after.get("exit_requested") is True, after
+    assert after.get("cancel_requested") is True, after
+
+
 def test_exit_during_cold_start_is_honoured(isolated, gateway, startup_gate):
     """Start -> Quit immediately: the run stops resumable (``interrupted``)."""
     data_dir, _log_dir = isolated
@@ -403,6 +450,29 @@ def test_exit_during_cold_start_is_honoured(isolated, gateway, startup_gate):
 # 2. the same three paths after the child has published its run
 # ---------------------------------------------------------------------------
 
+_HANDS_OFF: dict[str, bool] = {}
+
+
+def _interpreter_hands_the_run_to_a_child() -> bool:
+    """True when ``[sys.executable, script]`` does not run in the spawned pid.
+
+    Probed once per session by spawning the interpreter with a one-line script
+    that prints its own pid: when that differs from ``Popen.pid``, the
+    interpreter is a launcher (a shim) rather than the process that runs code.
+    """
+    if "value" not in _HANDS_OFF:
+        probe = subprocess.Popen(
+            [sys.executable, "-c", "import os, sys; sys.stdout.write(str(os.getpid()))"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        out, _ = probe.communicate(timeout=120)
+        try:
+            reported = int((out or "").strip())
+        except ValueError:
+            reported = -1
+        _HANDS_OFF["value"] = reported != probe.pid
+    return _HANDS_OFF["value"]
+
+
 def _wait_published(job_id: str) -> dict:
     assert _wait_until(
         lambda: bool((_runtime(job_id).get("worker") or {}).get("worker_id"))
@@ -416,6 +486,19 @@ def _wait_published(job_id: str) -> dict:
     # keeps going, which is how E-6r stayed green here and red on Windows.
     supervisor = supervisor_module.supervisor(job_id)
     owner_pid = (runtime.get("worker") or {}).get("owner_pid")
+    if _interpreter_hands_the_run_to_a_child():
+        # Windows interpreters can be launch shims -- the Store app-execution
+        # alias, or py.exe -- where the process you spawn exits and a child of
+        # theirs runs the script.  There the handle and the run legitimately
+        # differ, and requiring equality would fail a healthy run (which is
+        # exactly what happened: supervisor=21340 owner=30576).  The property
+        # the supervisor relies on is enforced by ownership evidence, not by this
+        # pid, so assert what is still true here: the task runs in another
+        # process, and it published a run.
+        assert owner_pid is not None and owner_pid != os.getpid(), (
+            "the task must run in a process of its own, not in the test: "
+            f"owner={owner_pid} test={os.getpid()}")
+        return runtime
     assert supervisor is not None and owner_pid == supervisor.pid, (
         "the launched process must be the process that runs the task: "
         f"supervisor={None if supervisor is None else supervisor.pid} "

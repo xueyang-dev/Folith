@@ -28,6 +28,8 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -173,8 +175,11 @@ class _StubScrollBar:
 
 
 class _StubWorkbench:
-    def __init__(self):
-        self.segment_list = SimpleNamespace(verticalScrollBar=lambda: _StubScrollBar())
+    def __init__(self, rows: int = 10):
+        # ``rowCount`` is the QTableWidget's own count, which can lag ``_rows``
+        # right after open; the driver must not select before it catches up.
+        self.segment_list = SimpleNamespace(
+            verticalScrollBar=lambda: _StubScrollBar(), rowCount=lambda: rows)
         self.calls = []
         self.activity_popover = SimpleNamespace(
             close=lambda: self.calls.append(("popup-close",)))
@@ -495,6 +500,256 @@ def test_report_declares_measurement_v3_and_the_phase_contract():
             assert phase in operations[name]["phases"]
 
 
+def test_the_r_window_parser_accepts_start_end_seconds():
+    assert runner._parse_r_window("120:720") == (120.0, 720.0)
+    assert runner._parse_r_window(None) is None
+    assert runner._parse_r_window("") is None
+    for bad in ("120", "720:120", "-1:60", "a:b"):
+        with pytest.raises(SystemExit):
+            runner._parse_r_window(bad)
+
+
+def test_an_r_only_round_leaves_i_to_s3_and_is_not_void():
+    """Plan D1: R here, I on S3.  A round without an I phase must not be voided.
+
+    The void rule exists to catch a round that was supposed to measure I and
+    could not; an R-only round never had one.
+    """
+    phases = runner._phase_metrics(
+        _window(), _window(),
+        r_only={"r_only": True, "r_window": {"start_s": 120.0, "end_s": 720.0,
+                                            "measured_s": 600.0}})
+    assert phases["valid_round"] is True, phases["discard_reasons"]
+    assert phases["discarded_rounds"] == 0
+    assert phases["R"]["valid"] is True
+    assert phases["I"]["provided_by"] == "S3"
+    assert phases["I"]["valid"] is True
+    assert phases["r_window"]["start_s"] == 120.0
+    assert phases["i_phase_s"] is None
+
+
+def test_a_normal_round_with_a_short_completion_phase_is_still_void():
+    """The r-only branch must not weaken the rule it bypasses."""
+    phases = runner._phase_metrics(_window(observed_s=61.0), _window(observed_s=60.0))
+    assert phases["valid_round"] is False
+    assert phases["discarded_rounds"] == 1
+
+
+def test_verify_accepts_an_r_only_round_and_keeps_the_r_sample_gate(tmp_path):
+    import json as _json
+
+    phases = runner._phase_metrics(
+        _window(), _window(),
+        r_only={"r_only": True, "r_window": {"start_s": 120.0, "end_s": 720.0,
+                                            "measured_s": 600.0}})
+    payload = _report(result={"gui_jank": _window(), "run_window": _window(observed_s=600.0),
+                              "translation": {"settled": True, "completed": True,
+                                              "mode": "r_only"}})
+    payload["metrics"]["phases"] = phases
+    payload["environment"]["mode"] = "source"
+    spec = payload["metrics"]["operations"]["operations"]
+    for name in ("scroll", "select_segment", "type_echo"):
+        spec[name]["phases"]["run"] = {"measured": True, "count": 10, "p95": 1.0}
+    (tmp_path / "runtime-baseline.json").write_text(_json.dumps(payload), encoding="utf-8")
+    verdict = runner.verify_round(tmp_path)
+    by_name = {item["check"]: item for item in verdict["checks"]}
+    assert by_name["I_valid"]["ok"] is True
+    assert by_name["I_valid"]["required"] is False
+    assert by_name["r_window_recorded"]["ok"] is True
+    assert by_name["i_phase_provided_by_s3"]["ok"] is True
+    # The R-phase sample gate is unchanged by the r-only mode.
+    assert by_name["run_phase_operations_sampled"]["ok"] is True
+    for name in ("scroll", "select_segment", "type_echo"):
+        spec[name]["phases"]["run"] = {"measured": False, "count": 0}
+    (tmp_path / "runtime-baseline.json").write_text(_json.dumps(payload), encoding="utf-8")
+    verdict = runner.verify_round(tmp_path)
+    gate = {item["check"]: item for item in verdict["checks"]}[
+        "run_phase_operations_sampled"]
+    assert gate["ok"] is False
+
+
+def test_the_task_fingerprint_proves_two_arms_used_the_same_load():
+    class _Adapter:
+        def __init__(self, sources):
+            self._state = {"pairs": [{"source": text, "target": ""} for text in sources]}
+
+        def load_state(self, _job_id):
+            return self._state
+
+    same_a = runner._task_fingerprint(_Adapter(["甲", "乙"]), "job")
+    same_b = runner._task_fingerprint(_Adapter(["甲", "乙"]), "job")
+    other = runner._task_fingerprint(_Adapter(["甲", "丙"]), "job")
+    assert same_a["segments"] == 2
+    assert same_a["digest"] == same_b["digest"]
+    assert same_a["digest"] != other["digest"]
+
+
+def test_the_cli_exposes_the_round2_flags(capsys):
+    """--help is the parser itself, so the flags are checked where they live."""
+    with pytest.raises(SystemExit) as exc:
+        runner.main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    for flag in ("--r-only", "--r-window", "--reuse-tasks", "--build-time-scale"):
+        assert flag in out, flag
+
+
+def _finished_state(segments: int = 3):
+    return {
+        "paras": [f"原文{i}" for i in range(segments)],
+        "pairs": [{"source": f"原文{i}", "target": f"译文{i}", "reviewed": True}
+                  for i in range(segments)],
+        "findings": [{"segment_index": i + 1, "segment_id": i + 1,
+                      "summary": f"问题{i}"} for i in range(segments)],
+        "review_evidence": [{"batch": i, "segment_ids": [i]} for i in range(segments)],
+        "human_actions": [{"finding_id": f"segment-mutation:{i}"}
+                          for i in range(segments)],
+        "review_stats": {"reviewed_segments": segments, "actionable": segments},
+        "tm_used_count": 2,
+        "p2_done": True,
+    }
+
+
+def test_the_tiler_renumbers_positions_and_keeps_the_density():
+    """Condition: findings/review evidence/aggregates are tiled, not dropped.
+
+    The I phase is dominated by the whole-document projections, so a 10,000-segment
+    task holding only translations would measure a lighter document than the one
+    the engine produces.
+    """
+    tiled = runner._tile_finished_state(_finished_state(3), 2)
+    assert len(tiled["pairs"]) == 6
+    assert len(tiled["paras"]) == 6
+    assert len(tiled["findings"]) == 6
+    assert [item["segment_index"] for item in tiled["findings"]] == [1, 2, 3, 4, 5, 6]
+    assert [item["segment_id"] for item in tiled["findings"]] == [1, 2, 3, 4, 5, 6]
+    assert [item["segment_ids"] for item in tiled["review_evidence"]] == [[0], [1], [2], [3], [4], [5]]
+    assert tiled["review_stats"]["actionable"] == 6
+    assert tiled["tm_used_count"] == 4
+    # The copy's actions must not collide with the template's.
+    ids = [item["finding_id"] for item in tiled["human_actions"]]
+    assert len(set(ids)) == len(ids), ids
+
+
+def test_the_tiler_leaves_a_single_copy_alone():
+    original = _finished_state(3)
+    tiled = runner._tile_finished_state(original, 1)
+    assert len(tiled["pairs"]) == 3
+    assert tiled["review_stats"]["actionable"] == 3
+
+
+def _verify_with_run_counts(tmp_path, counts, *, mode="source"):
+    """Write a minimal round whose R phase sampled *counts* and verify it."""
+    import json as _json
+
+    payload = _report(result={
+        "gui_jank": _window(),
+        "run_window": _window(observed_s=12.0),
+        "translation": {"settled": True, "completed": True},
+        "operations_skipped": {"scroll_not_scrollable": 3,
+                               "edit_table_not_ready": 5},
+    })
+    payload["environment"]["mode"] = mode
+    payload["environment"]["offscreen"] = mode.endswith("_offscreen")
+    spec = payload["metrics"]["operations"]["operations"]
+    for name, count in counts.items():
+        spec[name]["phases"]["run"] = {"measured": count > 0, "count": count,
+                                       "p95": 1.0 if count else None}
+    (tmp_path / "runtime-baseline.json").write_text(
+        _json.dumps(payload), encoding="utf-8")
+    verdict = runner.verify_round(tmp_path)
+    check = next((item for item in verdict["checks"]
+                  if item["check"] == "run_phase_operations_sampled"), None)
+    return verdict, check
+
+
+def test_a_source_round_that_sampled_no_run_phase_operations_fails_verify(tmp_path):
+    """P1-5e: zero scroll/select/type while translating must fail the round.
+
+    Those three only run when the grid has rows, so zero samples is not "the user
+    did not scroll" -- it is "the grid was empty", and such a round's R numbers
+    cannot be compared with the other arm's.
+    """
+    verdict, check = _verify_with_run_counts(
+        tmp_path, {"scroll": 0, "select_segment": 0, "type_echo": 0})
+    assert check["ok"] is False, check
+    assert check["detail"]["samples_in_R"] == {"scroll": 0, "select_segment": 0,
+                                               "type_echo": 0}
+    # The skip counters travel with the report so the reason is visible.
+    assert check["detail"]["skipped"]["scroll_not_scrollable"] == 3
+    assert verdict["ok"] is False
+
+
+def test_a_source_round_with_run_phase_operations_passes_that_check(tmp_path):
+    _verdict, check = _verify_with_run_counts(
+        tmp_path, {"scroll": 2288, "select_segment": 134, "type_echo": 134})
+    assert check["ok"] is True, check
+
+
+def test_an_offscreen_source_round_is_gated_too(tmp_path):
+    """The smoke leg is ``source_offscreen``; the gate must cover it as well."""
+    _verdict, check = _verify_with_run_counts(
+        tmp_path, {"scroll": 0, "select_segment": 0, "type_echo": 0},
+        mode="source_offscreen")
+    assert check is not None and check["ok"] is False, check
+
+
+def test_a_frozen_round_is_not_asked_for_run_phase_operations(tmp_path):
+    """The frozen arm's flow is the app's own; this gate is a source-round gate."""
+    verdict, _check = _verify_with_run_counts(
+        tmp_path, {"scroll": 0, "select_segment": 0, "type_echo": 0},
+        mode="frozen")
+    assert not any(item["check"] == "run_phase_operations_sampled"
+                   for item in verdict["checks"])
+
+
+def test_the_report_records_which_operations_were_skipped():
+    payload = _report(result={"operations_skipped": {"scroll_not_scrollable": 4,
+                                                     "edit_table_not_ready": 7}})
+    assert payload["operations_skipped"] == {"scroll_not_scrollable": 4,
+                                             "edit_table_not_ready": 7}
+
+
+def test_a_real_window_run_does_not_carry_the_offscreen_limits(monkeypatch):
+    """A real-window round must not describe itself as offscreen (P1-5).
+
+    The report used to print the offscreen limit list unconditionally, so a
+    round measured in a real window with animations on carried a limit that did
+    not apply to it -- and, worse, hid the one that does (no frozen product).
+    """
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    payload = _report(environment={"mode": "source", "offscreen": False})
+    joined = " ".join(payload["limits"]).lower()
+    assert "offscreen" not in joined, payload["limits"]
+    assert "frozen product" in joined, payload["limits"]
+    assert "offscreen" not in payload["note"].lower(), payload["note"]
+    assert payload["real_machine_baseline"] is False, \
+        "a source run is still not a frozen product"
+    # The offscreen list is still what an offscreen round reports.
+    offscreen = _report(environment={"mode": "source_offscreen", "offscreen": True})
+    assert "offscreen" in " ".join(offscreen["limits"]).lower()
+
+
+def test_report_records_whether_animations_were_on(monkeypatch):
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "0")
+    on = _report(environment={"mode": "source", "offscreen": False})
+    assert on["motion_enabled"] is True, on["motion"]
+    assert on["motion"]["source"] == "FOLITH_REDUCE_MOTION"
+
+    monkeypatch.setenv("FOLITH_REDUCE_MOTION", "1")
+    off = _report(environment={"mode": "source", "offscreen": False})
+    assert off["motion_enabled"] is False, off["motion"]
+
+    # Unset + a real window: the system decides, and guessing would be a lie.
+    monkeypatch.delenv("FOLITH_REDUCE_MOTION", raising=False)
+    monkeypatch.delenv("FOLITH_QT_NONINTERACTIVE", raising=False)
+    unknown = _report(environment={"mode": "source", "offscreen": False})
+    assert unknown["motion_enabled"] is None, unknown["motion"]
+    assert "system" in unknown["motion"]["source"]
+
+
 def test_report_without_a_measured_window_is_not_a_zero_measurement():
     """F5 at the report level: no window must not become an all-zero R and I."""
     payload = _report(result={"gui_jank": {}, "translation": {"settled": False}})
@@ -661,13 +916,32 @@ def test_s3_report_declares_r_not_applicable():
         "gui_jank": _window(observed_s=45.0, slow_count=9, severe_count=1),
         "run_window": {"measured": False, "present": False,
                        "reason": "S3 has no translating phase"},
-        "translation": {"settled": True, "mode": "s3_finished_tasks"},
+        "translation": {"settled": True, "completed": True,
+                        "mode": "s3_finished_tasks"},
         "operations": runner.OperationRecorder().report(),
     })
     assert payload["measurement"]["version"] == 3
     assert payload["metrics"]["phases"]["R"]["measured"] is False
     assert payload["metrics"]["phases"]["I"]["measured"] is True
     assert payload["ok"] is True
+
+
+def test_a_failed_translation_is_not_a_measured_round():
+    """A task that settled by *failing* must not report ok (P1-5 wiring trap).
+
+    ``settled`` is terminal-state, not success: with the replay gateway down the
+    task reached ``failed`` immediately, and a report that keyed ``ok`` on
+    ``settled`` called that run healthy.
+    """
+    payload = _report(result={
+        "gui_jank": _window(observed_s=60.0),
+        "run_window": _window(observed_s=3.0),
+        "translation": {"settled": True, "completed": False,
+                        "runtime_status": "failed", "p2_done": False},
+        "run_records": [],
+    })
+    assert payload["ok"] is False
+    assert payload["translation"]["runtime_status"] == "failed"
 
 
 def test_longest_consumes_the_repaired_window_scoped_sampler_field():
@@ -696,7 +970,7 @@ def test_aggregate_medians_skip_void_and_foreign_reports(tmp_path):
         result = {
             "gui_jank": _window(observed_s=60.0, slow_count=slow_scn, severe_count=0),
             "run_window": _window(observed_s=run_s, slow_count=slow_run, severe_count=0),
-            "translation": {"settled": True},
+            "translation": {"settled": True, "completed": True},
         }
         payload = _report(scenario=scenario, result=result)
         payload["measurement"]["version"] = version
@@ -722,3 +996,197 @@ def test_aggregate_medians_skip_void_and_foreign_reports(tmp_path):
     mixed = runner.aggregate_reports(tmp_path)
     assert mixed["mixed_scenarios"] is True
     assert "mix scenarios" in mixed["warning"]
+
+
+# ---------------------------------------------------------------------------
+# P1-5 prep: the two wiring faults the smoke run hit
+# ---------------------------------------------------------------------------
+
+def test_frozen_arm_reports_tool_share_as_null_not_zero():
+    """A frozen round cannot separate the tool's stalls, so 0.0 would be a lie.
+
+    The app's own scripted flow takes no instrumentation mark, so its counters are
+    all zero even when the harness *would* have caused stalls (P1-2 measured 25 %
+    and 100 % tool shares in the source arm).  Reading that zero as "pure product"
+    inverts the baseline/candidate comparison, so the field is null with a reason.
+    """
+    window = _window(observed_s=60.0, slow_count=7, severe_count=2,
+                     instrumentation_slow_count=0, instrumentation_severe_count=0)
+    frozen = runner._phase_metrics(window, window, tool_split_measured=False)
+    assert frozen["tool_split_measured"] is False
+    assert frozen["tool_split_reason"]
+    for label in ("R", "I"):
+        for tier in frozen[label]["tiers"].values():
+            assert tier["tool_split_measured"] is False
+            assert tier["tool_share"] is None
+            assert tier["tool_events"] is None
+            assert tier["including_tool"]["count"] is None
+            assert tier["including_tool"]["reason"]
+    # The product-side reading survives: the scenario really had 7 slow stalls.
+    r_slow = frozen["R"]["tiers"]["slow_100ms"]["excluding_tool"]
+    assert r_slow == {"count": 7, "per_minute": 7.0}
+
+    # The same window measured with the harness present keeps the full split.
+    source = runner._phase_metrics(window, window)
+    assert source["tool_split_measured"] is True
+    assert source["R"]["tiers"]["slow_100ms"]["tool_share"] == 0.0
+
+
+def test_a_report_says_whether_seconds_controlled_the_window():
+    """``--seconds`` is harness-only; the frozen arm must not imply it applied."""
+    frozen = _report(result={
+        "gui_jank": _window(),
+        "run_window": _window(observed_s=12.0),
+        "translation": {"settled": True, "completed": True},
+        "tool_split_measured": False,
+        "window_control": {"controlled_by": "the frozen app's own --selftest flow",
+                           "seconds_applied": False},
+    })
+    assert frozen["window_control"]["seconds_applied"] is False
+    assert frozen["measurement"]["tool_share"]["measured"] is False
+    line = runner._summary_line(frozen)
+    assert line["seconds_applied"] is False
+    assert line["tool_split_measured"] is False
+    for name, value in line.items():
+        if name.endswith("_tool_share"):
+            assert value is None, name
+
+    source = _report(result={
+        "gui_jank": _window(),
+        "run_window": _window(observed_s=12.0),
+        "translation": {"settled": True, "completed": True},
+        "tool_split_measured": True,
+        "window_control": {"controlled_by": "the harness interaction window",
+                           "seconds_applied": True},
+    })
+    assert source["window_control"]["seconds_applied"] is True
+    assert runner._summary_line(source)["seconds_applied"] is True
+
+
+def test_frozen_mode_refuses_seconds_instead_of_ignoring_it():
+    """P1-4 §5: ``--seconds 15`` never moved the frozen window.  Refuse now."""
+    with pytest.raises(SystemExit) as excinfo:
+        runner.main(["--out", "/tmp/p15-unused", "--mode", "frozen",
+                     "--frozen-app", "/bin/true", "--seconds", "30"])
+    assert excinfo.value.code == 2
+
+
+def test_the_driver_does_not_edit_before_the_table_has_rows():
+    """Right after open the row list is filled before QTableWidget is resized.
+
+    Selecting then paints a row whose items do not exist yet and the product
+    raises ``'NoneType' object has no attribute 'text'`` (views.py:6097).  That is
+    not the editing scenario, so no edit is attempted and no failure is recorded.
+    """
+    clock = [0.0]
+    window = _StubWindow()
+    window.workbench.segment_list = SimpleNamespace(
+        verticalScrollBar=lambda: _StubScrollBar(), rowCount=lambda: 0)
+    driver, result = _make_driver(clock, window=window,
+                                  adapter=_ProgressingAdapter(), seconds=10.0)
+    driver.begin()
+    window.runner.busy = False
+    clock[0] += 0.3
+    driver.tick()          # import -> open
+    clock[0] += 0.2
+    driver.tick()          # open -> interact
+    assert driver.state == "interact"
+
+    clock[0] += 2.1
+    driver.tick()
+    assert driver.edited == 0
+    assert not any(call[0] == "select" for call in window.workbench.calls)
+    assert result["failures"] == []
+
+    # Once the table catches up, the very next slot performs the edit.
+    window.workbench.segment_list = SimpleNamespace(
+        verticalScrollBar=lambda: _StubScrollBar(), rowCount=lambda: 10)
+    clock[0] += 2.1
+    driver.tick()
+    assert driver.edited == 1
+    assert ("submit", 0) in window.calls
+
+
+# ---------------------------------------------------------------------------
+# --verify: the one-command post-round contract check (P1-5 runbook step)
+# ---------------------------------------------------------------------------
+
+def _write_round(directory: Path, *, result: dict, mode: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    payload = _report(result=result, environment={"mode": mode})
+    (directory / "runtime-baseline.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return directory
+
+
+def _source_result():
+    return {
+        "gui_jank": _window(observed_s=60.0),
+        "run_window": _window(observed_s=12.0),
+        "translation": {"settled": True, "completed": True},
+        "tool_split_measured": True,
+        "window_control": {"controlled_by": "the harness interaction window",
+                           "seconds_applied": True},
+        "run_records": [],
+    }
+
+
+def _frozen_result():
+    return {
+        "gui_jank": _window(observed_s=60.0),
+        "run_window": _window(observed_s=60.0),
+        "translation": {"settled": True, "completed": True},
+        "tool_split_measured": False,
+        "window_control": {"controlled_by": "the frozen app's own --selftest flow",
+                           "seconds_applied": False},
+        "run_records": [],
+    }
+
+
+def test_verify_accepts_a_source_round_and_calls_it_aggregate_ready(tmp_path):
+    _write_round(tmp_path / "r1", result=_source_result(), mode="source_offscreen")
+    verdict = runner.verify_round(tmp_path / "r1")
+    failed = [item["check"] for item in verdict["checks"] if not item["ok"]]
+    # The product artifacts are missing in this synthetic round; everything the
+    # harness itself owns must pass, and I is required because --seconds applied.
+    assert "measurement_v3" not in failed
+    assert "R_valid" not in failed
+    assert "I_valid" not in failed
+    assert verdict["seconds_applied"] is True
+    assert verdict["aggregate_ready"] is True
+
+
+def test_verify_does_not_require_an_i_phase_from_the_frozen_arm(tmp_path):
+    _write_round(tmp_path / "frozen", result=_frozen_result(), mode="frozen_selftest")
+    verdict = runner.verify_round(tmp_path / "frozen")
+    by_name = {item["check"]: item for item in verdict["checks"]}
+    assert by_name["I_valid"]["required"] is False
+    assert by_name["tool_share_honest"]["ok"] is True
+    assert by_name["window_control_recorded"]["ok"] is True
+    # R-only, so the aggregation view must not pretend it is a full round.
+    assert verdict["aggregate_ready"] is False
+
+
+def test_verify_rejects_a_frozen_round_that_reports_a_tool_share_of_zero(tmp_path):
+    result = _frozen_result()
+    payload = _report(result=result, environment={"mode": "frozen_selftest"})
+    # Simulate the pre-fix report: the frozen arm printed 0.0 for the share.
+    for label in ("R", "I"):
+        for tier in payload["metrics"]["phases"][label]["tiers"].values():
+            tier["tool_share"] = 0.0
+            tier["tool_events"] = 0
+    directory = tmp_path / "bad"
+    directory.mkdir()
+    (directory / "runtime-baseline.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    verdict = runner.verify_round(directory)
+    by_name = {item["check"]: item for item in verdict["checks"]}
+    assert by_name["tool_share_honest"]["ok"] is False
+    assert verdict["ok"] is False
+
+
+def test_verify_fails_when_the_round_has_no_report(tmp_path):
+    verdict = runner.verify_round(tmp_path)
+    assert verdict["ok"] is False
+    assert verdict["checks"][0]["check"] == "report_present"
+    assert runner.main(["--verify", str(tmp_path)]) == 1

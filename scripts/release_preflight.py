@@ -75,13 +75,17 @@ HOME_PATH_PATTERNS = [
     (r"[Cc]:\\Users\\[A-Za-z0-9._\-]+", "Windows 家目录"),
 ]
 
-# Verbatim, publicly redistributed RWS fixtures. Exempt only these exact bytes:
-# an edited file must be scanned again. Provenance and hashes are in the README.
+# Verbatim public fixtures. Exempt only these exact bytes: an edited file must
+# be scanned again. Provenance and hashes are in each fixture README.
+# The Okapi sample's body contains a public URL that matches the Linux
+# home-directory pattern. Do not copy that URL into any other file.
 _PUBLIC_FIXTURE_HASHES = {
     "tests/fixtures/sdlxliff/TTSExample.docx.sdlxliff":
         "ab3fcbcb32a91ad894c25636be6970c70c218f674e3d57b87c8eaf4b909b8710",
     "tests/fixtures/sdlxliff/quickplace.docx.sdlxliff":
         "85e67619be7594ff80aaae03f17adbbe85f048680f39b74b31e36e19fff1cb4b",
+    "tests/fixtures/xliff12/test1_es.xlf":
+        "c27fe5f204c8a0e256e6fcc58c74d503880e82139238b5ab5c962f1afbca2ba2",
 }
 
 

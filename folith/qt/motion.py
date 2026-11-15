@@ -4,19 +4,19 @@ Preferences and interruptible transitions for the Qt client. Every animated
 widget asks :func:`reduced` instead of reading settings itself.
 
 Qt 6.11 exposes no reduce-motion hint (``QStyleHints.accessibility()`` only has
-the contrast preference) and the bundle has no pyobjc, so on macOS the system
-setting is read from ``NSWorkspace`` through the Objective-C runtime.
+the contrast preference). The OS read lives in :mod:`folith.qt.platform_motion`:
+macOS ``NSWorkspace``, Windows ``SPI_GETCLIENTAREAANIMATION``.
 """
 from __future__ import annotations
 
-import ctypes
-import ctypes.util
 import os
 import sys
 import time
 
 from PySide6.QtCore import QObject, QEasingCurve, QVariantAnimation, Qt
 from PySide6.QtWidgets import QGraphicsEffect
+
+from . import platform_motion
 
 DURATION = {"select": 140, "local": 180, "panel": 240, "view": 300,
             "body": 250, "source": 280, "progress": 250, "popover": 200, "popover-close": 150, "save": 400}
@@ -36,36 +36,10 @@ _SYSTEM_TTL_S = 5.0
 _cache: dict = {"at": 0.0, "value": False}
 
 
-def _macos_reduce_motion(selector: bytes = b"accessibilityDisplayShouldReduceMotion") -> bool:
-    try:
-        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
-        ctypes.cdll.LoadLibrary(
-            "/System/Library/Frameworks/AppKit.framework/AppKit")
-        objc.objc_getClass.restype = ctypes.c_void_p
-        objc.objc_getClass.argtypes = [ctypes.c_char_p]
-        objc.sel_registerName.restype = ctypes.c_void_p
-        objc.sel_registerName.argtypes = [ctypes.c_char_p]
-        send = objc.objc_msgSend
-        send.restype = ctypes.c_void_p
-        send.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-        workspace = send(objc.objc_getClass(b"NSWorkspace"),
-                         objc.sel_registerName(b"sharedWorkspace"))
-        if not workspace:
-            return False
-        send_bool = ctypes.cast(objc.objc_msgSend,
-                                ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,
-                                                 ctypes.c_void_p))
-        return bool(send_bool(workspace, objc.sel_registerName(selector)))
-    except Exception:  # noqa: BLE001 - an unreadable preference means "not reduced"
-        return False
-
-
 def _system_reduce_motion() -> bool:
-    if sys.platform != "darwin":
-        return False
     now = time.monotonic()
     if now - _cache["at"] > _SYSTEM_TTL_S:
-        _cache["value"] = _macos_reduce_motion()
+        _cache["value"] = platform_motion.system_reduce_motion()
         _cache["at"] = now
     return bool(_cache["value"])
 
@@ -74,7 +48,7 @@ def reduced() -> bool:
     """Whether animations should jump straight to their end state.
 
     In order: ``FOLITH_REDUCE_MOTION`` (1/0; also lets probes run animations),
-    scripted and offscreen runs (deterministic: always reduced), then the macOS
+    scripted and offscreen runs (deterministic: always reduced), then the OS
     setting.  An in-app switch is added with the settings window (P5); until a
     screen can write it, no stored preference is consulted -- otherwise tests
     and scripts would silently depend on the developer's real QSettings.
@@ -99,8 +73,8 @@ def reduced_transparency() -> bool:
         return False
     now = time.monotonic()
     if now - _transparency_cache["at"] > _SYSTEM_TTL_S:
-        _transparency_cache.update(at=now, value=_macos_reduce_motion(
-            b"accessibilityDisplayShouldReduceTransparency"))
+        _transparency_cache.update(
+            at=now, value=platform_motion.system_reduce_transparency())
     return bool(_transparency_cache["value"])
 
 

@@ -4043,7 +4043,20 @@ class WorkbenchView(QWidget):
             return False
         positions = [int(position) for position in positions]
         rows = list(rows)
+        # "Lines up with the rows on screen" includes the *number* of rows: the
+        # grid is what the user sees, and a delta applied by position needs the
+        # grid to have those positions.  The first feed of a run arrives before
+        # the first render, so ``rowCount()`` is 0 while ``_rows`` already holds
+        # the committed batch; painting then addressed cells that did not exist
+        # (P1-5e).  Returning False is the documented contract, and the caller
+        # reloads the authoritative state, so the batch is not dropped.
+        if self.segment_list.rowCount() != len(self._rows):
+            return False
         if positions and not self._apply_row_delta(rows, positions):
+            return False
+        if self.segment_list.rowCount() != len(self._rows):
+            # The delta appended rows: growing the grid is a whole render, not a
+            # paint.  Same fallback, same reason.
             return False
         self._bump_domains(set(domains or ()))
         if counters or (set(domains or ()) & {"review", "followup", "delivery"}):
@@ -6086,6 +6099,26 @@ class WorkbenchView(QWidget):
             number = self.segment_list.item(position, 0)
             source = self.segment_list.item(position, 1)
             target = self.segment_list.item(position, 2)
+        if number is None or source is None or target is None:
+            # Beyond ``rowCount()`` ``setItem`` is a silent no-op, so the repair
+            # above cannot help: the grid simply has no such row.  Raising from
+            # here used to abort a whole incremental update (P1-5e), so the paint
+            # reports and skips instead -- but under test the same condition is a
+            # bug and must fail loudly.
+            message = (f"segment grid has no cell at position {position} "
+                       f"(rowCount={self.segment_list.rowCount()}, "
+                       f"rows={len(self._rows)})")
+            if os.environ.get("PYTEST_CURRENT_TEST"):
+                raise RuntimeError(message)
+            try:
+                from folith import trace as _trace_module
+                _trace_module.trace.record_point(
+                    "segment_paint_missing_cell", position=int(position),
+                    row_count=int(self.segment_list.rowCount()),
+                    rows=len(self._rows))
+            except Exception:  # noqa: BLE001 - logging must never break painting
+                pass
+            return False
         self._painted[position] = dataclasses.replace(row)
         if row.segment_uid in self._notes:
             # 批注变了也要重画：缓存按行数据比较，批注不在行数据里。
