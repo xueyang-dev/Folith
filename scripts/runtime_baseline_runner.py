@@ -62,6 +62,8 @@ no GPU path and no native input, and this machine is not the tester's machine.
 from __future__ import annotations
 
 import argparse
+import atexit
+import gc
 import json
 import os
 import shutil
@@ -1833,6 +1835,62 @@ def _run_scenario_event_loop(app) -> None:
     app.exec()
 
 
+#: P2-21 判别实验用的 GC 开关。**只影响 runner 的进程**，产品默认行为不变。
+#:   auto（默认）—— 不动 Python 的 GC
+#:   off          —— 进程内关闭循环 GC（gc.disable()）
+#:   gui          —— 关闭循环 GC，改由 GUI 线程每 ``_GC_INTERVAL_MS`` 主动 collect 一次
+GC_MODE_ENV = "FOLITH_GC_MODE"
+GC_MODES = ("auto", "off", "gui")
+_GC_INTERVAL_MS = 1000
+_gc_timer = None  # 保活：挂在 app 上，进程退出才释放
+
+
+def gc_mode() -> str:
+    """当前实验臂；非法值按 ``auto`` 处理并记一条 failure 由调用方决定。"""
+    value = (os.environ.get(GC_MODE_ENV) or "").strip().lower()
+    return value if value in GC_MODES else "auto"
+
+
+def _apply_gc_mode_before_app(result: dict) -> str:
+    """在 Qt 起来之前关掉循环 GC（off/gui 两臂都要）。"""
+    mode = gc_mode()
+    requested = (os.environ.get(GC_MODE_ENV) or "").strip().lower()
+    result["gc_mode"] = mode
+    if requested and mode == "auto":
+        result.setdefault("failures", []).append(
+            f"unknown {GC_MODE_ENV}={requested!r}; using auto")
+    if mode in {"off", "gui"}:
+        gc.disable()
+    return mode
+
+
+def _install_gui_gc_timer(app, result: dict) -> None:
+    """gui 臂：GUI 线程每秒 collect 一次，worker 线程上不做循环回收。"""
+    global _gc_timer
+    from PySide6.QtCore import QTimer
+
+    timer = QTimer(app)
+    timer.setInterval(_GC_INTERVAL_MS)
+    calls = {"n": 0, "ms": 0.0, "worst_ms": 0.0}
+
+    def collect() -> None:
+        started = time.perf_counter()
+        gc.collect()
+        elapsed = (time.perf_counter() - started) * 1000.0
+        calls["n"] += 1
+        calls["ms"] += elapsed
+        calls["worst_ms"] = max(calls["worst_ms"], elapsed)
+
+    timer.timeout.connect(collect)
+    timer.start()
+    _gc_timer = timer
+    result["gc_gui_timer"] = {"interval_ms": _GC_INTERVAL_MS, "calls": calls}
+    # 报告 schema 是白名单，计时器统计进不去；收尾打一行到日志，供判别实验核对 C 臂真的在收。
+    atexit.register(lambda: print(
+        f"gc gui timer: calls={calls['n']} total_ms={calls['ms']:.1f} "
+        f"worst_ms={calls['worst_ms']:.1f}", flush=True))
+
+
 def _prepare_window(args: argparse.Namespace, data_dir: Path, log_dir: Path,
                     result: dict):
     """App + main window + UI health monitor for a source-mode scenario.
@@ -1843,12 +1901,15 @@ def _prepare_window(args: argparse.Namespace, data_dir: Path, log_dir: Path,
     """
     from folith.qt import bootstrap
 
+    _apply_gc_mode_before_app(result)
     paths = bootstrap.prepare_environment(data_dir=data_dir, log_dir=log_dir)
     from folith.qt import adapter, selftest
     from folith.qt import window as window_module
     from folith.qt.ui_health import UiHealthMonitor
 
     app = window_module.build_application([sys.argv[0]])
+    if result.get("gc_mode") == "gui":
+        _install_gui_gc_timer(app, result)
     if args.engine_config:
         config = load_engine_config(Path(args.engine_config).expanduser())
         problem = config.connection_problem()
@@ -2826,6 +2887,7 @@ def main(argv: list[str] | None = None) -> int:
         "base_url_is_mock": gateway is not None,
         "real_engine": result.get("real_engine") or None,
         "data_dir": str(data_dir),
+        "gc_mode": result.get("gc_mode", "auto"),
     }
     payload = assemble_report(scenario=args.scenario, paras=paras, fixtures=fixtures,
                               result=result, environment=environment,
