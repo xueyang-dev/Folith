@@ -132,9 +132,10 @@ jobs:
           # 这一轮的门：报告形状对、窗口是 --r-window 控制的、R 段确实被测量了。
           if (-not $r.r_only) { throw "S1 round did not report an r-only window" }
           if (-not $r.window_control.seconds_applied) { throw "S1 round ignored --seconds" }
-          $measured = $r.metrics.phases.R.measured_s
-          if (-not $measured -or $measured -le 0) { throw "S1 round measured no R window" }
-          Write-Host "s1: R window measured $measured s"
+          if (-not $r.metrics.phases.R.measured) { throw "S1 round did not measure the R window" }
+          $observed = $r.metrics.phases.R.observed_s
+          if (-not $observed -or $observed -le 0) { throw "S1 round observed no R seconds" }
+          Write-Host "s1: R window measured $observed s"
           Copy-Item "$OUT\s1\runtime-baseline.json" "$OUT\arm-cand\s1-1\"
           Write-Host "::endgroup::"
 
