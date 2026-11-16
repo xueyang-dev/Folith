@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
+
+import pytest
 
 
 from folith.qt import app as app_module
@@ -107,3 +110,53 @@ def test_the_new_engine_modules_are_qt_free():
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "PySide6" not in text
         assert "from .app" not in text
+
+
+# ---------------------------------------------------------------------------
+# E-7 前提：``FOLITH_ENGINE_PROCESS=0`` 时 pipeline 留在本进程
+# ---------------------------------------------------------------------------
+
+def test_the_switch_reads_as_documented(monkeypatch):
+    """空 / 0 / false 都是「进程内」，1 / true 才是子进程。"""
+    from folith.desktop import engine_host
+
+    for value, child in (("", False), ("0", False), ("false", False),
+                         ("1", True), ("true", True)):
+        monkeypatch.setenv("FOLITH_ENGINE_PROCESS", value)
+        assert engine_host.engine_process_enabled() is child, value
+
+
+def test_start_job_stays_in_process_when_the_switch_is_off(tmp_path, monkeypatch):
+    """``start_job`` 在开关为 0 时必须调 ``core.start_job_worker``（本进程线程）。
+
+    E-7 要在同一个独占时段里对照「进程内」与「子进程」两种跑法；这条契约不成立，
+    两臂量的就不是同一件事。P2-E 曾经据此判断「开关没把流水线拉回本进程」，
+    实际是 cProfile 只看主线程，看不到进程内那条 worker 线程。
+    """
+    import core
+    from folith.application import commands
+
+    monkeypatch.setattr(core, "OUTPUT_DIR", tmp_path, raising=False)
+    job_id = "engine-switch-in-process"
+    state = core.new_job_state("switch.docx")
+    state.update(p1_done=True)
+    core.save_job_state(job_id, state)
+
+    called = []
+    monkeypatch.setattr(core, "start_job_worker",
+                        lambda *a, **kw: called.append("in-process") or True)
+    monkeypatch.setattr(commands, "_start_in_engine",
+                        lambda *a, **kw: called.append("engine-child") or True)
+
+    monkeypatch.setenv("FOLITH_ENGINE_PROCESS", "0")
+    assert commands.start_job(job_id, {}, filename="switch.docx") is True
+    assert called == ["in-process"]
+
+    called.clear()
+    monkeypatch.setenv("FOLITH_ENGINE_PROCESS", "1")
+    assert commands.start_job(job_id, {}, filename="switch.docx") is True
+    assert called == ["engine-child"]
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__]))
