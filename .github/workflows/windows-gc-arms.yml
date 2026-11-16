@@ -41,6 +41,7 @@ jobs:
       FOLITH_QT_SELFTEST_MODEL: "replay/auto"
       FOLITH_QT_SELFTEST_TIMEOUT: "1800"
       FOLITH_GC_MODE: ${{ matrix.mode }}
+      FOLITH_QT_MESSAGES: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -109,6 +110,7 @@ jobs:
           for ($round = 1; $round -le $ROUNDS; $round++) {
             $data = "$OUT\r$round"
             Copy-Item -Recurse -Force "$OUT\tpl" $data
+            $env:FOLITH_QT_MESSAGES_OUT = "$OUT\qt-$round.log"
             $gw = Start-Gw 0.01
             try {
               & $PY scripts\runtime_baseline_runner.py --out "$OUT\s3-$round" `
@@ -138,6 +140,13 @@ jobs:
                                         report = [bool]$report; fatal = [bool]$fatal; top = $top }
             Write-Host ("round {0,2}: exit={1,11} report={2,-5} fatal={3,-5} {4}" -f $round, $code, $report, $fatal, $top)
             if ($fatal) { Copy-Item $crashLog.FullName "$OUT\crash-round-$round.log" }
+            if (-not $report -or $fatal) {
+              # abort 前的最后几条 Qt 消息（QThread/qFatal 一类会先打一句）
+              if (Test-Path $env:FOLITH_QT_MESSAGES_OUT) {
+                Get-Content $env:FOLITH_QT_MESSAGES_OUT | Select-Object -Last 12 |
+                  Out-File "$OUT\crash-round-$round-qt.log"
+              }
+            }
           }
 
           $rows | Export-Csv "$OUT\rounds.csv" -NoTypeInformation

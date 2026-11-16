@@ -69,6 +69,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import zipfile
 from datetime import datetime, timezone
@@ -1910,6 +1911,8 @@ def _prepare_window(args: argparse.Namespace, data_dir: Path, log_dir: Path,
     app = window_module.build_application([sys.argv[0]])
     if result.get("gc_mode") == "gui":
         _install_gui_gc_timer(app, result)
+    if (os.environ.get(QT_MESSAGES_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}:
+        _install_qt_message_handler(result)
     if args.engine_config:
         config = load_engine_config(Path(args.engine_config).expanduser())
         problem = config.connection_problem()
@@ -1946,6 +1949,57 @@ def _prepare_window(args: argparse.Namespace, data_dir: Path, log_dir: Path,
     if jank is None:
         result["failures"].append("stall sampler was not created")
     return paths, app, window, adapter, monitor, jank
+
+
+#: P2-21 第三步：把 Qt 自己的诊断消息抓下来（`qFatal` 会先打一句话再 abort）。
+#: 默认关闭；`FOLITH_QT_MESSAGES=1` 打开，写到 ``FOLITH_QT_MESSAGES_OUT``（默认 qt-messages.log）。
+QT_MESSAGES_ENV = "FOLITH_QT_MESSAGES"
+QT_MESSAGES_OUT_ENV = "FOLITH_QT_MESSAGES_OUT"
+_qt_message_handle = None
+
+
+def _qt_message_level_name(mode) -> str:
+    try:
+        from PySide6.QtCore import QtMsgType
+
+        return {
+            QtMsgType.QtDebugMsg: "debug",
+            QtMsgType.QtInfoMsg: "info",
+            QtMsgType.QtWarningMsg: "warning",
+            QtMsgType.QtCriticalMsg: "critical",
+            QtMsgType.QtFatalMsg: "fatal",
+        }.get(mode, str(int(mode)) if hasattr(mode, "__int__") else str(mode))
+    except Exception:  # noqa: BLE001
+        return str(mode)
+
+
+def _install_qt_message_handler(result: dict) -> None:
+    """每条 Qt 消息一行，带线程名，**立即 flush**（abort 时缓冲区不会丢）。"""
+    global _qt_message_handle
+    if _qt_message_handle is not None:
+        return
+    target = os.environ.get(QT_MESSAGES_OUT_ENV) or "qt-messages.log"
+    try:
+        handle = open(target, "w", encoding="utf-8", buffering=1)
+    except OSError as exc:
+        result.setdefault("failures", []).append(f"qt messages log unavailable: {exc}")
+        return
+
+    def handler(mode, context, message) -> None:
+        try:
+            handle.write(
+                f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}\t"
+                f"{threading.current_thread().name}\t"
+                f"{_qt_message_level_name(mode)}\t{message}\n")
+            handle.flush()
+        except Exception:  # noqa: BLE001 - 记录器不能再抛
+            pass
+
+    from PySide6.QtCore import qInstallMessageHandler
+
+    qInstallMessageHandler(handler)
+    _qt_message_handle = handle
+    result["qt_messages_log"] = target
 
 
 def _drive_event_loop(app, driver, result: dict) -> None:
