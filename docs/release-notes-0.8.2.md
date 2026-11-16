@@ -18,7 +18,7 @@
 - **锁定段是只读行**：看得见、改不了。批量替换、定点重译、候选采用、实体统一、段落结构编辑都会跳过或拒绝锁定段，并在界面上说明跳过了多少段。
 - 交付面板新增两个入口：**「原样导出双语文件…」**（任何方言都可用，把用户选的原文件逐字节写回）和 **「导出双语文件并写入译文…」**（只对通用 1.2 出现，把当前译文写回 `<target>`）。
 - 写回时会先核对段落身份、原文和锁定信息，任何一项对不上就整批拒绝，不会写出半份文件；被修改的单元如果带着 `approved` / `state` / `status` 这类外部状态属性，写回会**明确拒绝并说明原因**——否则下游 CAT 会把没审过的新译文当成已批准。
-- 1,000 单元的导入加写回导出，界面主线程最长停顿在门槛 500 ms 以内；数字见「性能」一节。
+- 1,000 单元的导入加写回导出：macOS 真实窗口实测最长界面停顿 **396 ms**（同机 offscreen 311–323 ms），门槛是 500 ms。这是**空闲机器**上的数字；机器上有别的重活时本机也量到过 459 ms，所以这一条是按「空闲机器上不超过 500 ms」说的。Windows 没有量过 1,000 单元。
 
 **方言只读**：SDLXLIFF 与 MQXLIFF 只有「原样导出」，界面上不出现写回译文的入口。这是设计约束，不是缺陷：这两类文件里的状态、确认与锁定由 Trados / memoQ 自己维护，Folith 不去伪造。
 
@@ -130,7 +130,7 @@ The workbench imports `.xlf` / `.xliff` (generic XLIFF 1.2) plus `.sdlxliff` / `
 - **Locked segments are read-only rows**: visible, not editable. Batch replace, retranslation, candidate adoption, entity unification and structural editing skip or refuse them, and the UI reports how many were skipped.
 - The delivery panel gains **"Export the bilingual file unchanged…"** (every dialect; writes your chosen file back byte for byte) and **"Export the bilingual file with translations…"** (generic 1.2 only; writes the current targets back into `<target>`).
 - Write-back first re-checks segment identity, source text and lock state and refuses the whole batch on any mismatch. If a changed unit carries an external `approved` / `state` / `status` attribute, write-back **refuses with a reason** instead of producing a file that downstream CAT tools would read as approved.
-- A 1,000-unit import plus write-back export stays under the 500 ms main-thread budget; numbers in "Performance".
+- A 1,000-unit import plus write-back export: the worst main-thread pause was **396 ms** in a real macOS window (311–323 ms offscreen on the same idle machine) against a 500 ms budget. That is an idle-machine number; with other heavy work running the same machine measured 459 ms. Windows was not measured at 1,000 units.
 
 **Dialects are read-only.** SDLXLIFF and MQXLIFF are export-unchanged only, with no write-back entry in the UI. That is a design constraint: their status, confirmation and locking belong to Trados / memoQ, and Folith does not fake them.
 
