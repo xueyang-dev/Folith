@@ -87,9 +87,10 @@
 2. **SDL / memoQ 文件只能原样导出。** `.sdlxliff`、`.mqxliff` 不会写回译文，界面上也没有这个入口；要更新译文，请回 Trados / memoQ 处理。通用 XLIFF 1.2 可以写回译文。
 3. **Windows 的验证范围只有冒烟和流畅度。** 这一版没有做 30 轮加压、没有做 8 小时长跑、没有做休眠唤醒，也没有做 0.8.1 界面的 Windows 原生逐项验收。Windows 上「能装、能打开、能翻完一份小文档并交付、XLIFF 能进出、退出没有残留进程」以冒烟清单为准；性能以门槛 9 的双臂对照为准。
 4. **G2 流畅度没有达到 −70%**（见「性能」）。不要读成「变快了」。
-5. **没有在 Trados 或 memoQ 里做过往返。** 方言样本与通用样本都是这样；原样导出的字节一致有测试与走查，但没有目标工具回读记录。
-6. **macOS 安装包仍未签名、未公证。** 首次打开需要用户手动放行。
-7. 离屏测试、mock 与单元测试不能代替真实窗口。
+5. **Windows 上打开大任务可能原生崩溃（P2-21，修复中）。** CI 的 S3 轮约 50%/轮命中：一种形态是主线程在 Qt 原生派发里的 `access violation`，另一种是 worker 线程在 `Garbage-collecting` 时 `Fatal Python error: Aborted`。归因（带 PySide 包装器的循环垃圾在错误线程被回收）目前是**假设不是结论**，修复与验收（CI Windows 上 S3 ≥10 轮 0 崩溃）由 Worker A 进行。**发布前这一条必须有结论**：修好，或者停在明确边界并写在这里。
+6. **没有在 Trados 或 memoQ 里做过往返。** 方言样本与通用样本都是这样；原样导出的字节一致有测试与走查，但没有目标工具回读记录。
+7. **macOS 安装包仍未签名、未公证。** 首次打开需要用户手动放行。
+8. 离屏测试、mock 与单元测试不能代替真实窗口。
 
 ---
 
@@ -187,9 +188,10 @@ None of the four "≥70% reduction" cells was met, and the R phase got worse. Th
 2. **SDL / memoQ files are export-unchanged only.** No write-back, no UI entry for it. Generic XLIFF 1.2 does write translations back.
 3. **Windows verification covers smoke and fluency only.** No 30-round stress, no 8-hour run, no sleep/wake, no native per-item acceptance of the 0.8.1 UI on Windows.
 4. **G2 did not reach −70%.** Do not read it as "faster".
-5. **No Trados / memoQ round trip** for dialects or generic files.
-6. **The macOS build is still unsigned and not notarized.**
-7. Offscreen tests, mocks and unit tests do not stand in for a real window.
+5. **Opening a large task on Windows can crash natively (P2-21, fix in progress).** About 50% of CI S3 rounds hit it: either an `access violation` on the main thread inside Qt's native dispatch, or `Fatal Python error: Aborted` on a worker thread while `Garbage-collecting`. The attribution (cyclic garbage holding PySide wrappers collected on the wrong thread) is a **hypothesis, not a conclusion**; Worker A owns the fix and its acceptance (CI Windows S3, 10 rounds, zero crashes). **This needs a conclusion before release**: fixed, or stopped at a stated boundary and written down here.
+6. **No Trados / memoQ round trip** for dialects or generic files.
+7. **The macOS build is still unsigned and not notarized.**
+8. Offscreen tests, mocks and unit tests do not stand in for a real window.
 
 ## Moved to 0.8.3
 
