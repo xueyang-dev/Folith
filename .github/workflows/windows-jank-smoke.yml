@@ -85,9 +85,18 @@ jobs:
               throw "template round produced no report"
             }
           } finally { Stop-Gw $gw }
-          $tpl = (Get-Content "$OUT\tpl-round\runtime-baseline.json" -Raw |
-                  ConvertFrom-Json).job_id
-          Write-Host "template job_id = $tpl"
+          # S1 的轮次报告里没有 job_id：模板 job 只能按「数据目录里有 pairs 的任务」找，
+          # 与 macOS 第二轮 runbook 的做法一致。
+          $tpl = $null; $bestPairs = 0
+          foreach ($dir in Get-ChildItem "$OUT\tpl" -Directory -ErrorAction SilentlyContinue) {
+            $stateFile = Join-Path $dir.FullName "state.json"
+            if (-not (Test-Path $stateFile)) { continue }
+            try { $st = Get-Content $stateFile -Raw | ConvertFrom-Json } catch { continue }
+            $n = @($st.pairs).Count
+            if ($n -gt $bestPairs) { $bestPairs = $n; $tpl = $dir.Name }
+          }
+          if (-not $tpl) { throw "no finished task under $OUT\tpl" }
+          Write-Host "template job_id = $tpl ($bestPairs pairs)"
           Write-Host "::endgroup::"
 
           # --- 2. S3 只测 I（播种 + 复用） --------------------------------
