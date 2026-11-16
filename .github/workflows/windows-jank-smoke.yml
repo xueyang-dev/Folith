@@ -72,15 +72,28 @@ jobs:
           function Stop-Gw($p) {
             if ($p) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
           }
+          # 每次都检查退出码：Python 崩掉时 PowerShell 不会自己抛，之前就是这样
+          # 静默跑到「文件不存在」才报错的。
+          $script:crashes = @()
+          function Invoke-Runner([string[]]$RunnerArgs, [int]$Attempts = 1) {
+            for ($n = 1; $n -le $Attempts; $n++) {
+              & $PY scripts\runtime_baseline_runner.py @RunnerArgs
+              if ($LASTEXITCODE -eq 0) { return }
+              Write-Host "::warning::runner exited $LASTEXITCODE (attempt $n/$Attempts) :: $($RunnerArgs -join ' ')"
+              if ($n -lt $Attempts) { Start-Sleep -Seconds 5 }
+            }
+            throw "runner exited $LASTEXITCODE after $Attempts attempt(s) :: $($RunnerArgs -join ' ')"
+          }
 
           # --- 1. 模板任务（S1 跑完） -------------------------------------
           Write-Host "::group::template build (S1 short)"
           $gw = Start-Gw "tpl" 0.05
           try {
-            & $PY scripts\runtime_baseline_runner.py `
-                --out "$OUT\tpl-round" --data-dir "$OUT\tpl" --mode source --scenario S1 `
-                --paras 120 --seconds 60 --settle-timeout 900 `
-                --base-url "http://127.0.0.1:$PORT/v1"
+            Invoke-Runner @("--out", "$OUT\tpl-round", "--data-dir", "$OUT\tpl",
+                            "--mode", "source", "--scenario", "S1",
+                            "--paras", "120", "--seconds", "60",
+                            "--settle-timeout", "900",
+                            "--base-url", "http://127.0.0.1:$PORT/v1")
             if (-not (Test-Path "$OUT\tpl-round\runtime-baseline.json")) {
               throw "template round produced no report"
             }
@@ -103,11 +116,12 @@ jobs:
           Write-Host "::group::S3 seeded round"
           $gw = Start-Gw "s3" 0.01
           try {
-            & $PY scripts\runtime_baseline_runner.py `
-                --out "$OUT\s3" --data-dir "$OUT\tpl" --mode source --scenario S3 `
-                --s3-small-paras 20 --seconds 20 --settle-timeout 600 `
-                --seed-template $tpl --seed-segments 400 `
-                --base-url "http://127.0.0.1:$PORT/v1"
+            Invoke-Runner @("--out", "$OUT\s3", "--data-dir", "$OUT\tpl",
+                            "--mode", "source", "--scenario", "S3",
+                            "--s3-small-paras", "20", "--seconds", "20",
+                            "--settle-timeout", "600",
+                            "--seed-template", $tpl, "--seed-segments", "400",
+                            "--base-url", "http://127.0.0.1:$PORT/v1") 2
           } finally { Stop-Gw $gw }
           & $PY scripts\runtime_baseline_runner.py --verify "$OUT\s3"
           if ($LASTEXITCODE -ne 0) { Write-Host "::warning::verify($OUT\s3) returned $LASTEXITCODE" }
@@ -118,11 +132,13 @@ jobs:
           Write-Host "::group::S3 reuse round"
           $gw = Start-Gw "s3b" 0.01
           try {
-            & $PY scripts\runtime_baseline_runner.py `
-                --out "$OUT\s3b" --data-dir "$OUT\tpl" --mode source --scenario S3 `
-                --s3-small-paras 20 --seconds 20 --settle-timeout 600 `
-                --seed-template $tpl --seed-segments 400 --reuse-tasks `
-                --base-url "http://127.0.0.1:$PORT/v1"
+            # 纯复用：不带 --seed-template/--seed-segments，走 _reuse_existing
+            # （带种子参数会每轮重新播种一次，那条路已经在上一步验过）。
+            Invoke-Runner @("--out", "$OUT\s3b", "--data-dir", "$OUT\tpl",
+                            "--mode", "source", "--scenario", "S3",
+                            "--s3-small-paras", "20", "--seconds", "20",
+                            "--settle-timeout", "600", "--reuse-tasks",
+                            "--base-url", "http://127.0.0.1:$PORT/v1") 2
           } finally { Stop-Gw $gw }
           $reuse = (Get-Content "$OUT\s3b\runtime-baseline.json" -Raw | ConvertFrom-Json)
           Write-Host "reuse round: tasks.reused=$($reuse.tasks.reused) segments=$($reuse.tasks.segments)"
@@ -133,10 +149,11 @@ jobs:
           Write-Host "::group::S1 r-only round"
           $gw = Start-Gw "s1" 1.0
           try {
-            & $PY scripts\runtime_baseline_runner.py `
-                --out "$OUT\s1" --data-dir "$OUT\s1-data" --mode source --scenario S1 `
-                --paras 200 --r-only --r-window 20:60 --settle-timeout 300 `
-                --base-url "http://127.0.0.1:$PORT/v1"
+            Invoke-Runner @("--out", "$OUT\s1", "--data-dir", "$OUT\s1-data",
+                            "--mode", "source", "--scenario", "S1",
+                            "--paras", "200", "--r-only", "--r-window", "20:60",
+                            "--settle-timeout", "300",
+                            "--base-url", "http://127.0.0.1:$PORT/v1")
           } finally { Stop-Gw $gw }
           & $PY scripts\runtime_baseline_runner.py --verify "$OUT\s1"
           if ($LASTEXITCODE -ne 0) { Write-Host "::warning::verify($OUT\s1) returned $LASTEXITCODE" }
@@ -153,7 +170,35 @@ jobs:
           Get-Content "$OUT\aggregate-cand.json" | Select-Object -First 25
           Write-Host "::endgroup::"
 
-          # --- 6. 残留进程检查（第 4 条的清单会用到） -------------------
+          # --- 6. 崩溃断言：任何 session 的 crash-stacks.log 里有致命异常就红 --
+          # 2026-11-16：main 上 s3b 轮曾静默崩在 worker 线程
+          # （review_queue -> delivery._merge_unresolved_findings，access violation），
+          # 报告没写出来，工作流却只报「文件不存在」。这条断言把崩溃变成可诊断的红。
+          # 这条**不 gate 管路**：0.8.2 在 Windows 上有一处已知的原生崩溃（打开任务的
+          # worker 线程，GC 期间 abort / access violation，见 runbook「已知问题」）。
+          # 它单独记：打印完整栈、汇总进 job summary、并落在 artifact 里。
+          Write-Host "::group::crash report (does not gate the plumbing check)"
+          $crashes = @(Get-ChildItem $OUT -Recurse -Filter crash-stacks.log -ErrorAction SilentlyContinue |
+                       Where-Object { (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match "fatal exception" })
+          if ($crashes.Count -gt 0) {
+            foreach ($c in $crashes) {
+              Write-Host "::warning::fatal exception recorded in $($c.FullName)"
+              Get-Content $c.FullName | Select-Object -First 40 | Write-Host
+            }
+            "## Windows smoke: $($crashes.Count) session(s) recorded a fatal exception`n" |
+                Out-File -Append $env:GITHUB_STEP_SUMMARY
+            foreach ($c in $crashes) {
+              "``````" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+              Get-Content $c.FullName | Select-Object -First 25 |
+                Out-File -Append $env:GITHUB_STEP_SUMMARY
+              "``````" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            }
+          } else {
+            Write-Host "no session recorded a fatal exception"
+          }
+          Write-Host "::endgroup::"
+
+          # --- 7. 残留进程检查（第 4 条的清单会用到） -------------------
           Write-Host "::group::leftover processes"
           $left = Get-Process python, pythonw, Folith -ErrorAction SilentlyContinue
           if ($left) { $left | Format-Table -AutoSize | Out-String | Write-Host }
