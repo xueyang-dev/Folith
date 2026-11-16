@@ -29,19 +29,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arm: control
-            mode: auto
-          - arm: off
-            mode: off
-          - arm: gui
-            mode: gui
+          - arm: "control"
+            mode: "auto"
+          - arm: "off"
+            mode: "off"
+          - arm: "gui"
+            mode: "gui"
     env:
       PYTHONUTF8: "1"
       FOLITH_REDUCE_MOTION: "0"
       FOLITH_QT_SELFTEST_MODEL: "replay/auto"
       FOLITH_QT_SELFTEST_TIMEOUT: "1800"
       FOLITH_GC_MODE: ${{ matrix.mode }}
-      FOLITH_QT_SETTINGS_DIR: ${{ runner.temp }}\folith-qt-${{ matrix.arm }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -56,6 +55,8 @@ jobs:
 
       - name: Ten S3 rounds
         shell: pwsh
+        env:
+          FOLITH_QT_SETTINGS_DIR: ${{ runner.temp }}\folith-qt-${{ matrix.arm }}
         run: |
           $ErrorActionPreference = "Stop"
           Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
