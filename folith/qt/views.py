@@ -3944,6 +3944,7 @@ class WorkbenchView(QWidget):
             for name in revisions:
                 revisions[name] += 1
         self._blocking_cached = None
+        self._blocking_items_cached = None
 
     def _domain_version(self, name: str) -> int:
         """Monotonic revision of one projection domain."""
@@ -4061,6 +4062,7 @@ class WorkbenchView(QWidget):
         self._bump_domains(set(domains or ()))
         if counters or (set(domains or ()) & {"review", "followup", "delivery"}):
             self._blocking_cached = None
+            self._blocking_items_cached = None
         if positions:
             if self._filters_active():
                 # A user filter is on: keeping the visible subset correct is a
@@ -5076,33 +5078,37 @@ class WorkbenchView(QWidget):
         self.stage_bar.set_more_pages(pages)
 
     def blocking_count(self) -> int:
-        """Number of unresolved blocking findings, cached between deltas.
-
-        ``blocking_items()`` walks the whole findings list (O(document)).  The
-        stage bar only needs its length, and a delta that does not touch
-        review/follow-up/delivery cannot change that length -- so this is the
-        one whole-document scan the per-batch path used to pay (1k 0.75 ms vs
-        10k 2.08 ms in the A1 measurements).  Invalidated by whole-state apply
-        and by a delta that reports those domains.
-        """
-        cached = getattr(self, "_blocking_cached", None)
-        if cached is None:
-            cached = len(self.blocking_items())
-            self._blocking_cached = cached
-        return cached
+        """Number of unresolved blocking findings, cached between deltas."""
+        return len(self.blocking_items())
 
     def blocking_items(self) -> list[dict]:
         """尚未解决的**阻断级**检查项——交付门禁、审校步骤、页头与交付页共用的那一份。
 
         2026-11-04 审校 F2：四个界面各自数了一遍，结果互相打架（审校页说完成、页头写
         「已完成」、交付页却拦 1 个必须处理的问题）。现在只在这里数一次。
+
+        这份结果是 O(document) 的：``delivery.unresolved_findings`` 会对每一条 finding
+        重算 ``finding_id``（两次 ``json.dumps`` + 两次 sha256）。打开一个 10,000 段任务
+        时它有 **5 个调用者**（``blocking_items`` 三次、``filtered_indexes`` 一次、
+        ``blocking_count`` 一次，见 P2-19 的 cProfile：一次打开 0.79 s，占打开总时长的
+        61%），所以按 P2-19 的预算表缓存一份。
+
+        失效语义与 ``_blocking_cached`` 完全一致，也只有两个时机：整状态替换
+        （``_replace_state``）与「计数或 review/followup/delivery 域变了」的增量
+        （``apply_delta``）。两处都已经把 ``_blocking_cached`` 置空，这里一起置空。
+        调用方拿到的是副本，改它不会污染缓存。
         """
         if not self._state:
             return []
+        cached = getattr(self, "_blocking_items_cached", None)
+        if cached is not None:
+            return list(cached)
         try:
-            return adapter.unresolved_blocking(self.job_id, self._state)
+            items = adapter.unresolved_blocking(self.job_id, self._state)
         except Exception:  # noqa: BLE001 - 只读投影，坏了不该拖垮整个界面
             return []
+        self._blocking_items_cached = items
+        return list(items)
 
     def _render_stage(self) -> None:
         """用审校投影、交付预检与运行视图重算阶段步骤条与"下一步"。"""
