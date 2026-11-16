@@ -42,6 +42,7 @@ jobs:
       FOLITH_QT_SELFTEST_TIMEOUT: "1800"
       FOLITH_GC_MODE: ${{ matrix.mode }}
       FOLITH_QT_MESSAGES: "1"
+      FOLITH_QT_THREAD_GUARD: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

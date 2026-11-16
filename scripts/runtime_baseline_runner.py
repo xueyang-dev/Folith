@@ -1913,6 +1913,14 @@ def _prepare_window(args: argparse.Namespace, data_dir: Path, log_dir: Path,
         _install_gui_gc_timer(app, result)
     if (os.environ.get(QT_MESSAGES_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}:
         _install_qt_message_handler(result)
+    if (os.environ.get(QT_THREAD_GUARD_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}:
+        _install_qt_thread_guard(result)
+    if (os.environ.get("FOLITH_GC_GARBAGE") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        import gc_garbage_probe
+
+        if gc_garbage_probe.install(os.environ.get("FOLITH_GC_GARBAGE_OUT") or None):
+            result["gc_garbage_probe"] = os.environ.get("FOLITH_GC_GARBAGE_OUT") or "gc-garbage.json"
+            atexit.register(gc_garbage_probe.dump)
     if args.engine_config:
         config = load_engine_config(Path(args.engine_config).expanduser())
         problem = config.connection_problem()
@@ -2000,6 +2008,56 @@ def _install_qt_message_handler(result: dict) -> None:
     qInstallMessageHandler(handler)
     _qt_message_handle = handle
     result["qt_messages_log"] = target
+
+
+#: P2-21：`QBasicTimer::stop: Failed. Possibly trying to stop from a different thread`
+#: 已经抓到（worker 线程 `Dummy-1` 上停了一个 GUI 线程的定时器）。这个开关把
+#: ``QTimer.stop`` / ``QObject.killTimer`` 包一层：**非主线程调用**时把线程名和 Python
+#: 栈记进 `FOLITH_QT_MESSAGES_OUT`，直接指出是谁跨线程停的。
+QT_THREAD_GUARD_ENV = "FOLITH_QT_THREAD_GUARD"
+
+
+def _install_qt_thread_guard(result: dict) -> None:
+    import traceback
+
+    from PySide6.QtCore import QObject, QTimer
+
+    target = os.environ.get(QT_MESSAGES_OUT_ENV) or "qt-messages.log"
+    try:
+        handle = open(target, "a", encoding="utf-8", buffering=1)
+    except OSError as exc:
+        result.setdefault("failures", []).append(f"qt thread guard log unavailable: {exc}")
+        return
+    main_ident = threading.main_thread().ident
+    installed: list[str] = []
+
+    def wrap(owner, name: str, label: str) -> None:
+        original = getattr(owner, name, None)
+        if original is None or getattr(original, "_p21_guard", False):
+            return
+
+        def guarded(self, *args, **kwargs):
+            if threading.get_ident() != main_ident:
+                stack = " | ".join(
+                    f"{Path(fr.filename).name}:{fr.lineno} {fr.name}"
+                    for fr in traceback.extract_stack()[-8:-1])
+                try:
+                    handle.write(
+                        f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}\t"
+                        f"{threading.current_thread().name}\toff-thread-call\t"
+                        f"{label}({type(self).__name__})\t{stack}\n")
+                    handle.flush()
+                except Exception:  # noqa: BLE001
+                    pass
+            return original(self, *args, **kwargs)
+
+        guarded._p21_guard = True
+        setattr(owner, name, guarded)
+        installed.append(label)
+
+    wrap(QTimer, "stop", "QTimer.stop")
+    wrap(QObject, "killTimer", "QObject.killTimer")
+    result["qt_thread_guard"] = installed
 
 
 def _drive_event_loop(app, driver, result: dict) -> None:
