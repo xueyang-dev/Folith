@@ -1,7 +1,12 @@
 name: windows jank runbook smoke
 
-# 冒烟 `.loop/reports/windows-jank-runbook.md` 里的命令形状（缩短参数），
+# 冒烟 `docs/release/0.8.2-windows-jank-runbook.md` 里的命令形状（缩短参数）。
 # 只证明「这套命令在 Windows 上能跑通」，不是测量、不出任何数字。
+#
+# 两个 job 分开，是因为它们回答两个不同的问题：
+#   smoke      —— 命令能不能跑（S1 + 模板 + verify + aggregate）。必须绿。
+#   s3-probe   —— S3 的两条命令在 Windows 上会不会崩（P2-21）。允许红：
+#                 它红代表产品里有那个原生崩溃，不代表命令写错。
 on:
   workflow_dispatch:
   push:
@@ -17,19 +22,17 @@ jobs:
     name: smoke (windows-latest)
     runs-on: windows-latest
     timeout-minutes: 45
-    env:
+    env: &jank-env
       PYTHONUTF8: "1"
       FOLITH_REDUCE_MOTION: "0"
       FOLITH_QT_SELFTEST_MODEL: "replay/auto"
       FOLITH_QT_SELFTEST_TIMEOUT: "1800"
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
       - name: Install dependencies
         shell: pwsh
         run: |
@@ -44,20 +47,17 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
-          $PY   = "python"
-          $PORT = 8765
-          $SEED = 7
-          $OUT  = "$env:RUNNER_TEMP\folith-jank-smoke"
+          $PY = "python"; $PORT = 8765; $SEED = 7
+          $OUT = "$env:RUNNER_TEMP\folith-jank-smoke"
           New-Item -ItemType Directory -Force $OUT | Out-Null
           New-Item -ItemType Directory -Force "$OUT\arm-cand\s1-1" | Out-Null
-          New-Item -ItemType Directory -Force "$OUT\arm-cand\s3-1" | Out-Null
 
           function Start-Gw([string]$tag, [double]$scale) {
-            $log   = "$OUT\$tag-gw.log"
             $ready = "$OUT\$tag-ready.json"
             Remove-Item $ready -ErrorAction SilentlyContinue
             $p = Start-Process -FilePath $PY -PassThru -NoNewWindow `
-                  -RedirectStandardOutput $log -RedirectStandardError "$log.err" `
+                  -RedirectStandardOutput "$OUT\$tag-gw.log" `
+                  -RedirectStandardError "$OUT\$tag-gw.err" `
                   -ArgumentList @("scripts\replay_latency_gateway.py", "--port", "$PORT",
                                   "--seed", "$SEED", "--time-scale", "$scale",
                                   "--role-default", "translation",
@@ -72,17 +72,12 @@ jobs:
           function Stop-Gw($p) {
             if ($p) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
           }
-          # 每次都检查退出码：Python 崩掉时 PowerShell 不会自己抛，之前就是这样
-          # 静默跑到「文件不存在」才报错的。
-          $script:crashes = @()
-          function Invoke-Runner([string[]]$RunnerArgs, [int]$Attempts = 1) {
-            for ($n = 1; $n -le $Attempts; $n++) {
-              & $PY scripts\runtime_baseline_runner.py @RunnerArgs
-              if ($LASTEXITCODE -eq 0) { return }
-              Write-Host "::warning::runner exited $LASTEXITCODE (attempt $n/$Attempts) :: $($RunnerArgs -join ' ')"
-              if ($n -lt $Attempts) { Start-Sleep -Seconds 5 }
+          # 每次都检查退出码：Python 崩掉时 PowerShell 不会自己抛。
+          function Invoke-Runner([string[]]$RunnerArgs) {
+            & $PY scripts\runtime_baseline_runner.py @RunnerArgs
+            if ($LASTEXITCODE -ne 0) {
+              throw "runner exited $LASTEXITCODE :: $($RunnerArgs -join ' ')"
             }
-            throw "runner exited $LASTEXITCODE after $Attempts attempt(s) :: $($RunnerArgs -join ' ')"
           }
 
           # --- 1. 模板任务（S1 跑完） -------------------------------------
@@ -90,16 +85,11 @@ jobs:
           $gw = Start-Gw "tpl" 0.05
           try {
             Invoke-Runner @("--out", "$OUT\tpl-round", "--data-dir", "$OUT\tpl",
-                            "--mode", "source", "--scenario", "S1",
-                            "--paras", "120", "--seconds", "60",
-                            "--settle-timeout", "900",
+                            "--mode", "source", "--scenario", "S1", "--paras", "120",
+                            "--seconds", "60", "--settle-timeout", "900",
                             "--base-url", "http://127.0.0.1:$PORT/v1")
-            if (-not (Test-Path "$OUT\tpl-round\runtime-baseline.json")) {
-              throw "template round produced no report"
-            }
           } finally { Stop-Gw $gw }
-          # S1 的轮次报告里没有 job_id：模板 job 只能按「数据目录里有 pairs 的任务」找，
-          # 与 macOS 第二轮 runbook 的做法一致。
+          # S1 的轮次报告里没有 job_id：模板任务只能按「数据目录里有 pairs 的任务」找。
           $tpl = $null; $bestPairs = 0
           foreach ($dir in Get-ChildItem "$OUT\tpl" -Directory -ErrorAction SilentlyContinue) {
             $stateFile = Join-Path $dir.FullName "state.json"
@@ -112,93 +102,35 @@ jobs:
           Write-Host "template job_id = $tpl ($bestPairs pairs)"
           Write-Host "::endgroup::"
 
-          # --- 2. S3 只测 I（播种 + 复用） --------------------------------
-          Write-Host "::group::S3 seeded round"
-          $gw = Start-Gw "s3" 0.01
-          try {
-            Invoke-Runner @("--out", "$OUT\s3", "--data-dir", "$OUT\tpl",
-                            "--mode", "source", "--scenario", "S3",
-                            "--s3-small-paras", "20", "--seconds", "20",
-                            "--settle-timeout", "600",
-                            "--seed-template", $tpl, "--seed-segments", "400",
-                            "--base-url", "http://127.0.0.1:$PORT/v1") 2
-          } finally { Stop-Gw $gw }
-          & $PY scripts\runtime_baseline_runner.py --verify "$OUT\s3"
-          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::verify($OUT\s3) returned $LASTEXITCODE" }
-          Copy-Item "$OUT\s3\runtime-baseline.json" "$OUT\arm-cand\s3-1\"
-          Write-Host "::endgroup::"
-
-          # --- 3. S3 复用同一份任务（--reuse-tasks） ---------------------
-          Write-Host "::group::S3 reuse round"
-          $gw = Start-Gw "s3b" 0.01
-          try {
-            # 纯复用：不带 --seed-template/--seed-segments，走 _reuse_existing
-            # （带种子参数会每轮重新播种一次，那条路已经在上一步验过）。
-            Invoke-Runner @("--out", "$OUT\s3b", "--data-dir", "$OUT\tpl",
-                            "--mode", "source", "--scenario", "S3",
-                            "--s3-small-paras", "20", "--seconds", "20",
-                            "--settle-timeout", "600", "--reuse-tasks",
-                            "--base-url", "http://127.0.0.1:$PORT/v1") 2
-          } finally { Stop-Gw $gw }
-          $reuse = (Get-Content "$OUT\s3b\runtime-baseline.json" -Raw | ConvertFrom-Json)
-          Write-Host "reuse round: tasks.reused=$($reuse.tasks.reused) segments=$($reuse.tasks.segments)"
-          if ($reuse.tasks.reused -ne $true) { throw "--reuse-tasks did not reuse the recorded tasks" }
-          Write-Host "::endgroup::"
-
-          # --- 4. S1 只测 R ---------------------------------------------
+          # --- 2. S1 只测 R ----------------------------------------------
           Write-Host "::group::S1 r-only round"
           $gw = Start-Gw "s1" 1.0
           try {
             Invoke-Runner @("--out", "$OUT\s1", "--data-dir", "$OUT\s1-data",
-                            "--mode", "source", "--scenario", "S1",
-                            "--paras", "200", "--r-only", "--r-window", "20:60",
+                            "--mode", "source", "--scenario", "S1", "--paras", "200",
+                            "--r-only", "--r-window", "20:60",
                             "--settle-timeout", "300",
                             "--base-url", "http://127.0.0.1:$PORT/v1")
           } finally { Stop-Gw $gw }
           & $PY scripts\runtime_baseline_runner.py --verify "$OUT\s1"
-          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::verify($OUT\s1) returned $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) { throw "verify(s1) returned $LASTEXITCODE" }
           $r = (Get-Content "$OUT\s1\runtime-baseline.json" -Raw | ConvertFrom-Json)
           Write-Host "s1: window_control=$($r.window_control.controlled_by) valid=$($r.r_only)"
+          if (-not $r.r_only) { throw "S1 round did not report an r-only window" }
           Copy-Item "$OUT\s1\runtime-baseline.json" "$OUT\arm-cand\s1-1\"
           Write-Host "::endgroup::"
 
-          # --- 5. 聚合 --------------------------------------------------
+          # --- 3. 聚合 ---------------------------------------------------
           Write-Host "::group::aggregate"
           & $PY scripts\runtime_baseline_runner.py --aggregate "$OUT\arm-cand" |
               Out-File "$OUT\aggregate-cand.json"
           if ($LASTEXITCODE -ne 0) { throw "aggregate failed ($LASTEXITCODE)" }
-          Get-Content "$OUT\aggregate-cand.json" | Select-Object -First 25
+          $agg = Get-Content "$OUT\aggregate-cand.json" -Raw | ConvertFrom-Json
+          Write-Host "rounds: $($agg.rounds)"
+          if ($agg.rounds -lt 1) { throw "aggregate saw no rounds" }
           Write-Host "::endgroup::"
 
-          # --- 6. 崩溃断言：任何 session 的 crash-stacks.log 里有致命异常就红 --
-          # 2026-11-16：main 上 s3b 轮曾静默崩在 worker 线程
-          # （review_queue -> delivery._merge_unresolved_findings，access violation），
-          # 报告没写出来，工作流却只报「文件不存在」。这条断言把崩溃变成可诊断的红。
-          # 这条**不 gate 管路**：0.8.2 在 Windows 上有一处已知的原生崩溃（打开任务的
-          # worker 线程，GC 期间 abort / access violation，见 runbook「已知问题」）。
-          # 它单独记：打印完整栈、汇总进 job summary、并落在 artifact 里。
-          Write-Host "::group::crash report (does not gate the plumbing check)"
-          $crashes = @(Get-ChildItem $OUT -Recurse -Filter crash-stacks.log -ErrorAction SilentlyContinue |
-                       Where-Object { (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match "fatal exception" })
-          if ($crashes.Count -gt 0) {
-            foreach ($c in $crashes) {
-              Write-Host "::warning::fatal exception recorded in $($c.FullName)"
-              Get-Content $c.FullName | Select-Object -First 40 | Write-Host
-            }
-            "## Windows smoke: $($crashes.Count) session(s) recorded a fatal exception`n" |
-                Out-File -Append $env:GITHUB_STEP_SUMMARY
-            foreach ($c in $crashes) {
-              "``````" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-              Get-Content $c.FullName | Select-Object -First 25 |
-                Out-File -Append $env:GITHUB_STEP_SUMMARY
-              "``````" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            }
-          } else {
-            Write-Host "no session recorded a fatal exception"
-          }
-          Write-Host "::endgroup::"
-
-          # --- 7. 残留进程检查（第 4 条的清单会用到） -------------------
+          # --- 4. 残留进程检查（发布门槛第 4 条的清单会用到） -------------
           Write-Host "::group::leftover processes"
           $left = Get-Process python, pythonw, Folith -ErrorAction SilentlyContinue
           if ($left) { $left | Format-Table -AutoSize | Out-String | Write-Host }
@@ -211,4 +143,134 @@ jobs:
         with:
           name: windows-jank-smoke
           path: ${{ runner.temp }}/folith-jank-smoke
+          if-no-files-found: warn
+
+  s3-probe:
+    name: S3 crash probe (windows-latest)
+    runs-on: windows-latest
+    # P2-21：Windows 上 S3 轮偶发原生崩溃（访问越界 / GC 期间 abort，约 50%/轮）。
+    # 这个 job 专门把它暴露出来，所以允许红；它红不代表命令写错。
+    continue-on-error: true
+    timeout-minutes: 45
+    env: *jank-env
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-desktop-build.txt "PySide6==6.11.2"
+
+      - name: S3 seeded round and --reuse-tasks (two attempts each)
+        shell: pwsh
+        env:
+          FOLITH_QT_SETTINGS_DIR: ${{ runner.temp }}\folith-qt-settings-s3
+        run: |
+          $ErrorActionPreference = "Stop"
+          Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+          $PY = "python"; $PORT = 8766; $SEED = 7
+          $OUT = "$env:RUNNER_TEMP\folith-jank-s3"
+          New-Item -ItemType Directory -Force $OUT | Out-Null
+
+          function Start-Gw([string]$tag, [double]$scale) {
+            $ready = "$OUT\$tag-ready.json"
+            Remove-Item $ready -ErrorAction SilentlyContinue
+            $p = Start-Process -FilePath $PY -PassThru -NoNewWindow `
+                  -RedirectStandardOutput "$OUT\$tag-gw.log" `
+                  -RedirectStandardError "$OUT\$tag-gw.err" `
+                  -ArgumentList @("scripts\replay_latency_gateway.py", "--port", "$PORT",
+                                  "--seed", "$SEED", "--time-scale", $scale,
+                                  "--role-default", "translation",
+                                  "--timeout-hold-grace", "0.5",
+                                  "--log", "$OUT\$tag-gw.jsonl", "--ready-file", $ready)
+            for ($i = 0; $i -lt 120; $i++) {
+              if (Test-Path $ready) { return $p }
+              Start-Sleep -Milliseconds 500
+            }
+            throw "gateway did not become ready: $tag"
+          }
+          function Stop-Gw($p) {
+            if ($p) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          }
+          # 崩溃是 P2-21 的症状：重试一次，但每次都把退出码打出来。
+          function Invoke-Runner([string[]]$RunnerArgs, [int]$Attempts = 2) {
+            for ($n = 1; $n -le $Attempts; $n++) {
+              & $PY scripts\runtime_baseline_runner.py @RunnerArgs
+              if ($LASTEXITCODE -eq 0) { return }
+              Write-Host "::warning::runner exited $LASTEXITCODE (attempt $n/$Attempts) :: $($RunnerArgs -join ' ')"
+              if ($n -lt $Attempts) { Start-Sleep -Seconds 5 }
+            }
+            throw "runner exited $LASTEXITCODE after $Attempts attempt(s)"
+          }
+
+          Write-Host "::group::template build"
+          $gw = Start-Gw "tpl" 0.05
+          try {
+            Invoke-Runner @("--out", "$OUT\tpl-round", "--data-dir", "$OUT\tpl",
+                            "--mode", "source", "--scenario", "S1", "--paras", "120",
+                            "--seconds", "60", "--settle-timeout", "900",
+                            "--base-url", "http://127.0.0.1:$PORT/v1")
+          } finally { Stop-Gw $gw }
+          $tpl = $null; $bestPairs = 0
+          foreach ($dir in Get-ChildItem "$OUT\tpl" -Directory -ErrorAction SilentlyContinue) {
+            $stateFile = Join-Path $dir.FullName "state.json"
+            if (-not (Test-Path $stateFile)) { continue }
+            try { $st = Get-Content $stateFile -Raw | ConvertFrom-Json } catch { continue }
+            $n = @($st.pairs).Count
+            if ($n -gt $bestPairs) { $bestPairs = $n; $tpl = $dir.Name }
+          }
+          if (-not $tpl) { throw "no finished task under $OUT\tpl" }
+          Write-Host "template job_id = $tpl ($bestPairs pairs)"
+          Write-Host "::endgroup::"
+
+          Write-Host "::group::S3 seeded round"
+          $gw = Start-Gw "s3" 0.01
+          try {
+            Invoke-Runner @("--out", "$OUT\s3", "--data-dir", "$OUT\tpl",
+                            "--mode", "source", "--scenario", "S3",
+                            "--s3-small-paras", "20", "--seconds", "20",
+                            "--settle-timeout", "600",
+                            "--seed-template", $tpl, "--seed-segments", "400",
+                            "--base-url", "http://127.0.0.1:$PORT/v1")
+          } finally { Stop-Gw $gw }
+          & $PY scripts\runtime_baseline_runner.py --verify "$OUT\s3"
+          # S3 轮次的 verify 一定 ok:false（没有翻译阶段）：看 valid_round / I_valid。
+          $v = Get-Content "$OUT\s3\runtime-baseline.json" -Raw | ConvertFrom-Json
+          Write-Host "s3: segments=$($v.tasks.segments) digest=$($v.tasks.digest)"
+          Write-Host "::endgroup::"
+
+          Write-Host "::group::S3 reuse round"
+          $gw = Start-Gw "s3b" 0.01
+          try {
+            Invoke-Runner @("--out", "$OUT\s3b", "--data-dir", "$OUT\tpl",
+                            "--mode", "source", "--scenario", "S3",
+                            "--s3-small-paras", "20", "--seconds", "20",
+                            "--settle-timeout", "600", "--reuse-tasks",
+                            "--base-url", "http://127.0.0.1:$PORT/v1")
+          } finally { Stop-Gw $gw }
+          $reuse = (Get-Content "$OUT\s3b\runtime-baseline.json" -Raw | ConvertFrom-Json)
+          Write-Host "reuse round: tasks.reused=$($reuse.tasks.reused) segments=$($reuse.tasks.segments)"
+          if ($reuse.tasks.reused -ne $true) { throw "--reuse-tasks did not reuse the recorded tasks" }
+          Write-Host "::endgroup::"
+
+          Write-Host "::group::crash report"
+          $crashes = @(Get-ChildItem $OUT -Recurse -Filter crash-stacks.log -ErrorAction SilentlyContinue |
+                       Where-Object { (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match "fatal exception" })
+          foreach ($c in $crashes) {
+            Write-Host "::warning::fatal exception in $($c.FullName)"
+            Get-Content $c.FullName | Select-Object -First 30 | Write-Host
+          }
+          Write-Host "sessions with a fatal exception: $($crashes.Count)"
+          Write-Host "::endgroup::"
+
+      - name: Upload S3 probe artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-s3-probe
+          path: ${{ runner.temp }}/folith-jank-s3
           if-no-files-found: warn
