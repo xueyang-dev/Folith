@@ -38,8 +38,21 @@ _state: dict = {
 
 
 def _is_qt(obj) -> bool:
+    """PySide6/shiboken6 模块里的对象，**或者任何 QObject 子类实例**。
+
+    后者很关键：`folith.qt.workers._TaskSignals` 这种自己写的 QObject 子类，
+    `type(o).__module__` 是 `folith.qt.workers`，按模块名筛会漏掉——而它正是
+    「Qt 对象被当成垃圾析构」的候选。
+    """
     module = getattr(type(obj), "__module__", "") or ""
-    return module.startswith(QT_MODULES)
+    if module.startswith(QT_MODULES):
+        return True
+    try:
+        from PySide6.QtCore import QObject
+
+        return isinstance(obj, QObject)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _describe(obj, depth: int = 0) -> str:
@@ -101,6 +114,11 @@ def _scan() -> None:
             return
         qt_objects = [obj for obj in garbage if _is_qt(obj)]
         for obj in qt_objects:
+            name = f"{getattr(type(obj), '__module__', '?')}.{type(obj).__name__}"
+            if not name.startswith(QT_MODULES):
+                _state.setdefault("folith_qt_types", {})
+                _state["folith_qt_types"][name] = _state["folith_qt_types"].get(name, 0) + 1
+        for obj in qt_objects:
             name = type(obj).__name__
             _state["qt_types"][name] = _state["qt_types"].get(name, 0) + 1
             taken = _state["samples_taken"].get(name, 0)
@@ -138,6 +156,7 @@ def install(path: str | None = None, *, force: bool = False) -> bool:
 def dump() -> dict:
     payload = {
         "collections": _state["collections"],
+        "folith_qt_types": dict(_state.get("folith_qt_types") or {}),
         "qt_types": dict(_state["qt_types"]),
         "chains": _state["chains"],
         "at": time.time(),
