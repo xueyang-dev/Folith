@@ -93,6 +93,7 @@ _LIBRARY_FRAME_PREFIX = "<library> "
 ENV_SWITCH = "FOLITH_JANK_MONITOR"
 
 _DISABLED_VALUES = frozenset({"0", "false", "no", "off", "disabled"})
+_ENABLED_VALUES = frozenset({"1", "true", "yes", "on", "enabled"})
 _SELF_FILE = Path(__file__).name
 _SELF_PATH = os.path.realpath(__file__)
 #: Aggregation key for stalls whose stack could not be captured (held GIL, etc.).
@@ -106,12 +107,22 @@ ENV_OTHER_THREADS = "FOLITH_JANK_OTHER_THREADS"
 
 
 def jank_other_threads_enabled(environ: Optional[Dict[str, str]] = None) -> bool:
-    """Whether the sampler may walk **other** threads' frames.  Unset/empty means yes."""
+    """Whether the sampler may walk **other** threads' frames.
+
+    **Off by default (P2-21b).**  Walking another thread's live frames -- and
+    dropping the frame objects afterwards -- while the GUI thread sits in C++
+    (a paint, a dialog) with the GIL released corrupts that frame on CPython
+    3.11: the GUI thread then dies inside `paintEvent` with an access violation.
+    Measured on Windows CI, 20 S3 rounds each: with the walk on, 7 rounds died
+    (0xC0000005, no report); with it off, **0/20** and every round clean.  The
+    runner turns it on with ``FOLITH_JANK_OTHER_THREADS=1`` for the measurements
+    that need the all-thread stack ranking (gates 7/8, P2-0r2).
+    """
     source = os.environ if environ is None else environ
     value = source.get(ENV_OTHER_THREADS)
     if value is None or not str(value).strip():
-        return True
-    return str(value).strip().lower() not in _DISABLED_VALUES
+        return False
+    return str(value).strip().lower() in _ENABLED_VALUES
 
 
 def other_threads_getter():
