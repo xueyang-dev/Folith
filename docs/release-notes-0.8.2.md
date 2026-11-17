@@ -50,14 +50,14 @@
 | # | 门槛 | 状态 | 说明 |
 | --- | --- | --- | --- |
 | 1 | 冻结代码 | **进行中** | 从 2026-11-16 起 main 只接受发布阻塞修复与发布文档；P2 性能修复例外 |
-| 2 | CI 全绿 + 1 次手动 Release Validation（含 macOS / Windows 冻结候选） | **待执行** | 冻结提交确认后触发 |
-| 3 | macOS 冻结包冒烟（安装、翻译到交付、XLIFF 导入导出、重开任务还在、5 轮加压） | **待执行** | Worker，约 1 小时 |
-| 4 | Windows 冻结包冒烟（同第 3 条、3 轮加压、退出无残留进程、界面无明显错位） | **待执行** | 用户；步骤见 [Windows 冒烟清单](release/0.8.2-windows-smoke-checklist.md) |
-| 5 | 已知问题与发布说明如实 | **本文件即交付** | 性能数字为占位，见下一节 |
-| 6 | 版本号、标签、发布 | **版本号 PR 已就绪** | 打标签与公开发布等用户点头 |
-| 7 | G2 流畅度 −70% | **待测（第 2 天）** | 已经测过第二轮，见「性能」 |
-| 8 | E-7 进程内 / 子进程分阶段对照 | **待测（第 2 天）** | 与第 7 条同一独占时段交替 |
-| 9 | Windows 流畅度两臂对照 | **待用户** | Windows 真机，按 70% 判定 |
+| 2 | CI 全绿 + 1 次手动 Release Validation（含 macOS / Windows 冻结候选） | **待发布当天** | 合入发布说明与版本号后，在发布提交上触发一次（步骤见 `.loop/reports/release-day.md`） |
+| 3 | macOS 冻结包冒烟（安装、翻译到交付、XLIFF 导入导出、重开任务还在、5 轮加压） | **已做** | 见 `docs/evidence/0.8.2-macos-frozen-smoke.md`（随 Worker A 的证据 PR 入仓）；**冻结包内 XLIFF 人工往返未做**（冻结包没有 CLI 入口，自动化套件覆盖） |
+| 4 | Windows 冻结包冒烟（同第 3 条、3 轮加压、退出无残留进程、界面无明显错位） | **待用户** | 步骤见 [Windows 冒烟清单](release/0.8.2-windows-smoke-checklist.md) |
+| 5 | 已知问题与发布说明如实 | **本文件即交付** | 性能数字已填（第 7、8 条，`e5f5941d`） |
+| 6 | 版本号、标签、发布 | **版本号 PR 已就绪**（#433） | 发布当天与说明一起合；打标签与公开发布等用户点头 |
+| 7 | G2 流畅度 −70% | **已测，未达** | R >100 ms −30.8%、R >500 ms 不可判定、I >100 ms +2.0%、I >500 ms +17.6%，见「性能」 |
+| 8 | E-7 进程内 / 子进程分阶段对照 | **已完成** | R >100 ms 进程内比子进程高 9.1%，R >500 ms 两臂 0；全线程排行见「性能」 |
+| 9 | Windows 流畅度两臂对照 | **待用户** | Windows 真机；这一版没有 Windows 流畅度数字 |
 
 用户已裁定：第 7–9 条要求的是**测完并如实报告**，不要求达到 70%。达到了写达到，没达到写没达到，不调参凑数，也不因此推迟发布。
 
@@ -65,20 +65,44 @@
 
 ## 性能
 
-> **【占位 · 第 7、8 条测完后填】** 本节在门槛 7、8 测完后替换为最终数字，并注明测量所用的提交号；Windows 的数字等 P2-21 修复之后的正式测量。下面是到目前为止**已经记录**的数字，不是这一版的最终结论。
+测量日期 2026-11-17，**测量所用提交 `e5f5941d`**（就是这一版的冻结候选，含 P2-21 / P2-21b 修复）。
+基线包 `build/0.8.2-baseline-8109b9c2`（`74a421b5`，只移植了测量脚本与延迟分布文件，产品代码不动）。
+口径：`metrics.gui_jank_process`，100 ms / 500 ms 两档，变化 =（候选 − 基线）/ 基线，**负数表示改善**。
 
-**第二轮 macOS（2026-11-15，真实窗口、动画开启，S1 只测 R、S3 只测 I，两臂各 3 轮交替，0 轮作废）：**
+### 门槛 7（G2 目标 −70%）：**未达成**
 
-| 阶段 | 档位 | 基线 | 候选 | 变化 |
-| --- | --- | --- | --- | --- |
-| R（滚动/选择/输入） | >100 ms 次/分 | 3.90 | 4.70 | **+20.5%（更差）** |
-| R | >500 ms 次/分 | 0 | 0 | **不可判定**（两臂都是 0） |
-| I（界面操作） | >100 ms 次/分 | 91.89 | 89.99 | −2.1% |
-| I | >500 ms 次/分 | 20.92 | 19.54 | −6.6% |
+macOS 真实窗口、动画开启，产品默认配置（不设 `FOLITH_JANK_OTHER_THREADS`），S1 只测 R（1,000 段、窗口 120:720、每轮 600 s）、S3 只测 I（10,000 段、60 s），两臂各 3 轮交替。
 
-结论：**四格「各降 ≥70%」全部未达**；R 阶段候选反而更差。R 阶段基线只有约 3.9 次/分、单次最长约 168 ms，已接近底噪，降 70% 意味着要降到每分钟 1.2 次以下。第二轮之后又合入了几项把打开路径和失败路径移出界面线程的修复（P2-11/13/14），**它们的效果需要第 2 天的复测来确认，本文件现在不给结论。**
+| 阶段 | 档位 | 基线 | 候选 | 变化 | 目标 −70% |
+| --- | --- | ---: | ---: | ---: | --- |
+| R（滚动/选择/输入） | >100 ms 次/分 | 3.90 | 2.70 | **−30.8%（改善）** | 未达到 |
+| R | >500 ms 次/分 | 0.00 | 0.00 | **不可判定**（两臂都是 0） | — |
+| I（界面操作） | >100 ms 次/分 | 87.52 | 89.29 | **+2.0%（变差）** | 未达到 |
+| I | >500 ms 次/分 | 19.41 | 22.82 | **+17.6%（变差）** | 未达到 |
 
-证据：[第二轮证据](evidence/0.8.2-p1-5-macos-jank-r2.md)。
+四格「各降 ≥70%」**全部未达成**：R 的 >100 ms 有所改善但不到目标，I 的两档都变差。
+按用户 2026-11-15 的裁定照常发布，数字如实记录——**没有调参、没有改窗口、没有挑轮次**。
+
+### 门槛 8（E-7 进程内 / 子进程对照）
+
+同机同时段、同一候选、S1 只测 R、两臂各 3 轮交替。这一条**打开了** `FOLITH_JANK_OTHER_THREADS=1`（需要全线程栈排行；产品默认不开）。
+
+| 档位 | 子进程（`FOLITH_ENGINE_PROCESS=1`） | 进程内（`=0`） | 差异 |
+| --- | ---: | ---: | ---: |
+| R >100 ms 次/分 | 2.20 | 2.40 | 进程内 **+9.1%** |
+| R >500 ms 次/分 | 0.00 | 0.00 | 不可判定 |
+
+全线程栈排行（三轮合计 `total_ms` 前 5）：进程内是引擎自己的线程在跑（`core._runtime_heartbeat_loop`、`trace._run_sampling`，最长 450 ms）；子进程是监督者读输出（`engine_supervisor._drain_output`，最长 240 ms）。也就是说**子进程化把最长的那几段停顿从引擎线程换到了监督者的读输出上**，R 阶段的两档没有变差到可判定的程度。
+
+### 稳定性
+
+第 7、8 条期间 macOS 共 **18 轮零崩溃**（S1 6 轮 + S3 6 轮 + E-7 6 轮），全部 `ok=true`、产物完整。
+
+### Windows
+
+Windows 的第 9 条（流畅度）由用户在真机跑，**这一版没有 Windows 流畅度数字**。Windows 上唯一有数字的是 P2-21 / P2-21b 的崩溃率：修复前 CI 的 S3 每轮约 2/10 ~ 7/20 概率整轮崩溃；修复后产品默认配置 **20 轮 0 崩溃、收尾退出码全 0**（run `44076100998`，`e5f5941d`），阳性对照（打开跨线程取帧）仍有 6/20 复现，说明因果成立。
+
+证据：`docs/evidence/0.8.2-g2-final.md`（随 Worker A 的证据 PR 入仓；数字原件在 `.loop/reports/numbers-for-release-notes.md` 与 `.loop/real-run-g7/`）。
 
 ---
 
@@ -158,31 +182,58 @@ The translation pipeline can run in one child process per task: the GUI process 
 | # | Gate | Status |
 | --- | --- | --- |
 | 1 | Code frozen | **in progress** (only release-blocking fixes and release docs) |
-| 2 | CI green + one manual Release Validation with macOS/Windows frozen candidates | **pending** |
-| 3 | macOS frozen-app smoke | **pending** (Worker, ~1 h) |
-| 4 | Windows frozen-app smoke | **pending** (user; see the [Windows smoke checklist](release/0.8.2-windows-smoke-checklist.md)) |
-| 5 | Known issues and notes are honest | **this document** (performance section is a placeholder) |
-| 6 | Version, tag, release | **version PR ready**; tag/publish waits for the user |
-| 7 | G2 −70% | **measurement pending (day 2)**; round-2 numbers below |
-| 8 | E-7 in-process vs subprocess comparison | **pending (day 2)** |
-| 9 | Windows fluency, both arms | **pending user** (judged at 70%) |
+| 2 | CI green + one manual Release Validation with macOS/Windows frozen candidates | **release day** — triggered once on the release commit after the notes and version bump land (`.loop/reports/release-day.md`) |
+| 3 | macOS frozen-app smoke | **done** — see `docs/evidence/0.8.2-macos-frozen-smoke.md` (lands with Worker A's evidence PR); the **in-app XLIFF round trip was not run on the frozen build** (no CLI entry; covered by the automated suite) |
+| 4 | Windows frozen-app smoke | **pending user** — see the [Windows smoke checklist](release/0.8.2-windows-smoke-checklist.md) |
+| 5 | Known issues and notes are honest | **this document**; the performance section now carries the gate 7 and 8 numbers |
+| 6 | Version, tag, release | **version PR ready** (#433); merges with these notes on release day, tag/publish waits for the user |
+| 7 | G2 −70% | **measured, not met** — R >100 ms -30.8%, R >500 ms not decidable, I >100 ms +2.0%, I >500 ms +17.6% |
+| 8 | E-7 in-process vs subprocess comparison | **done** — R >100 ms is 9.1% higher in-process, R >500 ms zero on both arms |
+| 9 | Windows fluency, both arms | **pending user** — this release carries no Windows fluency numbers |
 
 The user ruled that gates 7–9 require **measuring and reporting honestly**, not hitting 70%. Report what happened; do not tune numbers and do not slip the release over it.
 
 ## Performance
 
-> **Placeholder — the numbers land after gates 7 and 8 are measured.** This section is replaced with the final numbers and the commit they were measured on; the Windows numbers wait for the formal measurement after the P2-21 fix. The numbers below are what is recorded so far, not this version's conclusion.
+Measured 2026-11-17 on **commit `e5f5941d`** (this release's frozen candidate, P2-21 / P2-21b included).
+Baseline package `build/0.8.2-baseline-8109b9c2` (`74a421b5`, measurement scripts and latency distribution only; product code untouched).
+Metric: `metrics.gui_jank_process`, 100 ms / 500 ms bands. Change = (candidate - baseline) / baseline, so **negative is better**.
 
-Second macOS round (2026-11-15, real window, animations on, S1 measures R only, S3 measures I only, three alternating rounds per arm, no discarded rounds):
+### Gate 7 (G2 target, -70%): **not met**
 
-| Phase | Metric | Baseline | Candidate | Change |
-| --- | --- | --- | --- | --- |
-| R (scroll/select/type) | >100 ms per minute | 3.90 | 4.70 | **+20.5% (worse)** |
-| R | >500 ms per minute | 0 | 0 | **not decidable** (both zero) |
-| I (interaction) | >100 ms per minute | 91.89 | 89.99 | −2.1% |
-| I | >500 ms per minute | 20.92 | 19.54 | −6.6% |
+Real macOS window, animations on, product default configuration (no `FOLITH_JANK_OTHER_THREADS`), S1 measuring R only (1,000 segments, window 120:720, 600 s per round) and S3 measuring I only (10,000 segments, 60 s), three alternating rounds per arm.
 
-None of the four "≥70% reduction" cells was met, and the R phase got worse. The R baseline is about 3.9 events per minute with a 168 ms worst case — close to the noise floor, so a 70% cut means under 1.2 per minute. Several fixes landed after that round (P2-11/13/14 move work off the GUI thread); **their effect needs the day-2 re-measurement and is not claimed here.**
+| Phase | Band | Baseline | Candidate | Change | -70% target |
+| --- | --- | ---: | ---: | ---: | --- |
+| R (scroll/select/type) | >100 ms per min | 3.90 | 2.70 | **-30.8% (better)** | not met |
+| R | >500 ms per min | 0.00 | 0.00 | **not decidable** (both arms 0) | — |
+| I (UI work) | >100 ms per min | 87.52 | 89.29 | **+2.0% (worse)** | not met |
+| I | >500 ms per min | 19.41 | 22.82 | **+17.6% (worse)** | not met |
+
+All four cells fall short of -70%: R improved at >100 ms but not enough, and both I bands got worse. Released on schedule per the user's 2026-11-15 ruling, with the numbers recorded as measured — **no retuning, no window changes, no cherry-picked rounds**.
+
+### Gate 8 (E-7 in-process vs subprocess)
+
+Same machine, same window, same candidate, S1 measuring R only, three alternating rounds per arm. This one ran **with** `FOLITH_JANK_OTHER_THREADS=1` because it needs the all-thread stack ranking (the product default is off).
+
+| Band | Subprocess (`FOLITH_ENGINE_PROCESS=1`) | In-process (`=0`) | Difference |
+| --- | ---: | ---: | ---: |
+| R >100 ms per min | 2.20 | 2.40 | in-process **+9.1%** |
+| R >500 ms per min | 0.00 | 0.00 | not decidable |
+
+All-thread ranking (top five `total_ms` over three rounds): in-process, the engine's own threads do the work (`core._runtime_heartbeat_loop`, `trace._run_sampling`, longest 450 ms); as a subprocess, the supervisor draining its output (`engine_supervisor._drain_output`, longest 240 ms). Subprocessing therefore moved the longest stalls from the engine thread to the supervisor's output drain, and did not degrade either R band measurably.
+
+### Stability
+
+18 rounds on macOS with zero crashes during gates 7 and 8 (6 S1 + 6 S3 + 6 E-7), every round `ok=true` with complete artifacts.
+
+### Windows
+
+Gate 9 (Windows fluency) runs on the user's machine, so **this release carries no Windows fluency numbers**. The one Windows number that exists is the P2-21 / P2-21b crash rate: before the fix, CI S3 rounds crashed about 2 in 10 to 7 in 20; after it, the product default is **0 crashes in 20 rounds with every round exiting 0** (run `44076100998`, `e5f5941d`), while the positive control with cross-thread frame capture still reproduced 6/20.
+
+Evidence: `docs/evidence/0.8.2-g2-final.md` (lands with Worker A's evidence PR; the raw numbers are in `.loop/reports/numbers-for-release-notes.md` and `.loop/real-run-g7/`).
+
+---
 
 ## Known issues
 
