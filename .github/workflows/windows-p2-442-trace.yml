@@ -5,6 +5,11 @@ name: windows P2-442 delete freeze trace
 # 与删除步骤的时间标记打出来，用来判断那段时间落在哪一段。
 on:
   workflow_dispatch:
+    inputs:
+      load:
+        description: "同时跑 3 个重 CPU 测试文件制造负载（模拟 RV 并行）"
+        required: false
+        default: "1"
   push:
     paths:
       - ".github/workflows/windows-p2-442-trace.yml"
@@ -41,6 +46,19 @@ jobs:
           $OUT = "$env:RUNNER_TEMP\\p2442"
           New-Item -ItemType Directory -Force $OUT | Out-Null
           $fail = 0
+          # P2-442 只在 RV（同一 runner 并行跑多个作业）里出现过 1156 ms。这里用 3 个重 CPU
+          # 测试文件在后台并行，制造同类负载；inputs.load=0 关掉做对照。
+          $loads = @()
+          if ("${{ inputs.load }}" -ne "0") {
+            foreach ($name in @("tests/p35_xliff_ui_test.py", "tests/qt_client_window_test.py", "tests/task_overview_state_test.py")) {
+              $stem = [System.IO.Path]::GetFileNameWithoutExtension($name)
+              $loads += Start-Process -FilePath "python" -PassThru -NoNewWindow `
+                          -RedirectStandardOutput "$OUT\load-$stem.log" `
+                          -RedirectStandardError "$OUT\load-$stem.err" `
+                          -ArgumentList @("-m", "pytest", "-q", $name)
+            }
+            Write-Host "load: $($loads.Count) background pytest processes"
+          }
           for ($i = 1; $i -le 10; $i++) {
             $log = "$OUT\\run-$i.log"
             & python -m pytest -q "tests/task_delete_async_gui_test.py::test_deleting_five_stuck_engines_never_blocks_the_gui_thread" -s *> $log
@@ -49,6 +67,7 @@ jobs:
             Write-Host "--- run $i exit=$code"
             Select-String -Path $log -Pattern "E-4e" -SimpleMatch | ForEach-Object { $_.Line }
           }
+          foreach ($p in $loads) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
           "runs=10 failed=$fail" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           Write-Host "total failed runs: $fail / 10"
           exit 0
