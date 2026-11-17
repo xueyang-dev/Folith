@@ -36,16 +36,24 @@ jobs:
         include:
           - arm: "control"
             mode: "auto"
-          - arm: "off"
-            mode: "off"
-          - arm: "gui"
-            mode: "gui"
+            jank_monitor: ""
+            jank_other: ""
+          - arm: "sampler-off"
+            mode: "auto"
+            jank_monitor: "0"
+            jank_other: ""
+          - arm: "sampler-main-only"
+            mode: "auto"
+            jank_monitor: ""
+            jank_other: "0"
     env:
       PYTHONUTF8: "1"
       FOLITH_REDUCE_MOTION: "0"
       FOLITH_QT_SELFTEST_MODEL: "replay/auto"
       FOLITH_QT_SELFTEST_TIMEOUT: "1800"
       FOLITH_GC_MODE: ${{ matrix.mode }}
+      FOLITH_JANK_MONITOR: ${{ matrix.jank_monitor }}
+      FOLITH_JANK_OTHER_THREADS: ${{ matrix.jank_other }}
       FOLITH_QT_MESSAGES: "1"
       FOLITH_QT_THREAD_GUARD: "1"
     steps:
