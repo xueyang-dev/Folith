@@ -51,7 +51,7 @@
 | --- | --- | --- | --- |
 | 1 | 冻结代码 | **进行中** | 从 2026-11-16 起 main 只接受发布阻塞修复与发布文档；P2 性能修复例外 |
 | 2 | CI 全绿 + 1 次手动 Release Validation（含 macOS / Windows 冻结候选） | **待发布当天** | 合入发布说明与版本号后，在发布提交上触发一次（步骤见 `.loop/reports/release-day.md`） |
-| 3 | macOS 冻结包冒烟（安装、翻译到交付、XLIFF 导入导出、重开任务还在、5 轮加压） | **已做** | 见 `docs/evidence/0.8.2-macos-frozen-smoke.md`（随 Worker A 的证据 PR 入仓）；**冻结包内 XLIFF 人工往返未做**（冻结包没有 CLI 入口，自动化套件覆盖） |
+| 3 | macOS 冻结包冒烟（安装、翻译到交付、XLIFF 导入导出、重开任务还在、5 轮加压） | **已做** | 见 `docs/evidence/0.8.2-macos-frozen-smoke.md`（随 Worker A 的证据 PR 入仓）；**XLIFF 子项待用户在冻结包界面补核**（冻结包没有 CLI 入口，包内人工往返未做，自动化套件覆盖） |
 | 4 | Windows 冻结包冒烟（同第 3 条、3 轮加压、退出无残留进程、界面无明显错位） | **待用户** | 步骤见 [Windows 冒烟清单](release/0.8.2-windows-smoke-checklist.md) |
 | 5 | 已知问题与发布说明如实 | **本文件即交付** | 性能数字已填（第 7、8 条，`e5f5941d`） |
 | 6 | 版本号、标签、发布 | **版本号 PR 已就绪**（#433） | 发布当天与说明一起合；打标签与公开发布等用户点头 |
@@ -183,7 +183,7 @@ The translation pipeline can run in one child process per task: the GUI process 
 | --- | --- | --- |
 | 1 | Code frozen | **in progress** (only release-blocking fixes and release docs) |
 | 2 | CI green + one manual Release Validation with macOS/Windows frozen candidates | **release day** — triggered once on the release commit after the notes and version bump land (`.loop/reports/release-day.md`) |
-| 3 | macOS frozen-app smoke | **done** — see `docs/evidence/0.8.2-macos-frozen-smoke.md` (lands with Worker A's evidence PR); the **in-app XLIFF round trip was not run on the frozen build** (no CLI entry; covered by the automated suite) |
+| 3 | macOS frozen-app smoke | **done** — see `docs/evidence/0.8.2-macos-frozen-smoke.md` (lands with Worker A's evidence PR); the **XLIFF sub-item waits for the user to recheck it in the frozen build's UI** (no CLI entry, so the in-app round trip was not run; the automated suite covers it) |
 | 4 | Windows frozen-app smoke | **pending user** — see the [Windows smoke checklist](release/0.8.2-windows-smoke-checklist.md) |
 | 5 | Known issues and notes are honest | **this document**; the performance section now carries the gate 7 and 8 numbers |
 | 6 | Version, tag, release | **version PR ready** (#433); merges with these notes on release day, tag/publish waits for the user |
