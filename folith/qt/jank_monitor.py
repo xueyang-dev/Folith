@@ -101,6 +101,30 @@ UNCAPPED_STACK: Tuple[str, ...] = ("<stack not captured>",)
 WATCHER_THREAD_NAME = "FolithJankWatcher"
 
 
+#: 只采主线程自身、跳过"跨线程取帧"的开关（P2-21b 判别实验用）。
+ENV_OTHER_THREADS = "FOLITH_JANK_OTHER_THREADS"
+
+
+def jank_other_threads_enabled(environ: Optional[Dict[str, str]] = None) -> bool:
+    """Whether the sampler may walk **other** threads' frames.  Unset/empty means yes."""
+    source = os.environ if environ is None else environ
+    value = source.get(ENV_OTHER_THREADS)
+    if value is None or not str(value).strip():
+        return True
+    return str(value).strip().lower() not in _DISABLED_VALUES
+
+
+def other_threads_getter():
+    """采样器用的 getter：关掉跨线程取帧时返回空快照（采样器本身照跑）。"""
+    if jank_other_threads_enabled():
+        return capture_other_thread_frames
+
+    def _none(_exclude: Optional[int] = None):
+        return {}, False
+
+    return _none
+
+
 def jank_monitor_enabled(environ: Optional[Dict[str, str]] = None) -> bool:
     """Whether the sampler should run.  Unset/empty means enabled (default on)."""
     source = os.environ if environ is None else environ
@@ -324,16 +348,31 @@ def capture_other_thread_frames(
     result: OtherThreadFrames = {}
     truncated = False
     inspected = 0
-    for ident, name, frame in targets:
-        if inspected >= max(1, int(max_threads)):
-            truncated = True
-            break
-        if time.monotonic() > deadline:
-            truncated = True
-            break
-        inspected += 1
-        label, running = attribute_frame(frame, limit=limit)
-        result[ident] = ThreadFrame(name=name, frame=label, running=running)
+    try:
+        for ident, name, frame in targets:
+            if inspected >= max(1, int(max_threads)):
+                truncated = True
+                break
+            if time.monotonic() > deadline:
+                truncated = True
+                break
+            inspected += 1
+            label, running = attribute_frame(frame, limit=limit)
+            result[ident] = ThreadFrame(name=name, frame=label, running=running)
+    finally:
+        # Live frame objects are interpreter state, not data.  Keeping them here
+        # forms a cycle this function cannot help creating -- ``sys._current_frames()``
+        # returns a dict that contains this very frame, whose locals contain the
+        # dict -- and that cycle pins every inspected thread's frame with its
+        # locals: the open-job task state, its ``_TaskSignals`` QObject, whatever
+        # else the worker was holding.  Nothing here is garbage-collected, so the
+        # cyclic collector eventually takes the whole graph on **whichever thread
+        # runs it**, destroying Qt objects off the GUI thread (P2-21: the access
+        # violation inside a paint, the abort at teardown).  Everything below
+        # needs is already copied into ``result`` as plain strings.
+        targets.clear()
+        frames.clear()
+        frame = None
     return result, truncated
 
 
