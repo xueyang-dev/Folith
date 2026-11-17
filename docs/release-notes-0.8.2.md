@@ -51,7 +51,7 @@
 | --- | --- | --- | --- |
 | 1 | 冻结代码 | **进行中** | 从 2026-11-16 起 main 只接受发布阻塞修复与发布文档；P2 性能修复例外 |
 | 2 | CI 全绿 + 1 次手动 Release Validation（含 macOS / Windows 冻结候选） | **待发布当天** | 合入发布说明与版本号后，在发布提交上触发一次（步骤见 `.loop/reports/release-day.md`） |
-| 3 | macOS 冻结包冒烟（安装、翻译到交付、XLIFF 导入导出、重开任务还在、5 轮加压） | **已做** | 见 `docs/evidence/0.8.2-macos-frozen-smoke.md`（随 Worker A 的证据 PR 入仓）；**XLIFF 子项待用户在冻结包界面补核**（冻结包没有 CLI 入口，包内人工往返未做，自动化套件覆盖） |
+| 3 | macOS 冻结包冒烟（安装、翻译到交付、XLIFF 导入导出、重开任务还在、5 轮加压） | **已做** | 见 [macOS 冻结包冒烟证据](evidence/0.8.2-macos-frozen-smoke.md)；**XLIFF 子项待用户在冻结包界面补核**（冻结包没有 CLI 入口，包内人工往返未做，自动化套件覆盖） |
 | 4 | Windows 冻结包冒烟（同第 3 条、3 轮加压、退出无残留进程、界面无明显错位） | **待用户** | 步骤见 [Windows 冒烟清单](release/0.8.2-windows-smoke-checklist.md) |
 | 5 | 已知问题与发布说明如实 | **本文件即交付** | 性能数字已填（第 7、8 条，`e5f5941d`） |
 | 6 | 版本号、标签、发布 | **版本号 PR 已就绪**（#433） | 发布当天与说明一起合；打标签与公开发布等用户点头 |
@@ -102,7 +102,7 @@ macOS 真实窗口、动画开启，产品默认配置（不设 `FOLITH_JANK_OTH
 
 Windows 的第 9 条（流畅度）由用户在真机跑，**这一版没有 Windows 流畅度数字**。Windows 上唯一有数字的是 P2-21 / P2-21b 的崩溃率：修复前 CI 的 S3 每轮约 2/10 ~ 7/20 概率整轮崩溃；修复后产品默认配置 **20 轮 0 崩溃、收尾退出码全 0**（run `44076100998`，`e5f5941d`），阳性对照（打开跨线程取帧）仍有 6/20 复现，说明因果成立。
 
-证据：`docs/evidence/0.8.2-g2-final.md`（随 Worker A 的证据 PR 入仓；数字原件在 `.loop/reports/numbers-for-release-notes.md` 与 `.loop/real-run-g7/`）。
+证据：[G2 / E-7 最终测量](evidence/0.8.2-g2-final.md)（数字原件在 `.loop/reports/numbers-for-release-notes.md` 与 `.loop/real-run-g7/`）。
 
 ---
 
@@ -183,7 +183,7 @@ The translation pipeline can run in one child process per task: the GUI process 
 | --- | --- | --- |
 | 1 | Code frozen | **in progress** (only release-blocking fixes and release docs) |
 | 2 | CI green + one manual Release Validation with macOS/Windows frozen candidates | **release day** — triggered once on the release commit after the notes and version bump land (`.loop/reports/release-day.md`) |
-| 3 | macOS frozen-app smoke | **done** — see `docs/evidence/0.8.2-macos-frozen-smoke.md` (lands with Worker A's evidence PR); the **XLIFF sub-item waits for the user to recheck it in the frozen build's UI** (no CLI entry, so the in-app round trip was not run; the automated suite covers it) |
+| 3 | macOS frozen-app smoke | **done** — see the [macOS frozen-app smoke evidence](evidence/0.8.2-macos-frozen-smoke.md); the **XLIFF sub-item waits for the user to recheck it in the frozen build's UI** (no CLI entry, so the in-app round trip was not run; the automated suite covers it) |
 | 4 | Windows frozen-app smoke | **pending user** — see the [Windows smoke checklist](release/0.8.2-windows-smoke-checklist.md) |
 | 5 | Known issues and notes are honest | **this document**; the performance section now carries the gate 7 and 8 numbers |
 | 6 | Version, tag, release | **version PR ready** (#433); merges with these notes on release day, tag/publish waits for the user |
@@ -231,7 +231,7 @@ All-thread ranking (top five `total_ms` over three rounds): in-process, the engi
 
 Gate 9 (Windows fluency) runs on the user's machine, so **this release carries no Windows fluency numbers**. The one Windows number that exists is the P2-21 / P2-21b crash rate: before the fix, CI S3 rounds crashed about 2 in 10 to 7 in 20; after it, the product default is **0 crashes in 20 rounds with every round exiting 0** (run `44076100998`, `e5f5941d`), while the positive control with cross-thread frame capture still reproduced 6/20.
 
-Evidence: `docs/evidence/0.8.2-g2-final.md` (lands with Worker A's evidence PR; the raw numbers are in `.loop/reports/numbers-for-release-notes.md` and `.loop/real-run-g7/`).
+Evidence: [the final G2 / E-7 measurements](evidence/0.8.2-g2-final.md) (raw numbers in `.loop/reports/numbers-for-release-notes.md` and `.loop/real-run-g7/`).
 
 ---
 
