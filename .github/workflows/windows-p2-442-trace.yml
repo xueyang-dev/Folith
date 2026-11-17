@@ -1,0 +1,61 @@
+name: windows P2-442 delete freeze trace
+
+# P2-442：Windows 上「删除 5 个卡住的任务」时 GUI 冻结 1156 ms（上界 300 ms）。
+# 这个工作流只做取证：跑 10 次同一条用例，打开 FOLITH_E4E_TRACE，把每次的最长心跳间隙
+# 与删除步骤的时间标记打出来，用来判断那段时间落在哪一段。
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/windows-p2-442-trace.yml"
+
+concurrency:
+  group: windows-p2-442-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trace:
+    name: trace (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: "offscreen"
+      FOLITH_E4E_TRACE: "1"
+      FOLITH_REDUCE_MOTION: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-desktop-build.txt "PySide6==6.11.2"
+      - name: Ten runs of the same test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $OUT = "$env:RUNNER_TEMP\\p2442"
+          New-Item -ItemType Directory -Force $OUT | Out-Null
+          $fail = 0
+          for ($i = 1; $i -le 10; $i++) {
+            $log = "$OUT\\run-$i.log"
+            & python -m pytest -q "tests/task_delete_async_gui_test.py::test_deleting_five_stuck_engines_never_blocks_the_gui_thread" -s *> $log
+            $code = $LASTEXITCODE
+            if ($code -ne 0) { $fail++ }
+            Write-Host "--- run $i exit=$code"
+            Select-String -Path $log -Pattern "E-4e" -SimpleMatch | ForEach-Object { $_.Line }
+          }
+          "runs=10 failed=$fail" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          Write-Host "total failed runs: $fail / 10"
+          exit 0
+      - name: Upload traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2442-traces
+          path: ${{ runner.temp }}/p2442
+          if-no-files-found: warn

@@ -27,6 +27,7 @@ M-1 把单任务删除的有界性收紧到 ``3.0 + 0.6 s``（"先取消、再�
 from __future__ import annotations
 
 import sys
+import os
 import time
 from pathlib import Path
 
@@ -132,6 +133,37 @@ def _make_stuck_jobs(count: int = STUCK_JOBS) -> list[str]:
     return ids
 
 
+#: P2-442 诊断：`FOLITH_E4E_TRACE=1` 时把"删除每一小步"打上时间标记，
+#: 与心跳间隙放在同一条时间轴上，用来回答"那 1 秒多的冻结到底落在哪一段"。
+_TRACE: list[tuple[float, str]] = []
+_TRACING = os.environ.get("FOLITH_E4E_TRACE") == "1"
+
+
+def _mark(label: str) -> None:
+    if _TRACING:
+        _TRACE.append((time.monotonic(), label))
+
+
+def _trace_report(gaps: list[float]) -> None:
+    """打印最长间隙前后各 6 条标记（数据说话，不猜）。"""
+    if not _TRACING or not _TRACE:
+        return
+    worst = max(gaps) if gaps else 0.0
+    peak = 0
+    running = 0.0
+    marks = [t for t, _ in _TRACE]
+    # 找最长静止区间（相邻两条标记之间）
+    for index in range(1, len(marks)):
+        span = marks[index] - marks[index - 1]
+        if span > running:
+            running, peak = span, index
+    print(f"[E-4e trace] 心跳最长间隙 {worst * 1000:.0f} ms；标记间最长静止 {running * 1000:.0f} ms")
+    for index in range(max(0, peak - 6), min(len(_TRACE), peak + 6)):
+        at, label = _TRACE[index]
+        arrow = " <== 最长静止" if index == peak else ""
+        print(f"   +{at - marks[0]:7.3f}s  {label}{arrow}")
+
+
 def _run_with_heartbeat(app, start, done, timeout: float = BATCH_TIMEOUT_SECONDS):
     """在 GUI 线程跑 ``start()``，同时让 16 ms ``QTimer`` 记录心跳间隙。
 
@@ -192,6 +224,19 @@ def test_deleting_five_stuck_engines_never_blocks_the_gui_thread(window_env):
         for job_id in ids:
             assert core.job_is_active(job_id) is True, "假引擎必须真的在跑"
 
+        if _TRACING:
+            _TRACE.clear()
+            _real_delete = adapter.delete_job
+
+            def _traced_delete(job_id: str):
+                _mark(f"adapter.delete_job 开始 {job_id}")
+                try:
+                    return _real_delete(job_id)
+                finally:
+                    _mark(f"adapter.delete_job 返回 {job_id}")
+
+            adapter.delete_job = _traced_delete
+
         asked: list[str] = []
         window._confirm = lambda title, message, yes="确定", no="取消", tone="info": \
             asked.append(message) or True
@@ -203,6 +248,8 @@ def test_deleting_five_stuck_engines_never_blocks_the_gui_thread(window_env):
 
         start_seconds, gaps, finished = _run_with_heartbeat(
             app, start, lambda: not window._delete_in_flight)
+        _mark("_delete_in_flight 已清除（测量窗口结束）")
+        _trace_report(gaps)
 
         assert finished, "整批删除没有在预算内结束"
         assert len(asked) == 1, f"整批只该确认一次：{asked}"
