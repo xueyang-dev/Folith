@@ -38,10 +38,12 @@ jobs:
             mode: "auto"
             jank_monitor: ""
             jank_other: ""
+            expect_crashes: ""
           - arm: "sampler-on"
             mode: "auto"
             jank_monitor: ""
             jank_other: "1"
+            expect_crashes: "1"
     env:
       PYTHONUTF8: "1"
       FOLITH_REDUCE_MOTION: "0"
@@ -126,11 +128,13 @@ jobs:
             $env:FOLITH_QT_MESSAGES_OUT = "$OUT\qt-$round.log"
             $gw = Start-Gw 0.01
             try {
-              & $PY scripts\runtime_baseline_runner.py --out "$OUT\s3-$round" `
-                  --data-dir $data --mode source --scenario S3 `
-                  --s3-small-paras 20 --seconds 20 --settle-timeout 600 `
-                  --seed-template $tpl --seed-segments 400 `
-                  --base-url "http://127.0.0.1:$PORT/v1" *> "$OUT\round-$round.log"
+              $RunnerArgs = @("--out", "$OUT\s3-$round", "--data-dir", $data,
+                              "--mode", "source", "--scenario", "S3",
+                              "--s3-small-paras", "20", "--seconds", "20",
+                              "--settle-timeout", "600",
+                              "--seed-template", $tpl, "--seed-segments", "400",
+                              "--base-url", "http://127.0.0.1:$PORT/v1")
+              & $PY scripts\runtime_baseline_runner.py @RunnerArgs *> "$OUT\round-$round.log"
               $code = $LASTEXITCODE
             } finally { Stop-Gw $gw }
 
@@ -164,6 +168,14 @@ jobs:
 
           $rows | Export-Csv "$OUT\rounds.csv" -NoTypeInformation
           $crashes = ($rows | Where-Object { -not $_.report -or $_.fatal }).Count
+          # control = 验收臂：崩溃就是失败。sampler-on = 阳性对照：**必须**能看到崩溃，
+          # 看不到说明开关已经不再复现问题，同样是失败——但崩溃轮本身不是错误。
+          if ("${{ matrix.expect_crashes }}" -eq "1") {
+            Write-Host "positive control: $crashes crash(es) in $ROUNDS rounds (expected >= 1)"
+            if ($crashes -lt 1) { throw "positive control saw no crash in $ROUNDS rounds; the switch no longer reproduces P2-21b" }
+          } else {
+            if ($crashes -gt 0) { throw "$crashes crash(es) in $ROUNDS rounds on the acceptance arm" }
+          }
           "arm=$ARM mode=$env:FOLITH_GC_MODE rounds=$ROUNDS crashes=$crashes" |
               Out-File -Append $env:GITHUB_STEP_SUMMARY
           $rows | Where-Object { -not $_.report -or $_.fatal } | Format-Table -AutoSize |
