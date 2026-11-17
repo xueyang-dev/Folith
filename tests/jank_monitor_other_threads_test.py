@@ -12,18 +12,19 @@ from folith.qt.jank_monitor import (
 )
 
 
-def test_the_default_still_walks_other_threads(monkeypatch) -> None:
+def test_the_product_default_does_not_walk_other_threads(monkeypatch) -> None:
+    """P2-21b：默认不碰别的线程的帧（这条是判定门槛，别改回去）。"""
     monkeypatch.delenv("FOLITH_JANK_OTHER_THREADS", raising=False)
-    assert jank_other_threads_enabled() is True
-    assert other_threads_getter() is capture_other_thread_frames
+    assert jank_other_threads_enabled() is False
+    assert other_threads_getter() is not capture_other_thread_frames
 
 
-def test_an_empty_value_means_enabled(monkeypatch) -> None:
+def test_an_empty_value_means_the_default(monkeypatch) -> None:
     monkeypatch.setenv("FOLITH_JANK_OTHER_THREADS", "  ")
-    assert jank_other_threads_enabled() is True
+    assert jank_other_threads_enabled() is False
 
 
-def test_the_switch_disables_the_cross_thread_walk(monkeypatch) -> None:
+def test_the_switch_still_allows_disabling_explicitly(monkeypatch) -> None:
     for value in ("0", "false", "off", "no"):
         monkeypatch.setenv("FOLITH_JANK_OTHER_THREADS", value)
         assert jank_other_threads_enabled() is False, value
@@ -33,7 +34,8 @@ def test_the_switch_disables_the_cross_thread_walk(monkeypatch) -> None:
         assert frames == {} and truncated is False
 
 
-def test_one_still_means_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("FOLITH_JANK_OTHER_THREADS", "1")
-    assert jank_other_threads_enabled() is True
-    assert other_threads_getter() is capture_other_thread_frames
+def test_the_runner_switch_turns_the_walk_back_on(monkeypatch) -> None:
+    for value in ("1", "true", "yes", "on"):
+        monkeypatch.setenv("FOLITH_JANK_OTHER_THREADS", value)
+        assert jank_other_threads_enabled() is True, value
+        assert other_threads_getter() is capture_other_thread_frames
