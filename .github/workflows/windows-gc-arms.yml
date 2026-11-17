@@ -180,6 +180,9 @@ jobs:
               Out-File -Append $env:GITHUB_STEP_SUMMARY
           $rows | Where-Object { -not $_.report -or $_.fatal } | Format-Table -AutoSize |
               Out-String | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          # 崩溃轮会让最后一次 native 调用留下非零 $LASTEXITCODE，GitHub 会把它当成整步的退出码——
+          # 于是"阳性对照成立"（本来就该崩）反而显示成红。这里显式收尾。
+          exit 0
 
       - name: Upload arm artefacts
         if: always()
