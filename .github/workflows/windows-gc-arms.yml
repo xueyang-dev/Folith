@@ -1,0 +1,190 @@
+name: windows P2-21 gc arms
+
+# P2-21 的判别实验：只改「循环 GC 在哪个线程上发生」，看崩溃率变不变。
+#
+#   control  当前 main，不动 GC                 预期 ~50% 崩溃（确认基线）
+#   off      FOLITH_GC_MODE=off：进程内禁用循环 GC   预期 0
+#   gui      FOLITH_GC_MODE=gui：禁用 + GUI 线程每秒 collect  预期 0
+#
+# 判读：control 10 轮里 ≥4 次崩溃、off/gui 都 0/10 → 「回收落在 worker 线程」的假设成立；
+# 只有 off 有效 → 不是线程，是回收本身；两个都崩 → GC 假设不成立。
+#
+# 这是诊断用的工作流，不参与发布门槛，也不改产品默认行为。
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: "每臂跑几轮 S3"
+        required: false
+        default: "10"
+  push:
+    paths:
+      - ".github/workflows/windows-gc-arms.yml"
+
+concurrency:
+  group: windows-gc-arms-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arms:
+    name: arm ${{ matrix.arm }} (${{ inputs.rounds || '10' }} rounds)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arm: "control"
+            mode: "auto"
+            jank_monitor: ""
+            jank_other: ""
+            expect_crashes: ""
+          - arm: "sampler-on"
+            mode: "auto"
+            jank_monitor: ""
+            jank_other: "1"
+            expect_crashes: "1"
+    env:
+      PYTHONUTF8: "1"
+      FOLITH_REDUCE_MOTION: "0"
+      FOLITH_QT_SELFTEST_MODEL: "replay/auto"
+      FOLITH_QT_SELFTEST_TIMEOUT: "1800"
+      FOLITH_GC_MODE: ${{ matrix.mode }}
+      FOLITH_JANK_MONITOR: ${{ matrix.jank_monitor }}
+      FOLITH_JANK_OTHER_THREADS: ${{ matrix.jank_other }}
+      FOLITH_QT_MESSAGES: "1"
+      FOLITH_QT_THREAD_GUARD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-desktop-build.txt "PySide6==6.11.2"
+
+      - name: Ten S3 rounds
+        shell: pwsh
+        env:
+          FOLITH_QT_SETTINGS_DIR: ${{ runner.temp }}\folith-qt-${{ matrix.arm }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+          $PY = "python"; $PORT = 8765; $SEED = 7
+          # push 触发时没有 inputs，默认 10 轮（`[int]""` 会变成 0，一轮都不跑）。
+          $ROUNDS = 10
+          if ("${{ inputs.rounds }}" -ne "") { $ROUNDS = [int]"${{ inputs.rounds }}" }
+          $ARM = "${{ matrix.arm }}"
+          $OUT = "$env:RUNNER_TEMP\gc-arms\$ARM"
+          New-Item -ItemType Directory -Force $OUT | Out-Null
+          $rows = @()
+
+          function Start-Gw([double]$scale) {
+            $ready = "$OUT\ready.json"
+            Remove-Item $ready -ErrorAction SilentlyContinue
+            $p = Start-Process -FilePath $PY -PassThru -NoNewWindow `
+                  -RedirectStandardOutput "$OUT\gw.log" -RedirectStandardError "$OUT\gw.err" `
+                  -ArgumentList @("scripts\replay_latency_gateway.py", "--port", "$PORT",
+                                  "--seed", "$SEED", "--time-scale", $scale,
+                                  "--role-default", "translation", "--timeout-hold-grace", "0.5",
+                                  "--log", "$OUT\gw.jsonl", "--ready-file", $ready)
+            for ($i = 0; $i -lt 120; $i++) {
+              if (Test-Path $ready) { return $p }
+              Start-Sleep -Milliseconds 500
+            }
+            throw "gateway did not become ready"
+          }
+          function Stop-Gw($p) {
+            if ($p) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+          # --- 模板任务（每臂一次，10 轮共用同一份种子） -------------------
+          Write-Host "::group::template"
+          $gw = Start-Gw 0.05
+          try {
+            & $PY scripts\runtime_baseline_runner.py --out "$OUT\tpl-round" `
+                --data-dir "$OUT\tpl" --mode source --scenario S1 --paras 120 `
+                --seconds 60 --settle-timeout 900 --base-url "http://127.0.0.1:$PORT/v1"
+          } finally { Stop-Gw $gw }
+          $tpl = $null; $best = 0
+          foreach ($dir in Get-ChildItem "$OUT\tpl" -Directory -ErrorAction SilentlyContinue) {
+            $f = Join-Path $dir.FullName "state.json"
+            if (-not (Test-Path $f)) { continue }
+            try { $st = Get-Content $f -Raw | ConvertFrom-Json } catch { continue }
+            $n = @($st.pairs).Count
+            if ($n -gt $best) { $best = $n; $tpl = $dir.Name }
+          }
+          if (-not $tpl) { throw "no template task ($best pairs)" }
+          Write-Host "template job_id = $tpl ($best pairs), arm=$ARM mode=$env:FOLITH_GC_MODE"
+          Write-Host "::endgroup::"
+
+          # --- 10 轮 S3，每轮独立数据目录 ---------------------------------
+          for ($round = 1; $round -le $ROUNDS; $round++) {
+            $data = "$OUT\r$round"
+            Copy-Item -Recurse -Force "$OUT\tpl" $data
+            $env:FOLITH_QT_MESSAGES_OUT = "$OUT\qt-$round.log"
+            $gw = Start-Gw 0.01
+            try {
+              $RunnerArgs = @("--out", "$OUT\s3-$round", "--data-dir", $data,
+                              "--mode", "source", "--scenario", "S3",
+                              "--s3-small-paras", "20", "--seconds", "20",
+                              "--settle-timeout", "600",
+                              "--seed-template", $tpl, "--seed-segments", "400",
+                              "--base-url", "http://127.0.0.1:$PORT/v1")
+              & $PY scripts\runtime_baseline_runner.py @RunnerArgs *> "$OUT\round-$round.log"
+              $code = $LASTEXITCODE
+            } finally { Stop-Gw $gw }
+
+            $report = Test-Path "$OUT\s3-$round\runtime-baseline.json"
+            $top = ""
+            $crashLog = Get-ChildItem "$OUT\s3-$round\logs\ui-health" -Recurse -Filter crash-stacks.log -ErrorAction SilentlyContinue |
+                        Select-Object -First 1
+            $fatal = $false
+            if ($crashLog) {
+              $text = Get-Content $crashLog.FullName -Raw
+              if ($text -match "fatal exception|Fatal Python error") {
+                $fatal = $true
+                $lines = Get-Content $crashLog.FullName
+                $idx = ($lines | Select-String -Pattern "^Current thread" | Select-Object -First 1).LineNumber
+                if ($idx) { $top = (($lines[($idx - 1)..([Math]::Min($idx + 2, $lines.Count - 1))]) -join " / ") }
+                else { $top = ($lines | Select-Object -First 3) -join " / " }
+              }
+            }
+            $rows += [pscustomobject]@{ arm = $ARM; round = $round; exit = $code
+                                        report = [bool]$report; fatal = [bool]$fatal; top = $top }
+            Write-Host ("round {0,2}: exit={1,11} report={2,-5} fatal={3,-5} {4}" -f $round, $code, $report, $fatal, $top)
+            if ($fatal) { Copy-Item $crashLog.FullName "$OUT\crash-round-$round.log" }
+            if (-not $report -or $fatal) {
+              # abort 前的最后几条 Qt 消息（QThread/qFatal 一类会先打一句）
+              if (Test-Path $env:FOLITH_QT_MESSAGES_OUT) {
+                Get-Content $env:FOLITH_QT_MESSAGES_OUT | Select-Object -Last 12 |
+                  Out-File "$OUT\crash-round-$round-qt.log"
+              }
+            }
+          }
+
+          $rows | Export-Csv "$OUT\rounds.csv" -NoTypeInformation
+          $crashes = ($rows | Where-Object { -not $_.report -or $_.fatal }).Count
+          # control = 验收臂：崩溃就是失败。sampler-on = 阳性对照：**必须**能看到崩溃，
+          # 看不到说明开关已经不再复现问题，同样是失败——但崩溃轮本身不是错误。
+          if ("${{ matrix.expect_crashes }}" -eq "1") {
+            Write-Host "positive control: $crashes crash(es) in $ROUNDS rounds (expected >= 1)"
+            if ($crashes -lt 1) { throw "positive control saw no crash in $ROUNDS rounds; the switch no longer reproduces P2-21b" }
+          } else {
+            if ($crashes -gt 0) { throw "$crashes crash(es) in $ROUNDS rounds on the acceptance arm" }
+          }
+          "arm=$ARM mode=$env:FOLITH_GC_MODE rounds=$ROUNDS crashes=$crashes" |
+              Out-File -Append $env:GITHUB_STEP_SUMMARY
+          $rows | Where-Object { -not $_.report -or $_.fatal } | Format-Table -AutoSize |
+              Out-String | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload arm artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gc-arm-${{ matrix.arm }}
+          path: ${{ runner.temp }}/gc-arms/${{ matrix.arm }}
+          if-no-files-found: warn

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import threading
-import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -135,23 +134,44 @@ def test_mixed_drop_reports_all_results_once(client, app, tmp_path, monkeypatch)
 
 
 #: The release gate ("no stall above 500 ms for a 1,000-unit import and export")
-#: is measured on a real machine, and the recorded numbers come from a macOS
-#: real window.  A shared CI runner is a 2-vCPU VM where two worker threads
-#: parsing the same document contend with the GUI thread for the GIL, so the
-#: same product measured 560 ms there without any regression.  CI therefore
-#: guards against a *regression* with a looser bound and always prints the
-#: measured value; the gate itself is asserted where it is defined.
+#: is asserted on every *real machine*, on macOS and Windows alike.  A shared CI
+#: runner is a 2-vCPU VM where two worker threads parsing the same document
+#: contend with the GUI thread for the GIL, so the same product measured 560 ms
+#: there without any regression.  CI therefore guards against a *regression*
+#: with a looser bound and always prints the measured value; the 1500 ms CI
+#: exception was approved by the user on 2026-11-16 and applies only when the
+#: ``CI`` environment variable is set.
 REAL_MACHINE_BUDGET_MS = 500.0
 CI_REGRESSION_BUDGET_MS = 1500.0
 
 
 def _jank_budget_ms() -> float:
+    """500 ms off CI (both platforms), 1500 ms on CI, an explicit value wins."""
     override = os.environ.get("FOLITH_P35_JANK_BUDGET_MS", "").strip()
     if override:
         return float(override)
-    if sys.platform == "darwin" and not os.environ.get("CI"):
-        return REAL_MACHINE_BUDGET_MS
-    return CI_REGRESSION_BUDGET_MS
+    if os.environ.get("CI"):
+        return CI_REGRESSION_BUDGET_MS
+    return REAL_MACHINE_BUDGET_MS
+
+
+def test_jank_budget_does_not_depend_on_the_platform(monkeypatch):
+    """Override wins; CI gets 1500 ms; a real machine gets 500 ms on both systems."""
+    monkeypatch.delenv("FOLITH_P35_JANK_BUDGET_MS", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    for platform in ("darwin", "win32", "linux"):
+        monkeypatch.setattr("sys.platform", platform)
+        assert _jank_budget_ms() == 500.0, platform
+
+    monkeypatch.setenv("CI", "true")
+    for platform in ("darwin", "win32", "linux"):
+        monkeypatch.setattr("sys.platform", platform)
+        assert _jank_budget_ms() == 1500.0, platform
+
+    monkeypatch.setenv("FOLITH_P35_JANK_BUDGET_MS", "800")
+    assert _jank_budget_ms() == 800.0
+    monkeypatch.delenv("CI", raising=False)
+    assert _jank_budget_ms() == 800.0, "an explicit override wins in both environments"
 
 
 def test_thousand_units_import_export_keep_gui_responsive(client, app, tmp_path):
