@@ -150,6 +150,34 @@ def _log_stem(name: str) -> str:
     return f"{stem}-{part.rstrip(']').replace('/', 'of')}" if part else stem
 
 
+#: CI 里逐个失败文件展开的**行数上限**。完整输出永远写进 `.regression-logs/<stem>.log`
+#: 并作为 artifact 上传；这里只是展开的那一段，避免把整个 job 日志刷爆。
+FAILURE_EXCERPT_LINES = 200
+
+
+def failure_excerpt(output: str, limit: int = FAILURE_EXCERPT_LINES) -> str:
+    """挑出失败文件输出里**说到失败原因**的那一段。
+
+    以前只打最后 80 行：对一个 33 个用例的文件，末尾全是状态字典的尾巴，
+    断言行被截掉了（#441 就是这么丢的证据）。pytest 把断言放在
+    `=== FAILURES ===` 之后，所以从那一行开始截取；找不到就从头截。
+    """
+    lines = output.splitlines()
+    if len(lines) <= limit:
+        return output
+    start = 0
+    for index, line in enumerate(lines):
+        if line.startswith("=== FAILURES") or "Traceback (most recent call last)" in line:
+            start = max(0, index - 2)
+            break
+    excerpt = lines[start:start + limit]
+    remaining = len(lines) - start - limit
+    if remaining > 0:
+        excerpt.append(f"... （另有 {remaining} 行，完整输出见 artifact "
+                       f".regression-logs/）")
+    return "\n".join(excerpt)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-k", dest="pattern", default="",
@@ -232,6 +260,8 @@ def main() -> int:
         rows.append((code, kind, name, elapsed, line))
         if code != 0:
             failures.append(name)
+            # 完整输出（不是片段）：`.regression-logs/` 是各工作流的 artifact 路径，
+            # CI 上能下载到整份，本地也能直接看。
             LOGS.mkdir(parents=True, exist_ok=True)
             (LOGS / f"{_log_stem(name)}.log").write_text(output, encoding="utf-8")
         mark = "ok  " if code == 0 else "FAIL"
@@ -291,9 +321,10 @@ def main() -> int:
     if failures and os.environ.get("GITHUB_ACTIONS"):
         # 在 CI 日志里直接展开失败文件的末尾输出，不必先下载 artifact。
         for name in sorted(failures):
-            tail = (LOGS / f"{_log_stem(name)}.log").read_text(encoding="utf-8")
-            print(f"::group::FAIL {name}（日志末尾 80 行）")
-            print("\n".join(tail.splitlines()[-80:]))
+            log = (LOGS / f"{_log_stem(name)}.log").read_text(encoding="utf-8")
+            print(f"::group::FAIL {name}（失败片段；完整输出见 artifact "
+                  f".regression-logs/{_log_stem(name)}.log）")
+            print(failure_excerpt(log))
             print("::endgroup::")
             print(f"::error title=regression failure::{name}")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

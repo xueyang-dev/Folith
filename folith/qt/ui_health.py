@@ -16,7 +16,11 @@ import tempfile
 from PySide6.QtCore import QTimer, qVersion
 
 from folith.desktop.ui_watchdog import TIMEOUT_SECONDS, _write_report, _now
-from folith.qt.jank_monitor import JankMonitor, jank_monitor_enabled
+from folith.qt.jank_monitor import (
+    JankMonitor,
+    jank_monitor_enabled,
+    other_threads_getter,
+)
 
 
 class UiHealthMonitor:
@@ -79,7 +83,8 @@ class UiHealthMonitor:
         """
         if self.jank is not None:
             return self.jank
-        monitor = JankMonitor(enabled=jank_monitor_enabled())
+        monitor = JankMonitor(enabled=jank_monitor_enabled(),
+                                  threads_getter=other_threads_getter())
         try:
             monitor.start()
         except Exception:  # a measurement must never prevent the app from starting

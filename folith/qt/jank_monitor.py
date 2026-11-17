@@ -93,12 +93,47 @@ _LIBRARY_FRAME_PREFIX = "<library> "
 ENV_SWITCH = "FOLITH_JANK_MONITOR"
 
 _DISABLED_VALUES = frozenset({"0", "false", "no", "off", "disabled"})
+_ENABLED_VALUES = frozenset({"1", "true", "yes", "on", "enabled"})
 _SELF_FILE = Path(__file__).name
 _SELF_PATH = os.path.realpath(__file__)
 #: Aggregation key for stalls whose stack could not be captured (held GIL, etc.).
 UNCAPPED_STACK: Tuple[str, ...] = ("<stack not captured>",)
 #: Thread name of the sampler's own watcher: never a suspect.
 WATCHER_THREAD_NAME = "FolithJankWatcher"
+
+
+#: 只采主线程自身、跳过"跨线程取帧"的开关（P2-21b 判别实验用）。
+ENV_OTHER_THREADS = "FOLITH_JANK_OTHER_THREADS"
+
+
+def jank_other_threads_enabled(environ: Optional[Dict[str, str]] = None) -> bool:
+    """Whether the sampler may walk **other** threads' frames.
+
+    **Off by default (P2-21b).**  Walking another thread's live frames -- and
+    dropping the frame objects afterwards -- while the GUI thread sits in C++
+    (a paint, a dialog) with the GIL released corrupts that frame on CPython
+    3.11: the GUI thread then dies inside `paintEvent` with an access violation.
+    Measured on Windows CI, 20 S3 rounds each: with the walk on, 7 rounds died
+    (0xC0000005, no report); with it off, **0/20** and every round clean.  The
+    runner turns it on with ``FOLITH_JANK_OTHER_THREADS=1`` for the measurements
+    that need the all-thread stack ranking (gates 7/8, P2-0r2).
+    """
+    source = os.environ if environ is None else environ
+    value = source.get(ENV_OTHER_THREADS)
+    if value is None or not str(value).strip():
+        return False
+    return str(value).strip().lower() in _ENABLED_VALUES
+
+
+def other_threads_getter():
+    """采样器用的 getter：关掉跨线程取帧时返回空快照（采样器本身照跑）。"""
+    if jank_other_threads_enabled():
+        return capture_other_thread_frames
+
+    def _none(_exclude: Optional[int] = None):
+        return {}, False
+
+    return _none
 
 
 def jank_monitor_enabled(environ: Optional[Dict[str, str]] = None) -> bool:
@@ -324,16 +359,31 @@ def capture_other_thread_frames(
     result: OtherThreadFrames = {}
     truncated = False
     inspected = 0
-    for ident, name, frame in targets:
-        if inspected >= max(1, int(max_threads)):
-            truncated = True
-            break
-        if time.monotonic() > deadline:
-            truncated = True
-            break
-        inspected += 1
-        label, running = attribute_frame(frame, limit=limit)
-        result[ident] = ThreadFrame(name=name, frame=label, running=running)
+    try:
+        for ident, name, frame in targets:
+            if inspected >= max(1, int(max_threads)):
+                truncated = True
+                break
+            if time.monotonic() > deadline:
+                truncated = True
+                break
+            inspected += 1
+            label, running = attribute_frame(frame, limit=limit)
+            result[ident] = ThreadFrame(name=name, frame=label, running=running)
+    finally:
+        # Live frame objects are interpreter state, not data.  Keeping them here
+        # forms a cycle this function cannot help creating -- ``sys._current_frames()``
+        # returns a dict that contains this very frame, whose locals contain the
+        # dict -- and that cycle pins every inspected thread's frame with its
+        # locals: the open-job task state, its ``_TaskSignals`` QObject, whatever
+        # else the worker was holding.  Nothing here is garbage-collected, so the
+        # cyclic collector eventually takes the whole graph on **whichever thread
+        # runs it**, destroying Qt objects off the GUI thread (P2-21: the access
+        # violation inside a paint, the abort at teardown).  Everything below
+        # needs is already copied into ``result`` as plain strings.
+        targets.clear()
+        frames.clear()
+        frame = None
     return result, truncated
 
 
