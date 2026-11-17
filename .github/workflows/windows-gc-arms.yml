@@ -72,7 +72,9 @@ jobs:
           $ErrorActionPreference = "Stop"
           Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
           $PY = "python"; $PORT = 8765; $SEED = 7
-          $ROUNDS = [int]"${{ inputs.rounds }}"
+          # push 触发时没有 inputs，默认 10 轮（`[int]""` 会变成 0，一轮都不跑）。
+          $ROUNDS = 10
+          if ("${{ inputs.rounds }}" -ne "") { $ROUNDS = [int]"${{ inputs.rounds }}" }
           $ARM = "${{ matrix.arm }}"
           $OUT = "$env:RUNNER_TEMP\gc-arms\$ARM"
           New-Item -ItemType Directory -Force $OUT | Out-Null
