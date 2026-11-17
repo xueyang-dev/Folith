@@ -220,12 +220,34 @@ def state_signature(
     except OSError:
         return None
     try:
-        jstat = state_journal.journal_path(job_id, output_dir=output_dir).stat()
+        # Same retry as the state file: on Windows a scanner can hold a freshly
+        # replaced journal for a moment, and a bare ``stat`` would report "no
+        # change" for a file that just changed (#441).
+        jstat = stat_shared(state_journal.journal_path(job_id, output_dir=output_dir))
         journal_signature = (jstat.st_mtime_ns, jstat.st_size)
     except OSError:
         journal_signature = (0, 0)
     return (str(job_id), stat.st_mtime_ns, stat.st_size,
             journal_signature[0], journal_signature[1])
+
+
+def _journal_probe(job_id: str, output_dir: Optional[Path] = None):
+    """``(identity, mtime_ns, size, unknown)`` for the journal.
+
+    ``(0, 0)`` is a *claim* that the journal has no bytes.  That claim is only
+    safe when the file is really gone -- and only ``stat_shared`` can say so,
+    because on Windows a scanner holds a freshly replaced journal for a moment.
+    Everything else is ``unknown``: the loader then reads the journal to EOF
+    instead of bounding the replay at a size it could not read (#441).
+    """
+    path = state_journal.journal_path(job_id, output_dir=output_dir)
+    try:
+        jstat = stat_shared(path)
+    except FileNotFoundError:
+        return None, 0, 0, False
+    except OSError:
+        return None, None, None, True
+    return (jstat.st_dev, jstat.st_ino), jstat.st_mtime_ns, jstat.st_size, False
 
 
 def _snapshot_file_signature(stat):
@@ -279,8 +301,18 @@ def _load_job_state_cached(job_id, output_dir, force_reload):
     signature = state_signature(job_id, output_dir=output_dir)
     if signature is None:
         return None
+    # Probe the journal once, before anything may be served from the cache: a
+    # journal we cannot read is not an empty journal (#441).
+    (journal_identity, journal_mtime_ns, journal_size,
+     journal_unknown) = _journal_probe(job_id, output_dir)
+    if not journal_unknown:
+        # Key the cache on the journal values we actually read.  ``signature``
+        # carries a second stat of the same file, and on Windows that second
+        # stat can be the one that fails: never let it bound the replay.
+        signature = (signature[0], signature[1], signature[2],
+                     journal_mtime_ns, journal_size)
 
-    if not force_reload and signature in _STATE_CACHE:
+    if not force_reload and signature in _STATE_CACHE and not journal_unknown:
         _STATS["cache_hits"] += 1
         profiler.count("load_job_state_cache_hit")
         # Move to end for LRU
@@ -296,14 +328,10 @@ def _load_job_state_cached(job_id, output_dir, force_reload):
         from folith import state_migration as _state_migration
         from folith import translation_evidence as _translation_evidence
 
-        try:
-            jstat = state_journal.journal_path(job_id, output_dir=output_dir).stat()
-            identity = (jstat.st_dev, jstat.st_ino)
-        except OSError:
-            identity = None
+        identity = journal_identity
         path = str(p.absolute())
         state, offset = None, 0
-        if not force_reload:
+        if not force_reload and not journal_unknown:
             for previous, metadata in _STATE_REPLAY.items():
                 previous_path, previous_identity, previous_offset = metadata
                 if (previous[:3] == signature[:3] and previous_path == path
@@ -329,9 +357,16 @@ def _load_job_state_cached(job_id, output_dir, force_reload):
         # model. Cached loads resume at the last complete line instead of
         # parsing the book's full journal again for every new batch.
         report = state_journal.replay_from(
-            job_id, state, offset, output_dir=output_dir, end_offset=signature[4])
+            job_id, state, offset, output_dir=output_dir,
+            end_offset=None if journal_unknown else signature[4])
         _translation_evidence.reconcile_runtime_review_truth(state)
         state = core._reconcile_final_delivery_snapshot(job_id, state)
+
+        if journal_unknown:
+            # This read happened without a usable journal signature, so no key
+            # can describe it: caching it would hand the next caller a state
+            # whose bounds were never established. Serve this one and move on.
+            return _isolated_copy(state)
 
         # Store in LRU cache.  Only the newest signature of a job is worth
         # keeping: every save or journal append makes the older ones stale,
