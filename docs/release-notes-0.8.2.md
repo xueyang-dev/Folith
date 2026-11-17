@@ -41,6 +41,7 @@
 - **删除任务/项目不再长时间阻塞界面**：删除路径的等待预算与取消语义按实测收紧（M-1、#411）。
 - **翻译第一窗口的目标段数修正**：开始翻译后第一屏的段落数不再少于声明值（#408）。
 - **Windows「减少动态」**：读取系统动画设置（#415）。真机效果见门槛 9 与 Windows 冒烟清单。
+- **Windows 上打开大任务的原生崩溃修好了**：两个根因（帧环把 Qt 对象拖到错误的线程析构、跨线程取帧打坏主线程的帧）各自一个修复（#443、#446）。代价是**界面卡顿记录默认不再包含其他线程的栈**，诊断时用 `FOLITH_JANK_OTHER_THREADS=1` 打开。详见「已知问题」第 5 条与门槛 8 的跑法。
 
 ---
 
@@ -87,7 +88,7 @@
 2. **SDL / memoQ 文件只能原样导出。** `.sdlxliff`、`.mqxliff` 不会写回译文，界面上也没有这个入口；要更新译文，请回 Trados / memoQ 处理。通用 XLIFF 1.2 可以写回译文。
 3. **Windows 的验证范围只有冒烟和流畅度。** 这一版没有做 30 轮加压、没有做 8 小时长跑、没有做休眠唤醒，也没有做 0.8.1 界面的 Windows 原生逐项验收。Windows 上「能装、能打开、能翻完一份小文档并交付、XLIFF 能进出、退出没有残留进程」以冒烟清单为准；性能以门槛 9 的双臂对照为准。
 4. **G2 流畅度没有达到 −70%**（见「性能」）。不要读成「变快了」。
-5. **Windows 上打开大任务可能原生崩溃（P2-21，修复中，发布等待修复）。** CI 的 S3 轮约 50%/轮命中：一种形态是主线程在 Qt 原生派发里的 `access violation`，另一种是 worker 线程在 `Garbage-collecting` 时 `Fatal Python error: Aborted`。归因（带 PySide 包装器的循环垃圾在错误线程被回收）目前是**假设不是结论**，修复与验收（CI Windows 上 S3 ≥10 轮 0 崩溃）由 Worker A 进行。**发布前这一条必须有结论**：修好，或者停在明确边界并写在这里。
+5. **Windows 上打开大任务的原生崩溃（P2-21）：修复已合入，main 上 20 轮复核待完成。** 两个根因都修了——采样器不再把被检查线程的帧拖进循环垃圾（[#443](https://github.com/xueyang-dev/Folith/pull/443)），也不再默认跨线程取帧（[#446](https://github.com/xueyang-dev/Folith/pull/446)；`FOLITH_JANK_OTHER_THREADS=1` 才打开）。判别实验（Windows CI，三臂 × 20 轮）：旧默认 **7/20 崩溃**，只采主线程 **0/20** 且每轮 `exit=0`。**代价**：界面卡顿记录默认不再包含其他线程的栈，只看得到主线程自己的停顿；需要全线程栈排行时（诊断、第 8 条测量）设 `FOLITH_JANK_OTHER_THREADS=1`。`FOLITH_JANK_MONITOR=0` 仍然全关，但测量里不要用（runner 会把整轮记成失败）。
 6. **没有在 Trados 或 memoQ 里做过往返。** 方言样本与通用样本都是这样；原样导出的字节一致有测试与走查，但没有目标工具回读记录。
 7. **macOS 安装包仍未签名、未公证。** 首次打开需要用户手动放行。
 8. 离屏测试、mock 与单元测试不能代替真实窗口。
@@ -150,6 +151,7 @@ The translation pipeline can run in one child process per task: the GUI process 
 - Deleting tasks/projects no longer blocks the interface for seconds.
 - First-window target count after starting a translation is no longer short (#408).
 - Windows "reduce motion" is read from the system setting (#415).
+- The native crash when a large task opens on Windows is fixed: the frame cycle that destroyed Qt objects on a worker thread (#443) and the cross-thread frame walk that corrupted the GUI thread's frames (#446). The trade-off is that jank records no longer include other threads' stacks by default; set `FOLITH_JANK_OTHER_THREADS=1` when diagnosing. See known issue 5 and the gate 8 instructions.
 
 ## Nine gates: current status
 
@@ -188,7 +190,7 @@ None of the four "≥70% reduction" cells was met, and the R phase got worse. Th
 2. **SDL / memoQ files are export-unchanged only.** No write-back, no UI entry for it. Generic XLIFF 1.2 does write translations back.
 3. **Windows verification covers smoke and fluency only.** No 30-round stress, no 8-hour run, no sleep/wake, no native per-item acceptance of the 0.8.1 UI on Windows.
 4. **G2 did not reach −70%.** Do not read it as "faster".
-5. **Opening a large task on Windows can crash natively (P2-21; fix in progress, the release waits for it).** About 50% of CI S3 rounds hit it: either an `access violation` on the main thread inside Qt's native dispatch, or `Fatal Python error: Aborted` on a worker thread while `Garbage-collecting`. The attribution (cyclic garbage holding PySide wrappers collected on the wrong thread) is a **hypothesis, not a conclusion**; Worker A owns the fix and its acceptance (CI Windows S3, 10 rounds, zero crashes). **This needs a conclusion before release**: fixed, or stopped at a stated boundary and written down here.
+5. **The native crash when a large task opens on Windows (P2-21): fix merged, 20-round recheck on main pending.** Both root causes are fixed — the sampler no longer drags the inspected thread's frames into a reference cycle ([#443](https://github.com/xueyang-dev/Folith/pull/443)) and no longer walks other threads' frames by default ([#446](https://github.com/xueyang-dev/Folith/pull/446); `FOLITH_JANK_OTHER_THREADS=1` enables it). Discriminator run on Windows CI, three arms x 20 rounds: the old default crashed **7/20**, main-thread-only sampling was **0/20** with every round exiting 0. **The trade-off**: jank records no longer include other threads' stacks by default, so only the main thread's own stalls are visible; set `FOLITH_JANK_OTHER_THREADS=1` when you need the all-thread ranking (diagnosis, the gate 8 measurement). `FOLITH_JANK_MONITOR=0` still turns the sampler off entirely, but do not use it for measurements: the runner records the round as failed.
 6. **No Trados / memoQ round trip** for dialects or generic files.
 7. **The macOS build is still unsigned and not notarized.**
 8. Offscreen tests, mocks and unit tests do not stand in for a real window.
