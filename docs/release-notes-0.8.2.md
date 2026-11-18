@@ -52,12 +52,12 @@
 | 1 | 冻结代码 | **进行中** | 从 2026-11-16 起 main 只接受发布阻塞修复与发布文档；P2 性能修复例外 |
 | 2 | CI 全绿 + 1 次手动 Release Validation（含 macOS / Windows 冻结候选） | **待发布当天** | 合入发布说明与版本号后，在发布提交上触发一次（步骤见 `.loop/reports/release-day.md`） |
 | 3 | macOS 冻结包冒烟（安装、翻译到交付、XLIFF 导入导出、重开任务还在、5 轮加压） | **已做** | 见 [macOS 冻结包冒烟证据](evidence/0.8.2-macos-frozen-smoke.md)；**XLIFF 子项待用户在冻结包界面补核**（冻结包没有 CLI 入口，包内人工往返未做，自动化套件覆盖） |
-| 4 | Windows 冻结包冒烟（同第 3 条、3 轮加压、退出无残留进程、界面无明显错位） | **待用户** | 步骤见 [Windows 冒烟清单](release/0.8.2-windows-smoke-checklist.md) |
+| 4 | Windows 冻结包冒烟（同第 3 条、3 轮加压、退出无残留进程、界面无明显错位） | **可测项全部通过，界面目视签核待用户** | 冻结包里通用 XLIFF 1.2 界面内编辑后写回 161/161 段、Strict 与 Transitional 两种 schema 均通过；memoQ 与 SDLXLIFF 原样导出与原件逐字节一致；步骤见 [Windows 冒烟清单](release/0.8.2-windows-smoke-checklist.md)；发现一处界面瑕疵见已知问题第 7 条 |
 | 5 | 已知问题与发布说明如实 | **本文件即交付** | 性能数字已填（第 7、8 条，`e5f5941d`） |
 | 6 | 版本号、标签、发布 | **版本号 PR 已就绪**（#433） | 发布当天与说明一起合；打标签与公开发布等用户点头 |
 | 7 | G2 流畅度 −70% | **已测，未达** | R >100 ms −30.8%、R >500 ms 不可判定、I >100 ms +2.0%、I >500 ms +17.6%，见「性能」 |
 | 8 | E-7 进程内 / 子进程分阶段对照 | **已完成** | R >100 ms 进程内比子进程高 9.1%，R >500 ms 两臂 0；全线程排行见「性能」 |
-| 9 | Windows 流畅度两臂对照 | **待用户** | Windows 真机；这一版没有 Windows 流畅度数字 |
+| 9 | Windows 流畅度两臂对照 | **已测，未达** | Windows 真机（`e5f5941d`，每臂 3 轮取中位）：R >100 ms **−35.0%**（改善但未到 −70%）、R >500 ms 不可判定、I >100 ms **+22.3%**、I >500 ms **+42.8%**；12/12 轮 0 崩溃。条件与明细见「性能」 |
 
 用户已裁定：第 7–9 条要求的是**测完并如实报告**，不要求达到 70%。达到了写达到，没达到写没达到，不调参凑数，也不因此推迟发布。
 
@@ -100,9 +100,28 @@ macOS 真实窗口、动画开启，产品默认配置（不设 `FOLITH_JANK_OTH
 
 ### Windows
 
-Windows 的第 9 条（流畅度）由用户在真机跑，**这一版没有 Windows 流畅度数字**。Windows 上唯一有数字的是 P2-21 / P2-21b 的崩溃率：修复前 CI 的 S3 每轮约 2/10 ~ 7/20 概率整轮崩溃；修复后产品默认配置 **20 轮 0 崩溃、收尾退出码全 0**（run `44076100998`，`e5f5941d`），阳性对照（打开跨线程取帧）仍有 6/20 复现，说明因果成立。
+**门槛 9（Windows 方块对照）**：2026-11-18 在 Windows 真机跑，候选 `e5f5941d`、基线 `74a421b5`，产品默认配置（不设 `FOLITH_JANK_OTHER_THREADS`），每臂 3 轮取中位，单位次/分钟。
 
-证据：[G2 / E-7 最终测量](evidence/0.8.2-g2-final.md)（数字原件在 `.loop/reports/numbers-for-release-notes.md` 与 `.loop/real-run-g7/`）。
+| 阶段 | 档位 | 0.8.1 | 候选 | 变化 | 目标 −70% |
+| --- | --- | ---: | ---: | ---: | --- |
+| R（滚动/选择/输入） | >100 ms | 12.00 | 7.80 | **−35.0%（改善）** | 未达到 |
+| R | >500 ms | 0.00 | 0.00 | 不可判定 | — |
+| I（界面操作） | >100 ms | 52.56 | 64.29 | **+22.3%（变差）** | 未达到 |
+| I | >500 ms | 10.03 | 14.32 | **+42.8%（变差）** | 未达到 |
+
+**结论：门槛 9 也未达 −70%**——R 的 >100 ms 改善了 35%，I 的两档都明显变差。
+
+测量条件照实记录：Windows 11 家庭版、Ryzen 9 7845HX、32 GB、主屏 100%、「平衡」电源方案；**开测时 Windows Update 待重启**，微信剩 1 个进程、OneDrive 暂停状态未核实。12/12 正式轮，0 次崩溃、0 次超时中断；S1 的 `--verify` 6/6 `ok`；S3 按 runbook 预期 `ok=false`，但 `valid_round` / `I_valid` 都为 true；两臂 `--aggregate` 都是 `exit=0`。
+
+### 两个平台共同的性能问题：打开任务变慢了
+
+这一版把打开路径上的一些读整份文件的操作改成了只读文件头与索引（P2-13/P2-14），但**「打开任务」这一步在两个平台上都比 0.8.1 慢**：macOS 的 I >500 ms 是 **+17.6%**，Windows 的 I >500 ms 是 **+42.8%**。这是 **0.8.3 的首要性能目标**，不要因为 R 阶段的改善把这一条读成「更流畅了」。
+
+### Windows 稳定性（P2-21 / P2-21b）
+
+修复前 CI 的 S3 每轮约 2/10 ~ 7/20 概率整轮崩溃；修复后产品默认配置 **20 轮 0 崩溃、收尾退出码全 0**（run `44076100998`，`e5f5941d`），阳性对照（打开跨线程取帧）仍有 6/20 复现，说明因果成立。
+
+证据：[G2 / E-7 最终测量](evidence/0.8.2-g2-final.md)；数字原件在 `.loop/reports/numbers-for-release-notes.md`、`.loop/reports/numbers-windows-g9.md` 与 `.loop/real-run-g7/`。
 
 ---
 
@@ -114,9 +133,10 @@ Windows 的第 9 条（流畅度）由用户在真机跑，**这一版没有 Win
 4. **G2 流畅度没有达到 −70%**（见「性能」）。不要读成「变快了」。
 5. **Windows 上打开大任务的原生崩溃（P2-21）已修复。** main 上 20 轮复核：产品默认口径 **0/20 崩溃**，打开跨线程取帧的阳性对照仍 **6/20**（run `44076100998`）。 两个根因都修了——采样器不再把被检查线程的帧拖进循环垃圾（[#443](https://github.com/xueyang-dev/Folith/pull/443)），也不再默认跨线程取帧（[#446](https://github.com/xueyang-dev/Folith/pull/446)；`FOLITH_JANK_OTHER_THREADS=1` 才打开）。判别实验（Windows CI，三臂 × 20 轮）：旧默认 **7/20 崩溃**，只采主线程 **0/20** 且每轮 `exit=0`。**代价**：界面卡顿记录默认不再包含其他线程的栈，只看得到主线程自己的停顿；需要全线程栈排行时（诊断、第 8 条测量）设 `FOLITH_JANK_OTHER_THREADS=1`。`FOLITH_JANK_MONITOR=0` 仍然全关，但测量里不要用（runner 会把整轮记成失败）。
 6. **子进程模式的退出偶发要再点一次。** 打开 `FOLITH_ENGINE_PROCESS=1` 后，Windows 上退出时偶尔会提示「停止任务失败」并留在应用里，或者在下次打开时把这条任务显示成「意外中断」。**任务与数据都不受影响**（进度已落盘、任务仍是可继续的 `interrupted`），再点一次退出即可。只影响这个默认关闭的开关；0.8.3 修（[#453](https://github.com/xueyang-dev/Folith/issues/453)）。
-7. **没有在 Trados 或 memoQ 里做过往返。** 方言样本与通用样本都是这样；原样导出的字节一致有测试与走查，但没有目标工具回读记录。
-8. **macOS 安装包仍未签名、未公证。** 首次打开需要用户手动放行。
-9. 离屏测试、mock 与单元测试不能代替真实窗口。
+7. **Windows 首次进入交付页时，「冻结交付」提示在窗口左缘被裁切。** 提示文字仍在、功能可用，只是贴边显示不完整；把窗口拉宽即可看清。不影响交付结果，0.8.3 修。
+8. **没有在 Trados 或 memoQ 里做过往返。** 方言样本与通用样本都是这样；原样导出的字节一致有测试与走查，但没有目标工具回读记录。
+9. **macOS 安装包仍未签名、未公证。** 首次打开需要用户手动放行。
+10. 离屏测试、mock 与单元测试不能代替真实窗口。
 
 ---
 
@@ -185,12 +205,12 @@ The translation pipeline can run in one child process per task: the GUI process 
 | 1 | Code frozen | **in progress** (only release-blocking fixes and release docs) |
 | 2 | CI green + one manual Release Validation with macOS/Windows frozen candidates | **release day** — triggered once on the release commit after the notes and version bump land (`.loop/reports/release-day.md`) |
 | 3 | macOS frozen-app smoke | **done** — see the [macOS frozen-app smoke evidence](evidence/0.8.2-macos-frozen-smoke.md); the **XLIFF sub-item waits for the user to recheck it in the frozen build's UI** (no CLI entry, so the in-app round trip was not run; the automated suite covers it) |
-| 4 | Windows frozen-app smoke | **pending user** — see the [Windows smoke checklist](release/0.8.2-windows-smoke-checklist.md) |
+| 4 | Windows frozen-app smoke | **everything measurable passed; the visual sign-off is the user's** — in the frozen build, generic XLIFF 1.2 edited in the UI and written back for 161/161 segments, valid against both the Strict and Transitional schemas; memoQ and SDLXLIFF exported unchanged, byte-identical to the originals; one cosmetic defect is known issue 7 |
 | 5 | Known issues and notes are honest | **this document**; the performance section now carries the gate 7 and 8 numbers |
 | 6 | Version, tag, release | **version PR ready** (#433); merges with these notes on release day, tag/publish waits for the user |
 | 7 | G2 −70% | **measured, not met** — R >100 ms -30.8%, R >500 ms not decidable, I >100 ms +2.0%, I >500 ms +17.6% |
 | 8 | E-7 in-process vs subprocess comparison | **done** — R >100 ms is 9.1% higher in-process, R >500 ms zero on both arms |
-| 9 | Windows fluency, both arms | **pending user** — this release carries no Windows fluency numbers |
+| 9 | Windows fluency, both arms | **measured, not met** — real machine, `e5f5941d`, three rounds per arm (median): R >100 ms **-35.0%** (better, not the -70% target), R >500 ms not decidable, I >100 ms **+22.3%**, I >500 ms **+42.8%**; 12 of 12 rounds with zero crashes |
 
 The user ruled that gates 7–9 require **measuring and reporting honestly**, not hitting 70%. Report what happened; do not tune numbers and do not slip the release over it.
 
@@ -230,9 +250,28 @@ All-thread ranking (top five `total_ms` over three rounds): in-process, the engi
 
 ### Windows
 
-Gate 9 (Windows fluency) runs on the user's machine, so **this release carries no Windows fluency numbers**. The one Windows number that exists is the P2-21 / P2-21b crash rate: before the fix, CI S3 rounds crashed about 2 in 10 to 7 in 20; after it, the product default is **0 crashes in 20 rounds with every round exiting 0** (run `44076100998`, `e5f5941d`), while the positive control with cross-thread frame capture still reproduced 6/20.
+**Gate 9 (Windows, both arms)** was measured on a real machine on 2026-11-18: candidate `e5f5941d`, baseline `74a421b5`, product default configuration (no `FOLITH_JANK_OTHER_THREADS`), three rounds per arm, median, per minute.
 
-Evidence: [the final G2 / E-7 measurements](evidence/0.8.2-g2-final.md) (raw numbers in `.loop/reports/numbers-for-release-notes.md` and `.loop/real-run-g7/`).
+| Phase | Band | 0.8.1 | Candidate | Change | -70% target |
+| --- | --- | ---: | ---: | ---: | --- |
+| R (scroll/select/type) | >100 ms | 12.00 | 7.80 | **-35.0% (better)** | not met |
+| R | >500 ms | 0.00 | 0.00 | not decidable | — |
+| I (UI work) | >100 ms | 52.56 | 64.29 | **+22.3% (worse)** | not met |
+| I | >500 ms | 10.03 | 14.32 | **+42.8% (worse)** | not met |
+
+**Gate 9 did not reach -70% either**: R >100 ms improved by 35%, and both I bands got clearly worse.
+
+Measurement conditions, recorded as they were: Windows 11 Home, Ryzen 9 7845HX, 32 GB, 100% display scaling, "Balanced" power plan; **a Windows Update restart was pending when the run started**, one WeChat process remained, and the OneDrive pause was not verified. 12 of 12 formal rounds, 0 crashes, 0 timeouts; S1 `--verify` 6/6 `ok`; S3 reported `ok=false` as the runbook predicts while `valid_round` / `I_valid` were true; both `--aggregate` runs exited 0.
+
+### Both platforms share one regression: opening a task got slower
+
+This release replaced some whole-file reads on the open path with header-and-index reads (P2-13/P2-14), yet **"opening a task" is slower than 0.8.1 on both platforms**: macOS I >500 ms is **+17.6%** and Windows I >500 ms is **+42.8%**. That is **the top performance goal for 0.8.3**; the R-phase improvement does not make this release "smoother" overall.
+
+### Windows stability (P2-21 / P2-21b)
+
+Before the fix, CI S3 rounds crashed about 2 in 10 to 7 in 20; after it, the product default is **0 crashes in 20 rounds with every round exiting 0** (run `44076100998`, `e5f5941d`), while the positive control with cross-thread frame capture still reproduced 6/20.
+
+Evidence: [the final G2 / E-7 measurements](evidence/0.8.2-g2-final.md); raw numbers in `.loop/reports/numbers-for-release-notes.md`, `.loop/reports/numbers-windows-g9.md` and `.loop/real-run-g7/`.
 
 ---
 
@@ -244,9 +283,10 @@ Evidence: [the final G2 / E-7 measurements](evidence/0.8.2-g2-final.md) (raw num
 4. **G2 did not reach −70%.** Do not read it as "faster".
 5. **The native crash when a large task opens on Windows (P2-21) is fixed.** The 20-round recheck on main: the product default crashed **0/20**, while the positive control with cross-thread frame capture still crashed **6/20** (run `44076100998`). Both root causes are fixed — the sampler no longer drags the inspected thread's frames into a reference cycle ([#443](https://github.com/xueyang-dev/Folith/pull/443)) and no longer walks other threads' frames by default ([#446](https://github.com/xueyang-dev/Folith/pull/446); `FOLITH_JANK_OTHER_THREADS=1` enables it). Discriminator run on Windows CI, three arms x 20 rounds: the old default crashed **7/20**, main-thread-only sampling was **0/20** with every round exiting 0. **The trade-off**: jank records no longer include other threads' stacks by default, so only the main thread's own stalls are visible; set `FOLITH_JANK_OTHER_THREADS=1` when you need the all-thread ranking (diagnosis, the gate 8 measurement). `FOLITH_JANK_MONITOR=0` still turns the sampler off entirely, but do not use it for measurements: the runner records the round as failed.
 6. **Quitting in subprocess mode occasionally takes a second click.** With `FOLITH_ENGINE_PROCESS=1` on Windows, quitting can report "stopping the task failed" and keep the app open, or the next launch can show that task as an unexpected interruption. **The task and its data are unaffected** (progress is on disk and the task stays resumable as `interrupted`); quit once more. Only this opt-in switch is affected; fixed in 0.8.3 ([#453](https://github.com/xueyang-dev/Folith/issues/453)).
-7. **No Trados / memoQ round trip** for dialects or generic files.
-8. **The macOS build is still unsigned and not notarized.**
-9. Offscreen tests, mocks and unit tests do not stand in for a real window.
+7. **On Windows, the "freeze delivery" hint is clipped at the window's left edge the first time the delivery page opens.** The text is there and the feature works; widening the window shows all of it. Delivery results are unaffected; fixed in 0.8.3.
+8. **No Trados / memoQ round trip** for dialects or generic files.
+9. **The macOS build is still unsigned and not notarized.**
+10. Offscreen tests, mocks and unit tests do not stand in for a real window.
 
 ## Moved to 0.8.3
 
