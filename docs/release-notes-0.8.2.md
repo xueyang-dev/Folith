@@ -1,6 +1,6 @@
 # Folith 0.8.2 发布说明
 
-状态：**发布候选，未打标签、未上传安装包。** **发布日期：待定（P2-21 修复合入后）。** 用户 2026-11-17 裁定：P2-21 修好之前不发布；打标签和公开发布由用户在验收完成后决定。
+状态：**正式发布，2026-11-18。** 用户 2026-11-18 完成 Windows 界面目视签核与 macOS 冻结包 XLIFF 亲测后授权发布（「可以正式release了」）。发布提交与 Release Validation run 记录在 [0.8.2 验收对账表](release/0.8.2-acceptance-ledger.md)。
 
 本版按 0.8.2 快速发布方案（用户 2026-11-15 裁定）执行：门槛从原计划 §13 的完整验收清单收缩为 9 条，其余整体移到 0.8.3 并在下方如实列出。门槛状态与证据见 [0.8.2 验收对账表](release/0.8.2-acceptance-ledger.md)。
 
@@ -51,8 +51,8 @@
 | --- | --- | --- | --- |
 | 1 | 冻结代码 | **进行中** | 从 2026-11-16 起 main 只接受发布阻塞修复与发布文档；P2 性能修复例外 |
 | 2 | CI 全绿 + 1 次手动 Release Validation（含 macOS / Windows 冻结候选） | **待发布当天** | 合入发布说明与版本号后，在发布提交上触发一次（步骤见 `.loop/reports/release-day.md`） |
-| 3 | macOS 冻结包冒烟（安装、翻译到交付、XLIFF 导入导出、重开任务还在、5 轮加压） | **已做** | 见 [macOS 冻结包冒烟证据](evidence/0.8.2-macos-frozen-smoke.md)；**XLIFF 子项待用户在冻结包界面补核**（冻结包没有 CLI 入口，包内人工往返未做，自动化套件覆盖） |
-| 4 | Windows 冻结包冒烟（同第 3 条、3 轮加压、退出无残留进程、界面无明显错位） | **可测项全部通过，界面目视签核待用户** | 冻结包里通用 XLIFF 1.2 界面内编辑后写回 161/161 段、Strict 与 Transitional 两种 schema 均通过；memoQ 与 SDLXLIFF 原样导出与原件逐字节一致；步骤见 [Windows 冒烟清单](release/0.8.2-windows-smoke-checklist.md)；发现一处界面瑕疵见已知问题第 7 条 |
+| 3 | macOS 冻结包冒烟（安装、翻译到交付、XLIFF 导入导出、重开任务还在、5 轮加压） | **已做** | 见 [macOS 冻结包冒烟证据](evidence/0.8.2-macos-frozen-smoke.md)；**XLIFF 子项：用户在冻结包界面亲测通过（2026-11-18）**——导入、编辑、写回译文导出都做过；自动化套件同时覆盖 |
+| 4 | Windows 冻结包冒烟（同第 3 条、3 轮加压、退出无残留进程、界面无明显错位） | **通过**（界面目视签核：用户 2026-11-18） | 冻结包里通用 XLIFF 1.2 界面内编辑后写回 161/161 段、Strict 与 Transitional 两种 schema 均通过；memoQ 与 SDLXLIFF 原样导出与原件逐字节一致；步骤见 [Windows 冒烟清单](release/0.8.2-windows-smoke-checklist.md)；发现一处界面瑕疵见已知问题第 7 条 |
 | 5 | 已知问题与发布说明如实 | **本文件即交付** | 性能数字已填（第 7、8 条，`e5f5941d`） |
 | 6 | 版本号、标签、发布 | **版本号 PR 已就绪**（#433） | 发布当天与说明一起合；打标签与公开发布等用户点头 |
 | 7 | G2 流畅度 −70% | **已测，未达** | R >100 ms −30.8%、R >500 ms 不可判定、I >100 ms +2.0%、I >500 ms +17.6%，见「性能」 |
@@ -133,10 +133,12 @@ macOS 真实窗口、动画开启，产品默认配置（不设 `FOLITH_JANK_OTH
 4. **G2 流畅度没有达到 −70%**（见「性能」）。不要读成「变快了」。
 5. **Windows 上打开大任务的原生崩溃（P2-21）已修复。** main 上 20 轮复核：产品默认口径 **0/20 崩溃**，打开跨线程取帧的阳性对照仍 **6/20**（run `44076100998`）。 两个根因都修了——采样器不再把被检查线程的帧拖进循环垃圾（[#443](https://github.com/xueyang-dev/Folith/pull/443)），也不再默认跨线程取帧（[#446](https://github.com/xueyang-dev/Folith/pull/446)；`FOLITH_JANK_OTHER_THREADS=1` 才打开）。判别实验（Windows CI，三臂 × 20 轮）：旧默认 **7/20 崩溃**，只采主线程 **0/20** 且每轮 `exit=0`。**代价**：界面卡顿记录默认不再包含其他线程的栈，只看得到主线程自己的停顿；需要全线程栈排行时（诊断、第 8 条测量）设 `FOLITH_JANK_OTHER_THREADS=1`。`FOLITH_JANK_MONITOR=0` 仍然全关，但测量里不要用（runner 会把整轮记成失败）。
 6. **子进程模式的退出偶发要再点一次。** 打开 `FOLITH_ENGINE_PROCESS=1` 后，Windows 上退出时偶尔会提示「停止任务失败」并留在应用里，或者在下次打开时把这条任务显示成「意外中断」。**任务与数据都不受影响**（进度已落盘、任务仍是可继续的 `interrupted`），再点一次退出即可。只影响这个默认关闭的开关；0.8.3 修（[#453](https://github.com/xueyang-dev/Folith/issues/453)）。
-7. **Windows 首次进入交付页时，「冻结交付」提示在窗口左缘被裁切。** 提示文字仍在、功能可用，只是贴边显示不完整；把窗口拉宽即可看清。不影响交付结果，0.8.3 修。
-8. **没有在 Trados 或 memoQ 里做过往返。** 方言样本与通用样本都是这样；原样导出的字节一致有测试与走查，但没有目标工具回读记录。
-9. **macOS 安装包仍未签名、未公证。** 首次打开需要用户手动放行。
-10. 离屏测试、mock 与单元测试不能代替真实窗口。
+7. **Windows 首次进入交付页时，「冻结交付」提示在窗口左缘被裁切（[#520](https://github.com/xueyang-dev/Folith/issues/520)）。** 提示文字仍在、功能可用，只是贴边显示不完整；把窗口拉宽即可看清。不影响交付结果，0.8.3 修。
+8. **启动慢（[#514](https://github.com/xueyang-dev/Folith/issues/514)）。** 任务多、已交付的书多时，从双击到窗口出现要十几秒。实测：macOS，21 个任务、609 MB 的数据目录，**约 16 s**；主要耗时是主页任务列表在**窗口出现之前**同步构建（`refresh_home → adapter.list_jobs()`）。任务少时不明显（Windows 新数据目录冷启动 6.3 s）。**0.8.1 也有，不是 0.8.2 引入的**：`refresh_home`、`list_jobs` 在 0.8.1 的代码里与现在逐字相同。0.8.3 修，目标是同一份数据 **< 3 s**。
+9. **任务库与项目页切换卡顿（[#515](https://github.com/xueyang-dev/Folith/issues/515)）。** 数据多时切到「项目」页要等很久，期间界面会卡。实测同一份数据：项目概览**冷 33 s、热 16 s**，界面最长停顿约 **1.4 s**。**0.8.1 也有**：`refresh_projects` 与 `projects_overview` 在 0.8.1 的代码里与现在相同（同样是整份重算、同样的后台提交方式）。0.8.3 修，并加骨架过渡（[#516](https://github.com/xueyang-dev/Folith/issues/516)）。
+10. **没有在 Trados 或 memoQ 里做过往返。** 方言样本与通用样本都是这样；原样导出的字节一致有测试与走查，但没有目标工具回读记录。
+11. **macOS 安装包仍未签名、未公证。** 首次打开需要用户手动放行。
+12. 离屏测试、mock 与单元测试不能代替真实窗口。
 
 ---
 
@@ -161,7 +163,7 @@ macOS 真实窗口、动画开启，产品默认配置（不设 `FOLITH_JANK_OTH
 
 # Folith 0.8.2 release notes (English)
 
-Status: **release candidate, no tag and no uploaded installers.** Tagging and publishing happen after the user signs off.
+Status: **released on 2026-11-18.** The user signed off the Windows visual check and tested the XLIFF round trip in the macOS frozen build on 2026-11-18, then authorized the release. The release commit and the Release Validation run are recorded in the [0.8.2 acceptance ledger](release/0.8.2-acceptance-ledger.md).
 
 This release follows the 0.8.2 fast-path plan (user ruling, 2026-11-15): the gate list shrank from the full §13 acceptance matrix to nine gates; everything else moved to 0.8.3 and is listed below. Gate status and evidence: [0.8.2 acceptance ledger](release/0.8.2-acceptance-ledger.md).
 
@@ -204,8 +206,8 @@ The translation pipeline can run in one child process per task: the GUI process 
 | --- | --- | --- |
 | 1 | Code frozen | **in progress** (only release-blocking fixes and release docs) |
 | 2 | CI green + one manual Release Validation with macOS/Windows frozen candidates | **release day** — triggered once on the release commit after the notes and version bump land (`.loop/reports/release-day.md`) |
-| 3 | macOS frozen-app smoke | **done** — see the [macOS frozen-app smoke evidence](evidence/0.8.2-macos-frozen-smoke.md); the **XLIFF sub-item waits for the user to recheck it in the frozen build's UI** (no CLI entry, so the in-app round trip was not run; the automated suite covers it) |
-| 4 | Windows frozen-app smoke | **everything measurable passed; the visual sign-off is the user's** — in the frozen build, generic XLIFF 1.2 edited in the UI and written back for 161/161 segments, valid against both the Strict and Transitional schemas; memoQ and SDLXLIFF exported unchanged, byte-identical to the originals; one cosmetic defect is known issue 7 |
+| 3 | macOS frozen-app smoke | **done** — see the [macOS frozen-app smoke evidence](evidence/0.8.2-macos-frozen-smoke.md); the **XLIFF sub-item was verified by the user in the frozen build's UI on 2026-11-18** (import, edit and write-back export), with the automated suite covering it as well |
+| 4 | Windows frozen-app smoke | **passed** (visual sign-off by the user on 2026-11-18) — in the frozen build, generic XLIFF 1.2 edited in the UI and written back for 161/161 segments, valid against both the Strict and Transitional schemas; memoQ and SDLXLIFF exported unchanged, byte-identical to the originals; one cosmetic defect is known issue 7 |
 | 5 | Known issues and notes are honest | **this document**; the performance section now carries the gate 7 and 8 numbers |
 | 6 | Version, tag, release | **version PR ready** (#433); merges with these notes on release day, tag/publish waits for the user |
 | 7 | G2 −70% | **measured, not met** — R >100 ms -30.8%, R >500 ms not decidable, I >100 ms +2.0%, I >500 ms +17.6% |
@@ -283,10 +285,12 @@ Evidence: [the final G2 / E-7 measurements](evidence/0.8.2-g2-final.md); raw num
 4. **G2 did not reach −70%.** Do not read it as "faster".
 5. **The native crash when a large task opens on Windows (P2-21) is fixed.** The 20-round recheck on main: the product default crashed **0/20**, while the positive control with cross-thread frame capture still crashed **6/20** (run `44076100998`). Both root causes are fixed — the sampler no longer drags the inspected thread's frames into a reference cycle ([#443](https://github.com/xueyang-dev/Folith/pull/443)) and no longer walks other threads' frames by default ([#446](https://github.com/xueyang-dev/Folith/pull/446); `FOLITH_JANK_OTHER_THREADS=1` enables it). Discriminator run on Windows CI, three arms x 20 rounds: the old default crashed **7/20**, main-thread-only sampling was **0/20** with every round exiting 0. **The trade-off**: jank records no longer include other threads' stacks by default, so only the main thread's own stalls are visible; set `FOLITH_JANK_OTHER_THREADS=1` when you need the all-thread ranking (diagnosis, the gate 8 measurement). `FOLITH_JANK_MONITOR=0` still turns the sampler off entirely, but do not use it for measurements: the runner records the round as failed.
 6. **Quitting in subprocess mode occasionally takes a second click.** With `FOLITH_ENGINE_PROCESS=1` on Windows, quitting can report "stopping the task failed" and keep the app open, or the next launch can show that task as an unexpected interruption. **The task and its data are unaffected** (progress is on disk and the task stays resumable as `interrupted`); quit once more. Only this opt-in switch is affected; fixed in 0.8.3 ([#453](https://github.com/xueyang-dev/Folith/issues/453)).
-7. **On Windows, the "freeze delivery" hint is clipped at the window's left edge the first time the delivery page opens.** The text is there and the feature works; widening the window shows all of it. Delivery results are unaffected; fixed in 0.8.3.
-8. **No Trados / memoQ round trip** for dialects or generic files.
-9. **The macOS build is still unsigned and not notarized.**
-10. Offscreen tests, mocks and unit tests do not stand in for a real window.
+7. **On Windows, the "freeze delivery" hint is clipped at the window's left edge the first time the delivery page opens ([#520](https://github.com/xueyang-dev/Folith/issues/520)).** The text is there and the feature works; widening the window shows all of it. Delivery results are unaffected; fixed in 0.8.3.
+8. **Slow startup ([#514](https://github.com/xueyang-dev/Folith/issues/514)).** With many tasks and delivered books, double-click to window takes tens of seconds. Measured on macOS with 21 tasks and a 609 MB data directory: **about 16 s**, mostly the home task list being built **synchronously before the window appears** (`refresh_home -> adapter.list_jobs()`). With few tasks it is not noticeable (a fresh Windows data directory cold-started in 6.3 s). **0.8.1 has the same code path** — `refresh_home` and `list_jobs` are identical in the 0.8.1 tree — so this is not something 0.8.2 introduced. Fixed in 0.8.3 with a target of **under 3 s** on the same data set.
+9. **Switching to the projects page stalls ([#515](https://github.com/xueyang-dev/Folith/issues/515)).** With a lot of data the projects page takes a long time and the interface freezes meanwhile. Measured on the same data: the overview is **33 s cold and 16 s warm**, with the longest interface pause around **1.4 s**. **0.8.1 behaves the same way** — `refresh_projects` and `projects_overview` are unchanged — because the overview is recomputed in full. Fixed in 0.8.3, together with a skeleton transition ([#516](https://github.com/xueyang-dev/Folith/issues/516)).
+10. **No Trados / memoQ round trip** for dialects or generic files.
+11. **The macOS build is still unsigned and not notarized.**
+12. Offscreen tests, mocks and unit tests do not stand in for a real window.
 
 ## Moved to 0.8.3
 
