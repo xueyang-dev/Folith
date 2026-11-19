@@ -2739,5 +2739,11 @@
   "双语文件导入有提示": "El archivo bilingüe se importó con avisos",
   "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "Se excluyeron {v0} unidad(es) más como «no traducir»; no aparecen en el espacio de trabajo.",
   "显示全部 ({v0})": "Mostrar todo ({v0})",
-  "连接操作": "Acciones de conexión"
+  "连接操作": "Acciones de conexión",
+  "切换语言后需要重启才能完全生效": "Cambiar el idioma requiere reiniciar para aplicarlo por completo",
+  "切换到「{v0}」需要重启 Folith 才能完全生效。": "Cambiar a «{v0}» requiere reiniciar Folith para aplicarlo por completo.",
+  "将保存编辑并停止正在运行的任务，重新打开后可以继续。": "Se guardarán las ediciones pendientes y se detendrán las tareas en curso; podrá continuar al reabrir.",
+  "需要重启 Folith": "Reiniciar Folith",
+  "立即重启": "Reiniciar ahora",
+  "语言已保存，下次启动时生效": "Idioma guardado; se aplicará en el próximo inicio."
 }
