@@ -789,16 +789,37 @@ def delivery_snapshot_status_light(job_id):
     cached = _LIGHT_STATUS_CACHE.get(str(job_root))
     if cached is not None and cached[0] == key:
         return dict(cached[1])
-    state = _c.load_job_state(job_id)
-    matches = _snapshots.state_matches_identity(
-        state or {}, latest.get("translation_state_identity"))
+    # #514: the task list only needs the identity and final/draft, both of
+    # which are persisted in summary.json at save time.  Avoid loading (and
+    # deep-copying) a 30 MB state for every row on a cold start.
+    import json as _json
+    summary_path = job_root / "summary.json"
+    light = {}
+    try:
+        light = _json.loads(summary_path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 - legacy task: fall back to the full state
+        pass
+    identity = light.get("translation_state_identity")
+    if identity is None:
+        state = _c.load_job_state(job_id)
+        matches = _snapshots.state_matches_identity(
+            state or {}, latest.get("translation_state_identity"))
+        is_final = state.get("delivery_status") == "final"
+    else:
+        state = {}
+        matches = identity == latest.get("translation_state_identity")
+        is_final = light.get("delivery_status") == "final"
+        if not matches:
+            state = _c.load_job_state(job_id)
+            matches = _snapshots.state_matches_identity(
+                state or {}, latest.get("translation_state_identity"))
+            is_final = state.get("delivery_status") == "final"
     names = [item.get("name") for item in latest.get("assets") or []]
     integrity = bool(names) and all(
         name and _snapshots.asset_path(job_root, version, name).is_file() for name in names)
     status = {
         "latest": latest,
-        "current": bool(matches and integrity and state
-                        and state.get("delivery_status") == "final"),
+        "current": bool(matches and integrity and is_final),
         "diverged": not matches,
         "integrity": integrity,
     }

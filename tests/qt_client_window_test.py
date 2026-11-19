@@ -4889,3 +4889,23 @@ def test_inspector_status_line_is_translated(client):
         for label in (workbench.segment_status, workbench.fact_state, workbench.fact_review,
                       workbench.fact_source, workbench.fact_excluded):
             assert not cjk.search(label.text()), label.text()
+
+
+# ---------------------------------------------------------------------------
+# #514: the home list must not be built synchronously before the first frame.
+# ---------------------------------------------------------------------------
+def test_514_async_home_refresh_does_not_scan_on_the_gui_thread(client, monkeypatch) -> None:
+    import folith.qt.adapter as _adapter
+
+    calls: list[str] = []
+
+    def slow_list_jobs():
+        calls.append("called")
+        return []
+
+    monkeypatch.setattr(_adapter, "list_jobs", slow_list_jobs)
+    window = client["window"]
+    window._home_generation = 0
+    window._refresh_home_async()
+    # The submit goes to the worker; the GUI thread must not have called it.
+    assert calls == []
