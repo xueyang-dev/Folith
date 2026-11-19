@@ -45,10 +45,19 @@ from shiboken6 import delete, isValid  # noqa: E402
 from folith.qt import import_wizard, window as window_module  # noqa: E402
 from folith.qt.workers import TaskRunner  # noqa: E402
 
-#: The Issue's acceptance bound.  The old code measured the whole remaining
-#: task here (0.5 s -> 0.503 s, 25 s -> 25.009 s); a real fix is well under a
-#: frame, so 100 ms leaves room for a loaded CI machine without hiding a block.
-BOUND_S = 0.1
+#: Bound for "the caller was not blocked by the pool's teardown".
+#:
+#: 100 ms used to be the number here, and it measured the *scheduler*, not the
+#: teardown: the regression it guards against is a ``~QThreadPool`` join, which
+#: costs the whole remaining task (measured 0.5 s -> 0.503 s, 25 s -> 25.009 s).
+#: On a loaded machine the fixed code occasionally took 116 ms and went red.
+#:
+#: 1 s keeps the guard honest -- an implementation that joins a task with seconds
+#: left cannot pass -- while leaving ~20x headroom over the few-ms reality, so a
+#: busy CI machine no longer turns this into a flake.  The scaling test below is
+#: what pins the *shape* of the defect (time independent of the remaining task),
+#: which no scheduler delay can fake.
+BOUND_S = 1.0
 
 
 @pytest.fixture(scope="module")
@@ -118,6 +127,41 @@ def test_destroying_a_busy_runner_returns_immediately(app):
     assert elapsed < BOUND_S, (
         f"destroying a busy TaskRunner blocked for {elapsed:.3f}s "
         f"(bound {BOUND_S:.3f}s)")
+
+
+def test_teardown_time_does_not_scale_with_the_remaining_task(app):
+    """The defect was a join: teardown cost == the task's remaining time.
+
+    A scheduler hiccup can add a few milliseconds to any measurement, so the
+    fixed-code tests use a generous bound (``BOUND_S``).  This one pins the
+    property those bounds stand for: destroy the runner while a *long* task still
+    has seconds to go, and the teardown must not grow with that remainder.
+    Against the old parented pool this blocks for ~the whole task; with the fix
+    it returns at once and the work finishes off-screen.
+    """
+    remaining_s = 5.0
+    runner, started, finished = _start_busy(app, remaining_s, label="scaling")
+    pool = runner.pool
+    try:
+        assert started.wait(5.0), "the long task never started"
+        begun = time.perf_counter()
+        delete(runner)
+        elapsed = time.perf_counter() - begun
+        still_running = not finished.is_set()
+    finally:
+        finished.set()
+        _dispose_busy(runner, finished)
+        # Leave the process-wide state exactly as the other tests expect it: the
+        # abandoned pool may stay in ``_ABANDONED``, but it must be idle, because
+        # ``_has_running_work()`` is what the exit hook keys off.
+        _pump_until(app, lambda: pool.activeThreadCount() == 0)
+
+    assert elapsed < BOUND_S, (
+        f"destroying a runner with ~{remaining_s:.0f}s of work left blocked for "
+        f"{elapsed:.3f}s (bound {BOUND_S:.3f}s) -- that is the #363 join")
+    assert still_running, (
+        "the test needs the task to still be running when the runner is destroyed; "
+        "otherwise it cannot tell a join from a fast task")
 
 
 def test_delete_later_teardown_of_a_busy_runner_returns_immediately(app):
