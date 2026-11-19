@@ -1062,7 +1062,8 @@ class EngineDialog(QDialog):
         "reviewer_base_url", "ocr_language", "ocr_mode", "ocr_backend",
         "deliver_plain_docx", "deliver_bilingual_docx", "deliver_terms_xlsx",
         "deliver_evidence", "deliver_pdf", "deliver_original_pdf", "deliver_original_docx",
-        "deliver_epub", "connections", "connection_roles", "connection_models", "default_translation_mode",
+        "deliver_epub", "connections", "connection_roles", "connection_models",
+        "connection_levels", "default_translation_mode",
     })
 
     def _collect(self) -> adapter.EngineConfig:

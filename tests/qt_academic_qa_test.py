@@ -259,17 +259,17 @@ def test_reasoning_effort_is_offered_only_for_reasoning_models(qapp):
     from folith.qt.dialogs import EngineDialog
     from folith.qt.workers import TaskRunner
 
+    # #540 PR-2：档位在「用途」区的思考强度列，连接编辑器不再展示推理强度行。
     dialog = EngineDialog(adapter.EngineConfig(provider="OpenAI", model="gpt-4o",
                                                target_lang="简体中文"), TaskRunner())
-    # 推理强度在连接编辑区里：先打开正在用的那条连接。
-    dialog.connection_library.edit(dialog.connection_library.roles["translation"])
     assert dialog.reasoning_row.isHidden()
-    assert dialog._collect().reasoning_effort == ""
-    dialog.model_box.setCurrentText("o3")
-    assert not dialog.reasoning_row.isHidden()
-    dialog.reasoning_box.setCurrentIndex(dialog.reasoning_box.findData("high"))
-    assert dialog._collect().reasoning_effort == "high"
-    dialog.model_box.setCurrentText("gpt-4o")        # 不支持的模型：这一项收起，保留原值
-    assert dialog.reasoning_row.isHidden()
-    assert dialog._collect().reasoning_effort == ""   # 原配置就是自动
+    lib = dialog.connection_library
+    box = lib.level_selectors["translation"]
+    assert [box.itemData(i) for i in range(box.count())] == ["service_default"]
+    levels = {"translation": "high"}
+    from folith.engine import effort_settings
+    assert effort_settings.to_job_fields(levels, "translation", "OpenAI", "o3") == (
+        "high", "provider_default")
+    assert effort_settings.to_job_fields(levels, "translation", "OpenAI", "gpt-4o") == (
+        "high", "provider_default")  # 目录外的值原样照发，不被悄悄清掉
     # 审校改为从已保存的连接里选，不再有自己的「获取模型」按钮。

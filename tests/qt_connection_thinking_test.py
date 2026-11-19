@@ -100,39 +100,23 @@ def isolated(tmp_path, monkeypatch):
 # 1. 控件可见性与选项内容
 # ---------------------------------------------------------------------------
 
-def test_custom_relay_dots3_model_shows_thinking_row(app):
-    """自定义中转站 + dots3-note-prev → thinking_row 可见，至少有服务默认和关闭思考。"""
-    profile = _make_profile(provider="自定义中转站", model="dots3-note-prev",
-                            base_url="http://relay.local/v1")
-    dialog = _dialog(app, profiles=[profile])
-    lib = dialog.connection_library
-    lib.edit("c1")
-    app.processEvents()
-
-    thinking_row = dialog.thinking_row
-    assert not thinking_row.isHidden(), "dots3 模型应显示思考行"
-    box = dialog.thinking_box
-    assert box.count() > 1, "应有多于一个选项"
-    datas = [box.itemData(i) for i in range(box.count())]
-    assert "provider_default" in datas
-    assert "thinking_disabled_vllm" in datas
+def test_custom_relay_dots3_model_offers_a_thinking_level(app):
+    """#540 PR-2：dots3 的「用途 › 思考强度」列含服务默认与 Off（vLLM 开关）。"""
+    from folith.engine import effort_settings
+    assert effort_settings.choices("自定义中转站", "dots3-note-prev") == [
+        ("service_default", "服务默认"), ("off", "Off"), ("on", "On")]
+    assert effort_settings.to_job_fields({"translation": "off"}, "translation",
+                                         "自定义中转站", "dots3-note-prev") == (
+        "", "thinking_disabled_vllm")
 
 
-def test_deepseek_flash_shows_deepseek_label(app):
-    """DeepSeek deepseek-flash → 关闭思考（DeepSeek 系）选项可见。"""
-    profile = _make_profile(pid="c2", provider="DeepSeek", model="deepseek-flash",
-                            custom=False, provider_id="", base_url="")
-    dialog = _dialog(app, profiles=[profile])
-    lib = dialog.connection_library
-    lib.edit("c2")
-    app.processEvents()
-
-    box = dialog.thinking_box
-    assert not dialog.thinking_row.isHidden(), "deepseek-flash 应显示思考行"
-    texts = [box.itemText(i) for i in range(box.count())]
-    assert any("DeepSeek" in t for t in texts), f"应含 DeepSeek 标签，实际：{texts}"
-    datas = [box.itemData(i) for i in range(box.count())]
-    assert "thinking_disabled" in datas
+def test_deepseek_flash_maps_off_to_the_deepseek_switch(app):
+    """#540 PR-2：DeepSeek 的 Off 档走 DeepSeek 自己的关闭开关。"""
+    from folith.engine import effort_settings
+    assert ("off", "Off") in effort_settings.choices("DeepSeek", "deepseek-flash")
+    assert effort_settings.to_job_fields({"translation": "off"}, "translation",
+                                         "DeepSeek", "deepseek-flash") == (
+        "", "thinking_disabled")
 
 
 def test_unknown_model_hides_thinking_row(app):
@@ -260,42 +244,22 @@ def test_lost_model_support_keeps_stored_value(app, isolated):
 # 4. 作用范围提示（#220 A3）：开关影响哪些角色要写在界面上
 # ---------------------------------------------------------------------------
 
-def test_thinking_hint_lists_roles_next_to_switch(app, isolated):
-    """dots3 连接：提示紧挨思考行显示，占位符已替换，列出翻译、辅助、视觉。
-
-    默认没有单独配置视觉连接，视觉沿用翻译连接，所以三个角色都在列
-    （job_reasoning_modes 喂翻译与辅助；follow_connection_thinking 的
-    translation_profile 分支让视觉跟随）。
-    """
+def test_thinking_levels_are_per_role_not_a_connection_switch(app, isolated):
+    """#540 PR-2：三行各有档位下拉；专用视觉连接不改变「作用范围」提示（已移除）。"""
     profile = _make_profile(provider="自定义中转站", model="dots3-note-prev",
                             base_url="http://relay.local/v1")
     dialog = _dialog(app, profiles=[profile])
     lib = dialog.connection_library
-    lib.edit("c1")
     app.processEvents()
-
-    hint = dialog.thinking_hint
-    assert not hint.isHidden(), "思考行可见时，作用范围提示也应可见"
-    text = hint.text()
-    assert "{v0}" not in text, f"占位符必须已被替换，实际：{text!r}"
-    for role in ("翻译", "辅助", "视觉"):
-        assert role in text, f"提示应列出{role}，实际：{text!r}"
-
-
-def test_thinking_hint_drops_vision_when_dedicated_vision_connection(app, isolated):
-    """单独配置了视觉连接后，视觉不再跟随翻译连接的开关，提示里也不应再列视觉。"""
-    core.save_ocr_online_config(provider="自定义中转站", model="vision-model",
-                                api_key="sk-vision", base_url="http://vision.local/v1")
-    profile = _make_profile(provider="自定义中转站", model="dots3-note-prev",
-                            base_url="http://relay.local/v1")
-    dialog = _dialog(app, profiles=[profile])
-    lib = dialog.connection_library
-    lib.edit("c1")
-    app.processEvents()
-
-    text = dialog.thinking_hint.text()
-    assert "视觉" not in text, f"有专用视觉连接时不应列视觉，实际：{text!r}"
-    assert "翻译" in text and "辅助" in text
+    assert set(lib.level_selectors) == {"translation", "reviewer", "vision"}
+    assert dialog.thinking_hint.isHidden(), "连接编辑器不再展示作用范围提示"
+    # 视觉沿用翻译但可单独改
+    from folith.engine import effort_settings
+    levels = {"translation": "low"}
+    assert effort_settings.effective_level(levels, "vision") == "low"
+    levels["vision"] = "off"
+    assert effort_settings.effective_level(levels, "vision") == "off"
+    dialog.close()
 
 
 def test_thinking_hint_hides_with_unknown_model(app):
