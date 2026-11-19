@@ -136,17 +136,18 @@ def _status_label(job_id: str, summary: Mapping[str, Any], signature: str) -> st
     """
     if "status_label" in summary:
         return str(summary["status_label"])
-    core = _core()
+    # #514: derive the label from the summary itself.  Loading the full state
+    # here made every cold list refresh read a 30 MB state per delivered task.
+    progress = str(summary.get("progress_label") or "待处理")
+    status = str(summary.get("runtime_status") or "")
+    if status and status != "idle":
+        label = progress or status
+    else:
+        label = progress
     key = _label_cache_key(job_id, summary, signature)
     cached = _LABEL_CACHE.get(key)
     if cached is not None:
         return cached
-    try:
-        state = core.load_job_state(job_id)
-        label = core.task_status_label(state or {}, job_id) if state \
-            else str(summary.get("progress_label") or "待处理")
-    except Exception as exc:  # noqa: BLE001 - a label must never break the list
-        label = f"{summary.get('progress_label') or '待处理'}（状态读取失败：{exc}）"
     if len(_LABEL_CACHE) > _LABEL_CACHE_LIMIT:
         _LABEL_CACHE.clear()
     _LABEL_CACHE[key] = label

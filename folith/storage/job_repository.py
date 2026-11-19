@@ -498,6 +498,7 @@ def build_job_summary(job_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
                              if pairs else None),
         "review_count": len(findings),
         "translation_state_identity": state.get("translation_state_identity"),
+        "delivery_status": state.get("delivery_status"),
     }
 
 
