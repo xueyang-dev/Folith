@@ -23,6 +23,7 @@ break:
 from __future__ import annotations
 
 import copy
+import os
 import json
 import re
 from pathlib import Path
@@ -977,6 +978,65 @@ def test_replaced_or_truncated_journal_does_not_reuse_a_byte_offset(
         replacement.replace(path)
     else:
         _rewrite_journal(job_id, records[:1])
+    loaded = core.load_job_state(job_id)
+    cold = repo.load_job_state_cached(job_id, force_reload=True)
+    assert loaded == cold
+    assert len(loaded["pairs"]) == 2
+
+
+def _replace_journal_with_a_larger_single_record(job_id: str, records) -> None:
+    """Rewrite the journal with one record the size check cannot rule out."""
+    path = journal.journal_path(job_id)
+    replacement = path.with_suffix(".replacement")
+    record = copy.deepcopy(records[0])
+    record["pairs"][0]["target"] = "新文件里的译文" * 300
+    replacement.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    replacement.replace(path)
+
+
+def test_a_failed_journal_stat_never_serves_a_state_without_the_journal(
+        temp_job_env, monkeypatch):
+    """A journal we cannot stat is not an empty journal (#441).
+
+    On Windows a scanner can hold a freshly replaced journal for a moment.  The
+    signature used to collapse to ``(0, 0)`` and the loader replayed zero bytes,
+    which silently dropped every committed batch for that read.
+    """
+    job_id = "journal-stat-failure"
+    _crash_run(job_id, _paragraphs(8))
+    records = journal.read_mutations(job_id)
+    _rewrite_journal(job_id, records[:2])
+    repo.invalidate_cache()
+    assert len(core.load_job_state(job_id)["pairs"]) == 4
+
+    path = journal.journal_path(job_id)
+    real_stat = Path.stat
+    failures = [1]
+
+    def flaky_stat(self, *args, **kwargs):
+        if self == path and failures:
+            failures.pop()
+            raise PermissionError(13, "simulated sharing violation")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    assert len(core.load_job_state(job_id)["pairs"]) == 4
+    # The failed read must not have poisoned the cache for the next caller.
+    assert len(core.load_job_state(job_id)["pairs"]) == 4
+    assert len(repo.load_job_state_cached(job_id, force_reload=True)["pairs"]) == 4
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows repetition of the #441 flake")
+@pytest.mark.parametrize("attempt", range(20))
+def test_replaced_journal_reloads_cold_repeatedly(temp_job_env, attempt):
+    """The replacement scenario that failed once on Windows, 20 times over."""
+    job_id = f"journal-replaced-repeat-{attempt}"
+    _crash_run(job_id, _paragraphs(8))
+    records = journal.read_mutations(job_id)
+    _rewrite_journal(job_id, records[:2])
+    repo.invalidate_cache()
+    assert len(core.load_job_state(job_id)["pairs"]) == 4
+    _replace_journal_with_a_larger_single_record(job_id, records)
     loaded = core.load_job_state(job_id)
     cold = repo.load_job_state_cached(job_id, force_reload=True)
     assert loaded == cold
