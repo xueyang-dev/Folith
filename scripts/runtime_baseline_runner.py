@@ -2077,11 +2077,20 @@ def current_rss_mb() -> float | None:
                         ("PagefileUsage", ctypes.c_size_t),
                         ("PeakPagefileUsage", ctypes.c_size_t)]
 
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        # The pseudo-handle is a 64-bit HANDLE on x64; ctypes' default int return
+        # value would truncate it and every call would fail.  Restype/argtypes are
+        # the difference between "no samples" and a number (Windows CI caught it).
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
         counters = Counters()
         counters.cb = ctypes.sizeof(Counters)
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        if not ctypes.windll.psapi.GetProcessMemoryInfo(
-                handle, ctypes.byref(counters), counters.cb):
+        if not psapi.GetProcessMemoryInfo(
+                kernel32.GetCurrentProcess(), ctypes.byref(counters),
+                wintypes.DWORD(counters.cb)):
             return None
         return counters.WorkingSetSize / (1024.0 * 1024.0)
     except Exception:  # noqa: BLE001 - a number we cannot read is not a failure
@@ -2104,9 +2113,14 @@ def current_handle_count() -> int | None:
         import ctypes
         from ctypes import wintypes
 
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.GetProcessHandleCount.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetProcessHandleCount.restype = wintypes.BOOL
         count = wintypes.DWORD()
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        if not ctypes.windll.kernel32.GetProcessHandleCount(handle, ctypes.byref(count)):
+        if not kernel32.GetProcessHandleCount(kernel32.GetCurrentProcess(),
+                                              ctypes.byref(count)):
             return None
         return int(count.value)
     except Exception:  # noqa: BLE001

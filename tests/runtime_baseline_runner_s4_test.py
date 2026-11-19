@@ -121,7 +121,31 @@ def test_zero_cycles_is_a_failure_not_a_pass():
 
 
 # ---------------------------------------------------------------------------
-# 2. one short real round: the scenario runs, samples and reports
+# 2. the samplers work on the platform that runs the CI job
+# ---------------------------------------------------------------------------
+
+def test_rss_and_handle_sampling_read_a_positive_value():
+    """The endurance verdict is only as good as these two numbers.
+
+    On Windows the pseudo-handle is a 64-bit value; passing it through ctypes with
+    the default ``int`` return type truncates it and every call returns nothing,
+    which is exactly what happened on the Windows runner: the round ran 120 s and
+    produced zero handle samples. This test reads both samplers for real, on
+    whatever platform the job runs on.
+    """
+    mod = _module()
+    rss = mod.current_rss_mb()
+    assert rss is not None and rss > 0, (
+        "could not read this process's RSS; the endurance verdict would have no "
+        "memory evidence on this platform")
+    handles = mod.current_handle_count()
+    assert handles is not None and handles > 0, (
+        "could not read this process's handle count; the endurance verdict would "
+        "have no handle evidence on this platform")
+
+
+# ---------------------------------------------------------------------------
+# 3. one short real round: the scenario runs, samples and reports
 # ---------------------------------------------------------------------------
 
 def test_a_short_s4_round_really_loops_and_reports(tmp_path):
