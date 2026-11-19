@@ -32,7 +32,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE = ROOT / "scripts" / "qt_lifecycle_probe.py"
 
 
-def _run_probe(tmp_path: Path, *, engine_process: str, name: str) -> dict:
+def _run_probe(tmp_path: Path, *, engine_process: str, name: str,
+               scenario: str = "lifecycle-main") -> dict:
     data_dir = tmp_path / name / "data"
     report_path = tmp_path / name / "report.json"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -46,13 +47,47 @@ def _run_probe(tmp_path: Path, *, engine_process: str, name: str) -> dict:
     # The probe pins its own data/log dirs from --data-dir.
     env.pop("FOLITH_OUTPUT_DIR", None)
     result = subprocess.run(
-        [sys.executable, str(PROBE), "--scenario", "lifecycle-main",
+        [sys.executable, str(PROBE), "--scenario", scenario,
          "--data-dir", str(data_dir), "--out", str(report_path),
          "--stub-delay", "0.2", "--timeout", "180"],
         cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=300)
     assert report_path.is_file(), (
         f"no report; rc={result.returncode}\n{result.stdout[-2000:]}\n{result.stderr[-3000:]}")
     return json.loads(report_path.read_text(encoding="utf-8")), result
+
+
+@pytest.mark.parametrize("engine_process,expected", [("0", False), ("1", True)])
+def test_exit_while_paused_passes_in_both_execution_models(tmp_path, engine_process,
+                                                           expected):
+    """G-E matrix: quitting while a task is *paused* behaves the same in both models.
+
+    The pause contract keeps the worker (or the child) and ``.worker.lock``
+    alive.  Closing the window then has to notify that owner, wait for it to
+    exit, release the lock and leave a resumable state — without finishing the
+    task.  In the child model the exit path is stdin EOF, so this is also the
+    "kill the UI" direction of G-E item 2, seen from the user's side.
+    """
+    pytest.importorskip("PySide6")
+    report, result = _run_probe(tmp_path, engine_process=engine_process,
+                                name=f"paused-exit-{engine_process}",
+                                scenario="paused-exit")
+    assert result.returncode == 0, (
+        f"probe failed (engine_process={engine_process}); report={json.dumps(report, ensure_ascii=False)[:3000]}")
+    assert report["engine_process"] is expected
+    assert report["ok"] is True, json.dumps(report, ensure_ascii=False)[:3000]
+
+    # The product's pause keeps the run alive (and the lock held) before exit.
+    assert report["paused"] is True
+    assert report["status_when_paused"] == "paused"
+    assert report["lock_held_while_paused"] is True
+    # Quitting stopped it: the window is gone and the lock was released ...
+    assert report["closed"] is True
+    assert report["exit_after"]["lock"] in (False, None)
+    # ... without the task being finished.
+    assert report["completed"] is False
+    # paused-exit does not report a window-failure list (it asserts ok instead).
+    assert not report.get("failures")
+    assert all(not item["timed_out"] for item in report["waits"]), report["waits"]
 
 
 @pytest.mark.parametrize("engine_process,expected", [("0", False), ("1", True)])

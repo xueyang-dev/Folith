@@ -580,6 +580,71 @@ def test_start_returns_before_the_child_is_ready(isolated, gateway):
         timeout=120)
 
 
+def test_a_second_start_reuses_the_live_child(isolated, stub_child, monkeypatch):
+    """G-E matrix: pressing Start twice must not spawn a second engine.
+
+    The in-process path answers "already running" (``start_job_worker`` returns
+    ``False`` and the command layer keeps the run).  The subprocess path has to
+    answer the same way from the GUI's own registry -- a second child for one
+    task would hold two handles, two tokens and two writers.
+    """
+    monkeypatch.setenv("ENGINE_STUB_MODE", "ignore-eof")
+    job_id = "e3twice001"
+    _create_job(job_id)
+    first = supervisor_module.start_engine(
+        job_id, mode="start", connection=_connection("http://127.0.0.1:9/v1"))
+    assert first.started, first.reason
+    child = supervisor_module.supervisor(job_id)
+    assert child is not None and child.running
+
+    second = supervisor_module.start_engine(
+        job_id, mode="start", connection=_connection("http://127.0.0.1:9/v1"))
+    assert second.started is True
+    assert second.already_running is True
+    assert second.pid == first.pid
+    assert supervisor_module.supervisor(job_id) is child
+
+
+def test_manual_save_during_an_engine_run_is_rejected_and_keeps_the_draft(
+        isolated, slow_gateway):
+    """G-E matrix: saving a manual edit while a *child* runs is refused.
+
+    The GUI-side save takes ``.worker.lock`` to prove nothing is running; the
+    child owns that lock for the whole run, so the save must fail with the same
+    user-facing message the in-process path uses ("任务正在后台处理…") and leave
+    the draft alone.  Without this, the two models would disagree about what a
+    user sees while a translation runs.
+    """
+    url, _log = slow_gateway
+    data_dir, _log_dir = isolated
+    job_id = "e3editwhile1"
+    _create_job(job_id, text="".join(
+        f"Sentence {index} about the supervisor.\n" for index in range(24)))
+    supervisor_module.set_launch_command(None)
+    outcome = supervisor_module.start_engine(
+        job_id, mode="start", connection=_connection(url))
+    assert outcome.started, outcome.reason
+    # Wait for the child to be far enough to own both the lock and a translated
+    # pair: that is the state a user's save lands in mid-run.
+    assert _wait_until(
+        lambda: exit_flow.worker_lock_held(data_dir, job_id)
+        and bool((core.load_job_state(job_id) or {}).get("pairs")),
+        timeout=90), "the child never reached a locked, translated state"
+
+    state = core.load_job_state(job_id)
+    assert state and state["pairs"], state
+    baseline = state["pairs"][0]["target"]
+    core.save_translation_drafts(
+        job_id, {"0": {"text": "人工确认的译文。", "baseline": baseline}})
+
+    with pytest.raises(RuntimeError, match="后台处理"):
+        core.save_translation_edit(job_id, 0, "人工确认的译文。")
+    assert core.load_job_state(job_id)["pairs"][0]["target"] == baseline
+    assert core.load_translation_drafts(job_id)["0"]["text"] == "人工确认的译文。"
+
+    supervisor_module.shutdown_all(budget=5.0)
+
+
 def test_stop_is_a_notification_and_a_bounded_wait(isolated, stub_child,
                                                    monkeypatch):
     """An engine that ignores EOF is terminated, not joined."""
