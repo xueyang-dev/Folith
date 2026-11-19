@@ -375,15 +375,60 @@ class EngineDialog(QDialog):
                     self.deliver_original_pdf_box, self.deliver_original_docx_box,
                     self.deliver_epub_box):
             box.toggled.connect(self._immediate_changed)
-        for combo in (self.theme_box, self.language_box, self.ocr_backend_box,
+        # 界面语言不进「立即生效」：改语言要先经过重启确认（#547）。
+        for combo in (self.theme_box, self.ocr_backend_box,
                       self.ocr_mode_box, self.ocr_language_box, self.default_mode_box, self.accent_box):
             combo.currentIndexChanged.connect(self._immediate_changed)
+        self.language_box.currentIndexChanged.connect(self._language_changed)
         self.target_box.currentTextChanged.connect(self._immediate_changed)
         self.ocr_language_box.editTextChanged.connect(self._immediate_changed)
 
     def _immediate_changed(self, *_args) -> None:
         if not self._loading:
             self._defaults_timer.start()
+
+    def _language_changed(self, *_args) -> None:
+        """#547：语言变化先确认；同值 / 构造期不弹框，取消则原样退回。"""
+        if self._loading:
+            return
+        code = str(self.language_box.currentData() or i18n.DEFAULT_LANGUAGE)
+        if code == self.language_preference:
+            return
+        parent = self.parentWidget()
+        if parent is None or not hasattr(parent, "_confirm"):
+            self._apply_preferences()      # 无主窗口（嵌入引导等）时沿用旧行为
+            return
+        job_id = str(getattr(parent, "_current_job_id", "") or "")
+        running = bool(job_id and adapter.job_is_alive(job_id))
+        message = i18n.tr('切换到「{v0}」需要重启 Folith 才能完全生效。',
+                          v0=i18n.language_label(code))
+        if running:
+            message += "\n\n" + i18n.tr('将保存编辑并停止正在运行的任务，重新打开后可以继续。')
+        if not parent._confirm(i18n.tr('需要重启 Folith'), message,
+                               yes=i18n.tr('立即重启'), no=i18n.tr('取消')):
+            index = self.language_box.findData(self.language_preference)
+            self.language_box.blockSignals(True)
+            self.language_box.setCurrentIndex(max(0, index))
+            self.language_box.blockSignals(False)
+            return
+        self._apply_preferences()           # 先保存，再走与正常退出相同的流程
+        from folith.desktop import relaunch
+        relaunch.request()
+        QTimer.singleShot(0, parent, lambda: self._watch_exit_for_relaunch(parent))
+        parent.close()
+
+    def _watch_exit_for_relaunch(self, parent, tries: int = 0) -> None:
+        """#547：退出若被取消 / 失败，就不重启，只提示语言下次启动生效。"""
+        from folith.desktop import relaunch
+
+        if not relaunch.pending() or not parent.isVisible():
+            return                          # 已接受退出：app.py 在锁释放后重启
+        if getattr(parent, "_exit_in_progress", False) and tries < 120:
+            QTimer.singleShot(500, parent,
+                              lambda: self._watch_exit_for_relaunch(parent, tries + 1))
+            return
+        relaunch.clear()
+        parent._notice(i18n.tr('语言已保存，下次启动时生效'), task=False)
 
     def _defaults_config(self) -> adapter.EngineConfig:
         """当前**已保存**的连接 + 界面上的其余选项（正在改、还没应用的连接不混进来）。"""
@@ -944,13 +989,12 @@ class EngineDialog(QDialog):
             self.language_box.addItem(label, code)
         self._select_language(self.language_preference)
         self.language_box.setFixedWidth(200)
-        restart = QLabel(i18n.tr('重启后生效'))
-        style_module.set_text_role(restart, "time")
+        self.language_box.setToolTip(i18n.tr('切换语言后需要重启才能完全生效'))
 
         group = components.FormGroup()
         group.add_row(_setting_row(i18n.tr('外观'), self._build_appearance_picker()))
         group.add_row(_setting_row(i18n.tr('主题色'), self.accent_picker))
-        group.add_row(_setting_row(i18n.tr('界面语言'), self.language_box, restart))
+        group.add_row(_setting_row(i18n.tr('界面语言'), self.language_box))
         page_layout.addWidget(group)
         page_layout.addStretch(1)
         return page
