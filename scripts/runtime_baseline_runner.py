@@ -2445,6 +2445,16 @@ class _EnduranceDriver:
 #: S5 exists because S1 measures them on a 1,000-paragraph document while the
 #: plan's numbers are for a finished 10,000-segment task.
 S5_DEFAULT_SEGMENTS = 10000
+#: Reported beside the five G3 operations, without a budget (B-44): they are what
+#: a user feels first, and a release note must not lack them.
+OBSERVATION_OPERATIONS = ("start_translation", "open_task")
+#: Set when this module is imported, i.e. at process start: the clock for
+#: "启动到可交互" (B-44 / #514).
+_PROCESS_STARTED_AT = time.monotonic()
+
+
+class _SeededTaskReady(Exception):
+    """Control flow: the task came from a seed, so the build path is skipped."""
 
 
 class _InteractionDriver(_ScenarioDriver):
@@ -2465,7 +2475,10 @@ class _InteractionDriver(_ScenarioDriver):
         self._started = self.clock()
         self.job_id = self.preset_job
         self.result["job_id"] = self.job_id
-        self.result["steps"].append({"step": "task_open_requested", "ok": True})
+        # Open from the first callback, as this driver always did: opening a
+        # 10,000-segment seeded task takes long enough that deferring the call to
+        # a tick made the open-state machine race its own deadline.
+        self._open_requested_at = self.clock()
         self.window.open_job(self.job_id)
 
     def _tick_open(self, now: float) -> None:
@@ -2480,6 +2493,12 @@ class _InteractionDriver(_ScenarioDriver):
                 self._finish(settled=False)
             return
         self.result["steps"].append({"step": "opened", "ok": True})
+        # B-44 observational row: opening a task is one of the two things users
+        # feel first.  No budget (the plan never set one), but measured and
+        # reported so the release table can compare versions.
+        if getattr(self, "_open_requested_at", None):
+            self.operations.add("open_task", "complete",
+                                (now - self._open_requested_at) * 1000.0)
         self._interact_until = now + self.seconds
         self._last_scroll = self._last_edit = self._last_page = now
         self._last_panel = now
@@ -2517,6 +2536,9 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
                     }}
     paths, app, window, adapter, monitor, jank = _prepare_window(
         args, data_dir, log_dir, result)
+    # "启动到可交互": process start -> the window exists and is usable.  No budget
+    # (the plan set none), but B-44 wants it in the report and the release table.
+    interactive_at = time.monotonic()
     operations = OperationRecorder()
 
     # -- build the finished big task (not measured) ------------------------
@@ -2524,6 +2546,23 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
     build_started = time.monotonic()
     task_build: dict = {}
     try:
+        if getattr(args, "seed_template", ""):
+            # The 10,000-segment task the plan's budgets are defined on cannot be
+            # produced by translating a 10,000-paragraph document in a measurement
+            # window; it is seeded from a task the engine really finished
+            # (_seed_tiled_task, the same path S3 uses), and the report says so.
+            seeded = _seed_tiled_task(
+                adapter, str(args.seed_template), segments,
+                fixture=fixture, filename=f"g3-{segments}-segments.epub")
+            result["steps"].append({"step": "task_seeded", "ok": True, **seeded})
+            task_build = {"job_id": seeded["job_id"],
+                          "segments": seeded.get("segments") or segments,
+                          "seeded_from": str(args.seed_template),
+                          "build_seconds": round(time.monotonic() - build_started, 2)}
+            job_id = task_build["job_id"]
+            pairs = int(task_build["segments"])
+            result["steps"].append({"step": "task_built", "ok": True, **task_build})
+            raise _SeededTaskReady()
         config = window.config
         created = adapter.import_documents([fixture], config)[0]
         job_id = created.job_id
@@ -2563,6 +2602,8 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
                 "note": "the built task's segment count is the fixture's; pass "
                         "--seed-template/--seed-segments for the 10,000-segment "
                         "task the plan's budgets are defined on"})
+    except _SeededTaskReady:
+        pass
     except Exception as exc:  # noqa: BLE001 - reported, not swallowed
         import traceback
 
@@ -2594,8 +2635,18 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
                        "page": driver.pages, "panel": driver.panels},
             "build": task_build,
         }
-        result["g3"] = g3_report(operations, segments=int(task_build.get("segments") or 0),
-                                 failures=result["failures"])
+        result["g3"] = g3_report(
+            operations, segments=int(task_build.get("segments") or 0),
+            failures=result["failures"],
+            observational={
+                "start_to_interactive": {
+                    "label": "启动到可交互（进程启动 → 窗口可用）",
+                    "p95_ms": round((interactive_at - _PROCESS_STARTED_AT) * 1000.0, 2),
+                    "count": 1,
+                    "budget_ms": None,
+                    "observational": True,
+                },
+            })
         result["run_window"] = {
             "measured": False,
             "present": False,
@@ -2606,7 +2657,8 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
 
 
 def g3_report(operations: OperationRecorder, *, segments: int,
-              failures: list[str] | None = None) -> dict:
+              failures: list[str] | None = None,
+              observational: dict | None = None) -> dict:
     """The G3 table: each core operation's p95 against the plan's budget.
 
     ``ok`` requires every operation to have been sampled *and* to be within
@@ -2636,11 +2688,29 @@ def g3_report(operations: OperationRecorder, *, segments: int,
                       "count": entry.get("count"),
                       "budget_ms": float(spec.get("budget_ms")),
                       "within_budget": within}
+    # B-44: two more things a user feels first -- how long the app takes to be
+    # usable (start to interactive) and how long opening a task takes -- are
+    # reported beside the five, with no budget and no say in pass/fail, because
+    # the plan never set a number for them.  They are measured, labelled and
+    # compared across versions; they are not silently promoted to gates.
+    observational = dict(observational or {})
+    for name in OBSERVATION_OPERATIONS:
+        entry = ((per_operation.get(name) or {}).get("phases") or {}).get("complete") or {}
+        if not entry.get("measured") or entry.get("p95") is None:
+            continue
+        observational[name] = {
+            "label": SUPPORT_OPERATIONS[name]["label"],
+            "p95_ms": round(float(entry["p95"]), 2),
+            "count": entry.get("count"),
+            "budget_ms": None,
+            "observational": True,
+        }
     ok = bool(not missing and not over_budget and not (failures or []))
     return {
         "scenario": "G3",
         "task_segments": segments,
         "operations": rows,
+        "observational": observational,
         "missing": missing,
         "over_budget": over_budget,
         "budgets_from": "0.8.2 plan §10 (p95, 10,000-segment task)",
