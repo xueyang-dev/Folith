@@ -182,9 +182,19 @@ def test_switching_projects_reads_no_task_state_when_nothing_changed(env, monkey
     adapter.unsorted_detail()
     adapter.projects_overview()
     adapter.pending_total()
-    real_reads = [r for r in reads if real(r) is not None]
-    assert real_reads == [], real_reads              # 缓存命中：没有任何任务状态被读取
-    assert project_digest.STATS["loads"] == loads["loads"]
+    # A3: the read-only digest path must not pickle-copy a full state.
+    # A shallow view reads the cache without _isolated_copy; the old path did
+    # one pickle round-trip per task.  Spy the copy helper directly so the
+    # assertion fails if a caller switches back to the full-state API.
+    from folith.storage import job_repository as _repo
+    copies: list[str] = []
+    real_copy = _repo._isolated_copy
+    monkeypatch.setattr(_repo, "_isolated_copy",
+                        lambda state: copies.append("copy") or real_copy(state))
+    copies.clear()
+    adapter.projects_overview()
+    assert copies == [], copies
+    assert project_digest.STATS["loads"] == loads["loads"], project_digest.STATS
     # 只有变了的任务才重读：改一个任务，恰好重读它一次。
     state = real("manual-ch3")
     state["knowledge_candidates"] = state["knowledge_candidates"][:-1]
@@ -192,7 +202,8 @@ def test_switching_projects_reads_no_task_state_when_nothing_changed(env, monkey
     reads.clear()
     adapter.project_detail(ids["device"])
     adapter.project_detail(ids["annual"])
-    assert [r for r in reads if real(r) is not None] == ["manual-ch3"], reads
+    # Only the changed task is re-read -- measured by the digest counter.
+    assert project_digest.STATS["loads"] == loads["loads"] + 1, project_digest.STATS
 
 
 def test_badge_counts_are_computed_once_per_refresh_with_the_cheap_path(env, monkeypatch):  # noqa: F811
@@ -266,3 +277,44 @@ def test_candidate_rows_match_per_candidate_context(env):  # noqa: F811
     assert clash["conflicts"] == slow["conflicts"] and clash["has_conflict"]
     assert clash["is_new"] is False and by_source["hub"]["is_new"] is True
     assert clash["first_reference"].startswith("第 3 章 · #")
+
+
+# ---------------------------------------------------------------------------
+# A3: read-only state view must not pickle-copy a cached 30 MB state.
+# ---------------------------------------------------------------------------
+def test_state_view_of_cached_job_never_isolated_copies(env, monkeypatch) -> None:
+    from folith.storage import job_repository as repo
+
+    core = env["core"]
+    state = core.new_job_state("view.docx")
+    state["pairs"] = [{"source": "a", "target": "b"}]
+    core.save_job_state("view-job", state)
+    assert core.load_job_state("view-job") is not None  # warm the state cache
+
+    calls: list[str] = []
+    real_copy = repo._isolated_copy
+    monkeypatch.setattr(repo, "_isolated_copy",
+                        lambda s: calls.append("copy") or real_copy(s))
+
+    view = repo.load_job_state_view("view-job", ("filename", "pairs"), output_dir=None)
+    assert view is not None and view["filename"] == "view.docx"
+    assert calls == [], "a cached view must not pickle-copy the whole state"
+
+
+def test_state_view_shares_nested_objects_with_cache(env) -> None:
+    """A3 anti-pollution contract: the view shares nested objects with the
+    cached canonical state, so callers must treat it as read-only.  This pins
+    the sharing; changing the view to a deep copy would break it."""
+    from folith.storage import job_repository as repo
+
+    core = env["core"]
+    state = core.new_job_state("view2.docx")
+    state["pairs"] = [{"source": "x", "target": "y"}]
+    core.save_job_state("view-job-2", state)
+    core.load_job_state("view-job-2")  # warm
+
+    view = repo.load_job_state_view("view-job-2", ("pairs",), output_dir=None)
+    from folith.storage.job_repository import state_signature
+    sig = state_signature("view-job-2")
+    cached = repo._STATE_CACHE[sig]
+    assert view is not None and view["pairs"] is cached["pairs"]

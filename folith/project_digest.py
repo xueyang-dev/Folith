@@ -71,7 +71,11 @@ def read_digests(core) -> list[dict]:
             STATS["hits"] += 1
             digests.append(cached[1])
             continue
-        state = core.load_job_state(job_id)
+        # A3: read-only consumer -- a shallow projection avoids the pickle
+        # round-trip of a book-sized state (and the gen2 GC it triggers).
+        from folith.storage import job_repository as _repo
+        state = _repo.load_job_state_view(
+            job_id, (*SLIM_KEYS, "pipeline_config"), output_dir=output_dir)
         if state is None:
             continue
         STATS["loads"] += 1
