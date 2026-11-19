@@ -258,7 +258,7 @@ class EngineDialog(QDialog):
         self._clamp_to_screen()
         # 页面 sizeHint 要等第一次布局才算得准：构造期 _fit_height 拿到的是旧值，
         # 会按偏矮的内容把窗口定死，「用途」因此要滚动才看得见。布局完成后再量一次。
-        QTimer.singleShot(0, self._refit_after_show)
+        QTimer.singleShot(0, self, self._refit_after_show)
 
     def _refit_after_show(self) -> None:
         if self.isVisible():
