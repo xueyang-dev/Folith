@@ -84,7 +84,7 @@ def test_toast_timeout_hover_replacement_and_focus(window, app, monkeypatch):
     app.sendEvent(toast, QEvent(QEvent.Type.Enter))
     assert not toast.timer.isActive()
     app.sendEvent(toast, QEvent(QEvent.Type.Leave))
-    assert toast.timer.isActive() and toast.timer.interval() == 3000
+    assert toast.timer.isActive() and toast.timer.interval() == 5000
     monkeypatch.setattr(toast, 'underMouse', lambda: False)
     main.home.search_edit.setFocus()
     toast._fade()

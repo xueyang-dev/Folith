@@ -1,24 +1,47 @@
-"""Window-local notifications: no modal grab and no editor focus change."""
+"""Window-local notifications: no modal grab and no editor focus change.
+
+#520：小通知共用一套视觉语言。语气（success / info / warning / error / progress）
+决定图标与颜色，颜色只走 :data:`folith.qt.theme.STATUS_TONES` 的语义 token；
+错误与警告常驻，其余约 5 秒后淡出；位置固定在窗口底部中央，长名字中间省略。
+"""
 from __future__ import annotations
 
 import weakref
 
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
-                               QPushButton, QVBoxLayout)
+                               QPushButton, QToolButton, QVBoxLayout)
 
-from . import i18n, icons, motion, style
+from . import i18n, icons, motion, style, theme
+
+
+#: 语气 → 状态语气键（QLabel[textRole="status"][tone=…] 的 QSS 已有这些颜色）
+TONE_STATUS = {"success": "done", "info": "active", "warning": "attention",
+               "error": "error", "progress": "active"}
+#: 语气 → 主题图标引擎里的图标名
+TONE_ICONS = {"success": "check-circle", "info": "info", "warning": "alert",
+              "error": "alert", "progress": "pulse"}
+#: 自动消失时间（毫秒）：错误与警告常驻，由用户关闭。
+DISMISS_MS = 5000
+
+
+def tone_of(error: bool = False, tone: str = "") -> str:
+    return tone if tone in TONE_STATUS else ("error" if error else "info")
 
 
 class Toast(QFrame):
     def __init__(self, parent):
         super().__init__(parent)
-        self.setObjectName("popover")
+        self.setObjectName("noticeToast")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self.icon_label = QLabel(self)
+        self.icon_label.setAccessibleName("")
         self.label = QLabel(self)
         self.label.setTextFormat(Qt.TextFormat.PlainText)
-        self.label.setWordWrap(True)
+        self.label.setWordWrap(False)
         self.label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        style.set_text_role(self.label, "status")
         self.details = QPushButton(i18n.tr('详情'), self)
         self.details.clicked.connect(self._show_details)
         self.close_button = QPushButton(self)
@@ -28,8 +51,10 @@ class Toast(QFrame):
         self.close_button.setAccessibleDescription(i18n.tr('关闭当前通知，继续工作。'))
         self.close_button.clicked.connect(self.hide)
         row = QHBoxLayout(self)
-        row.setContentsMargins(16, 10, 10, 10)
-        row.addWidget(self.label, 1)
+        row.setContentsMargins(14, 10, 10, 10)
+        row.setSpacing(theme.SPACE["sm"])
+        row.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.label, 1, Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.details)
         row.addWidget(self.close_button)
         self.timer = QTimer(self)
@@ -39,44 +64,59 @@ class Toast(QFrame):
         self._effect = QGraphicsOpacityEffect(self)
         self.setGraphicsEffect(self._effect)
         self._detail = ""
+        self._message = ""
+        self._tone = "info"
         self.hide()
         parent.installEventFilter(self)
         for control in (self.close_button, self.details, self.label):
             control.installEventFilter(self)
 
-    def present(self, message: str, *, error=False, detail=""):
+    def present(self, message: str, *, error=False, detail="", tone: str = ""):
         self._motion.stop("fade")
         self._effect.setOpacity(1)
-        compact = " ".join(message.split())
-        long = len(compact) > 240
-        self._message = message
+        self._tone = tone_of(error, tone)
+        self._message = " ".join(message.split())
         self._detail = detail
-        self.label.setText(compact[:239] + "…" if long else message)
-        self.label.setProperty("error", "true" if error else "false")
+        status = TONE_STATUS[self._tone]
+        self.icon_label.setPixmap(icons.pixmap(TONE_ICONS[self._tone], 16,
+                                               theme.STATUS_TONES[status]))
+        self.label.setProperty("tone", status)
         style.repolish(self.label)
+        self.label.setText(self._message)
+        # 完整文字始终在提示与辅助技术里，省略只发生在可见的单行上。
         self.setAccessibleName(message)
         self.setAccessibleDescription(detail or message)
-        self.details.setVisible(bool(detail) or long)
+        self.details.setVisible(bool(detail) or len(self._message) > 240)
         self.details.setAccessibleDescription(message)
         self._place()
         self.show()
         self.raise_()
-        self.timer.start(3000)
+        if self._tone in ("error", "warning"):
+            self.timer.stop()          # 错误 / 警告常驻，等用户关闭
+        else:
+            self.timer.start(DISMISS_MS)
+
+    def _elided(self) -> str:
+        """长文件名中间省略：保留开头和结尾，完整文字留在 tooltip / 辅助名里。"""
+        width = max(80, self.width() - 140)  # 图标 + 两个按钮 + 内边距
+        return QFontMetrics(self.label.font()).elidedText(
+            self._message, Qt.TextElideMode.ElideMiddle, width)
 
     def _place(self):
         parent = self.parentWidget()
-        self.setFixedWidth(max(120, min(580, parent.width() - 32)))
+        self.setFixedWidth(max(320, min(580, parent.width() - 40)))
+        self.label.setText(self._elided())
+        self.label.setToolTip(self._message)
         self.adjustSize()
-        # macOS 上内容伸进了透明标题栏：从安全区下面开始算，不压住窗口标题。
-        handle = parent.windowHandle()
-        top = handle.safeAreaMargins().top() if handle is not None else 0
-        self.move((parent.width() - self.width()) // 2, parent.menuBar().height() + top + 12)
+        # #520：底部中央、状态区上方；不随菜单栏高度变化，也不压住窗口标题。
+        y = max(0, parent.height() - self.height() - 24)
+        self.move((parent.width() - self.width()) // 2, y)
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.Resize and self.isVisible():
+        if event.type() == QEvent.Type.Resize and watched is self.parentWidget() and self.isVisible():
             self._place()
         if event.type() == QEvent.Type.FocusOut and self.isVisible():
-            self.timer.start(3000)
+            self._resume_timer()
         return False
 
     def enterEvent(self, event):
@@ -86,10 +126,16 @@ class Toast(QFrame):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.timer.start(3000)
+        self._resume_timer()
         super().leaveEvent(event)
 
+    def _resume_timer(self):
+        if self._tone not in ("error", "warning"):
+            self.timer.start(DISMISS_MS)
+
     def _fade(self):
+        if self._tone in ("error", "warning"):
+            return
         if self.underMouse() or (self.window().focusWidget() is not None and
                                  self.isAncestorOf(self.window().focusWidget())):
             return
@@ -133,3 +179,76 @@ class Toast(QFrame):
         layout.addWidget(close)
         dialog.show()
         self.hide()
+
+
+class NoticeBanner(QFrame):
+    """#520 行内任务横幅：图标 + 一句话 + 可选动作 + 关闭，始终只占一行。
+
+    长文件名中间省略，完整文字留在 tooltip / 辅助名里；语气只改图标与文字颜色，
+    卡片表面仍用 `bg-surface`，亮暗两套主题都由 token 决定。
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("noticeBanner")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self.icon_label = QLabel(self)
+        self.label = QLabel(self)
+        self.label.setTextFormat(Qt.TextFormat.PlainText)
+        self.label.setWordWrap(False)
+        self.label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        style.set_text_role(self.label, "status")
+        self.action_button = QPushButton(self)
+        style.set_button(self.action_button, "plain", small=True)
+        self.action_button.setVisible(False)
+        self.close_button = QToolButton(self)
+        self.close_button.setObjectName("iconButton")
+        self.close_button.setIcon(icons.icon("x", 14, "text-secondary"))
+        self.close_button.setIconSize(QSize(14, 14))
+        self.close_button.setAccessibleName(i18n.tr('关闭提示'))
+        self.close_button.clicked.connect(self.hide)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 8, 8, 8)
+        row.setSpacing(theme.SPACE["sm"])
+        row.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.label, 1, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.action_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._message = ""
+        self._tone = "info"
+        self.hide()
+
+    def set_notice(self, message: str, *, tone: str = "", error: bool = False,
+                   action: str = "", on_action=None) -> None:
+        self._tone = tone_of(error, tone)
+        self._message = " ".join(message.split())
+        status = TONE_STATUS[self._tone]
+        self.icon_label.setPixmap(icons.pixmap(TONE_ICONS[self._tone], 16,
+                                               theme.STATUS_TONES[status]))
+        self.label.setProperty("tone", status)
+        style.repolish(self.label)
+        self.setAccessibleName(message)
+        self.setAccessibleDescription(message)
+        self.action_button.setVisible(bool(action))
+        if action:
+            self.action_button.setText(i18n.tr(action))
+            if getattr(self, "_action_connected", False):
+                self.action_button.clicked.disconnect()
+                self._action_connected = False
+            if on_action is not None:
+                self.action_button.clicked.connect(on_action)
+                self._action_connected = True
+        self.show()
+        self.raise_()
+        self._elide()
+
+    def _elide(self) -> None:
+        width = max(80, self.width() - 120)
+        self.label.setText(QFontMetrics(self.label.font()).elidedText(
+            self._message, Qt.TextElideMode.ElideMiddle, width))
+        self.label.setToolTip(self._message)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 命名
+        super().resizeEvent(event)
+        if self.isVisible():
+            self._elide()

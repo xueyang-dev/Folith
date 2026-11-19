@@ -2744,5 +2744,6 @@
   "将保存编辑并停止正在运行的任务，重新打开后可以继续。": "Pending edits will be saved and running tasks stopped; you can continue after reopening.",
   "需要重启 Folith": "Restart Folith",
   "立即重启": "Restart now",
-  "语言已保存，下次启动时生效": "Language saved; it will take effect on next launch."
+  "语言已保存，下次启动时生效": "Language saved; it will take effect on next launch.",
+  "关闭提示": "Dismiss tip"
 }
