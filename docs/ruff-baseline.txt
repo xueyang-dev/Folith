@@ -635,7 +635,6 @@ F841	tests/retrospective_consistency_test.py	monkeypatch_ok = True
 F841	tests/review_scheduler_test.py	ordinal = line.split(".", 1)[0].strip()
 F841	tests/review_scheduler_test.py	res0 = scheduler.wait_for_batch(0, timeout=2.0)
 F841	tests/review_scheduler_test.py	res1 = scheduler.wait_for_batch(1, timeout=2.0)
-F841	tests/review_scheduler_test.py	savings = (seq_wall - ovl_wall) / seq_wall
 F841	tests/revision_integrity_test.py	state = _job(job_id)
 F841	tests/source_cleanup_test.py	batches = [[(0, "Line 0"), (1, "Line 1")]]
 F841	tests/source_cleanup_test.py	result_map = {0: {"status": "failed", "rows": None, "error": None}}
