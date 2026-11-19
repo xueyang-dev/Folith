@@ -37,6 +37,7 @@ QT_QPA_PLATFORM=offscreen python -m pytest -q tests/brand_regression_test.py
 - 涉及系统名称、快捷键、窗口行为、文件路径的改动，两个平台都要考虑：标签和快捷键走 `folith/qt/platform_ui.py`，Cocoa 窗口集成只放在 `folith/qt/macwindow.py`。
 - 界面文案用 `i18n.tr(...)`，并同步 `folith/resources/locales/` 里的目录。
 - 用户的本地改动不要覆盖；只提交你自己改的文件。
+- 四个巨型模块（`core.py`、`folith/qt/views.py`、`folith/qt/adapter.py`、`folith/qt/window.py`）有行数上限，`tests/line_budget_test.py` 会在 PR 里检查：**新逻辑放新模块**，确实无法拆分时才在同一个 PR 里抬上限并写明理由。
 
 ## 文档
 
