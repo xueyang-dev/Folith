@@ -1003,6 +1003,12 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
         log_dir=log_dir, secrets=_secrets_in(connection))
     line = engine_protocol.encode_start_request(
         job_id, connection, mode=mode, filename=filename)
+    # The child owns every later status; this one is Ours so Start has feedback
+    # within a second instead of after the child's cold start (G-E item 4).  It
+    # must land *before* the start line: a child that fails instantly publishes
+    # its own terminal state, and writing "starting" afterwards would overwrite
+    # the truth with a status that never happened.
+    publish_starting_status(job_id)
     if not sup.send_line(line):
         sup.abandon()
         try:
@@ -1010,9 +1016,6 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
         except Exception:  # noqa: BLE001
             pass
         return EngineOutcome(False, "后台引擎进程未能接收启动指令。")
-    # The child owns every later status; this one is Ours so Start has feedback
-    # within a second instead of after the child's cold start (G-E item 4).
-    publish_starting_status(job_id)
     with _LOCK:
         _SUPERVISORS[job_id] = sup
     _arm_exit_hook()

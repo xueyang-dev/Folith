@@ -705,6 +705,33 @@ def test_start_publishes_a_starting_status_within_a_second(isolated, gateway):
         timeout=120), core.load_runtime_state(job_id)
 
 
+def test_the_starting_status_exists_before_the_child_can_act(isolated, stub_child,
+                                                            monkeypatch):
+    """Ordering, not timing: the launch status must precede the start line.
+
+    A child that fails instantly publishes its own terminal state the moment it
+    reads the line.  Writing "starting" after sending the line would overwrite
+    that truth (Windows: "failed" turned into "interrupted").  So the write has
+    to happen before the child can do anything at all.
+    """
+    monkeypatch.setenv("ENGINE_STUB_MODE", "ignore-eof")
+    job_id = "e3order0001"
+    _create_job(job_id)
+    seen: dict = {}
+    real_send = supervisor_module.EngineSupervisor.send_line
+
+    def send_line(self, payload):
+        seen["phase"] = (core.load_runtime_state(job_id) or {}).get("phase")
+        seen["status"] = (core.load_runtime_state(job_id) or {}).get("status")
+        return real_send(self, payload)
+
+    monkeypatch.setattr(supervisor_module.EngineSupervisor, "send_line", send_line)
+    outcome = supervisor_module.start_engine(
+        job_id, mode="start", connection=_connection("http://127.0.0.1:9/v1"))
+    assert outcome.started, outcome.reason
+    assert seen == {"phase": "starting", "status": "queued"}, seen
+
+
 def test_a_failed_start_does_not_claim_the_task_is_starting(isolated, monkeypatch):
     """No child, no status: a rejected start must not paint a starting task."""
     job_id = "e3startfail1"
