@@ -124,6 +124,20 @@ def generate(out: Path, tasks: int, seed: int, segments: int) -> dict:
         findings_total += findings
         (job / "state.json").write_text(
             json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 真实任务在 save_job_state 时会同步写一份轻量 summary.json；启动路径优先读它。
+        # 合成目录也写一份同形状的，否则会把「没有 summary」的回退路径当成基线。
+        (job / "summary.json").write_text(json.dumps({
+            "job_id": job.name,
+            "filename": state["filename"],
+            "attention_count": sum(1 for f in state["findings"] if not f.get("resolved")),
+            "attention_tone": "warning" if state.get("has_blocking") else "info",
+            "segment_count": segments,
+            "target_lang": "zh-CN",
+            "runtime_status": "idle",
+            "updated_at": f"synthetic-{seed}-{index:03d}",
+            "project_id": None,
+            "progress_label": "已完成" if is_delivered else "翻译中",
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
         (job / "source.docx").write_bytes(
             f"synthetic source {seed} {index}\n".encode())
         if is_delivered:
