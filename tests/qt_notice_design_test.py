@@ -73,7 +73,12 @@ def test_error_toast_is_sticky_even_after_hover(app):
 
 
 def test_long_filename_is_elided_in_the_middle_with_full_text_available(app):
-    toast, parent = _toast(app)
+    # 窄窗口 + 长名字：在不同平台的字体下都必然触发中间省略。
+    parent = QWidget()
+    parent.resize(420, 300)
+    parent.show()
+    app.processEvents()
+    toast = notifications.Toast(parent)
     name = "示例长篇小说·第一卷（含很长的副标题用于测试中间省略）.epub"
     try:
         toast.present(f"已创建 1 个新任务（{name}）")
