@@ -148,7 +148,7 @@ def thinking_control_options(provider, model):
                  if name.startswith(prefixes) and (providers is None or provider in providers))
 
 
-def connection_thinking_mode():
+def connection_thinking_mode(saved=None):
     """Thinking mode stored on the connection currently used for translation.
 
     ``None`` means that connection records no choice, so the caller falls back
@@ -156,8 +156,12 @@ def connection_thinking_mode():
     same as no choice: it is how the user turns the control back off after a run
     already recorded the opted-in mode in the snapshot.  The connection editor
     writes the empty string for 服务默认, so that counts as a choice too.
+
+    ``saved`` is a provider-config mapping to read instead of the saved file
+    (the desktop client passes the configuration it is showing).
     """
-    saved = _c.load_provider_config() or {}
+    if saved is None:
+        saved = _c.load_provider_config() or {}
     wanted = str((saved.get("connection_roles") or {}).get("translation") or "")
     profile = next((p for p in saved.get("connections") or []
                     if isinstance(p, dict) and p.get("id") == wanted), None)
@@ -285,6 +289,69 @@ def job_reasoning_modes(translator=None, auxiliary=None, connection_mode=None,
                 one(auxiliary, "auxiliary_reasoning_mode",
                     "FOLITH_AUXILIARY_REASONING_MODE",
                     lambda: connection_mode_for(auxiliary_target), auxiliary_target)))
+
+
+_THINKING_OFF_MODES = ("thinking_disabled", "thinking_disabled_vllm")
+
+
+def translation_thinking_status(saved=None):
+    """Whether a new run's translator will think, from the saved connections.
+
+    The thinking switch lives on a connection, and only on connections whose
+    endpoint was verified to honour it.  A user can therefore turn thinking off
+    on one connection while translation runs on another one that cannot (a
+    Local Gateway only takes a reasoning level).  This reports what the run will
+    really do, resolved by :func:`job_reasoning_modes` exactly as a new task
+    resolves it, so the client can say so before the run starts.
+
+    Returns ``None`` when no translation model is configured, else a dict:
+
+    * ``state`` -- ``"off"`` (a verified switch is applied), ``"on"`` (the model
+      thinks by default and the connection is on 服务默认), ``"not_switchable"``
+      (a reasoning model whose connection only takes a level), or
+      ``"unknown"`` (nothing is known about this model's thinking);
+    * ``connection`` -- the translation connection's name (or the provider);
+    * ``effort`` -- the reasoning level that will be sent, ``""`` for none;
+    * ``elsewhere`` -- names of *other* connections that have thinking turned
+      off, which therefore do not apply to this run.
+    """
+    if saved is None:
+        saved = _c.load_provider_config() or {}
+    provider = str(saved.get("provider") or "").strip()
+    model = str(saved.get("model") or "").strip()
+    if not provider or not model:
+        return None
+    wanted = str((saved.get("connection_roles") or {}).get("translation") or "")
+    connections = [p for p in saved.get("connections") or [] if isinstance(p, dict)]
+    profile = next((p for p in connections if wanted and p.get("id") == wanted), None)
+    mode, _aux = job_reasoning_modes(
+        connection_mode=connection_thinking_mode(saved), saved={},
+        translator_target=(provider, model), auxiliary_target=(provider, model))
+    efforts = reasoning_effort_options(provider, model)
+    effort = str((profile or {}).get("reasoning_effort")
+                 or saved.get("reasoning_effort") or "").strip().lower()
+    if effort not in efforts:
+        effort = ""
+    if mode in _THINKING_OFF_MODES:
+        state = "off"
+    elif thinking_control_options(provider, model):
+        state = "on"
+    elif efforts:
+        state = "not_switchable"
+    else:
+        state = "unknown"
+    elsewhere = [str(p.get("name") or p.get("provider") or "").strip()
+                 for p in connections
+                 if p is not profile
+                 and str(p.get("reasoning_mode") or "").strip().lower() in _THINKING_OFF_MODES]
+    return {
+        "state": state,
+        "provider": provider,
+        "model": model,
+        "connection": str((profile or {}).get("name") or provider).strip(),
+        "effort": effort,
+        "elsewhere": [name for name in elsewhere if name] if state != "off" else [],
+    }
 
 
 def effective_request_route(provider, model, role=None):

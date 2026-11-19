@@ -827,6 +827,26 @@ class TaskSetupPanel(QWidget):
         self.mode_summary.setContentsMargins(4, 2, 0, 0)
         body.addWidget(self.mode_summary)
 
+        # 思考状态：这次翻译会不会思考，按引擎真实解析的结果说（见
+        # adapter.translation_thinking_view）。思考是同一本书 2–3 倍耗时的来源，
+        # 而开关挂在连接上——在别的连接上关掉了，这条连接照样思考，所以要在开始前说清楚。
+        self.thinking_note = QLabel("")
+        self.thinking_note.setObjectName("hint")
+        self.thinking_note.setWordWrap(True)
+        self.thinking_settings_button = QPushButton(i18n.tr('设置连接…'))
+        style_module.set_button(self.thinking_settings_button, "plain")
+        self.thinking_settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.thinking_settings_button.clicked.connect(self.connectionSettingsRequested.emit)
+        thinking_row = QWidget()
+        thinking_layout = QHBoxLayout(thinking_row)
+        thinking_layout.setContentsMargins(4, 0, 0, 0)
+        thinking_layout.setSpacing(theme_module.SPACE["sm"])
+        thinking_layout.addWidget(self.thinking_note, 1)
+        thinking_layout.addWidget(self.thinking_settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        body.addWidget(thinking_row)
+        self.thinking_row = thinking_row
+        self.thinking_row.setVisible(False)
+
         # 自定义状态：只在**实际生效的配置**与所选预设不同时亮出来，
         # 并且同时给出"退回该预设默认值"的出口（否则用户只能靠记忆手动改回去）。
         self.strategy_note = QLabel("")
@@ -1167,6 +1187,23 @@ class TaskSetupPanel(QWidget):
         # 做不了的事不该是一个可点的蓝色主按钮：旁边已经说了原因和去哪里配置。
         self.start_button.setEnabled(not problem)
         self.start_button.setToolTip(self.connection_note.text())
+
+    def set_thinking_status(self, view: dict | None) -> None:
+        """「思考」状态行：``{"text", "tone"}``，tone 为空则收起整行。
+
+        ``warning`` 用警示色并给出去连接设置的入口；``hint`` 只是一句确认。
+        """
+        view = view or {}
+        text = str(view.get("text") or "")
+        tone = str(view.get("tone") or "")
+        warning = tone == "warning"
+        self.thinking_note.setObjectName("warningText" if warning else "hint")
+        # objectName 改了要让样式表重新匹配，否则颜色停在旧的选择器上。
+        self.thinking_note.style().unpolish(self.thinking_note)
+        self.thinking_note.style().polish(self.thinking_note)
+        self.thinking_note.setText(text)
+        self.thinking_settings_button.setVisible(warning)
+        self.thinking_row.setVisible(bool(text and tone))
 
     def document_profile(self) -> dict:
         """当前该显示/编辑的画像：用户保存过的优先，否则是智能画像的建议。"""

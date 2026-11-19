@@ -2738,5 +2738,10 @@
   "双语文件导入有提示": "The bilingual file was imported with notices",
   "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "{v0} more unit(s) were excluded as \"do not translate\" and do not appear in the workbench.",
   "显示全部 ({v0})": "Show all ({v0})",
-  "连接操作": "Connection actions"
+  "连接操作": "Connection actions",
+  "思考：已关闭（{v0}）": "Thinking: off ({v0})",
+  "思考：开启（服务默认）。「{v0}」上的这个模型默认会思考，翻译会明显变慢；可在连接设置里改为「关闭思考」。": "Thinking: on (provider default). The model on “{v0}” thinks by default, which makes translation noticeably slower; set it to “Disable thinking” in the connection settings.",
+  "思考：这条连接无法关闭。「{v0}」只能调推理强度（当前：{v1}）。": "Thinking: cannot be turned off on this connection. “{v0}” only takes a reasoning effort (current: {v1}).",
+  "「{v0}」上的「关闭思考」不作用于翻译。": " “Disable thinking” on “{v0}” does not apply to translation.",
+  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "Most model output is thinking; thinking could not be turned off, so translation will be noticeably slower"
 }

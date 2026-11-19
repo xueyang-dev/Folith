@@ -2739,5 +2739,10 @@
   "双语文件导入有提示": "Le fichier bilingue a été importé avec des avertissements",
   "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "{v0} unité(s) supplémentaire(s) ont été exclues comme « ne pas traduire » ; elles n'apparaissent pas dans l'espace de travail.",
   "显示全部 ({v0})": "Tout afficher ({v0})",
-  "连接操作": "Actions de connexion"
+  "连接操作": "Actions de connexion",
+  "思考：已关闭（{v0}）": "Réflexion : désactivée ({v0})",
+  "思考：开启（服务默认）。「{v0}」上的这个模型默认会思考，翻译会明显变慢；可在连接设置里改为「关闭思考」。": "Réflexion : activée (service par défaut). Le modèle de « {v0} » réfléchit par défaut, ce qui ralentit nettement la traduction ; choisissez « Désactiver la réflexion » dans les paramètres de connexion.",
+  "思考：这条连接无法关闭。「{v0}」只能调推理强度（当前：{v1}）。": "Réflexion : impossible à désactiver sur cette connexion. « {v0} » n’accepte qu’un effort de raisonnement (actuel : {v1}).",
+  "「{v0}」上的「关闭思考」不作用于翻译。": " « Désactiver la réflexion » sur « {v0} » ne s’applique pas à la traduction.",
+  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "La sortie du modèle est surtout de la réflexion ; la réflexion n’a pas pu être désactivée, la traduction sera nettement plus lente"
 }

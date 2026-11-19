@@ -2739,5 +2739,10 @@
   "双语文件导入有提示": "Die zweisprachige Datei wurde mit Hinweisen importiert",
   "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "Weitere {v0} Segment(e) wurden als „nicht übersetzen“ ausgeschlossen und erscheinen nicht im Arbeitsbereich.",
   "显示全部 ({v0})": "Alle anzeigen ({v0})",
-  "连接操作": "Verbindungsaktionen"
+  "连接操作": "Verbindungsaktionen",
+  "思考：已关闭（{v0}）": "Denken: aus ({v0})",
+  "思考：开启（服务默认）。「{v0}」上的这个模型默认会思考，翻译会明显变慢；可在连接设置里改为「关闭思考」。": "Denken: an (Dienststandard). Das Modell auf „{v0}“ denkt standardmäßig, das verlangsamt die Übersetzung deutlich; in den Verbindungseinstellungen auf „Denken deaktivieren“ stellen.",
+  "思考：这条连接无法关闭。「{v0}」只能调推理强度（当前：{v1}）。": "Denken: auf dieser Verbindung nicht abschaltbar. „{v0}“ erlaubt nur den Denkaufwand (aktuell: {v1}).",
+  "「{v0}」上的「关闭思考」不作用于翻译。": " „Denken deaktivieren“ auf „{v0}“ gilt nicht für die Übersetzung.",
+  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "Die Modellausgabe besteht größtenteils aus Denken; das Denken ließ sich nicht abschalten, die Übersetzung wird deutlich langsamer"
 }

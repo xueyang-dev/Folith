@@ -45,7 +45,7 @@ from . import bootstrap
 from . import dialogs
 from . import prompts
 from .segment_assist import protection_text as _protection_text
-from . import components, motion
+from . import components, motion, thinking_status
 from . import style as style_module
 from . import theme as theme_module
 from . import views as views_module
@@ -2265,7 +2265,7 @@ class MainWindow(QMainWindow):
             self.workbench.set_setup_choices(adapter.setup_choices())
             self._setup_choices_loaded = True
         self.workbench.set_setup(adapter.task_setup_view(self.config, job_id, state))
-        self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
+        thinking_status.apply_connection_state(self.workbench.setup_panel, self.config)
         self._auto_style_profile(job_id)
 
     def _auto_style_profile(self, job_id: str) -> None:
@@ -4804,7 +4804,7 @@ class MainWindow(QMainWindow):
         self._notice(i18n.tr('模型连接已应用。'), task=False)
         if self.stack.currentWidget() is self.workbench:
             self.workbench.config = self.config
-            self.workbench.setup_panel.set_connection_problem(self.config.connection_problem())
+            thinking_status.apply_connection_state(self.workbench.setup_panel, self.config)
             self.refresh_workbench(force=True)
 
     @staticmethod
