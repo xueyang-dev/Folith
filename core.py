@@ -8138,7 +8138,8 @@ def provider_config_path():
 
 
 def save_provider_config(provider, model, api_key, base_url=None, reviewer=None,
-                         reasoning_effort=None, connections=None, connection_roles=None, connection_models=None):
+                         reasoning_effort=None, connections=None, connection_roles=None,
+                         connection_models=None, connection_levels=None):
     """把 AI 引擎配置落盘（本地单机工具，0600 权限），重启后自动加载。"""
     _ensure_output_dir()
     normalized_base = normalize_openai_base_url(base_url) if base_url else ""
@@ -8166,6 +8167,8 @@ def save_provider_config(provider, model, api_key, base_url=None, reviewer=None,
                                else previous.get("connection_roles", {}))
     cfg["connection_models"] = (connection_models if connection_models is not None
                                 else previous.get("connection_models", {}))
+    cfg["connection_levels"] = (connection_levels if connection_levels is not None
+                                else previous.get("connection_levels", {}))
     path = provider_config_path()
     temp_path = path.with_suffix(path.suffix + ".tmp")
     temp_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2),
@@ -8210,6 +8213,7 @@ def load_provider_config():
         result["connections"] = data.get("connections", [])
         result["connection_roles"] = data.get("connection_roles", {})
         result["connection_models"] = data.get("connection_models", {})
+        result["connection_levels"] = data.get("connection_levels", {})
         return result
     except Exception:  # noqa: BLE001 - 配置文件损坏时按未保存处理
         return None

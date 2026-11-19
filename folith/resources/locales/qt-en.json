@@ -2745,7 +2745,11 @@
   "需要重启 Folith": "Restart Folith",
   "立即重启": "Restart now",
   "语言已保存，下次启动时生效": "Language saved; it will take effect on next launch.",
-"关闭提示": "Dismiss tip",
+  "关闭提示": "Dismiss tip",
   "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "Most model output is thinking; thinking could not be turned off, so translation will be noticeably slower",
-  "正在载入任务…": "Loading tasks…"
+  "正在载入任务…": "Loading tasks…",
+  "{v0}的思考强度": "Thinking level for {v0}",
+  "旧设置：{v0}": "Legacy: {v0}",
+  "这个模型无法关闭思考；可在这里调整推理强度。": "This model cannot turn thinking off; adjust the reasoning level here.",
+  "只列这个模型已验证的思考档位。": "Only this model's verified thinking levels are listed."
 }
