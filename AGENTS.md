@@ -18,5 +18,6 @@
 - Test shared behavior and relevant platform branches. Mocked macOS tests on
   Windows do not count as real Cocoa/title-bar acceptance. Record that limit.
 - Preserve unrelated local edits. Report actual problems; do not invent findings.
+- **Nothing merges automatically before 1.0.** CI green is necessary, not permission: a product-code PR goes to a reviewer who checks the diff and the evidence and makes the merge decision; pure docs/test/workflow PRs may be self-merged once CI is green, with the merge commit recorded. What stays human is native acceptance (Cocoa title bar, Windows native window, frozen-build fluency) and the merge decision itself. See [CONTRIBUTING.md § 1.0 之前不自动合并](CONTRIBUTING.md#10-之前不自动合并).
 - Finish requested implementations and proportionate verification. Diagnosis
   remains read-only unless changes were requested.
