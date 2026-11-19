@@ -18,6 +18,7 @@ format is stable):
 * S2 — long scanned PDF, paging and thumbnails while OCR runs.   (skeleton)
 * S3 — open a finished large task and switch tasks (10,000 segments by default).
 * S4 — eight-hour endurance run against the local mock gateway (#455).
+* S5 — the five G3 interaction operations, p95 against the plan's budgets (#456).
 
 Measurement v3 (issue #347, plan §9 D1 / §11 / §13 G2-G3)
     ``measurement.version = 3``.  The session is split into two phases so the
@@ -2438,6 +2439,218 @@ class _EnduranceDriver:
             pass
 
 
+#: G3 (#456) is the interaction-budget table from the 0.8.2 plan §10: five
+#: operations, each with a p95 budget on a **10,000-segment** task.  The budgets
+#: live in :data:`CORE_OPERATIONS` (the same table S1 already records against);
+#: S5 exists because S1 measures them on a 1,000-paragraph document while the
+#: plan's numbers are for a finished 10,000-segment task.
+S5_DEFAULT_SEGMENTS = 10000
+
+
+class _InteractionDriver(_ScenarioDriver):
+    """S5: drive the five G3 operations on an already-finished, open task.
+
+    Reuses the S1 interaction loop (the same scroll / select / type / page /
+    panel calls the product handles), but skips import and translation: the task
+    is prepared before the window starts measuring, and every sample therefore
+    belongs to the "complete" phase -- a reader of a 10,000-segment task.
+    """
+
+    def __init__(self, *, preset_job: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.preset_job = str(preset_job)
+
+    def begin(self) -> None:
+        self.state = "open"
+        self._started = self.clock()
+        self.job_id = self.preset_job
+        self.result["job_id"] = self.job_id
+        self.result["steps"].append({"step": "task_open_requested", "ok": True})
+        self.window.open_job(self.job_id)
+
+    def _tick_open(self, now: float) -> None:
+        if getattr(self.window, "_opening_job_id", ""):
+            if now > self._started + min(180.0, self.settle_timeout):
+                self.result["failures"].append("the big task did not open")
+                self._finish(settled=False)
+            return
+        if getattr(self.window, "_current_job_id", "") != self.job_id:
+            if now > self._started + min(180.0, self.settle_timeout):
+                self.result["failures"].append("the big task never became current")
+                self._finish(settled=False)
+            return
+        self.result["steps"].append({"step": "opened", "ok": True})
+        self._interact_until = now + self.seconds
+        self._last_scroll = self._last_edit = self._last_page = now
+        self._last_panel = now
+        self._phase("complete")
+        self.state = "interact"
+
+    @property
+    def measurement_phase(self) -> str:
+        # Nothing here is setup or run: the task is finished before the clock
+        # starts, so every sample describes reading an existing task.
+        return "complete"
+
+    def _tick_settle(self, now: float) -> None:
+        self._finish(settled=True)
+
+
+def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
+                  log_dir: Path, base_url: str) -> dict:
+    """S5: the G3 interaction-latency table on a finished 10,000-segment task.
+
+    The task is prepared *before* the measured window: imported, translated to
+    completion against the mock gateway, then reopened.  Building it pumps events
+    in a bounded loop, which is honest because nothing is being measured yet --
+    the interaction loop afterwards runs from Qt timer callbacks like S1, and
+    every G3 sample is taken in the "complete" phase.
+    """
+
+    result: dict = {"mode": "source_offscreen" if args.offscreen else "source",
+                    "steps": [], "failures": [],
+                    "tool_split_measured": True,
+                    "window_control": {
+                        "controlled_by": "the harness event loop",
+                        "seconds_applied": True,
+                        "seconds": args.seconds,
+                    }}
+    paths, app, window, adapter, monitor, jank = _prepare_window(
+        args, data_dir, log_dir, result)
+    operations = OperationRecorder()
+
+    # -- build the finished big task (not measured) ------------------------
+    segments = max(2, int(getattr(args, "s5_segments", S5_DEFAULT_SEGMENTS)))
+    build_started = time.monotonic()
+    task_build: dict = {}
+    try:
+        config = window.config
+        created = adapter.import_documents([fixture], config)[0]
+        job_id = created.job_id
+        deadline = time.monotonic() + max(60.0, float(args.settle_timeout))
+        while getattr(window, "_opening_job_id", ""):
+            app.processEvents()
+            time.sleep(0.01)
+            if time.monotonic() > deadline:
+                raise RuntimeError("the task did not open while building it")
+        window.open_job(job_id)
+        while getattr(window, "_opening_job_id", ""):
+            app.processEvents()
+            time.sleep(0.01)
+            if time.monotonic() > deadline:
+                raise RuntimeError("the task did not open while building it")
+        window.start_or_resume()
+        while time.monotonic() < deadline:
+            app.processEvents()
+            state = adapter.load_state(job_id) or {}
+            if state.get("p2_done"):
+                break
+            time.sleep(0.01)
+        else:
+            raise RuntimeError("translation did not finish while building the task")
+        state = adapter.load_state(job_id) or {}
+        pairs = len(state.get("pairs") or [])
+        task_build = {"job_id": job_id, "segments": pairs,
+                      "build_seconds": round(time.monotonic() - build_started, 2)}
+        result["steps"].append({"step": "task_built", "ok": True, **task_build})
+        if pairs and segments and pairs != segments:
+            # A 10,000-segment target needs the seeded path (_seed_tiled_task);
+            # a built document has exactly the fixture's segment count.  Say so
+            # instead of reporting S1's scale as if it were the plan's.
+            result["steps"].append({
+                "step": "segment_count_note", "ok": True,
+                "built": pairs, "target": segments,
+                "note": "the built task's segment count is the fixture's; pass "
+                        "--seed-template/--seed-segments for the 10,000-segment "
+                        "task the plan's budgets are defined on"})
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        import traceback
+
+        result["failures"].append(f"building the G3 task: {type(exc).__name__}: {exc}")
+        result["traceback"] = traceback.format_exc()
+        result["g3"] = g3_report(operations, segments=0, failures=result["failures"])
+        return result
+
+    # -- measure: open it fresh and drive the five operations --------------
+    window.close_job() if hasattr(window, "close_job") else None
+    driver = _InteractionDriver(
+        preset_job=job_id, app=app, window=window, adapter=adapter, jank=jank,
+        fixture=fixture, seconds=args.seconds, settle_timeout=args.settle_timeout,
+        result=result, operations=operations)
+    try:
+        _drive_event_loop(app, driver, result)
+    except Exception as exc:  # noqa: BLE001 - the JSON is the evidence
+        import traceback
+
+        result["failures"].append(f"{type(exc).__name__}: {exc}")
+        result["traceback"] = traceback.format_exc()
+    finally:
+        result["operations"] = operations.report()
+        result["translation"] = {
+            "settled": bool(driver.finished),
+            "completed": bool(driver.finished and not result["failures"]),
+            "mode": "s5_interaction_budget",
+            "cycles": {"scroll": driver.scrolls, "edit": driver.edited,
+                       "page": driver.pages, "panel": driver.panels},
+            "build": task_build,
+        }
+        result["g3"] = g3_report(operations, segments=int(task_build.get("segments") or 0),
+                                 failures=result["failures"])
+        result["run_window"] = {
+            "measured": False,
+            "present": False,
+            "reason": ("S5 measures the five interaction operations on a finished "
+                       "task: there is no translating window, so R does not apply"),
+        }
+    return result
+
+
+def g3_report(operations: OperationRecorder, *, segments: int,
+              failures: list[str] | None = None) -> dict:
+    """The G3 table: each core operation's p95 against the plan's budget.
+
+    ``ok`` requires every operation to have been sampled *and* to be within
+    budget; an operation with no sample is ``missing``, never a silent pass.
+    """
+    # ``OperationRecorder.report()`` wraps the per-operation blocks in a
+    # ``{"operations": {...}}`` envelope (unit/clock/phases/missing beside it).
+    report = operations.report()
+    per_operation = report.get("operations") or report
+    rows: dict = {}
+    missing: list[str] = []
+    over_budget: list[str] = []
+    for name, spec in CORE_OPERATIONS.items():
+        entry = ((per_operation.get(name) or {}).get("phases") or {}).get("complete") or {}
+        p95 = entry.get("p95")
+        if entry.get("measured") is False or p95 is None:
+            missing.append(name)
+            rows[name] = {"label": spec["label"], "p95_ms": None,
+                          "budget_ms": spec.get("budget_ms"),
+                          "within_budget": None,
+                          "reason": entry.get("reason") or "no sample"}
+            continue
+        within = p95 <= float(spec.get("budget_ms"))
+        if not within:
+            over_budget.append(name)
+        rows[name] = {"label": spec["label"], "p95_ms": round(float(p95), 2),
+                      "count": entry.get("count"),
+                      "budget_ms": float(spec.get("budget_ms")),
+                      "within_budget": within}
+    ok = bool(not missing and not over_budget and not (failures or []))
+    return {
+        "scenario": "G3",
+        "task_segments": segments,
+        "operations": rows,
+        "missing": missing,
+        "over_budget": over_budget,
+        "budgets_from": "0.8.2 plan §10 (p95, 10,000-segment task)",
+        "ok": ok,
+        "verdict": ("pass" if ok else "fail:" + ",".join(
+            [f"missing:{name}" for name in missing]
+            + [f"over:{name}" for name in over_budget])),
+    }
+
+
 def run_source_s4(args: argparse.Namespace, fixtures: list[Path], data_dir: Path,
                   log_dir: Path, base_url: str) -> dict:
     """S4: the eight-hour endurance run (#455).
@@ -2956,6 +3169,8 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
         "motion_enabled": _motion.get("motion_enabled"),
         "note": note_for(_offscreen),
     }
+    if scenario == "S5":
+        payload["g3"] = result.get("g3")
     if scenario == "S4":
         # #455's verdict is not a jank rate: the endurance block carries the
         # cycle count, the crash/not-responding counters and the idle RSS tail.
@@ -2964,7 +3179,10 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
         payload["handle_samples"] = result.get("handle_samples") or []
         payload["wall_time_s"] = result.get("wall_time_s")
     translation = result.get("translation") or {}
-    if scenario == "S4":
+    if scenario == "S5":
+        g3 = result.get("g3") or {}
+        payload["ok"] = bool(g3.get("ok") and not result.get("failures"))
+    elif scenario == "S4":
         endurance = result.get("endurance") or {}
         payload["ok"] = bool(endurance.get("ok") and not result.get("failures"))
     else:
@@ -2976,6 +3194,19 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
 
 def _summary_line(payload: dict) -> dict:
     """The one-line stdout summary: the numbers a console reader needs first."""
+    if payload.get("scenario") == "S5":
+        g3 = payload.get("g3") or {}
+        return {
+            "ok": payload.get("ok"),
+            "report": payload.get("report_path"),
+            "scenario": "S5",
+            "task_segments": g3.get("task_segments"),
+            "p95_ms": {name: row.get("p95_ms")
+                       for name, row in (g3.get("operations") or {}).items()},
+            "missing": g3.get("missing"),
+            "over_budget": g3.get("over_budget"),
+            "verdict": g3.get("verdict"),
+        }
     if payload.get("scenario") == "S4":
         endurance = payload.get("endurance") or {}
         return {
@@ -3152,6 +3383,29 @@ def verify_round(directory: Path) -> dict:
     measurement = payload.get("measurement") or {}
     metrics = payload.get("metrics") or {}
     phases = metrics.get("phases") or {}
+    if payload.get("scenario") == "S5":
+        # S5 answers the G3 table: five operations, p95 each, against the plan's
+        # budgets on a finished task.  Verifying it with the jank contract would
+        # report "no R/I" failures for a scenario that never had a run window.
+        g3 = payload.get("g3") or {}
+        operations = (payload.get("metrics") or {}).get("operations") or {}
+        rows = g3.get("operations") or {}
+        add("implemented", payload.get("implemented") is True,
+            {"implemented": payload.get("implemented")})
+        add("g3_table_present", bool(rows), sorted(rows))
+        add("all_five_operations_reported", set(rows) == set(CORE_OPERATIONS),
+            {"reported": sorted(rows), "expected": sorted(CORE_OPERATIONS)})
+        add("p95_recorded", all(row.get("p95_ms") is not None or row.get("reason")
+                                for row in rows.values()),
+            {name: row.get("p95_ms") for name, row in rows.items()})
+        add("budget_verdict_recorded", bool(g3.get("verdict")),
+            {"verdict": g3.get("verdict"), "over_budget": g3.get("over_budget")})
+        add("operation_samples_present", bool(operations.get("operations")),
+            {"note": operations.get("note")}, required=False)
+        ok = all(check["ok"] for check in checks if check.get("required", True))
+        return {"directory": str(directory), "ok": bool(ok), "checks": checks,
+                "aggregate_ready": False,
+                "note": "S5 is the G3 interaction table: no R/I window exists"}
     if payload.get("scenario") == "S4":
         # S4 is an endurance loop: there is no single translating window, so the
         # R/I checks below cannot apply (#455 judges crashes, not-responding
@@ -3305,7 +3559,8 @@ def verify_round(directory: Path) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Folith runtime baseline runner (S1/S3)")
     parser.add_argument("--out", default=None, help="output directory for this run")
-    parser.add_argument("--scenario", default="S1", choices=("S1", "S2", "S3", "S4"))
+    parser.add_argument("--scenario", default="S1",
+                        choices=("S1", "S2", "S3", "S4", "S5"))
     parser.add_argument("--paras", type=int, default=200, help="paragraph count (S1)")
     parser.add_argument("--seconds", type=float, default=None,
                         help="measured interaction window (translation keeps "
@@ -3347,6 +3602,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="real provider config file, read in memory: runs the "
                              "scenario against the real endpoint instead of the mock "
                              "gateway (the key is never written into any output)")
+    parser.add_argument("--s5-segments", type=int, default=S5_DEFAULT_SEGMENTS,
+                        help="segment count the G3 budgets are defined on (the "
+                             "built fixture decides the real count; pass a seeded "
+                             "10,000-segment task for the plan's scale)")
     parser.add_argument("--s4-sample-seconds", type=float, default=S4_SAMPLE_SECONDS,
                         help="how often S4 samples this process's RSS and handle count")
     parser.add_argument("--s4-cycle-timeout", type=float, default=S4_CYCLE_TIMEOUT_S,
@@ -3472,6 +3731,8 @@ def main(argv: list[str] | None = None) -> int:
                 result = run_source_s3(args, fixtures, data_dir, log_dir, base_url)
             elif args.scenario == "S4":
                 result = run_source_s4(args, fixtures, data_dir, log_dir, base_url)
+            elif args.scenario == "S5":
+                result = run_source_s5(args, fixtures[0], data_dir, log_dir, base_url)
             else:
                 result = run_source(args, fixtures[0], data_dir, log_dir, base_url)
         finally:
