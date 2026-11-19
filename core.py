@@ -10568,22 +10568,21 @@ def request_job_exit(job_id):
     """
     if not job_id:
         return False
-    # The engine host asks again when its stdin reaches EOF, and that call can
-    # land *while* the worker is finishing: the worker has already published
-    # ``interrupted`` with ``exit_requested`` set, but it is still inside its
-    # ``finally``, so ``is_job_worker_alive`` is still true.  The "alive" branch
-    # then flips the terminal state back to ``cancelling``, and the supervisor
-    # later publishes ``interrupted`` with ``exit_requested=False`` -- the run
-    # loses the flag that says "resume me" (found on Windows, E-6a follow-up).
-    # The exit is already durable, so confirm it instead of restating it.
+    # Asking twice must confirm, never restate: the engine host asks again on
+    # stdin EOF, possibly while the worker is finishing.  That second write used
+    # to flip an already-``interrupted`` run back to ``cancelling``, and the next
+    # publisher cleared ``exit_requested`` -- the flag that says "resume me"
+    # (Windows, E-6a follow-up; #453).  Once set, the request exists.
     runtime = load_runtime_state(job_id) or {}
-    if str(runtime.get("status") or "") == "interrupted" \
-            and runtime.get("exit_requested") is True:
+    if runtime.get("exit_requested") is True:
         return True
     alive = is_job_worker_alive(job_id) or _job_execution_alive(job_id)
     if alive:
+        # ``retry``, not ``raise``: a single 2 s acquire against a child that
+        # holds the lock became "停止任务失败" and kept the app open (#453); the
+        # exit flow still caps the whole stop at its own budget.
         update_runtime_state(
-            job_id, on_timeout="raise", exit_requested=True, cancel_requested=True,
+            job_id, on_timeout="retry", exit_requested=True, cancel_requested=True,
             status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
             event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
             event_name="exit_requested", event_visibility="user",
@@ -10594,7 +10593,7 @@ def request_job_exit(job_id):
     # GUI/action side (E-6u): quitting waits on this write; a refusal is
     # reported to the exit flow ("停止任务失败"), and the app stays open.
     update_runtime_state(
-        job_id, on_timeout="raise", status="interrupted", phase="interrupted",
+        job_id, on_timeout="retry", status="interrupted", phase="interrupted",
         phase_label="已停止以便退出", cancel_requested=False,
         exit_requested=True, error=None,
         event="任务已停止以便退出；可继续处理。",

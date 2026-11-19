@@ -228,6 +228,13 @@ if mode == "record-build-id":
 if mode == "ignore-eof":
     time.sleep(120)
     sys.exit(0)
+if mode == "quitting":
+    # The child honoured the exit request at a batch boundary and then died
+    # before publishing a terminal status: the supervisor is the next writer.
+    (target / "runtime_state.json").write_text(json.dumps(
+        {"status": "cancelling", "exit_requested": True, "cancel_requested": True},
+        ensure_ascii=False))
+    sys.exit(1)
 sys.exit(0)
 '''
 
@@ -643,6 +650,26 @@ def test_manual_save_during_an_engine_run_is_rejected_and_keeps_the_draft(
     assert core.load_translation_drafts(job_id)["0"]["text"] == "人工确认的译文。"
 
     supervisor_module.shutdown_all(budget=5.0)
+
+def test_a_quitting_child_keeps_its_request_when_the_supervisor_publishes(
+        isolated, stub_child, monkeypatch):
+    """#453: the supervisor must not clear the flag that says "resume me"."""
+    monkeypatch.setenv("ENGINE_STUB_MODE", "quitting")
+    job_id = "e3quitflag01"
+    _create_job(job_id)
+    outcome = supervisor_module.start_engine(
+        job_id, mode="start", connection=_connection("http://127.0.0.1:9/v1"))
+    assert outcome.started, outcome.reason
+    sup = supervisor_module.supervisor(job_id)
+    assert sup is not None
+    assert sup.wait(timeout=60), core.load_runtime_state(job_id)
+
+    runtime = core.load_runtime_state(job_id) or {}
+    assert runtime.get("status") == "interrupted", runtime
+    # The child stopped because the user asked; the supervisor only supplies the
+    # terminal write, so both flags it found must survive it.
+    assert runtime.get("exit_requested") is True, runtime
+    assert runtime.get("cancel_requested") is True, runtime
 
 
 def test_stop_is_a_notification_and_a_bounded_wait(isolated, stub_child,

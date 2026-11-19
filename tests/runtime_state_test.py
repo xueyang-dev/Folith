@@ -632,3 +632,85 @@ def test_job_cancel_force_waits_for_worker_exit(tmp_path, monkeypatch):
         monkeypatch.setattr(core, "run_job_pipeline", original)
         core._RUNTIME_WORKERS.clear()
         core.OUTPUT_DIR = old_dir
+
+# ---------------------------------------------------------------------------
+# #453: the exit request must outlive a second ask and a contended write lock
+# ---------------------------------------------------------------------------
+
+def test_asking_to_exit_twice_confirms_instead_of_rewriting(tmp_path):
+    """The second ask must not restate the request.
+
+    The engine host asks again when its stdin reaches EOF, and that call can
+    land while the worker is still finishing.  Restating it flipped a run that
+    was already durably ``interrupted`` back to ``cancelling``; the next
+    publisher then cleared ``exit_requested`` and the run looked like a crash.
+    """
+    old_dir = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    job_id = "exitaskedtwice"
+    try:
+        core.save_job_state(job_id, core.new_job_state("exit-twice.docx"))
+        core.update_runtime_state(job_id, status="running", phase="running",
+                                  exit_requested=True, cancel_requested=True)
+        before = core.load_runtime_state(job_id)
+        assert core.request_job_exit(job_id) is True
+        after = core.load_runtime_state(job_id)
+        # Confirmed, not restated: the state and its event list are untouched.
+        assert after["status"] == "running", after
+        assert after["exit_requested"] is True
+        assert after["cancel_requested"] is True
+        assert len(after.get("events") or []) == len(before.get("events") or [])
+    finally:
+        core.OUTPUT_DIR = old_dir
+
+
+_LOCK_HOLDER = """
+import sys, time
+from pathlib import Path
+sys.path.insert(0, {root!r})
+from folith import job_lock
+lock = job_lock.acquire(Path({path!r}))
+Path({ready!r}).write_text("1", encoding="utf-8")
+time.sleep({seconds})
+lock.close()
+"""
+
+
+def test_the_exit_request_survives_a_lock_held_past_the_bounded_timeout(tmp_path):
+    """Quitting must not fail on a single 2 s acquire (#453, found on Windows).
+
+    Another process (here the engine child's stand-in) holds
+    ``.runtime-write.lock`` past ``job_lock.DEFAULT_TIMEOUT_SECONDS``.  The exit
+    write is user-initiated, so it retries a bounded number of times instead of
+    turning that into "停止任务失败" with the app still open.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from folith import job_lock
+
+    old_dir = core.OUTPUT_DIR
+    core.OUTPUT_DIR = tmp_path
+    job_id = "exitcontended1"
+    root = Path(__file__).resolve().parents[1]
+    ready = tmp_path / "lock-held"
+    holder = None
+    try:
+        core.save_job_state(job_id, core.new_job_state("exit-lock.docx"))
+        core.update_runtime_state(job_id, status="idle", phase="idle")
+        lock_path = core.job_dir(job_id) / ".runtime-write.lock"
+        holder = subprocess.Popen(
+            [sys.executable, "-c", _LOCK_HOLDER.format(
+                root=str(root), path=str(lock_path), ready=str(ready),
+                seconds=job_lock.DEFAULT_TIMEOUT_SECONDS + 0.6)])
+        assert _wait_for(ready.exists, timeout=30), "the holder never took the lock"
+
+        assert core.request_job_exit(job_id) is True
+        runtime = core.load_runtime_state(job_id)
+        assert runtime["status"] == "interrupted", runtime
+        assert runtime["exit_requested"] is True
+    finally:
+        if holder is not None:
+            holder.wait(timeout=30)
+        core.OUTPUT_DIR = old_dir

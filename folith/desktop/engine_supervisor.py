@@ -713,7 +713,15 @@ class EngineSupervisor:
             self._clear_recorded_owner(runtime)
             return
         code = self._exit_code
-        if self._stopping:
+        # The user's request outlives this handle.  The child may have stopped at
+        # a batch boundary and written "cancelling" (or "interrupted") with the
+        # flags set, and this publish used to clear them unconditionally -- the
+        # run then looked like a crash and lost the "resume me" flag (#453).
+        quitting = (self._stopping or bool(runtime.get("exit_requested"))
+                    or bool(runtime.get("cancel_requested")))
+        cancel_requested = bool(runtime.get("cancel_requested"))
+        exit_requested = bool(runtime.get("exit_requested"))
+        if quitting:
             message = "后台任务已停止；已完成的进度会保留，可以继续处理。"
             error = None
         else:
@@ -739,7 +747,8 @@ class EngineSupervisor:
         core._write_terminal_runtime_state(
             self.job_id, what="engine_process_exited",
             status="interrupted", phase="interrupted",
-            phase_label=message, cancel_requested=False, exit_requested=False,
+            phase_label=message, cancel_requested=cancel_requested,
+            exit_requested=exit_requested,
             error=error, event=message, event_name="engine_process_exited",
             event_visibility="user", event_category="lifecycle",
             progress=True, heartbeat=True,
