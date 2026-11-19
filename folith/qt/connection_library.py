@@ -4,8 +4,8 @@ from __future__ import annotations
 import uuid
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QPushButton, QSizePolicy, QVBoxLayout,
-                               QWidget)
+                               QListWidgetItem, QMenu, QPushButton, QScrollArea,
+                               QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 from . import adapter, components, connection_status, i18n, icons, style
 from . import theme as theme_module
 from folith.model_connections import effective_config
@@ -24,6 +24,8 @@ class ConnectionLibrary(QWidget):
     STATE_TONE = {"ok": "done", "failed": "error", "untested": "attention",
                   "missing": "attention"}
     ROLES = (("translation", "翻译"), ("reviewer", "审校"), ("vision", "视觉"))
+    #: 超过这个数量的连接先折叠，省下的高度留给「用途」（#517）。
+    COLLAPSE_AFTER = 4
 
     def __init__(self, dialog):
         super().__init__()
@@ -43,6 +45,8 @@ class ConnectionLibrary(QWidget):
         self._catalog_modalities = {}
         #: 「测试视觉」进行中：按钮去抖。
         self._vision_probe_busy = False
+        #: 长列表是否已展开（#517）：折叠时只显示前 COLLAPSE_AFTER 条。
+        self._show_all = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme_module.SPACE["md"])
@@ -92,7 +96,7 @@ class ConnectionLibrary(QWidget):
                 self.vision_modality_hint = hint
         layout.addWidget(self.role_group)
         layout.addStretch(1)
-        layout.addWidget(dialog._apply_row("models"))
+        # 「测试并保存」由对话框固定在滚动区之外（#517），不放在这一页里。
 
         self._build_editor()
         self.refresh()
@@ -494,39 +498,58 @@ class ConnectionLibrary(QWidget):
                                    theme_module.SPACE["md"], theme_module.SPACE["md"])
             row.addWidget(empty)
             self.list_group.add_row(holder)
-        for p in self.profiles:
-            self.list_group.add_row(self._connection_row(p))
+        else:
+            collapsed = (not self._show_all and len(self.profiles) > self.COLLAPSE_AFTER)
+            visible = self.profiles[:self.COLLAPSE_AFTER] if collapsed else self.profiles
+            for p in visible:
+                self.list_group.add_row(self._connection_row(p))
+            if collapsed:
+                holder = QWidget()
+                row = QHBoxLayout(holder)
+                row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["xs"],
+                                       0, 0)
+                self.show_all_button = QPushButton(
+                    i18n.tr('显示全部 ({v0})', v0=len(self.profiles)))
+                style.set_button(self.show_all_button, "plain", small=True)
+                self.show_all_button.clicked.connect(self._show_all_connections)
+                row.addWidget(self.show_all_button)
+                row.addStretch(1)
+                self.list_group.add_row(holder)
         for role, box in self.selectors.items():
             self.fill_selector(box, role)
         if hasattr(self.dialog, "vision_connection_box"):
             self.fill_selector(self.dialog.vision_connection_box, "vision")
 
+    def _show_all_connections(self):
+        self._show_all = True
+        self.refresh()
+        # 展开后回到列表顶部：按钮原本在折叠列表的末尾，保留旧滚动位置会把表头裁掉。
+        area = self.dialog.pages.get("models")
+        if isinstance(area, QScrollArea):
+            area.verticalScrollBar().setValue(0)
+
     def _connection_row(self, p):
-        """一行：圆点 · 名称（自定义标签）/ 提供商 · 模型 · 状态 · 编辑 · 删除。"""
+        """一行：圆点 · 名称 · 提供商 · 默认模型（+模型数）· 状态 · ⋯ 操作菜单。
+
+        #517：编辑 / 删除收进「⋯」，一行就够；折叠长列表后「用途」不必滚就能看见。
+        """
         cfg = effective_config(self.dialog.config, [p], {"translation": p["id"]})
         cfg.model = p["model"]
         status = connection_status.status("translation", cfg)
         tone = self.STATE_TONE.get(status["state"], "idle")
         holder = QWidget()
         row = QHBoxLayout(holder)
-        row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["sm"],
-                               theme_module.SPACE["sm"], theme_module.SPACE["sm"])
-        row.setSpacing(theme_module.SPACE["md"])
+        row.setContentsMargins(theme_module.SPACE["md"], theme_module.SPACE["xs"],
+                               theme_module.SPACE["sm"], theme_module.SPACE["xs"])
+        row.setSpacing(theme_module.SPACE["sm"])
         row.addWidget(components.StatusDot(theme_module.STATUS_TONES[tone]), 0,
                       Qt.AlignmentFlag.AlignVCenter)
-        column = QVBoxLayout()
-        row.addLayout(column, 1)
-        column.setSpacing(0)
-        # Attach before filling: see tests/qt_layout_item_wrapper_test.py (SIGSEGV).
-        title = QHBoxLayout()
-        column.addLayout(title)
-        title.setSpacing(theme_module.SPACE["sm"])
         name = QLabel(p["name"])
         style.set_text_role(name, "name")
-        title.addWidget(name)
+        row.addWidget(name, 0, Qt.AlignmentFlag.AlignVCenter)
         if p.get("custom"):
-            title.addWidget(style.Chip(i18n.tr('自定义'), "muted"))
-        title.addStretch(1)
+            row.addWidget(style.Chip(i18n.tr('自定义'), "muted"), 0,
+                          Qt.AlignmentFlag.AlignVCenter)
         models = list(dict.fromkeys([p["model"], *p.get("models", [])]))
         provider = i18n.tr('OpenAI 兼容') if p.get("custom") else i18n.tr_dynamic(p["provider"])
         detail = f"{provider} · {p['model']}"
@@ -534,20 +557,29 @@ class ConnectionLibrary(QWidget):
             detail = i18n.tr('{v0} 等 {v1} 个模型', v0=detail, v1=len(models))
         meta = style.ElideLabel(detail, mode=Qt.TextElideMode.ElideRight)
         style.set_text_role(meta, "meta")
-        column.addWidget(meta)
+        row.addWidget(meta, 1, Qt.AlignmentFlag.AlignVCenter)
         state = components.StatusLabel(i18n.tr(self.STATE_TEXT.get(status["state"], "")), tone)
         state.dot.hide()
         state.setToolTip(i18n.tr_dynamic(status["message"]))
-        row.addWidget(state)
-        edit = QPushButton(i18n.tr('编辑'))
-        style.set_button(edit, "secondary", small=True)
-        edit.clicked.connect(lambda _c=False, key=p["id"]: self.open_editor(key))
-        # 删除是不可撤销的：危险色文字按钮 + 确认（默认焦点在取消上）。
-        remove = QPushButton(i18n.tr('删除'))
-        style.set_button(remove, "danger", small=True)
-        remove.clicked.connect(lambda _c=False, key=p["id"], name=p["name"]: self.confirm_delete(key, name))
-        row.addWidget(edit)
-        row.addWidget(remove)
+        row.addWidget(state, 0, Qt.AlignmentFlag.AlignVCenter)
+        # 编辑 / 删除收进「⋯」：一行里不再摆两个整按钮（#517）。
+        actions = QToolButton()
+        actions.setObjectName("iconButton")   # 与行内图标按钮同款：无边框，且 QSS 去掉菜单箭头
+        actions.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        actions.setIcon(icons.icon("more", 16, "text-secondary"))
+        actions.setIconSize(QSize(16, 16))
+        actions.setCursor(Qt.CursorShape.PointingHandCursor)
+        actions.setAccessibleName(i18n.tr('{v0} 的更多操作', v0=p["name"]))
+        actions.setToolTip(i18n.tr('连接操作'))
+        actions.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(actions)
+        menu.addAction(i18n.tr('编辑'),
+                       lambda _checked=False, key=p["id"]: self.open_editor(key))
+        remove_action = menu.addAction(i18n.tr('删除'))
+        remove_action.triggered.connect(
+            lambda _checked=False, key=p["id"], name=p["name"]: self.confirm_delete(key, name))
+        actions.setMenu(menu)
+        row.addWidget(actions, 0, Qt.AlignmentFlag.AlignVCenter)
         return holder
 
     def fill_selector(self, box, role):

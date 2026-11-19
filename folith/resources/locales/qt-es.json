@@ -2737,5 +2737,7 @@
   "无法重试": "No se puede reintentar",
   "任务当前不可取消。": "La tarea no se puede cancelar en este momento.",
   "双语文件导入有提示": "El archivo bilingüe se importó con avisos",
-  "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "Se excluyeron {v0} unidad(es) más como «no traducir»; no aparecen en el espacio de trabajo."
+  "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "Se excluyeron {v0} unidad(es) más como «no traducir»; no aparecen en el espacio de trabajo.",
+  "显示全部 ({v0})": "Mostrar todo ({v0})",
+  "连接操作": "Acciones de conexión"
 }
