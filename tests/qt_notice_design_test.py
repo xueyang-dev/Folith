@@ -74,7 +74,7 @@ def test_error_toast_is_sticky_even_after_hover(app):
 
 def test_long_filename_is_elided_in_the_middle_with_full_text_available(app):
     toast, parent = _toast(app)
-    name = "The Correspondent (Virginia Evans) (z-library.sk, 1lib.sk, z-lib.sk).epub"
+    name = "示例长篇小说·第一卷（含很长的副标题用于测试中间省略）.epub"
     try:
         toast.present(f"已创建 1 个新任务（{name}）")
         assert toast.label.text() != toast._message
@@ -115,7 +115,7 @@ def test_banner_elides_the_middle_and_exposes_an_action(app):
     holder = QWidget()
     banner = notifications.NoticeBanner(holder)
     banner.resize(520, 40)
-    name = "The Correspondent (Virginia Evans) (z-library.sk, 1lib.sk).epub"
+    name = "Synthetic Novel Volume One (with a very long subtitle to test elision).epub"
     clicked = []
     banner.set_notice(f"已创建 1 个新任务（{name}）", action="打开任务",
                       on_action=lambda: clicked.append(True))
