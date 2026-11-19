@@ -282,7 +282,7 @@ def test_candidate_rows_match_per_candidate_context(env):  # noqa: F811
 # ---------------------------------------------------------------------------
 # A3: read-only state view must not pickle-copy a cached 30 MB state.
 # ---------------------------------------------------------------------------
-def test_state_view_of_cached_job_never_isolated_copies(env, monkeypatch) -> None:
+def test_state_view_of_cached_job_never_isolated_copies(env, monkeypatch) -> None:  # noqa: F811
     from folith.storage import job_repository as repo
 
     core = env["core"]
@@ -301,7 +301,7 @@ def test_state_view_of_cached_job_never_isolated_copies(env, monkeypatch) -> Non
     assert calls == [], "a cached view must not pickle-copy the whole state"
 
 
-def test_state_view_shares_nested_objects_with_cache(env) -> None:
+def test_state_view_shares_nested_objects_with_cache(env) -> None:  # noqa: F811
     """A3 anti-pollution contract: the view shares nested objects with the
     cached canonical state, so callers must treat it as read-only.  This pins
     the sharing; changing the view to a deep copy would break it."""
