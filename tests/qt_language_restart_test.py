@@ -139,6 +139,9 @@ def test_accepted_exit_leaves_relaunch_pending_for_app(app, monkeypatch):
 
 def test_macos_frozen_reopens_the_bundle(monkeypatch):
     exe = "/Applications/Folith.app/Contents/MacOS/Folith"
+    # The branch under test is the macOS `.app` command shape; keep the fake
+    # bundle path literal so Windows' Path.resolve() cannot rewrite it to D:\… .
+    monkeypatch.setattr(relaunch, "mac_bundle", lambda _exe: "/Applications/Folith.app")
     command, kwargs = relaunch.build_command(platform="darwin", frozen=True,
                                               argv=["--data-dir", "/tmp/x"], exe=exe)
     assert command == ["open", "-n", "/Applications/Folith.app", "--args",
