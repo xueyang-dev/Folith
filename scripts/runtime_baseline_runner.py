@@ -17,7 +17,7 @@ format is stable):
   table, edits a translation and switches stage pages.
 * S2 — long scanned PDF, paging and thumbnails while OCR runs.   (skeleton)
 * S3 — open a finished large task and switch tasks (10,000 segments by default).
-* S4 — eight-hour run against a local mock gateway.               (skeleton)
+* S4 — eight-hour endurance run against the local mock gateway (#455).
 
 Measurement v3 (issue #347, plan §9 D1 / §11 / §13 G2-G3)
     ``measurement.version = 3``.  The session is split into two phases so the
@@ -80,7 +80,6 @@ from folith.trace import compute_percentiles  # noqa: E402 - needs ROOT on sys.p
 
 NOT_IMPLEMENTED = {
     "S2": "long scanned PDF: paging/thumbnails while OCR runs",
-    "S4": "eight-hour run against a local mock gateway",
 }
 
 #: The measurement definition implemented by this file.
@@ -177,13 +176,19 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
-def build_epub(path: Path, paragraphs: int) -> Path:
-    """Deterministic EPUB with *paragraphs* segments (no random content)."""
+def build_epub(path: Path, paragraphs: int, salt: str = "") -> Path:
+    """Deterministic EPUB with *paragraphs* segments (no random content).
+
+    ``salt`` marks a document as a distinct one: the endurance loop (S4) imports
+    a document per cycle, and the product de-duplicates identical imports, so the
+    same bytes would hand back the same task instead of starting a new cycle.
+    The salt only lands in the first paragraph, so the workload stays comparable.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(
         f"<p>第 {index + 1} 段：基线场景用于在同一份文档上重复测量主线程响应。"
         f"The runtime baseline keeps the workload identical across runs "
-        f"(segment {index + 1}).</p>"
+        f"(segment {index + 1}).{' ' + salt if index == 0 and salt else ''}</p>"
         for index in range(max(1, paragraphs)))
     with zipfile.ZipFile(path, "w") as book:
         book.writestr("mimetype", "application/epub+zip")
@@ -2028,6 +2033,477 @@ def _drive_event_loop(app, driver, result: dict) -> None:
         result["failures"].append("scenario did not finish (event loop ended early)")
 
 
+#: S4 (#455): an eight-hour run must show 0 crashes, 0 "not responding" episodes
+#: and no steady growth of idle RSS after the last cycle.  These defaults are the
+#: verdict's numbers; the round still reports what it measured when it misses.
+S4_DEFAULT_SECONDS = 8 * 3600.0
+S4_SAMPLE_SECONDS = 30.0
+S4_CYCLE_TIMEOUT_S = 900.0
+S4_IDLE_SECONDS = 120.0
+S4_IDLE_SAMPLE_SECONDS = 15.0
+S4_RSS_GROWTH_MB = 64.0
+S4_RSS_GROWTH_FRACTION = 0.20
+#: Distinct fixtures the loop rotates through (the product de-duplicates imports).
+S4_FIXTURE_POOL = 12
+
+
+def current_rss_mb() -> float | None:
+    """Resident set size of this process, in MB, or ``None`` if unreadable."""
+    if sys.platform.startswith("linux"):
+        try:
+            pages = int(Path("/proc/self/statm").read_text().split()[1])
+            return pages * (os.sysconf("SC_PAGE_SIZE") / (1024.0 * 1024.0))
+        except (OSError, ValueError, IndexError):
+            return None
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(["ps", "-o", "rss=", "-p", str(os.getpid())],
+                                 capture_output=True, text=True, timeout=5)
+            return int(out.stdout.strip()) / 1024.0
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+    try:  # Windows
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t),
+                        ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t)]
+
+        counters = Counters()
+        counters.cb = ctypes.sizeof(Counters)
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        if not ctypes.windll.psapi.GetProcessMemoryInfo(
+                handle, ctypes.byref(counters), counters.cb):
+            return None
+        return counters.WorkingSetSize / (1024.0 * 1024.0)
+    except Exception:  # noqa: BLE001 - a number we cannot read is not a failure
+        return None
+
+
+def current_handle_count() -> int | None:
+    """Open file descriptors / handles of this process, or ``None``."""
+    if sys.platform.startswith("linux"):
+        try:
+            return len(os.listdir("/proc/self/fd"))
+        except OSError:
+            return None
+    if sys.platform == "darwin":
+        try:
+            return len(os.listdir("/dev/fd"))
+        except OSError:
+            return None
+    try:  # Windows
+        import ctypes
+        from ctypes import wintypes
+
+        count = wintypes.DWORD()
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        if not ctypes.windll.kernel32.GetProcessHandleCount(handle, ctypes.byref(count)):
+            return None
+        return int(count.value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def endurance_verdict(*, cycles: int, crashes: int, not_responding: int,
+                      rss_samples: list[float], idle_rss_mb: list[float],
+                      growth_limit_mb: float = S4_RSS_GROWTH_MB,
+                      growth_fraction: float = S4_RSS_GROWTH_FRACTION) -> dict:
+    """#455's acceptance: 0 crashes, 0 "not responding", idle RSS does not grow.
+
+    ``idle_rss_mb`` is the idle tail measured *after* the last cycle: growth is
+    ``last - first``, and it must stay under both an absolute limit (a small run
+    must not look fine just because 20% of 20 MB is nothing) and a fraction of
+    the baseline (a large run must not grow without bound).
+    """
+    idle_growth = None
+    idle_ok: bool | None = None
+    idle_limit = None
+    if len(idle_rss_mb) >= 2:
+        idle_growth = round(idle_rss_mb[-1] - idle_rss_mb[0], 2)
+        allowed = max(growth_limit_mb, idle_rss_mb[0] * growth_fraction)
+        idle_ok = idle_growth <= allowed
+        idle_limit = round(allowed, 2)
+    # A run with no idle tail (a very short one) has no evidence *for* stability,
+    # but it also has none against it: report null rather than a fake pass.
+    ok = bool(cycles > 0 and crashes == 0 and not_responding == 0
+              and idle_ok is not False)
+    return {
+        "cycles": cycles,
+        "crashes": crashes,
+        "not_responding": not_responding,
+        "rss_samples_mb": [round(value, 2) for value in rss_samples],
+        "idle_rss_mb": [round(value, 2) for value in idle_rss_mb],
+        "idle_rss_growth_mb": idle_growth,
+        "idle_rss_growth_limit_mb": idle_limit,
+        "criteria": {
+            "no_crash": crashes == 0,
+            "no_not_responding": not_responding == 0,
+            "idle_rss_stable": idle_ok,
+            "idle_rss_measured": len(idle_rss_mb) >= 2,
+            "had_cycles": cycles > 0,
+        },
+        "ok": ok,
+        "verdict": ("pass" if ok else "fail:" + ",".join(
+            name for name, passed in (
+                ("no_crash", crashes == 0),
+                ("no_not_responding", not_responding == 0),
+                ("idle_rss_stable", idle_ok),
+                ("had_cycles", cycles > 0)) if not passed)),
+    }
+
+
+class _EnduranceDriver:
+    """S4: run the product's import → translate → deliver cycle in a loop.
+
+    #455 asks for an eight-hour run with three facts: no crash, no "not
+    responding" episode, and idle RSS that stops growing.  The loop therefore
+    drives *real* cycles (not sleeps), bounds each one (a cycle that outlives its
+    budget *is* the not-responding evidence), samples RSS/handles while it runs,
+    and takes a quiet idle tail after the last cycle.
+    """
+
+    def __init__(self, *, app, window, adapter, jank, fixtures, seconds,
+                 settle_timeout, result, sample_seconds=S4_SAMPLE_SECONDS,
+                 cycle_timeout=S4_CYCLE_TIMEOUT_S, idle_seconds=S4_IDLE_SECONDS,
+                 idle_sample_seconds=S4_IDLE_SAMPLE_SECONDS, clock=time.monotonic,
+                 fixture_builder=None):
+        self.app = app
+        self.window = window
+        self.adapter = adapter
+        self.jank = jank
+        self.fixtures = [str(item) for item in fixtures]
+        self.seconds = max(5.0, float(seconds))
+        self.settle_timeout = max(5.0, float(settle_timeout))
+        self.result = result
+        self.sample_seconds = max(1.0, float(sample_seconds))
+        self.cycle_timeout = max(5.0, float(cycle_timeout))
+        self.idle_seconds = max(0.0, float(idle_seconds))
+        self.idle_sample_seconds = max(1.0, float(idle_sample_seconds))
+        self.clock = clock
+        self.state = "created"
+        self.finished = False
+        self.cycles = 0
+        self.crashes = 0
+        self.not_responding = 0
+        self.cycle_records: list[dict] = []
+        self.rss_samples: list[float] = []
+        self.idle_rss_mb: list[float] = []
+        self.handle_samples: list[int] = []
+        self.job_id = ""
+        self._deadline = 0.0
+        self._cycle_started = 0.0
+        self._cycle_deadline = 0.0
+        self._next_sample = 0.0
+        self._idle_until = 0.0
+        self._next_idle_sample = 0.0
+        self._predicate_every = 0.05
+        self._last_predicate = 0.0
+        self._fixture_index = 0
+        self.fixture_builder = fixture_builder
+
+    # -- sampling ---------------------------------------------------------
+    def _sample(self) -> None:
+        rss = current_rss_mb()
+        if rss is not None:
+            self.rss_samples.append(rss)
+        handles = current_handle_count()
+        if handles is not None:
+            self.handle_samples.append(handles)
+
+    def begin(self) -> None:
+        self.result["steps"].append({"step": "endurance_started", "ok": True})
+        self._deadline = self.clock() + self.seconds
+        self._sample()
+        self._next_sample = self.clock() + self.sample_seconds
+        self._start_cycle()
+
+    def _start_cycle(self) -> None:
+        self._fixture_index += 1
+        if self.fixture_builder is not None:
+            fixture = str(self.fixture_builder(self._fixture_index))
+        else:
+            fixture = self.fixtures[self._fixture_index % len(self.fixtures)]
+        self._cycle_started = self.clock()
+        # The run deadline ends the loop; it is not a cycle budget.  Mixing the two
+        # counted the last, perfectly healthy cycle as "not responding" because the
+        # run's time ran out inside it.
+        self._cycle_deadline = self._cycle_started + self.cycle_timeout
+        self.job_id = ""
+        self._jobs_before: set[str] = set()
+        self.state = "import"
+        try:
+            self._jobs_before = {job.job_id for job in self.adapter.list_jobs()}
+        except Exception:  # noqa: BLE001 - an unreadable list just means no filter
+            self._jobs_before = set()
+        try:
+            self.window.import_paths([fixture], autostart=False)
+        except Exception as exc:  # noqa: BLE001 - a crash is a finding, not a stop
+            self.crashes += 1
+            self._record_cycle(ok=False, reason=f"import raised {type(exc).__name__}: {exc}")
+            self._after_cycle()
+
+    def _record_cycle(self, *, ok: bool, reason: str = "") -> None:
+        self.cycles += 1
+        self.cycle_records.append({
+            "cycle": self.cycles,
+            "ok": ok,
+            "seconds": round(self.clock() - self._cycle_started, 2),
+            "job_id": self.job_id,
+            "reason": reason,
+        })
+
+    def _after_cycle(self) -> None:
+        now = self.clock()
+        if now >= self._deadline:
+            self._begin_idle(now)
+        else:
+            self._start_cycle()
+
+    def _begin_idle(self, now: float) -> None:
+        self._idle_until = now + self.idle_seconds
+        self._next_idle_sample = now
+        self.state = "idle"
+
+    def tick(self) -> bool:
+        if self.finished:
+            return True
+        try:
+            getattr(self, "_tick_" + self.state)(self.clock())
+        except Exception as exc:  # noqa: BLE001 - recorded, never swallowed silently
+            self.crashes += 1
+            self.result["failures"].append(
+                f"endurance {self.state}: {type(exc).__name__}: {exc}")
+            self._finish()
+        return self.finished
+
+    def _predicate_due(self, now: float) -> bool:
+        if now - self._last_predicate < self._predicate_every:
+            return False
+        self._last_predicate = now
+        return True
+
+    def _run_window_over(self, now: float) -> bool:
+        """True when the endurance window has ended (the last cycle is truncated)."""
+        if now < self._deadline:
+            return False
+        if self.state in {"import", "open", "settle"}:
+            self.cycles += 1
+            self.cycle_records.append({
+                "cycle": self.cycles,
+                "ok": None,
+                "truncated": True,
+                "seconds": round(now - self._cycle_started, 2),
+                "job_id": self.job_id,
+                "reason": "run window ended while this cycle was still running",
+            })
+        self._begin_idle(now)
+        return True
+
+    def _tick_import(self, now: float) -> None:
+        if self._run_window_over(now):
+            return
+        if now >= self._next_sample:
+            self._sample()
+            self._next_sample = now + self.sample_seconds
+        if not self._predicate_due(now):
+            return
+        try:
+            jobs = self.adapter.list_jobs()
+            busy = self.window.runner.busy
+        except Exception as exc:  # noqa: BLE001
+            self.crashes += 1
+            self._record_cycle(ok=False, reason=f"listing failed: {exc}")
+            self._after_cycle()
+            return
+        fresh = [job.job_id for job in jobs if job.job_id not in self._jobs_before]
+        if busy or not fresh:
+            # A cycle that cannot even get its task imported is a not-responding
+            # episode once it outlives the budget; before that it is just work.
+            if now > self._cycle_deadline:
+                self.not_responding += 1
+                self._record_cycle(ok=False, reason="import did not produce a task in time")
+                self._after_cycle()
+            return
+        self.job_id = fresh[0]
+        self.state = "open"
+        self.window.open_job(self.job_id)
+
+    def _tick_open(self, now: float) -> None:
+        if self._run_window_over(now):
+            return
+        if now >= self._next_sample:
+            self._sample()
+            self._next_sample = now + self.sample_seconds
+        if getattr(self.window, "_opening_job_id", ""):
+            if now > self._cycle_deadline:
+                self.not_responding += 1
+                self._record_cycle(ok=False, reason="task did not open in time")
+                self._after_cycle()
+            return
+        if getattr(self.window, "_current_job_id", "") != self.job_id:
+            if now > self._cycle_deadline:
+                self.not_responding += 1
+                self._record_cycle(ok=False, reason="task did not open")
+                self._after_cycle()
+            return
+        try:
+            self.window.start_or_resume()
+        except Exception as exc:  # noqa: BLE001
+            self.crashes += 1
+            self._record_cycle(ok=False, reason=f"start raised {type(exc).__name__}: {exc}")
+            self._after_cycle()
+            return
+        self.state = "settle"
+
+    def _tick_settle(self, now: float) -> None:
+        if self._run_window_over(now):
+            return
+        if now >= self._next_sample:
+            self._sample()
+            self._next_sample = now + self.sample_seconds
+        if not self._predicate_due(now):
+            return
+        try:
+            runtime = self.adapter.core.load_runtime_state(self.job_id) or {}
+            state = self.adapter.load_state(self.job_id) or {}
+        except Exception as exc:  # noqa: BLE001
+            self.crashes += 1
+            self._record_cycle(ok=False, reason=f"state read failed: {exc}")
+            self._after_cycle()
+            return
+        status = str(runtime.get("status") or "")
+        done = bool(state.get("p2_done")) or status == "completed"
+        failed = status in {"failed", "interrupted", "cancelled"}
+        if done:
+            self._record_cycle(ok=True)
+            self._after_cycle()
+            return
+        if failed:
+            self._record_cycle(ok=False, reason=f"cycle ended {status}")
+            self._after_cycle()
+            return
+        if now > self._cycle_deadline:
+            # The cycle outlived its budget: this is the "not responding" fact.
+            self.not_responding += 1
+            self._record_cycle(ok=False, reason=f"cycle exceeded {self.cycle_timeout:.0f}s")
+            self._after_cycle()
+
+    def _tick_idle(self, now: float) -> None:
+        if now >= self._next_idle_sample:
+            rss = current_rss_mb()
+            if rss is not None:
+                self.idle_rss_mb.append(rss)
+            self._next_idle_sample = now + self.idle_sample_seconds
+        if now >= self._idle_until:
+            self._finish()
+
+    def _finish(self) -> None:
+        if self.finished:
+            return
+        self.finished = True
+        self.state = "finished"
+        # ``_run_scenario_event_loop`` is ``app.exec()``: it only returns when the
+        # application is asked to quit.  S1 gets that from closing its window; an
+        # endurance run has no single interaction window to close, so it quits.
+        try:
+            self.window.close()
+        except Exception:  # noqa: BLE001 - the quit below is what matters
+            pass
+        try:
+            self.app.quit()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def run_source_s4(args: argparse.Namespace, fixtures: list[Path], data_dir: Path,
+                  log_dir: Path, base_url: str) -> dict:
+    """S4: the eight-hour endurance run (#455).
+
+    Every cycle is the product's real path (import → translate → deliver the
+    snapshot), driven from Qt timer callbacks like S1.  The verdict is #455's:
+    0 crashes, 0 not-responding episodes, idle RSS stable after the last cycle.
+    R/I phases do not apply -- an endurance run has no single translating window
+    -- and the report says so instead of leaving the fields empty.
+    """
+    result: dict = {"mode": "source_offscreen" if args.offscreen else "source",
+                    "steps": [], "failures": [],
+                    "tool_split_measured": True,
+                    "window_control": {
+                        "controlled_by": "the harness event loop",
+                        "seconds_applied": True,
+                        "seconds": args.seconds,
+                    }}
+    paths, app, window, adapter, monitor, jank = _prepare_window(
+        args, data_dir, log_dir, result)
+    # One file, rewritten with a unique salt per cycle: the product de-duplicates
+    # identical imports, so reusing the bytes would stop the loop (the first
+    # version imported the same document twice and then waited for a task that
+    # could never appear).  A single path keeps an eight-hour run from leaving
+    # tens of thousands of fixture files behind.
+    base_paras = max(3, int(getattr(args, "paras", 6) or 6))
+    cycle_path = args.out / "fixtures" / "s4-cycle.epub"
+
+    def _cycle_fixture(cycle: int) -> Path:
+        return build_epub(cycle_path, base_paras, salt=f"cycle-{cycle}")
+
+    driver = _EnduranceDriver(
+        app=app, window=window, adapter=adapter, jank=jank,
+        fixtures=[str(item) for item in fixtures], fixture_builder=_cycle_fixture,
+        seconds=args.seconds, settle_timeout=args.settle_timeout, result=result,
+        sample_seconds=float(getattr(args, "s4_sample_seconds", S4_SAMPLE_SECONDS)),
+        cycle_timeout=float(getattr(args, "s4_cycle_timeout", S4_CYCLE_TIMEOUT_S)),
+        idle_seconds=float(getattr(args, "s4_idle_seconds", S4_IDLE_SECONDS)),
+        idle_sample_seconds=float(
+            getattr(args, "s4_idle_sample_seconds", S4_IDLE_SAMPLE_SECONDS)))
+    started = time.monotonic()
+    try:
+        _drive_event_loop(app, driver, result)
+        result["endurance"] = endurance_verdict(
+            cycles=driver.cycles, crashes=driver.crashes,
+            not_responding=driver.not_responding,
+            rss_samples=driver.rss_samples, idle_rss_mb=driver.idle_rss_mb)
+        result["cycles"] = driver.cycle_records
+        result["handle_samples"] = driver.handle_samples
+        result["translation"] = {
+            "settled": bool(driver.cycles),
+            "completed": driver.cycles > 0,
+            "mode": "s4_endurance",
+            "cycles": driver.cycles,
+            "crashes": driver.crashes,
+            "not_responding": driver.not_responding,
+        }
+    except Exception as exc:  # noqa: BLE001 - the JSON is the evidence
+        import traceback
+
+        result["failures"].append(f"{type(exc).__name__}: {exc}")
+        result["traceback"] = traceback.format_exc()
+        result["endurance"] = endurance_verdict(
+            cycles=driver.cycles, crashes=driver.crashes + 1,
+            not_responding=driver.not_responding,
+            rss_samples=driver.rss_samples, idle_rss_mb=driver.idle_rss_mb)
+    finally:
+        result["wall_time_s"] = round(time.monotonic() - started, 2)
+        result["run_window"] = {
+            "measured": False,
+            "present": False,
+            "reason": ("S4 is an endurance loop: there is no single translating "
+                       "window, so R does not apply and the verdict is not a "
+                       "jank rate"),
+        }
+        if getattr(driver, "scenario_window", None):
+            result["gui_jank"] = driver.scenario_window
+    return result
+
+
 def run_source(args: argparse.Namespace, fixture: Path, data_dir: Path,
                log_dir: Path, base_url: str) -> dict:
     """S1 on the shared Qt window, driven from the event loop (#327).
@@ -2466,15 +2942,41 @@ def assemble_report(*, scenario: str, paras: int, fixtures: list[Path],
         "motion_enabled": _motion.get("motion_enabled"),
         "note": note_for(_offscreen),
     }
+    if scenario == "S4":
+        # #455's verdict is not a jank rate: the endurance block carries the
+        # cycle count, the crash/not-responding counters and the idle RSS tail.
+        payload["endurance"] = result.get("endurance")
+        payload["cycles"] = result.get("cycles") or []
+        payload["handle_samples"] = result.get("handle_samples") or []
+        payload["wall_time_s"] = result.get("wall_time_s")
     translation = result.get("translation") or {}
-    payload["ok"] = bool(
-        translation.get("completed")
-        and not result.get("failures"))
+    if scenario == "S4":
+        endurance = result.get("endurance") or {}
+        payload["ok"] = bool(endurance.get("ok") and not result.get("failures"))
+    else:
+        payload["ok"] = bool(
+            translation.get("completed")
+            and not result.get("failures"))
     return payload
 
 
 def _summary_line(payload: dict) -> dict:
     """The one-line stdout summary: the numbers a console reader needs first."""
+    if payload.get("scenario") == "S4":
+        endurance = payload.get("endurance") or {}
+        return {
+            "ok": payload.get("ok"),
+            "report": payload.get("report_path"),
+            "scenario": "S4",
+            "mode": payload.get("mode") or (payload.get("environment") or {}).get("mode"),
+            "cycles": endurance.get("cycles"),
+            "crashes": endurance.get("crashes"),
+            "not_responding": endurance.get("not_responding"),
+            "idle_rss_growth_mb": endurance.get("idle_rss_growth_mb"),
+            "verdict": endurance.get("verdict"),
+            "wall_time_s": payload.get("wall_time_s"),
+            "report_path": payload.get("report_path"),
+        }
     phases = (payload.get("metrics") or {}).get("phases") or {}
     run = (phases.get("R") or {})
     after = (phases.get("I") or {})
@@ -2636,6 +3138,38 @@ def verify_round(directory: Path) -> dict:
     measurement = payload.get("measurement") or {}
     metrics = payload.get("metrics") or {}
     phases = metrics.get("phases") or {}
+    if payload.get("scenario") == "S4":
+        # S4 is an endurance loop: there is no single translating window, so the
+        # R/I checks below cannot apply (#455 judges crashes, not-responding
+        # episodes and idle RSS instead).  Verifying an S4 round must check the
+        # verdict's own evidence, not run the jank contract over it and call the
+        # missing windows a failure.
+        endurance = payload.get("endurance") or {}
+        cycles = payload.get("cycles") or []
+        finished = [item for item in cycles if item.get("ok") is True]
+        add("implemented", payload.get("implemented") is True,
+            {"implemented": payload.get("implemented")})
+        add("endurance_block_present", bool(endurance), endurance)
+        add("cycles_ran", bool(finished), {"cycles": endurance.get("cycles"),
+                                           "finished": len(finished)})
+        add("crash_count_recorded", "crashes" in endurance,
+            {"crashes": endurance.get("crashes")})
+        add("not_responding_count_recorded", "not_responding" in endurance,
+            {"not_responding": endurance.get("not_responding")})
+        add("idle_rss_measured", bool(endurance.get("criteria", {})
+                                      .get("idle_rss_measured")),
+            {"idle_rss_mb": endurance.get("idle_rss_mb")})
+        add("samples_present", bool(payload.get("handle_samples")),
+            {"handle_samples": len(payload.get("handle_samples") or [])},
+            required=False)
+        add("verdict_recorded", bool(endurance.get("verdict")),
+            {"verdict": endurance.get("verdict")})
+        ok = all(check["ok"] for check in checks if check.get("required", True))
+        return {"directory": str(directory), "ok": bool(ok), "checks": checks,
+                "aggregate_ready": False,
+                "note": "S4 is an endurance round: R/I do not apply, the "
+                        "endurance block is the evidence"}
+
     window_control = payload.get("window_control") or {}
     seconds_applied = window_control.get("seconds_applied")
     mode = (payload.get("environment") or {}).get("mode")
@@ -2799,6 +3333,16 @@ def main(argv: list[str] | None = None) -> int:
                         help="real provider config file, read in memory: runs the "
                              "scenario against the real endpoint instead of the mock "
                              "gateway (the key is never written into any output)")
+    parser.add_argument("--s4-sample-seconds", type=float, default=S4_SAMPLE_SECONDS,
+                        help="how often S4 samples this process's RSS and handle count")
+    parser.add_argument("--s4-cycle-timeout", type=float, default=S4_CYCLE_TIMEOUT_S,
+                        help="one S4 cycle may not exceed this; a cycle that does is "
+                             "counted as a not-responding episode")
+    parser.add_argument("--s4-idle-seconds", type=float, default=S4_IDLE_SECONDS,
+                        help="quiet tail after the last S4 cycle (idle RSS baseline)")
+    parser.add_argument("--s4-idle-sample-seconds", type=float,
+                        default=S4_IDLE_SAMPLE_SECONDS,
+                        help="sampling interval inside the S4 idle tail")
     parser.add_argument("--s3-segments", type=int, default=10000,
                         help="segments of the finished task S3 opens and switches to")
     parser.add_argument("--s3-small-paras", type=int, default=40,
@@ -2912,6 +3456,8 @@ def main(argv: list[str] | None = None) -> int:
                 result = run_frozen(args, fixtures[0], data_dir, log_dir, base_url)
             elif args.scenario == "S3":
                 result = run_source_s3(args, fixtures, data_dir, log_dir, base_url)
+            elif args.scenario == "S4":
+                result = run_source_s4(args, fixtures, data_dir, log_dir, base_url)
             else:
                 result = run_source(args, fixtures[0], data_dir, log_dir, base_url)
         finally:
