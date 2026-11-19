@@ -31,6 +31,9 @@ from pathlib import Path
 
 #: 每个任务的段落数（pairs）。21 个任务 × 约 143 段 ≈ 3,000 待审项。
 DEFAULT_SEGMENTS = 210
+#: 一段"版面 IR"的近似大小（字节）。真实任务中每份 state 约 30 MB，来自整本书的
+#: 段落版面数据；#514 的慢路径（json.dumps / 深拷贝）只有在 state 达到这个量级才触发。
+IR_PER_SEGMENT = 145_000
 #: 每个已交付任务的 findings 密度（约 1/3 段有检查项）
 FINDINGS_PER_DELIVERED_DIVISOR = 2
 #: 未交付任务的 findings 密度（约 1/2 段有检查项）
@@ -73,6 +76,10 @@ def _state(filename: str, index: int, segments: int, findings: int, rng: random.
         "report_enabled": True,
         "paras": [p["source"] for p in pairs],
         "pairs": pairs,
+        # 大段版面 IR：占 state 体积的绝大部分，文本仍是程序生成的。
+        "page_layout_ir": [
+            "IR:" + _text(rng, IR_PER_SEGMENT // 8) for _ in range(segments)
+        ],
         "auto_terms": {f"term-{n}": f"译法-{n}" for n in range(6)},
         "findings": items,
         "review_stats": {
