@@ -390,12 +390,34 @@ def test_overlap_with_simulated_latency(monkeypatch):
         )
         ovl_wall = time.perf_counter() - t1
 
-        # Assertions
-        assert ovl_wall < seq_wall, f"Overlap wall time ({ovl_wall:.3f}s) should be lower than sequential ({seq_wall:.3f}s)"
-        savings = (seq_wall - ovl_wall) / seq_wall
-        metrics = state_ovl["review_overlap"]
-        assert metrics["hidden_review_seconds"] > 0, "Should have measured hidden review time"
-        assert metrics["hidden_review_ratio"] > 0.40, f"Expected > 40% hidden ratio, got {metrics['hidden_review_ratio']}"
+        # The claim under test is "review latency is hidden behind generation",
+        # and the product measures exactly that: elapsed review time that fitted
+        # inside a generation window.  The cross-run wall clock used to be the
+        # assertion here, and it cannot carry it: on a loaded Windows runner the
+        # same test measured 3.428 s vs 3.350 s, because two sleep-and-schedule
+        # runs are dominated by timer granularity and neighbour load, while the
+        # real difference is a fraction of a second.
+        metrics = state_ovl.get("review_overlap") or {}
+        assert metrics, (
+            "the product recorded no review-overlap metrics: the scheduler did "
+            "not run, so the latency could not have been hidden")
+        assert metrics["hidden_review_seconds"] > 0, (
+            f"no review latency was hidden (sequential {seq_wall:.3f}s, "
+            f"overlap {ovl_wall:.3f}s)")
+        assert metrics["hidden_review_ratio"] > 0.40, (
+            f"expected > 40% hidden ratio, got {metrics['hidden_review_ratio']}")
+        # Magnitude from accounting, not from the clock: four batches, and the
+        # last one's review cannot hide, so at least one review's worth of time
+        # has to have overlapped.
+        assert metrics["hidden_review_seconds"] >= REV_LATENCY, (
+            f"hidden {metrics['hidden_review_seconds']:.3f}s is less than one "
+            f"review's latency ({REV_LATENCY}s); overlap did nothing")
+        # Cheap guard against "overlap was switched off, and this run just
+        # happened to be slow": generous on purpose — it only has to catch a
+        # disabled scheduler, not a busy machine.
+        assert ovl_wall <= seq_wall + 1.0, (
+            f"overlap wall time ({ovl_wall:.3f}s) is far above sequential "
+            f"({seq_wall:.3f}s); the scheduler looks disabled")
 
     finally:
         core.OUTPUT_DIR = old_output_dir
