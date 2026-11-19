@@ -21,12 +21,24 @@ Repository = "https://github.com/xueyang-dev/Folith"
 Issues = "https://github.com/xueyang-dev/Folith/issues"
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9", "pikepdf>=10"]
+test = ["pytest>=8,<9", "pikepdf>=10", "ruff==0.17.5"]
 
 [project.scripts]
 folith = "folith.qt.app:main"
 # Published package and command kept as a compatibility alias for existing installs.
 foliothread = "folith.qt.app:main"
+
+[tool.ruff]
+# 只做 bug 类静态检查（#460）：未定义名、重复定义、未使用导入/变量、bare except、
+# 循环变量闭包、raise without from 等。**不是**格式化器，也不开风格规则——
+# 那类建议在一个下午里有上千条，没人修，只会把门变成噪声。
+target-version = "py310"
+line-length = 120
+extend-exclude = [".loop", "build", "dist", "venv", "tmp", "outputs", ".git"]
+
+[tool.ruff.lint]
+# `scripts/check_ruff_baseline.py` 用同一串规则跑冻结基线（docs/ruff-baseline.txt）。
+select = ["F", "E722", "B017", "B023", "B030", "B039", "B904"]
 
 [tool.setuptools]
 py-modules = ["core"]

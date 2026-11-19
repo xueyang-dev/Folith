@@ -1,0 +1,643 @@
+# ruff 冻结基线（bug 类规则）：每行 `代码 <tab> 文件 <tab> 出错行的内容`。
+# 规则：F,E722,B017,B023,B030,B039,B904（ruff 0.17.5）
+
+B017	tests/local_gateway_test.py	with pytest.raises(Exception):
+B017	tests/persistence_phase_a_test.py	with pytest.raises(Exception):
+B017	tests/scenario_gate_test.py	with pytest.raises(Exception):
+B017	tests/state_journal_test.py	with pytest.raises(Exception):
+B017	tests/state_journal_test.py	with pytest.raises(Exception):
+B017	tests/vision_usage_trace_test.py	with pytest.raises(Exception):
+B023	benchmark/run_ocr_vision_pilot.py	"image_attached": image is not None,
+B023	benchmark/run_ocr_vision_pilot.py	"image_attached": image is not None,
+B023	benchmark/run_ocr_vision_pilot.py	"page_index": page["page_index"], "mode": mode,
+B023	benchmark/run_ocr_vision_pilot.py	"page_index": page["page_index"], "mode": mode,
+B023	benchmark/run_ocr_vision_pilot.py	if mode in {"vision_text_control", "image_guided"}:
+B023	benchmark/run_ocr_vision_pilot.py	raw_responses.append(text)
+B023	benchmark/run_ocr_vision_pilot.py	requests.append(attempt)
+B023	benchmark/run_ocr_vision_pilot.py	{"role": "user", "content": request_content(prompt, image)}],
+B023	core.py	on_status=lambda label: _runtime_status_callback(job_id, state, label),
+B023	docs/performance/phase3-independent-evidence/batch_compare.py	prompts.append([system,user])
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p10_typography.py	assert style.current_theme() == theme, (name, theme, style.current_theme())
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p10_typography.py	assert style.current_theme() == theme, (name, theme, style.current_theme())
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p10_typography.py	manifest.append({'page': name, 'language':language, 'theme':theme, 'file':path.name,
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p10_typography.py	manifest.append({'page': name, 'language':language, 'theme':theme, 'file':path.name,
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p10_typography.py	path = out / f'{name}-{language}-{theme}.png'
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p10_typography.py	path = out / f'{name}-{language}-{theme}.png'
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p1_changed_refresh.py	st["_refresh_probe"] = i  # a real write: new signature, same content otherwise
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p7_real_batches.py	if record['requests']:
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p7_real_batches.py	parsed = translation_protocol.parse_translation_response(response, count)
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p7_real_batches.py	record.update(outcome='ok', returned_items=len(parsed))
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p7_real_batches.py	record.update(outcome='protocol_error', code=error.code)
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p7_real_batches.py	record.update(outcome='transport_error', error_type=type(error).__name__)
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p7_real_batches.py	record['requests'] += 1
+B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p7_real_batches.py	record['seconds'] = round(time.perf_counter()-start, 2)
+B023	folith/academic_evidence.py	"end": lambda self: end,
+B023	folith/academic_evidence.py	"start": lambda self: start,
+B023	folith/academic_quality.py	protected[token] = match.group(0)
+B023	folith/academic_quality.py	token = f"TRACEPROVENANCE{len(protected)}TOKEN"
+B023	folith/academic_writer.py	if case_type == "translation_decision":
+B023	folith/academic_writer.py	kind, value = "INITIAL", (focus.get("initial_span") or {}).get("text")
+B023	folith/academic_writer.py	kind, value = "SOURCE", (focus.get("source_span") or {}).get("text")
+B023	folith/academic_writer.py	kind, value = "TARGET", (focus.get("target_span") or {}).get("text")
+B023	folith/academic_writer.py	return f"> [{kind} {case_id}]: {value}" if value else item.group(0)
+B023	folith/desktop/exit_flow.py	lambda: {item.segment_id for item in read_pending_drafts(data_dir, job_id)} != before,
+B023	folith/pdfrender/__init__.py	background = sampler.sample(page_index, slot.source_box)
+B023	folith/qt/selftest.py	self.pump(self.timeout, lambda: self._job_settled(adapter, core, pdf_id))
+B023	folith/streaming_ingest.py	or self.pages_done != seen, _WAIT_SLICE_S)
+B023	folith/translation_planner.py	matches = pattern.search if pattern is not None else lambda text: term in text
+B023	scripts/arabic_acceptance_audit.py	assert src_txt in user
+B023	scripts/arabic_acceptance_audit.py	assert tgt_name in system
+B023	scripts/arabic_acceptance_audit.py	calls.append((system, user))
+B023	scripts/arabic_acceptance_audit.py	return json.dumps([tgt_txt], ensure_ascii=False)
+B023	scripts/arabic_acceptance_audit.py	return json.dumps(references, ensure_ascii=False)
+B023	scripts/knowledge_feedback_live.py	call_llm=lambda *a, **k: reply,
+B023	scripts/phase7_memory_scope_scaling.py	return float((phases.get(name) or {}).get("total_cpu_s", 0.0)) * 1000.0
+B023	scripts/phase7_memory_scope_scaling.py	return float((phases.get(name) or {}).get("total_cpu_s", 0.0)) * 1000.0
+B023	scripts/qt_crash_recovery_probe.py	_pump(app, 1.1, lambda: time.monotonic() >= until)
+B023	scripts/qt_crash_recovery_probe.py	assert _pump(app, 15, lambda: window.workbench._state.get("pairs") == pairs)
+B023	scripts/qt_crash_recovery_probe.py	window.workbench._state.get("pairs") or []) > len(pairs))
+B023	scripts/qt_stale_wrapper_probe.py	result = original(self, name, **extra)
+B023	scripts/qt_stale_wrapper_probe.py	return original(self, name, **extra)
+B023	scripts/retrospective_benchmark.py	calls.append(user)
+B023	scripts/source_context_evidence.py	and bench.source_clip.width() > 200)
+B023	scripts/source_context_evidence.py	pump(lambda: '没能' in panel.hint.text())
+B023	scripts/source_context_evidence.py	pump(lambda: bench.view_source_button.isEnabled())
+B023	scripts/source_context_evidence.py	pump(lambda: not bench._motion.running('translation-columns')
+B023	scripts/source_context_evidence.py	pump(lambda: panel.location.text() == expected)
+B023	scripts/source_context_evidence.py	pump(lambda: panel.location.text() == expected)
+B023	scripts/vlm_migration_benchmark.py	body=transport._request_body(system,[{'type':'text','text':user}])
+B023	scripts/vlm_migration_benchmark.py	calls.append({'request_id':response.id,'usage':response.usage.model_dump() if response.usage else {},
+B023	scripts/vlm_migration_benchmark.py	response=transport._get_client().chat.completions.create(**body)
+B023	tests/qt_workbench_delta_test.py	applied_batches.append(len(positions))
+B023	tests/qt_workbench_delta_test.py	assert _pump(app, 300, lambda: window._delta_applied_seq == batch + 1
+B023	tests/qt_workbench_delta_test.py	assert _pump(app, 300, lambda: workbench.segment_list.rowCount() == segments), (
+B023	tests/qt_workbench_delta_test.py	assert _pump(app, 300, lambda: workbench.segment_list.rowCount() == segments), (
+B023	tests/qt_workbench_delta_test.py	result = original_apply(*args, **kwargs)
+B023	tests/qt_workbench_delta_test.py	samples.append((time.perf_counter() - started) * 1000)
+B030	scripts/pdf_ingestion_benchmark.py	self._psutil.Error if self._psutil else OSError):
+B039	folith/trace.py	_ACTIVE_SPAN_STACK: contextvars.ContextVar[List[str]] = contextvars.ContextVar("folith_span_stack", default=[])
+B904	core.py	raise RuntimeError("任务已请求取消")
+B904	folith/application/job_config.py	raise JobConfigError(f"无法把 {value!r} 解析为整数。")
+B904	folith/interop/tu_contract.py	raise ValueError(
+B904	folith/interop/xliff12.py	raise XliffStructureError(
+B904	folith/interop/xliff12.py	raise XliffStructureError(str(exc))
+B904	folith/interop/xml_span.py	raise XmlSpanError(f"属性字节不能按 {encoding} 解码：{exc}")
+B904	folith/interop/xml_span.py	raise XmlSpanError(f"文本字节不能按 {encoding} 解码：{exc}")
+B904	folith/interop/xml_span.py	raise XmlSpanError(f"文档声明的编码 {codec!r} 本机不认识；拒绝猜测")
+B904	folith/interop/xml_span.py	raise XmlSpanError(f"新文本不能按文档编码 {encoding} 写回：{exc}")
+B904	folith/interop/xml_span.py	raise XmlSpanError(f"非法的字符引用：&{name};")
+B904	folith/interop/xml_span.py	raise XmlSpanError(f"非法的字符引用：&{name};")
+B904	folith/ocr_online.py	raise ValueError("not_json")
+B904	folith/ocr_online.py	raise ValueError("refused")
+B904	folith/ocr_paddle.py	raise OCRUnavailable("worker_terminated", "Paddle OCR 进程异常退出；已完成页面保留，可减少资源占用后重试。")
+B904	scripts/check_ruff_baseline.py	raise SystemExit(2)
+B904	scripts/dynamic_context_ab.py	raise SystemExit(f"provider config unreadable ({type(exc).__name__})")
+B904	scripts/runtime_baseline_runner.py	raise SystemExit(f"--r-window must be START:END seconds, got {text!r}")
+B904	tests/engine_host_subprocess_test.py	raise AssertionError(
+F401	benchmark/bench_lib.py	from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+F401	benchmark/bench_lib.py	from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+F401	benchmark/run_ocr_sources_verification.py	from PIL import Image
+F401	benchmark/run_ocr_sources_verification.py	import io
+F401	benchmarks/performance/compare.py	import sys
+F401	benchmarks/performance/runner.py	from PySide6.QtCore import QObject, QTimer
+F401	benchmarks/performance/runner.py	import json
+F401	core.py	_ocr_join_lines, _order_line_words, _iter_tesseract_tsv_rows,
+F401	core.py	_ocr_join_lines, _order_line_words, _iter_tesseract_tsv_rows,
+F401	core.py	_ocr_join_lines, _order_line_words, _iter_tesseract_tsv_rows,
+F401	core.py	_parse_tesseract_tsv, _ocr_page_with_tesseract,
+F401	core.py	from defusedxml import ElementTree as ET
+F401	core.py	from folith import delivery as _delivery
+F401	core.py	from folith import document_ir as _document_ir
+F401	core.py	from folith import store_lock as _store_lock
+F401	core.py	from folith.textual import has_textual_content, normalize_language, text_direction
+F401	core.py	from folith.trace import trace, TraceLevel, RunContext
+F401	core.py	from folith.trace import trace, TraceLevel, RunContext
+F401	core.py	from html import escape as html_escape
+F401	core.py	from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+F401	core.py	from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+F401	core.py	from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+F401	core.py	from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+F401	core.py	from urllib.parse import urlparse
+F401	core.py	import csv
+F401	core.py	import pandas as pd
+F401	core.py	import subprocess
+F401	core.py	import unicodedata
+F401	core.py	import zipfile
+F401	docs/performance-real-tasks-2026-10-08/audit.py	import math
+F401	docs/performance/phase3-boundary-review/boundary_observations.py	from unittest.mock import patch
+F401	docs/performance/phase3-boundary-review/boundary_observations.py	import os
+F401	docs/performance/phase3-independent-evidence/batch_compare.py	import copy, json, os, re, subprocess, sys, tarfile, tempfile
+F401	docs/performance/phase3-independent-evidence/benchmark.py	import ast, copy, importlib.util, json, statistics, subprocess, sys, tempfile, threading, time, types
+F401	docs/performance/phase3-independent-evidence/independent_audit_observations.py	import json
+F401	docs/performance/phase3-independent-evidence/independent_audit_observations.py	import os
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_busy.py	from folith.qt import style as style_module, theme
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_busy.py	from pathlib import Path
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_focus_probe.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_focus_probe.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_focus_probe.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_focus_probe.py	import json, os, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_focus_probe.py	import json, os, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_nav.py	from PySide6.QtCore import QSettings, QObject, QEvent
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_nav.py	from PySide6.QtCore import QSettings, QObject, QEvent
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_nav.py	import os, shutil, sys, tempfile, time, statistics
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_row_jump.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_row_jump.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_row_jump.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_row_jump.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_row_jump.py	from PySide6.QtTest import QTest
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_row_jump.py	import json, os, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_save.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_save.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_save.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_save.py	from PySide6.QtTest import QTest
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_save.py	import json, os, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_save.py	import json, os, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_seg_switch.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_stray.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_stray.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_stray.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_stray.py	from PySide6.QtCore import QSettings, QObject, QEvent, Qt, QElapsedTimer
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_stray.py	from PySide6.QtTest import QTest
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_stray.py	import json, os, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_stray.py	import json, os, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p10_typography.py	from PySide6.QtWidgets import QApplication, QLabel
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p1_changed_refresh.py	import cProfile, io, os, pstats, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p1_idle_refresh.py	import cProfile, io, os, pstats, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p1_poll_stall.py	import cProfile, io, os, pstats, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p1_poll_stall.py	import cProfile, io, os, pstats, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p1_poll_stall.py	import cProfile, io, os, pstats, shutil, statistics, sys, tempfile, time
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p4_motion_slice.py	from PySide6.QtTest import QTest
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p4_motion_slice.py	from folith.qt import adapter, i18n, motion, window
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p9_brand.py	from folith.qt import adapter, branding, i18n, style
+F401	docs/qt-beta/acceptance-feedback-2026-10-14-tools/probe_preset_resolution.py	import json, os, sys, tempfile
+F401	eval/history.py	import time
+F401	eval/phase2_tests.py	from folith.terminology import term_matches  # noqa: E402
+F401	eval/reporting/csv_report.py	from typing import Any, Dict, List
+F401	eval/run_ab.py	import shutil
+F401	eval/run_ab.py	import time
+F401	eval/sampling/blind_review.py	from typing import Any, Dict, List, Optional, Tuple
+F401	folith/application/commands.py	from pathlib import Path
+F401	folith/application/commands.py	is_supported_source,
+F401	folith/application/read_models.py	from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+F401	folith/claim_strength.py	from typing import Any, Dict, Iterable, List, Mapping, Optional
+F401	folith/compliance.py	from typing import Any, Dict, Iterable, List, Mapping
+F401	folith/critical_path.py	from typing import Any, Callable, Dict, List, Optional
+F401	folith/desktop/exit_flow.py	from typing import Any, Callable, Iterable, Sequence
+F401	folith/desktop/exit_flow.py	from typing import Any, Callable, Iterable, Sequence
+F401	folith/docx_roundtrip.py	import copy
+F401	folith/finding_groups.py	from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+F401	folith/history_view.py	from typing import Any, Dict, Mapping, Optional
+F401	folith/human_evidence.py	import json
+F401	folith/knowledge_cache.py	import re
+F401	folith/legacy_literature.py	from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+F401	folith/legacy_literature.py	from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+F401	folith/ocr_backends.py	from folith.ocr_online import ONLINE_OCR_BACKEND as _ONLINE_NAME, OnlineOCRConfig
+F401	folith/ocr_cache.py	import os
+F401	folith/ocr_models.py	from dataclasses import dataclass, field
+F401	folith/ocr_online.py	import logging
+F401	folith/ocr_paddle.py	import paddle
+F401	folith/ocr_tesseract.py	import inspect
+F401	folith/persistence_profiler.py	from typing import Any, Dict, List, Optional
+F401	folith/profiler.py	from typing import Any, Dict, Iterator, List, Optional
+F401	folith/qt/adapter.py	JobConfig as _JobConfig,
+F401	folith/qt/batch_unify_dialog.py	from . import i18n as _i18n
+F401	folith/qt/components.py	QStackedWidget, QTableWidget, QToolButton, QVBoxLayout, QWidget)
+F401	folith/qt/components.py	from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLayout,
+F401	folith/qt/components.py	import sys
+F401	folith/qt/dialogs.py	QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
+F401	folith/qt/dialogs.py	QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
+F401	folith/qt/dialogs.py	QPlainTextEdit, QPushButton, QRadioButton, QScrollArea, QSpinBox, QStackedWidget,
+F401	folith/qt/dialogs.py	QPlainTextEdit, QPushButton, QRadioButton, QScrollArea, QSpinBox, QStackedWidget,
+F401	folith/qt/dialogs.py	QTableWidget, QTableWidgetItem, QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
+F401	folith/qt/dialogs.py	import os
+F401	folith/qt/i18n.py	import os
+F401	folith/qt/outline_loader.py	from pathlib import Path
+F401	folith/qt/review_panel.py	from . import adapter
+F401	folith/qt/review_panel.py	from .style import Card
+F401	folith/qt/scope_dialog.py	from PySide6.QtCore import Qt, Signal
+F401	folith/qt/selftest.py	import io
+F401	folith/qt/settings_pages.py	from .dialogs import _panel, _set_status
+F401	folith/qt/source_outline_panel.py	from .outline_loader import OutlineLoader, outline_loader
+F401	folith/qt/views.py	QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QFrame,
+F401	folith/qt/views.py	QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QFrame,
+F401	folith/qt/views.py	QMenu, QPlainTextEdit, QProgressBar,
+F401	folith/qt/views.py	QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
+F401	folith/report_evidence.py	from typing import Any, Dict, List
+F401	folith/review_export.py	from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+F401	folith/review_scheduler.py	from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+F401	folith/review_scheduler.py	import copy
+F401	folith/storage/job_repository.py	import os
+F401	folith/storage/state_journal.py	from typing import Any, Dict, List, Optional, Sequence, Tuple
+F401	folith/terminology_variants.py	from typing import Any, Dict, Iterable, List, Optional, Sequence
+F401	folith/trace.py	from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
+F401	folith/trace.py	import atexit
+F401	folith/trace.py	import dataclasses
+F401	folith/trace.py	import platform
+F401	folith/translation_cache.py	from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+F401	folith/translation_cache.py	from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+F401	folith/translation_candidates.py	from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+F401	folith/translation_decisions.py	from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, TypedDict
+F401	folith/workspace_presentation.py	from folith.terminology import entry_matches, source_forms, term_matches
+F401	scripts/acceptance/outline_191_offscreen.py	from folith import source_outline, outline_anchor, outline_corrections, outline_recovery
+F401	scripts/acceptance/outline_191_offscreen.py	from folith.qt.outline_panel import OutlinePanel, NODE_ROLE
+F401	scripts/arabic_acceptance_audit.py	from folith.engine.document_export import _apply_paragraph_direction
+F401	scripts/arabic_acceptance_audit.py	from folith.qt import segment_editor, theme
+F401	scripts/arabic_acceptance_audit.py	from folith.textual import has_textual_content, text_direction
+F401	scripts/benchmark_performance.py	import copy
+F401	scripts/benchmark_performance.py	import os
+F401	scripts/benchmark_performance.py	load_job_state_cached,
+F401	scripts/benchmark_performance_trace.py	import json
+F401	scripts/benchmark_performance_trace.py	import os
+F401	scripts/check_windows_artifact.py	import os
+F401	scripts/dynamic_context_ab.py	from dataclasses import dataclass, field
+F401	scripts/knowledge_feedback_ab_compare.py	from folith import consistency as _consistency  # noqa: E402
+F401	scripts/knowledge_feedback_ab_compare.py	from typing import Any, Dict, List, Sequence
+F401	scripts/knowledge_feedback_ab_compare.py	from typing import Any, Dict, List, Sequence
+F401	scripts/knowledge_feedback_ab_compare.py	import re
+F401	scripts/knowledge_feedback_acceptance_ab.py	from folith import usage as _usage  # noqa: E402
+F401	scripts/knowledge_feedback_acceptance_ab.py	from typing import Any, Dict, List, Optional, Sequence, Tuple
+F401	scripts/knowledge_feedback_acceptance_ab.py	from typing import Any, Dict, List, Optional, Sequence, Tuple
+F401	scripts/knowledge_feedback_acceptance_ab.py	import os
+F401	scripts/knowledge_feedback_acceptance_ab.py	import statistics
+F401	scripts/knowledge_feedback_live.py	import os
+F401	scripts/knowledge_feedback_live.py	import statistics
+F401	scripts/knowledge_feedback_lost_items.py	from folith import knowledge as _knowledge  # noqa: E402
+F401	scripts/knowledge_feedback_lost_items.py	from typing import Any, Dict, List, Optional, Sequence, Tuple
+F401	scripts/knowledge_feedback_lost_items.py	from typing import Any, Dict, List, Optional, Sequence, Tuple
+F401	scripts/knowledge_feedback_lost_items.py	import collections
+F401	scripts/knowledge_feedback_yield.py	from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+F401	scripts/make_synthetic_data_dir.py	import shutil
+F401	scripts/make_synthetic_data_dir.py	import tempfile
+F401	scripts/phase8_terminology_differential_gate.py	from typing import Any, Dict, List, Sequence, Tuple
+F401	scripts/phase8_terminology_differential_gate.py	import re
+F401	scripts/qt_crash_recovery_probe.py	from folith.qt import adapter, selftest, window as w
+F401	scripts/qt_hung_provider_probe.py	import tempfile
+F401	scripts/qt_lifecycle_probe.py	import io
+F401	scripts/review_cost_audit.py	from folith import translation_core  # noqa: E402
+F401	scripts/review_defect_recall.py	from typing import Any, Dict, List, Optional, Tuple
+F401	scripts/review_defect_recall.py	from typing import Any, Dict, List, Optional, Tuple
+F401	scripts/review_defect_recall.py	import copy
+F401	scripts/review_yield_live.py	import os
+F401	scripts/reviewer_overlap_benchmark.py	from folith import context as _context  # noqa: E402
+F401	scripts/reviewer_overlap_benchmark.py	from typing import Any, Dict, List, Tuple
+F401	scripts/reviewer_overlap_benchmark.py	import copy
+F401	scripts/reviewer_overlap_benchmark.py	import os
+F401	scripts/terminology_acceptance.py	from folith.qt import views
+F401	scripts/translation_concurrency_benchmark.py	import os
+F401	scripts/translation_critical_path_audit.py	import statistics
+F401	scripts/translation_efficiency_benchmark.py	from typing import Any, Dict, List, Optional, Sequence, Tuple
+F401	scripts/vlm_migration_benchmark.py	from dataclasses import replace
+F401	tests/annotation_durable_staging_test.py	from unittest.mock import MagicMock, patch
+F401	tests/annotation_durable_staging_test.py	from unittest.mock import MagicMock, patch
+F401	tests/annotation_durable_staging_test.py	import os
+F401	tests/annotation_fail_stop_test.py	from concurrent.futures import ThreadPoolExecutor
+F401	tests/annotation_fail_stop_test.py	from types import SimpleNamespace
+F401	tests/annotation_quality_test.py	_is_person_name,
+F401	tests/annotation_quality_test.py	import pytest
+F401	tests/desktop_legacy_import_test.py	import time
+F401	tests/desktop_tool_discovery_test.py	import os
+F401	tests/desktop_updates_test.py	import hashlib
+F401	tests/deterministic_finding_groups_test.py	from folith import models
+F401	tests/document_understanding_test.py	from pathlib import Path
+F401	tests/docx_contract_v1_test.py	CONTRACT_VERSION,
+F401	tests/docx_contract_v1_test.py	DocxUnit,
+F401	tests/docx_contract_v1_test.py	build_roundtrip_docx,
+F401	tests/docx_contract_v1_test.py	from folith.engine.document_export import build_translation_docx
+F401	tests/docx_contract_v1_test.py	import hashlib
+F401	tests/docx_header_footer_contract_test.py	from docx.enum.section import WD_SECTION
+F401	tests/docx_roundtrip_contract_test.py	import sys
+F401	tests/engine_terminal_cleanup_test.py	import json
+F401	tests/engine_terminal_cleanup_test.py	import os
+F401	tests/fixtures/docx_contract/generate_fixtures.py	from docx.enum.text import WD_ALIGN_PARAGRAPH
+F401	tests/fixtures/docx_contract/generate_fixtures.py	from docx.shared import Inches, Pt, RGBColor
+F401	tests/fixtures/docx_contract/generate_fixtures.py	from docx.shared import Inches, Pt, RGBColor
+F401	tests/fixtures/docx_contract/generate_fixtures.py	import docx
+F401	tests/fixtures/docx_contract/generate_fixtures.py	import lxml.etree as LET
+F401	tests/fixtures/docx_contract/generate_fixtures.py	import os
+F401	tests/issue220_performance_report_test.py	import time
+F401	tests/jank_monitor_test.py	attribute_frame,
+F401	tests/language_expansion_e2e_test.py	from folith.document_understanding import VLMDocumentProvider, language_hint
+F401	tests/language_expansion_e2e_test.py	import io
+F401	tests/language_expansion_e2e_test.py	import json
+F401	tests/language_expansion_e2e_test.py	import pytest
+F401	tests/language_expansion_e2e_test.py	import xml.etree.ElementTree as ET
+F401	tests/legacy_literature_recovery_test.py	import json
+F401	tests/marker_fidelity_e2e_test.py	import pytest
+F401	tests/ocr_language_rtl_test.py	direction_for,
+F401	tests/original_layout_delivery_contract_test.py	import pytest
+F401	tests/p35_xliff_core_test.py	from pathlib import Path
+F401	tests/p35_xliff_ui_test.py	from pathlib import Path
+F401	tests/pdf_lazy_page_cache_test.py	from unittest.mock import patch
+F401	tests/pdf_lazy_page_cache_test.py	import pytest
+F401	tests/performance_trace_test.py	from pathlib import Path
+F401	tests/performance_trace_test.py	import concurrent.futures
+F401	tests/performance_trace_test.py	import os
+F401	tests/performance_trace_test.py	import sys
+F401	tests/project_language_assets_test.py	from folith import project as project_module  # noqa: E402
+F401	tests/project_task_navigation_test.py	from folith import project as project_module  # noqa: E402
+F401	tests/provider_quota_errors_test.py	import pytest
+F401	tests/qt_batch_unify_dialog_test.py	from folith.qt.selftest import open_job_and_wait  # noqa: E402
+F401	tests/qt_batch_unify_dialog_test.py	import time
+F401	tests/qt_client_adapter_test.py	import json
+F401	tests/qt_client_window_test.py	from PySide6.QtTest import QTest
+F401	tests/qt_client_window_test.py	from folith.qt import i18n, window as window_module
+F401	tests/qt_client_window_test.py	from folith.qt import i18n, window as window_module
+F401	tests/qt_client_window_test.py	from folith.qt import window as window_module
+F401	tests/qt_client_window_test.py	from pathlib import Path
+F401	tests/qt_concept_dialog_test.py	import core
+F401	tests/qt_connection_thinking_test.py	import json
+F401	tests/qt_design_system_test.py	from PySide6.QtCore import QSize, Qt  # noqa: E402
+F401	tests/qt_macos_file_open_test.py	from folith.qt import adapter
+F401	tests/qt_notifications_test.py	from folith.application import read_models
+F401	tests/qt_notifications_test.py	from pathlib import Path
+F401	tests/qt_notifications_test.py	from qt_shell_previews_test import app, window  # shared isolated real-window fixture
+F401	tests/qt_notifications_test.py	from qt_shell_previews_test import app, window  # shared isolated real-window fixture
+F401	tests/qt_notifications_test.py	import json
+F401	tests/qt_onboarding_test.py	from folith.qt import adapter, connection_status, dialogs, onboarding, preferences  # noqa: E402
+F401	tests/qt_open_without_outline_wait_test.py	from PySide6.QtCore import QCoreApplication, QEvent, Qt  # noqa: E402
+F401	tests/qt_open_without_outline_wait_test.py	from folith.application import commands as cmd
+F401	tests/qt_open_without_outline_wait_test.py	from folith.application.settings import SettingsSources
+F401	tests/qt_open_without_outline_wait_test.py	from folith.qt import adapter as adp
+F401	tests/qt_open_without_outline_wait_test.py	from folith.qt import adapter as adp
+F401	tests/qt_open_without_outline_wait_test.py	from folith.qt.outline_loader import OutlineLoader, outline_loader
+F401	tests/qt_projects_view_test.py	from folith.qt.projects_view import ProjectsView
+F401	tests/qt_qa_triage_audit_list_test.py	from PySide6.QtCore import Qt
+F401	tests/qt_qa_triage_audit_list_test.py	from PySide6.QtWidgets import QPushButton
+F401	tests/qt_qa_triage_audit_list_test.py	from folith.engine import triage_resolution as tr
+F401	tests/qt_s3_layout_regression_test.py	adapter, components, delivery_panel, flow_layout, i18n, style, views,
+F401	tests/qt_settings_dialog_ui_test.py	from PySide6.QtWidgets import QLabel, QLineEdit, QVBoxLayout  # noqa: E402
+F401	tests/qt_settings_dialog_ui_test.py	from PySide6.QtWidgets import QLabel, QLineEdit, QVBoxLayout  # noqa: E402
+F401	tests/qt_setup_panel_poll_test.py	import time
+F401	tests/qt_source_outline_panel_test.py	from folith.qt import outline_loader as ol_module
+F401	tests/qt_task_defaults_test.py	import tempfile
+F401	tests/qt_term_highlight_test.py	from PySide6.QtCore import Qt
+F401	tests/qt_trial_feedback_test.py	from folith.qt import adapter, dialogs, connection_status, theme, views
+F401	tests/readiness_telemetry_test.py	from unittest.mock import MagicMock, patch
+F401	tests/readiness_telemetry_test.py	from unittest.mock import MagicMock, patch
+F401	tests/readiness_telemetry_test.py	import copy
+F401	tests/red_team_acceptance_test.py	from folith import assets, delivery, document_profile, models, state_migration, terminology
+F401	tests/release_engineering_test.py	from pathlib import Path
+F401	tests/review_evidence_eval_test.py	import pytest
+F401	tests/review_export_test.py	from pathlib import Path
+F401	tests/review_gate_test.py	from typing import Any, Dict, List, Sequence
+F401	tests/review_gate_test.py	import tempfile
+F401	tests/review_scheduler_test.py	BatchLifecycleState,
+F401	tests/review_scheduler_test.py	from folith import context as _context
+F401	tests/review_scheduler_test.py	from folith.performance import PipelineProfiler
+F401	tests/review_scheduler_test.py	from unittest.mock import MagicMock
+F401	tests/review_scheduler_test.py	import os
+F401	tests/run_regression_log_test.py	import pytest
+F401	tests/runtime_quality_regression_test.py	from folith import assets, context, delivery, entity_registry, knowledge, model_roles
+F401	tests/scenario_gate_test.py	import re
+F401	tests/source_cleanup_test.py	from folith import source_cleanup
+F401	tests/stage2_dependency_test.py	from pathlib import Path
+F401	tests/stage3_case_review_test.py	from pathlib import Path
+F401	tests/stage3_case_review_test.py	import copy
+F401	tests/stage3_case_review_test.py	import json
+F401	tests/stage6_anonymous_mti_regression_test.py	from collections import Counter
+F401	tests/stage6_anonymous_mti_regression_test.py	from folith import academic_evidence, academic_writer, academic_validator
+F401	tests/stage6_anonymous_mti_regression_test.py	from pathlib import Path
+F401	tests/state_mutation_lock_test.py	import json
+F401	tests/state_mutation_lock_test.py	import uuid
+F401	tests/term_revision_test.py	from folith.engine import candidates as engine_candidates
+F401	tests/text_layer_routing_test.py	import pymupdf
+F401	tests/translation_core_phase2_test.py	from copy import deepcopy
+F401	tests/tu_contract_v1_test.py	ImportReport,
+F401	tests/ui_overhaul_f2_status_test.py	import dataclasses
+F401	tests/ui_overhaul_f2_status_test.py	import os
+F401	tests/vision_connection_pin_test.py	import json
+F401	tests/workflow_recovery_test.py	from folith.storage import job_repository
+F402	benchmarks/performance/runner.py	for field, value in (("provider", PROVIDER), ("model", MODEL),
+F541	docs/qt-beta/acceptance-feedback-2026-10-14-tools/compare_strategy_presets.py	tmp = Path(tempfile.mkdtemp(prefix=f"folith-fair-")); data = tmp / "data"; data.mkdir()
+F541	folith/academic_writer.py	f"- translation_decision_visible_count: 0",
+F541	folith/compliance.py	f"统计规则：Unicode CJK unified/extension A 汉字数，不含英文、数字、标点。",
+F541	folith/human_evidence.py	f"你当时是否参考了某个理论或原则来指导这一句的处理？")
+F541	folith/human_evidence.py	f"这一句涉及的术语/专名你当时为什么这样处理？")
+F541	folith/human_evidence.py	f"这一段在原文中的上下文背景是什么？"
+F541	scripts/acceptance/outline_191_offscreen.py	print(f"Step 1: parse_source_outline")
+F541	scripts/acceptance/outline_191_offscreen.py	print(f"\nStep 10: task_outline() with native structure makes no model call  PASS")
+F541	scripts/acceptance/outline_191_offscreen.py	print(f"\nStep 2: sidecar stored")
+F541	scripts/acceptance/outline_191_offscreen.py	print(f"\nStep 3: adapter.task_outline() (warm sidecar)")
+F541	scripts/acceptance/outline_191_offscreen.py	print(f"\nStep 4: outline panel widget")
+F541	scripts/acceptance/outline_191_offscreen.py	print(f"\nStep 5: navigation signal")
+F541	scripts/acceptance/outline_191_offscreen.py	print(f"\nStep 6: second set_outline with same fingerprint")
+F541	scripts/acceptance/outline_191_offscreen.py	print(f"\nStep 7: panel show/hide  PASS")
+F541	scripts/acceptance/outline_191_offscreen.py	print(f"\nStep 9: source byte identity  PASS")
+F541	scripts/benchmark_performance.py	print(f"Mounted Rows (Before vs After): 400 vs 40 (10x reduction)")
+F541	scripts/knowledge_feedback_live.py	print(f"# live knowledge-extraction sweep\n")
+F541	scripts/phase6_profiler_overhead.py	f"[off on on off] ===")
+F541	scripts/phase6_profiler_overhead.py	print(f"\n=== macro: real translate_stage, symmetric order "
+F541	scripts/run_regression.py	print(f"失败日志：" + str(LOGS))
+F601	folith/human_evidence.py	"final_target": (
+F811	core.py	from folith import request_control as _request_control
+F811	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_row_jump.py	import statistics
+F811	docs/qt-beta/acceptance-feedback-2026-10-14-tools/motion_save.py	from PySide6.QtCore import QElapsedTimer, QTimer
+F811	eval/history.py	from pathlib import Path
+F811	folith/qt/concept_dialog.py	def run(fn, *args, done):
+F811	folith/qt/dialogs.py	from PySide6.QtWidgets import QFileDialog
+F811	tests/desktop_exit_flow_test.py	import json
+F811	tests/qt_batch_unify_dialog_test.py	def test_applied_row_removed_prevents_second_click(self, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_apply_button_text_updates_with_count(self, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_button_not_visible_when_one_eligible(self, client, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_button_not_visible_when_one_eligible(self, client, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_button_visible_via_real_job_e2e(self, client, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_button_visible_via_real_job_e2e(self, client, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_button_visible_when_two_eligible(self, client, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_button_visible_when_two_eligible(self, client, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_dialog_opens_without_crash(self, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_emily_row_is_checked_by_default(self, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_rtl_layout_for_arabic(self, qt_app, monkeypatch):
+F811	tests/qt_batch_unify_dialog_test.py	def test_select_all_and_none(self, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_signal_is_connected_to_window(self, client, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_signal_is_connected_to_window(self, client, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_snippet_rows_paint_visible_text(self, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_snippet_shows_changed_form_in_long_segment(self, qt_app):
+F811	tests/qt_batch_unify_dialog_test.py	def test_trad_simplified_row_checked_by_default(self, qt_app):
+F811	tests/qt_concept_dialog_test.py	core = client['core']
+F811	tests/qt_concept_dialog_test.py	def test_bounded_preview_never_selects_hidden_rows(app, concept_job):
+F811	tests/qt_concept_dialog_test.py	def test_preview_selection_dirty_fields_and_protection(app, concept_job):
+F811	tests/qt_concept_dialog_test.py	def test_review_button_drives_save_preview_select_apply_and_reopen(client, monkeypatch):
+F811	tests/qt_dialog_lifecycle_test.py	def test_concept_callback_after_dialog_deleted_is_a_noop(app, concept_job, monkeypatch):
+F811	tests/qt_followup_test.py	def test_a_failed_profile_is_reported_instead_of_being_silently_skipped():
+F811	tests/qt_job_action_failures_test.py	def test_a_cancel_click_that_times_out_is_reported(client, monkeypatch):
+F811	tests/qt_job_action_failures_test.py	def test_a_cancel_that_the_adapter_refuses_is_not_reported_as_cancelling(client, monkeypatch):
+F811	tests/qt_job_action_failures_test.py	def test_an_action_without_a_current_job_says_so_instead_of_doing_nothing(client, monkeypatch):
+F811	tests/qt_job_action_failures_test.py	def test_pause_continue_and_retry_report_their_failures(client, monkeypatch):
+F811	tests/qt_notifications_test.py	def test_background_result_belongs_to_original_task(window, app):
+F811	tests/qt_notifications_test.py	def test_background_result_belongs_to_original_task(window, app):
+F811	tests/qt_notifications_test.py	def test_card_progress_tones_include_terminal_states(app, status, token):
+F811	tests/qt_notifications_test.py	def test_card_uses_same_retry_and_stall_clock_as_workbench(app):
+F811	tests/qt_notifications_test.py	def test_library_saved_time_includes_newer_checkpoint_without_reading_state(window, monkeypatch):
+F811	tests/qt_notifications_test.py	def test_log_write_failure_keeps_the_error_available(window, monkeypatch):
+F811	tests/qt_notifications_test.py	def test_summary_count_matches_drawer_without_loading_state_for_listing(window, monkeypatch):
+F811	tests/qt_notifications_test.py	def test_task_error_is_nonmodal_persistent_and_readable(window, app, monkeypatch):
+F811	tests/qt_notifications_test.py	def test_task_error_is_nonmodal_persistent_and_readable(window, app, monkeypatch):
+F811	tests/qt_notifications_test.py	def test_task_notices_expire_back_to_the_run_status(window, app, monkeypatch):
+F811	tests/qt_notifications_test.py	def test_task_notices_expire_back_to_the_run_status(window, app, monkeypatch):
+F811	tests/qt_notifications_test.py	def test_toast_timeout_hover_replacement_and_focus(window, app, monkeypatch):
+F811	tests/qt_notifications_test.py	def test_toast_timeout_hover_replacement_and_focus(window, app, monkeypatch):
+F811	tests/qt_setup_panel_poll_test.py	def _import_job(client, seed: str = "Test paragraph.") -> str:
+F811	tests/qt_setup_panel_poll_test.py	def _open_setup_panel(client, job_id: str):
+F811	tests/qt_setup_panel_poll_test.py	def _simulate_poll(client):
+F811	tests/qt_setup_panel_poll_test.py	def test_delivery_box_survives_preloaded_poll(client):
+F811	tests/qt_setup_panel_poll_test.py	def test_delivery_preset_survives_preloaded_poll(client):
+F811	tests/qt_setup_panel_poll_test.py	def test_opening_job_always_loads_saved_values(client):
+F811	tests/qt_setup_panel_poll_test.py	def test_strategy_box_survives_preloaded_poll(client):
+F811	tests/qt_setup_panel_poll_test.py	def test_switching_jobs_resets_dirty_and_reloads(client):
+F811	tests/qt_window_migration_test.py	client, monkeypatch, changes):
+F811	tests/qt_window_migration_test.py	def _open(client, job_id):
+F811	tests/qt_window_migration_test.py	def test_academic_pages_follow_the_setting_and_final_qa_can_be_confirmed(client):
+F811	tests/qt_window_migration_test.py	def test_case_approval_and_report_answers_reach_the_core(client):
+F811	tests/qt_window_migration_test.py	def test_failed_term_save_preserves_pending_form(client, monkeypatch):
+F811	tests/qt_window_migration_test.py	def test_followup_entity_unification_from_the_window(client):
+F811	tests/qt_window_migration_test.py	def test_leaving_with_unsaved_term_requires_discard_or_stays(client, monkeypatch):
+F811	tests/qt_window_migration_test.py	def test_merge_candidate_from_ui_retains_alias_and_audit(client, monkeypatch):
+F811	tests/qt_window_migration_test.py	def test_project_review_candidates_can_be_decided_from_the_window(client):
+F811	tests/qt_window_migration_test.py	def test_restore_original_translation_from_the_window(client):
+F811	tests/qt_window_migration_test.py	def test_review_finding_is_resolved_from_the_window(client):
+F811	tests/qt_window_migration_test.py	def test_segment_structure_edit_from_the_window(client):
+F811	tests/qt_window_migration_test.py	def test_successful_term_save_clears_only_saved_form(client):
+F811	tests/qt_window_migration_test.py	def test_terminology_preview_apply_and_undo_from_window(client, monkeypatch):
+F811	tests/qt_window_migration_test.py	def test_terms_freeze_from_the_window_clears_the_gate(client, monkeypatch):
+F811	tests/qt_window_migration_test.py	def test_workspace_term_edit_failure_leaves_state_unchanged(client, monkeypatch):
+F811	tests/qt_workbench_delta_test.py	client, monkeypatch):
+F811	tests/qt_workbench_delta_test.py	def _book_job(client, segments: int = SEGMENTS) -> str:
+F811	tests/qt_workbench_delta_test.py	def _open(client) -> str:
+F811	tests/qt_workbench_delta_test.py	def _settle(client, workbench) -> None:
+F811	tests/qt_workbench_delta_test.py	def test_a_batch_delta_updates_rows_without_reading_the_state(client, monkeypatch):
+F811	tests/qt_workbench_delta_test.py	def test_a_batch_that_arrives_before_the_first_render_still_fills_the_grid(client):
+F811	tests/qt_workbench_delta_test.py	def test_an_older_delta_can_never_replace_a_newer_one(client):
+F811	tests/qt_workbench_delta_test.py	def test_env_switch_restores_the_old_path_verbatim(client, monkeypatch):
+F811	tests/qt_workbench_delta_test.py	def test_external_snapshot_falls_back_to_the_whole_state_path(client, monkeypatch):
+F811	tests/qt_workbench_delta_test.py	def test_one_poll_converges_without_a_settle_window(client):
+F811	tests/qt_workbench_delta_test.py	def test_only_the_batch_rows_are_repainted_and_no_heights_for_untouched_rows(client):
+F811	tests/qt_workbench_delta_test.py	def test_painting_a_row_the_grid_does_not_have_is_not_swallowed(client):
+F811	tests/qt_workbench_delta_test.py	def test_per_batch_delta_touches_only_the_batch(client, capsys):
+F811	tests/qt_workbench_delta_test.py	def test_sequence_gap_falls_back_to_the_whole_state_path(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def _book_job(client, segments: int = SEGMENTS) -> str:
+F811	tests/qt_workbench_domain_versions_test.py	def _open(client) -> str:
+F811	tests/qt_workbench_domain_versions_test.py	def _open_started(client) -> str:
+F811	tests/qt_workbench_domain_versions_test.py	def _settle(client, predicate, timeout: float = 120.0) -> bool:
+F811	tests/qt_workbench_domain_versions_test.py	def test_a_failed_projection_reissues_the_pending_poll(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def test_academic_report_recomputes_only_when_its_domain_is_bumped(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def test_delivery_domain_alone_starts_the_projection(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def test_no_slow_domain_dirty_means_no_projection_worker(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def test_replace_state_invalidates_every_domain(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def test_review_panel_recomputes_only_when_its_domain_is_bumped(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def test_snapshot_while_worker_is_active_keeps_the_delta_path(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def test_snapshot_without_a_worker_rebuilds_the_state(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def test_state_is_a_plain_attribute_so_assignment_has_no_side_effect(client):
+F811	tests/qt_workbench_domain_versions_test.py	def test_terms_panel_recomputes_only_when_its_domain_is_bumped(client, monkeypatch):
+F811	tests/qt_workbench_domain_versions_test.py	def test_unchanged_refresh_keeps_domain_versions_and_skips_projections(client, monkeypatch):
+F811	tests/qt_workbench_poll_test.py	def _book_job(client, segments=SEGMENTS) -> str:
+F811	tests/qt_workbench_poll_test.py	def _settle(client, workbench) -> None:
+F811	tests/qt_workbench_poll_test.py	def test_a_failed_save_never_reads_the_state_on_the_gui_thread(client, monkeypatch):
+F811	tests/qt_workbench_poll_test.py	def test_blocking_items_is_scanned_once_per_state(client, monkeypatch):
+F811	tests/qt_workbench_poll_test.py	def test_committed_batch_repaints_only_its_rows(client):
+F811	tests/qt_workbench_poll_test.py	def test_large_grid_fills_visible_cells_first_and_selection_covers_pending_rows(client):
+F811	tests/qt_workbench_poll_test.py	def test_new_commit_does_not_drop_heights_from_an_unfinished_paint_pass(client, monkeypatch):
+F811	tests/qt_workbench_poll_test.py	def test_poll_projects_review_off_thread_and_only_applies_widgets_on_gui(client, monkeypatch):
+F811	tests/qt_workbench_poll_test.py	def test_review_projection_failure_does_not_hide_new_committed_pairs(client, monkeypatch):
+F811	tests/qt_workbench_poll_test.py	def test_slow_poll_review_cannot_replace_a_newer_explicit_refresh(client, monkeypatch):
+F811	tests/qt_workbench_poll_test.py	def test_unchanged_poll_does_not_touch_the_grid(client):
+F811	tests/text_layer_routing_test.py	import pymupdf
+F811	tests/text_layer_routing_test.py	import pymupdf
+F811	tests/text_layer_routing_test.py	import pymupdf
+F821	folith/knowledge.py	known_forms: Optional[Iterable[str]] = None,
+F821	folith/knowledge.py	known_forms: Optional[Iterable[str]] = None,
+F821	folith/qt/i18n.py	_TEMPLATE_RE_CACHE: dict[str, "re.Pattern[str]"] = {}
+F821	scripts/qt_stale_wrapper_probe.py	if top and _layout_count(obj) == 0:
+F821	tests/terminology_governance_test.py	test_retranslate_keeps_postcheck_findings()
+F841	benchmark/bench_lib.py	prev = list(range(m + 1))
+F841	benchmark/make_outputs.py	e2e = load("end_to_end.json", [])
+F841	benchmark/make_outputs.py	ranked = sorted(best_pages.values(), key=lambda r: r["raw_cer"])
+F841	benchmark/run_cleanup_final.py	out = ROOT / "pages" / f"page_{idx:04d}" / "cleanup" / f"{model}_{dpi}_{psm}.json"
+F841	benchmarks/performance/baseline_mode.py	original_append = core._append_runtime_event
+F841	core.py	batch = bundle["batch"]
+F841	docs/ui-audit/40-design-review-2026-10-16/capture.py	pages = getattr(dialog, "PAGES", None) or []
+F841	folith/academic_quality.py	final = segment.get("final_target")
+F841	folith/academic_quality.py	reasons: List[str] = []
+F841	folith/academic_writer.py	academic = _state(state)
+F841	folith/academic_writer.py	findings = (segment.get("process_evidence") or {}).get("findings") or []
+F841	folith/academic_writer.py	old_by_id = {str(x.get("case_id")): x for x in old_plans.get("plans") or []}
+F841	folith/application/job_config.py	saved: Dict[str, Any] = dict(saved_raw) if isinstance(saved_raw, Mapping) else {}
+F841	folith/case_presentation.py	case_type = case_provenance.case_type(presentation)
+F841	folith/compliance.py	profile_id = DEFAULT_PROFILE_ID
+F841	folith/engine/projects.py	before = {e["source"].casefold(): e
+F841	folith/engine/segments.py	count = len(sources)
+F841	folith/finalization.py	artifacts = academic.get("artifacts") or {}
+F841	folith/finalization.py	override = overrides.get(case_id) if isinstance(overrides, Mapping) else None
+F841	folith/finalization.py	review = reviews.get(case_id) if isinstance(reviews, Mapping) else None
+F841	folith/finalization.py	validation = artifacts.get("validation") or {}
+F841	folith/ocr_backends.py	warnings: List[str] = []
+F841	folith/outline_anchor.py	payload = store_outline(job_id, parsed, source_sha256_value=digest)
+F841	folith/qt/dialogs.py	hidden = len(self._rows) - len(shown)
+F841	folith/qt/outline_panel.py	node = self._nodes[node_id]
+F841	folith/qt/window.py	results: dict = {}
+F841	folith/rendered_qa.py	below = heading["bbox"][3]
+F841	folith/report_template.py	back_titles = {
+F841	folith/report_template.py	top_level = int(((template_contract.get("document_structure") or {}).get(
+F841	folith/source_cleanup.py	fragment = cleaned[index]
+F841	folith/source_context.py	tag, level = self._tag, self._level
+F841	folith/synthetic_cases.py	baseline_text = str((case.get("synthetic_baseline") or {}).get(
+F841	folith/terminology.py	joined = "\n".join(segments)
+F841	folith/trace.py	wall = summary.get("wall_time_s", 0.0)
+F841	folith/workspace_report.py	sections = sorted(group["sections"], key=str)
+F841	scripts/acceptance/outline_191_offscreen.py	p = doc.add_heading(f"{ch}.{sec} Section heading for chapter {ch}", level=2)
+F841	scripts/benchmark_performance.py	after_widgets_viewport_only = 39 * 2 + 10 + 3
+F841	scripts/benchmark_performance.py	results = {}
+F841	scripts/benchmark_performance.py	summaries = list_job_summaries()
+F841	scripts/benchmark_performance_trace.py	base_rss = results[0]["peak_rss_mb"]
+F841	scripts/benchmark_performance_trace.py	with ctx.span("translation", "batch_pipeline", items_in=120, items_out=120) as s4:
+F841	scripts/benchmark_performance_trace.py	with ctx.span("translation", f"batch_{b_idx}", items_in=b_segs, items_out=b_segs) as bs:
+F841	scripts/dynamic_context_ab.py	summary = payload.get("calls_summary") or {}
+F841	scripts/dynamic_context_verify.py	local_ids = set()
+F841	scripts/knowledge_feedback_yield.py	injected = lifecycle["first_injected"]
+F841	scripts/phase6_batch_scaling.py	rows = result["rows"]
+F841	scripts/review_cost_audit.py	pairs: List[Tuple[str, str]] = [
+F841	scripts/review_defect_recall.py	findings, failed, trace = [], True, {"error": f"{type(exc).__name__}: {exc}"}
+F841	scripts/terminology_acceptance.py	app = QApplication.instance()
+F841	scripts/translation_bottleneck_audit.py	spans = [(i["started_monotonic"], i["finished_monotonic"]) for i in items
+F841	tests/annotation_fail_stop_test.py	real_stage=staging.save_staged_annotation
+F841	tests/delivery_snapshot_test.py	state = _job(job_id, findings=[{
+F841	tests/delivery_snapshot_test.py	state = _job(job_id, glossary=[{
+F841	tests/fixtures/docx_contract/generate_fixtures.py	r_mid = fp.add_run(" of ")
+F841	tests/ocr_sources_test.py	second = OCRPageIdentity(page_index=0, **common, backend_options="online|model=B")
+F841	tests/performance_trace_test.py	run = mgr.start_run("task_nest", output_dir=tmp_path)
+F841	tests/performance_trace_test.py	summary = ctx.finish()
+F841	tests/performance_trace_test.py	with ctx.span("stage", "op") as s:
+F841	tests/persistence_phase_a_test.py	state = _run_translation(f"truth-{label}", paragraphs, batch_size=2)
+F841	tests/qa_escalation_contract_test.py	before_by_id = {fid: copy.deepcopy(entry)
+F841	tests/qt_acceptance_kit_test.py	app = QApplication.instance() or QApplication([])
+F841	tests/qt_client_adapter_test.py	app = window_module.build_application([])
+F841	tests/qt_client_adapter_test.py	core = adapter_env["core"]
+F841	tests/qt_client_window_test.py	core = client["core"]
+F841	tests/qt_client_window_test.py	core = client["core"]
+F841	tests/qt_client_window_test.py	project_id = project["project_id"]
+F841	tests/qt_client_window_test.py	window, adapter, app = client["window"], client["adapter"], client["app"]
+F841	tests/qt_i18n_test.py	base = json.loads(i18n.catalog_path("qt", "zh-CN").read_text(encoding="utf-8"))
+F841	tests/qt_model_input_modality_test.py	catalog = {}
+F841	tests/qt_notifications_test.py	main, core = window['window'], window['core']
+F841	tests/qt_open_without_outline_wait_test.py	window = env["window"]
+F841	tests/qt_qa_triage_audit_list_test.py	app = QApplication.instance() or QApplication([])
+F841	tests/qt_source_outline_panel_test.py	source = adapter.source_path(job_id)
+F841	tests/qt_source_panel_test.py	adapter = client["adapter"]
+F841	tests/qt_workbench_delta_test.py	window, adapter, core, app = (client["window"], client["adapter"],
+F841	tests/qt_workbench_delta_test.py	window, adapter, core, app = client["window"], client["adapter"], client["core"], client["app"]
+F841	tests/qt_workbench_delta_test.py	window, app = client["window"], client["app"]
+F841	tests/qt_workbench_poll_test.py	window, adapter, core, app = client['window'], client['adapter'], client['core'], client['app']
+F841	tests/qt_workbench_projection_test.py	adapter = client["adapter"]
+F841	tests/retrospective_consistency_test.py	monkeypatch_ok = True
+F841	tests/review_scheduler_test.py	ordinal = line.split(".", 1)[0].strip()
+F841	tests/review_scheduler_test.py	res0 = scheduler.wait_for_batch(0, timeout=2.0)
+F841	tests/review_scheduler_test.py	res1 = scheduler.wait_for_batch(1, timeout=2.0)
+F841	tests/review_scheduler_test.py	savings = (seq_wall - ovl_wall) / seq_wall
+F841	tests/revision_integrity_test.py	state = _job(job_id)
+F841	tests/source_cleanup_test.py	batches = [[(0, "Line 0"), (1, "Line 1")]]
+F841	tests/source_cleanup_test.py	result_map = {0: {"status": "failed", "rows": None, "error": None}}
+F841	tests/stage3_case_review_test.py	old_output = core.OUTPUT_DIR
+F841	tests/stage6_anonymous_mti_regression_test.py	affected = academic_writer.propagate_artifact_staleness(
