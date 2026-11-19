@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -17,7 +16,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from folith.desktop import relaunch  # noqa: E402
-from folith.qt import adapter, dialogs, i18n  # noqa: E402
+from folith.qt import adapter, dialogs  # noqa: E402
 from folith.qt.workers import TaskRunner  # noqa: E402
 
 
