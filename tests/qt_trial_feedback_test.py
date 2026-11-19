@@ -429,8 +429,12 @@ def test_connection_editor_is_a_sheet_and_the_page_has_one_save(isolated, app):
     page = dialog.pages["models"].widget()
     assert not page.isAncestorOf(dialog.key_edit), "添加连接的表单在单独的面板里"
     assert library.editor.isAncestorOf(dialog.key_edit)
-    saves = [b for b in page.findChildren(QPushButton) if b.text() in ("测试并保存", "保存用途", "保存")]
+    # #517：唯一的保存动作固定在滚动区之外（对话框级），不在页内容里。
+    labels = ("测试并保存", "保存用途", "保存")
+    assert not [b for b in page.findChildren(QPushButton) if b.text() in labels]
+    saves = [b for b in dialog.findChildren(QPushButton) if b.text() in labels]
     assert len(saves) == 1
+    assert dialog._pinned_actions.isAncestorOf(saves[0])
     dialog.provider_box.setCurrentText("DeepSeek")
     library.models.setText("m-1, m-2")
     library.add_model()
