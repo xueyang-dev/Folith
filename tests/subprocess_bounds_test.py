@@ -777,6 +777,9 @@ _RAW_CHILD_PROCESS_ALLOWED = {
     ("folith/desktop/updates.py", "Popen"):
         "detached updater: it must survive the app that launches it, so nothing "
         "may wait for it",
+    ("folith/desktop/relaunch.py", "Popen"):
+        "detached replacement process (#547): it must outlive the exiting app "
+        "and take the single-instance lock only after the old one is released",
     ("folith/desktop/engine_supervisor.py", "PIPE"):
         "the engine's stdout/stderr pipes are the protocol with a live child; the "
         "read is bounded by the supervisor's own timeout, not by run_bounded()",
