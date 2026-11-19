@@ -71,3 +71,18 @@ def test_zip_is_deterministic(tmp_path) -> None:
     b = mod.generate(tmp_path / "b", tasks=2, seed=5, segments=8)
     sha_b = mod.zip_dir(tmp_path / "b", tmp_path / "b.zip")
     assert a == b and sha_a == sha_b == mod.zip_dir(tmp_path / "a", tmp_path / "a2.zip")
+
+
+def test_generator_refuses_to_fill_the_disk(monkeypatch) -> None:
+    """A-22: never repeat the 10:14 Errno 28 that interrupted the user's run."""
+    mod = _module()
+    import types
+
+    monkeypatch.setattr(mod.shutil, "disk_usage",
+                        lambda _p: types.SimpleNamespace(free=10 * 1024**3))
+    try:
+        mod.check_free_space(Path("/tmp/x"), 21, 210)
+    except SystemExit as exc:
+        assert "REFUSED" in str(exc)
+    else:
+        raise AssertionError("a 10 GB free disk must be refused for a 21-task dir")
