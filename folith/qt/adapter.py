@@ -3374,7 +3374,7 @@ def projects_overview() -> dict:
                 len(_assets.build_term_rows([j])) for j in job_list)
             unsorted = entry
         else:
-            direction = core.project_direction(record or {})
+            direction = core.project_direction(record or {}, jobs=job_list)
             entry.update(
                 source_lang=direction["source_lang"], target_lang=direction["target_lang"],
                 direction_inferred=direction["inferred"],
@@ -3453,7 +3453,7 @@ def project_detail(project_id: str, *, basis: str = "all",
     log = []
     for record in reversed(project.get("promotion_log") or []):
         log.append({"what": _log_text(record), "when": str(record.get("at") or "")})
-    direction = core.project_direction(project)
+    direction = core.project_direction(project, jobs=job_list)
     detail = {
         "project": {**project_rows_by_id().get(str(project["project_id"]), {}),
                     "source_lang": direction["source_lang"],
