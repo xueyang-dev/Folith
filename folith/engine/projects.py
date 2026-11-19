@@ -1049,9 +1049,10 @@ def project_direction(project, jobs=None):
     并列时取先出现的；只看目标语言已知的任务。
 
     ``jobs``：调用方已经拿到的本项目任务（``{"state": ...}``，精简摘要即可，
-    只读 ``source_lang`` / ``target_lang``）。省略时才调用 ``list_project_jobs``，
-    后者会读出并复制**全部**任务的完整状态——在列表里逐个项目调用时，
-    这是秒级、且占着 GIL 让界面卡住的读取，所以界面读路径都应传入 ``jobs``。
+    只读 ``source_lang`` / ``target_lang``）。省略时读按签名缓存的任务摘要
+    （``project_digest``）；不走 ``list_project_jobs``，因为后者会读出并复制
+    **全部**任务的完整状态——逐个项目调用时是秒级、且占着 GIL 让界面卡住。
+    摘要读不出来时才退回 ``list_project_jobs``。
     """
     project = _project.normalize_project(project)
     if _project.is_system_project(project):
@@ -1059,6 +1060,10 @@ def project_direction(project, jobs=None):
     if project["target_lang"]:
         return {"source_lang": project["source_lang"],
                 "target_lang": project["target_lang"], "inferred": False}
+    if jobs is None:
+        from folith import project_digest
+        jobs = project_digest.jobs_of(project_digest.grouped_by_project(_c),
+                                      project["project_id"])
     if jobs is None:
         jobs = list_project_jobs(project["project_id"])
     counts, first = {}, {}

@@ -3256,14 +3256,6 @@ def _jobs_by_project() -> tuple[list[dict], dict[str, list[dict]]]:
     return jobs, grouped
 
 
-def _grouped_jobs_of(grouped: dict[str, list[dict]], project_id: str) -> list[dict]:
-    """``_jobs_by_project`` 分组里某个项目的任务（项目 ID 按任务归属同样的规则归一）。"""
-    from folith import project as _project_model
-    key = _project_model.canonical_project_id(project_id) \
-        if str(project_id or "").strip() else core.SYSTEM_PROJECT_ID
-    return grouped.get(str(key), [])
-
-
 def _conflict_rows(project: dict, jobs: list[dict]) -> list[dict]:
     """项目里"和术语库不一致"的待决冲突，做成与候选同形的行。"""
     names = {str(j.get("job_id")): str((j.get("state") or {}).get("filename") or "")
@@ -3382,7 +3374,6 @@ def projects_overview() -> dict:
                 len(_assets.build_term_rows([j])) for j in job_list)
             unsorted = entry
         else:
-            # 传入已分好组的摘要：不传会为每个项目把全部任务的完整状态读一遍。
             direction = core.project_direction(record or {}, jobs=job_list)
             entry.update(
                 source_lang=direction["source_lang"], target_lang=direction["target_lang"],
@@ -3800,12 +3791,10 @@ def move_targets(job_ids: Sequence[str]) -> list[dict]:
     from folith import language_assets as _assets
     current = {core.resolved_project_id(core.load_job_state(j) or {}) for j in job_ids}
     options = []
-    _jobs, grouped = _jobs_by_project()
     for project in core.list_active_projects():
         if project["project_id"] in current:
             continue
-        direction = core.project_direction(
-            project, jobs=_grouped_jobs_of(grouped, project["project_id"]))
+        direction = core.project_direction(project)
         options.append({
             "project_id": project["project_id"], "name": project["name"],
             "is_system": bool(project.get("is_system")),
@@ -6471,16 +6460,11 @@ def import_wizard_project_choices() -> list[dict]:
     from folith.engine import projects as _projects
 
     choices = []
-    try:
-        _jobs, grouped = _jobs_by_project()
-    except Exception:  # noqa: BLE001 - 读不到摘要就逐个项目推断（慢，但列表仍能显示）
-        grouped = None
     for row in project_rows():
         project_id = str(row.get("project_id") or "")
         try:
             direction = _projects.project_direction(
-                core.load_project(project_id) or {"project_id": project_id},
-                jobs=None if grouped is None else _grouped_jobs_of(grouped, project_id))
+                core.load_project(project_id) or {"project_id": project_id})
         except Exception:  # noqa: BLE001 - 列表必须仍能显示
             direction = {"source_lang": "", "target_lang": ""}
         choices.append({
