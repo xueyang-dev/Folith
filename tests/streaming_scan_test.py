@@ -22,6 +22,11 @@ CUT_PAGES = {19, 33}
 #: 「翻译先于识别结束」类用例的每页阅读耗时：离线替身瞬时读完整本 45 页只要几十毫秒，
 #: 那样"翻译是否先开始"就只是调度运气。放慢到 50 ms/页，翻译开始时已读页数稳定在个位数。
 READ_PACE_S = 0.05
+#: 「翻译先于识别结束」的余量：窗口用例还要跑完理解与术语，机器繁忙时首窗线程
+#: 可能晚几秒才被调度；50 ms/页 只有 2.25 s 的余量，Release Validation 的并行
+#: 负载下曾读到整本 45 页（`45 < 45` 红）。五倍余量把这段变成 ~11 s 的睡眠，
+#: 睡眠时长不受 CPU 竞争影响，契约仍然由页数断言来钉。
+WINDOW_READ_PACE_S = 0.25
 
 
 def scanned_pdf(pages=PAGES):
@@ -220,7 +225,7 @@ def test_short_unpunctuated_lines_are_not_joined_across_pages():
 
 def test_each_window_extends_digests_synopsis_and_terms(streaming_job):
     vision, started, args = streaming_job
-    vision.page_seconds = READ_PACE_S
+    vision.page_seconds = WINDOW_READ_PACE_S
     args = {**args, "enable_understanding": True, "auto_term": True}
     state = core.run_job_pipeline("knowledge", "scan.pdf", scanned_pdf(), **args)
     # 先交首批再补画像/理解/术语；识别 45 页没读完翻译已经开工（旧版本靠

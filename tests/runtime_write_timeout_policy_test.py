@@ -152,7 +152,14 @@ def test_gui_pause_timeout_reaches_the_adapter_with_a_retry_message(
     assert not runtime.get("pause_requested")
 
 
-def test_gui_retry_step_timeout_is_not_swallowed(job, lock_timeouts):
+def test_gui_retry_step_timeout_is_not_swallowed(job, lock_timeouts, monkeypatch):
+    # ``retry_job_step`` refuses a task that looks like it is still executing,
+    # and the fixture's worker pid (4242) is dead only by convention.  On a busy
+    # runner that pid can be *taken* by another process, which made this test
+    # fail with "DID NOT RAISE" (Release Validation, Windows leg).  The subject
+    # here is the write policy, so pin liveness instead of inheriting pid reuse.
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda job_id: False)
+    monkeypatch.setattr(core, "_job_execution_alive", lambda job_id: False)
     core.update_runtime_state(job, status="failed",
                               error={"message": "provider timeout"})
     lock_timeouts.remaining = 10
