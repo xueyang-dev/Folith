@@ -151,7 +151,8 @@ def section_index(state: Mapping[str, Any]) -> List[Tuple[int, int, str]]:
     return index
 
 
-def segment_reference(state: Mapping[str, Any], segment_id: Any) -> str:
+def segment_reference(state: Mapping[str, Any], segment_id: Any,
+                      sections: Optional[List[Tuple[int, int, str]]] = None) -> str:
     """段落的人类引用：有章节标签时是「章节 · #123」，否则退回「#123」。
 
     段号按 1 起算展示（与工作台一致），但**不做任何跳转**——跳转由 app 层
@@ -161,7 +162,7 @@ def segment_reference(state: Mapping[str, Any], segment_id: Any) -> str:
             or segment_id < 0:
         return ""
     label = ""
-    for start, end, text in section_index(state):
+    for start, end, text in (section_index(state) if sections is None else sections):
         if start <= segment_id <= end:
             label = text
             break
@@ -428,12 +429,18 @@ def build_candidate_rows(
             continue
         job_id = str(job.get("job_id") or "")
         document = str(state.get("filename") or "")
+        # 每个任务只算一次：逐条候选重算术语表规范化和章节索引，
+        # 在几千条候选的大书上是几十秒（O(候选 × 术语) / O(候选 × 位置 × 章节)）。
+        job_state = dict(state)
+        glossary_by_source = knowledge.glossary_entries_by_source(job_state)
+        sections = section_index(state)
         for candidate in state.get("knowledge_candidates") or []:
             if not isinstance(candidate, Mapping):
                 continue
             if candidate.get("decision") and not include_decided:
                 continue
-            context = knowledge.candidate_context(dict(candidate), dict(state))
+            context = knowledge.candidate_context(
+                dict(candidate), job_state, glossary_by_source=glossary_by_source)
             occurrences = [item for item in context.get("occurrences") or []
                            if isinstance(item, int) and not isinstance(item, bool)]
             observed = [item for item in context.get("observed_segments") or []
@@ -444,7 +451,7 @@ def build_candidate_rows(
             unique_segments = list(dict.fromkeys(positions_source))
             position_entries = []
             for segment in unique_segments:
-                label = segment_reference(state, segment)
+                label = segment_reference(state, segment, sections)
                 if label:
                     position_entries.append({"label": label, "index": segment})
             # 列表级只带前 12 条标签（够用且省），Inspector 用完整的
@@ -478,7 +485,7 @@ def build_candidate_rows(
                 # 否则「查看全部出现位置（N）」会少报。
                 "position_total": len(unique_segments),
                 "first_observed_segment": first,
-                "first_reference": segment_reference(state, first),
+                "first_reference": segment_reference(state, first, sections),
                 "source_context": str(context.get("source_context") or ""),
                 "target_context": str(context.get("target_context") or ""),
                 "conflicts": conflicts,

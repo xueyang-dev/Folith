@@ -1041,12 +1041,17 @@ def _job_direction(state):
             str(state.get("target_lang") or "").strip())
 
 
-def project_direction(project):
+def project_direction(project, jobs=None):
     """项目的语言方向：已设定的优先，否则由项目里的任务推断。
 
     返回 {"source_lang", "target_lang", "inferred"}；设定和推断都没有时两个语言
     都是空串（调用方据此提示用户设置）。推断取项目里**最多任务使用**的方向，
     并列时取先出现的；只看目标语言已知的任务。
+
+    ``jobs``：调用方已经拿到的本项目任务（``{"state": ...}``，精简摘要即可，
+    只读 ``source_lang`` / ``target_lang``）。省略时才调用 ``list_project_jobs``，
+    后者会读出并复制**全部**任务的完整状态——在列表里逐个项目调用时，
+    这是秒级、且占着 GIL 让界面卡住的读取，所以界面读路径都应传入 ``jobs``。
     """
     project = _project.normalize_project(project)
     if _project.is_system_project(project):
@@ -1054,9 +1059,11 @@ def project_direction(project):
     if project["target_lang"]:
         return {"source_lang": project["source_lang"],
                 "target_lang": project["target_lang"], "inferred": False}
+    if jobs is None:
+        jobs = list_project_jobs(project["project_id"])
     counts, first = {}, {}
-    for job in list_project_jobs(project["project_id"]):
-        source, target = _job_direction(job["state"])
+    for job in jobs:
+        source, target = _job_direction(job.get("state"))
         key = _project.direction_key(source, target)
         if not key[1]:
             continue

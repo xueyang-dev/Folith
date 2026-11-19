@@ -179,16 +179,37 @@ def _first_alignment(
     return first, ""
 
 
-def candidate_context(candidate: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
-    """Build the human-review context for one persisted knowledge candidate."""
+def glossary_entries_by_source(state: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """The job's normalized glossary, grouped by casefolded source.
+
+    Normalizing the whole glossary is the expensive part of
+    :func:`candidate_context`; callers that build context for many candidates
+    of one job compute this once and pass it in.
+    """
+    glossary = state.get("glossary") or (state.get("glossary_frozen") or {}).get("entries") or []
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in models.normalize_glossary(glossary):
+        grouped.setdefault(entry.get("source", "").casefold(), []).append(entry)
+    return grouped
+
+
+def candidate_context(
+    candidate: Dict[str, Any], state: Dict[str, Any], *,
+    glossary_by_source: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
+    """Build the human-review context for one persisted knowledge candidate.
+
+    ``glossary_by_source`` is :func:`glossary_entries_by_source` of the same
+    ``state``; omit it and it is computed here.
+    """
     source = str(candidate.get("source") or "").strip()
     segment = candidate.get("first_observed_segment")
     segment = segment if isinstance(segment, int) and not isinstance(segment, bool) else None
     pairs = state.get("pairs") or []
     pair = pairs[segment] if segment is not None and 0 <= segment < len(pairs) else {}
-    glossary = state.get("glossary") or (state.get("glossary_frozen") or {}).get("entries") or []
-    entries = [entry for entry in models.normalize_glossary(glossary)
-               if entry.get("source", "").casefold() == source.casefold()]
+    if glossary_by_source is None:
+        glossary_by_source = glossary_entries_by_source(state)
+    entries = [dict(entry) for entry in glossary_by_source.get(source.casefold(), [])]
     proposed = str(candidate.get("observed_target") or "").strip()
     conflicts = []
     for entry in entries:
