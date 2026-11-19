@@ -182,12 +182,26 @@ def inspect(out: Path) -> dict:
             "findings": findings}
 
 
+#: zip 条目的固定时间戳（zip 纪元，1980-01-01）。生成目录的**文件 mtime** 是运行时
+#: 的墙钟，`ZipFile.write` 会把它写进条目头；两次生成只要跨过 zip 的 2 秒粒度，
+#: 同样的内容就会得到不同字节，sha256 也就不再是"同一份数据"的指纹。
+#: #541 的 RV 里正是这样红的（Python 3.11 / 3.12 各一次）。
+_ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+#: 常规文件、0644：权限位也不能随 umask 漂移。
+_ZIP_FILE_MODE = 0o644 << 16
+
+
 def zip_dir(out: Path, archive: Path) -> str:
-    """打包成 zip，返回 sha256。"""
+    """打包成 zip，返回 sha256。**同一份内容 → 同一串字节**，与生成时间无关。"""
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for path in sorted(out.rglob("*")):
-            if path.is_file():
-                zf.write(path, path.relative_to(out))
+            if not path.is_file():
+                continue
+            info = zipfile.ZipInfo(path.relative_to(out).as_posix(),
+                                   date_time=_ZIP_EPOCH)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = _ZIP_FILE_MODE
+            zf.writestr(info, path.read_bytes())
     return hashlib.sha256(archive.read_bytes()).hexdigest()
 
 
