@@ -11,7 +11,7 @@ import dataclasses
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
@@ -218,6 +218,13 @@ class EngineDialog(QDialog):
             self.stack.addWidget(page)
         bar.addStretch(1)
 
+        # #517：底部操作区钉在滚动区之外。「测试并保存」以前在连接页里面，
+        # 连接一多就跟着内容滚出可见区域；现在它属于对话框本身，只有页内容滚动。
+        self._pinned_actions = QWidget()
+        self._pinned_layout = QVBoxLayout(self._pinned_actions)
+        self._pinned_layout.setContentsMargins(0, 0, 0, 0)
+        self._pinned_layout.setSpacing(0)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -228,7 +235,9 @@ class EngineDialog(QDialog):
         body.setContentsMargins(20, theme_module.SPACE["sm"], 20, theme_module.SPACE["md"])
         body.setSpacing(theme_module.SPACE["sm"])
         body.addWidget(self.stack, 1)
+        body.addWidget(self._pinned_actions)
         body.addWidget(self._status)
+        self._pinned_layout.addWidget(self._apply_row("models"))
 
         # 立即生效：改动合并 250 ms 再落盘（拖动、连续输入不会每一下都写一次）。
         self._defaults_timer = QTimer(self)
@@ -245,12 +254,23 @@ class EngineDialog(QDialog):
         from . import macwindow
 
         macwindow.hide_when_app_inactive(self)
+        # 首次显示时窗口管理器可能已把它放到了靠下的位置；按当前屏幕重新夹一遍。
+        self._clamp_to_screen()
+        # 页面 sizeHint 要等第一次布局才算得准：构造期 _fit_height 拿到的是旧值，
+        # 会按偏矮的内容把窗口定死，「用途」因此要滚动才看得见。布局完成后再量一次。
+        QTimer.singleShot(0, self._refit_after_show)
+
+    def _refit_after_show(self) -> None:
+        if self.isVisible():
+            self._fit_height()
 
     def show_page(self, key: str) -> None:
         if key not in self.pages:
             key = "general"
         self.tab_buttons[key].setChecked(True)
         self.stack.setCurrentWidget(self.pages[key])
+        # 固定操作区只服务连接页；其他页的选项改了立即生效，没有「应用」。
+        self._pinned_actions.setVisible(key == "models")
         label = next(text for value, _icon, text in self.PAGES if value == key)
         self.setWindowTitle(i18n.tr(label))
         if key == "storage":
@@ -262,25 +282,70 @@ class EngineDialog(QDialog):
         widget = self.stack.currentWidget()
         return next((key for key, page in self.pages.items() if page is widget), "general")
 
+    def _clamp_to_screen(self) -> None:
+        """把整窗（含标题栏）夹进当前屏幕的可用区域并居中。
+
+        `QScreen.availableGeometry()` 已经排除了 macOS 的 Dock / 菜单栏和
+        Windows 的任务栏，所以一个跨平台的 Qt 调用就够；共享界面里不写
+        任何平台专属代码（`AGENTS.md`）。主窗口完整落在可用区域内时优先
+        相对它居中，否则退回到可用区域本身居中。
+        """
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        frame = self.frameGeometry()
+        client = self.geometry()
+        # resize() 改的是客户区，availableGeometry() 要装的是整窗：先把装饰扣掉。
+        extra_w = max(0, frame.width() - client.width())
+        extra_h = max(0, frame.height() - client.height())
+        width = min(max(client.width(), self.minimumWidth()), max(1, area.width() - extra_w))
+        height = min(max(client.height(), self.minimumHeight()), max(1, area.height() - extra_h))
+        if (width, height) != (client.width(), client.height()):
+            self.resize(width, height)
+            frame = self.frameGeometry()
+        parent = self.parentWidget()
+        anchor = parent.frameGeometry() if parent is not None and parent.isVisible() else QRect()
+        if not anchor.isValid() or not area.contains(anchor):
+            anchor = area
+        center = anchor.center()
+        frame_x = center.x() - frame.width() // 2
+        frame_y = center.y() - frame.height() // 2
+        # right()/bottom() 是闭区间，所以能放下的最靠右/下位置要 +1。
+        frame_x = max(area.left(), min(frame_x, area.right() - frame.width() + 1))
+        frame_y = max(area.top(), min(frame_y, area.bottom() - frame.height() + 1))
+        # move() 收的是 widget 左上角，frameGeometry() 含装饰：把差值减回去。
+        delta = frame.topLeft() - self.geometry().topLeft()
+        self.move(frame_x - delta.x(), frame_y - delta.y())
+
     def _fit_height(self) -> None:
-        """窗口高度随当前页的内容伸缩（macOS 设置窗口的行为），不超出屏幕。"""
+        """窗口高度随当前页的内容伸缩（macOS 设置窗口的行为），不超出屏幕。
+
+        `resize()` 从当前顶边往下长：窗口若原本开得靠下，底部（含「测试并保存」）
+        就会被 Dock / 任务栏挡住。所以每次高度变化后都重新夹回可用区域并居中。
+        """
         page = self.stack.currentWidget()
         inner = page.widget() if isinstance(page, QScrollArea) else page
         wanted = inner.sizeHint().height() + 120
-        screen = (self.screen() or QGuiApplication.primaryScreen())
-        cap = int(screen.availableGeometry().height() * 0.85) if screen else 820
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        area = screen.availableGeometry() if screen is not None else None
+        cap = int(area.height() * 0.85) if area is not None else 820
         target = max(360, min(wanted, cap, 820))
+        if area is not None:
+            target = min(target, area.height())
         from . import motion
+
+        def set_height(value: float) -> None:
+            self.resize(self.width(), round(value))
+            self._clamp_to_screen()
 
         start = self.height()
         if not self.isVisible():
-            self.resize(self.width(), target)
+            set_height(target)
             return
         if not hasattr(self, "_motion"):
             self._motion = motion.Motion(self)
-        self._motion.animate("settings-height", start, target,
-                             lambda value: self.resize(self.width(), round(value)),
-                             kind="panel")
+        self._motion.animate("settings-height", start, target, set_height, kind="panel")
 
     # -- 立即生效的选项 -------------------------------------------------------
     #: 改错会让任务失败、因而要「应用」并先测试的字段；其余展示的字段改了立即生效。

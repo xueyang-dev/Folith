@@ -2737,5 +2737,7 @@
   "无法重试": "Wiederholen nicht möglich",
   "任务当前不可取消。": "Die Aufgabe kann derzeit nicht abgebrochen werden.",
   "双语文件导入有提示": "Die zweisprachige Datei wurde mit Hinweisen importiert",
-  "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "Weitere {v0} Segment(e) wurden als „nicht übersetzen“ ausgeschlossen und erscheinen nicht im Arbeitsbereich."
+  "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "Weitere {v0} Segment(e) wurden als „nicht übersetzen“ ausgeschlossen und erscheinen nicht im Arbeitsbereich.",
+  "显示全部 ({v0})": "Alle anzeigen ({v0})",
+  "连接操作": "Verbindungsaktionen"
 }
