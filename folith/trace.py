@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
 from folith import request_control
+from folith.engine import reasoning_watch as _reasoning_watch
 from folith.performance import ActiveTimeTracker, DEFAULT_HEARTBEAT_INTERVAL_S
 
 
@@ -158,6 +159,24 @@ def aggregate_optional(records: List[Dict[str, Any]], key: str) -> Dict[str, Any
         "calls_total": len(records),
         "complete": bool(records) and len(known) == len(records),
     }
+
+
+#: A run is reasoning-heavy when at least this share of its output tokens is
+#: reasoning, over at least this many output tokens (a handful of calls says
+#: nothing).  With a working "thinking off" switch the share is 0.
+REASONING_HEAVY_SHARE = 0.5
+REASONING_HEAVY_MIN_OUTPUT_TOKENS = 2000
+
+
+def _reasoning_share(reasoning: Dict[str, Any], completion: Dict[str, Any]) -> Optional[float]:
+    """Reasoning tokens / output tokens over the calls that reported both totals.
+
+    ``None`` when either total is unknown or there is no output.
+    """
+    r_total, c_total = reasoning.get("total"), completion.get("total")
+    if r_total is None or not c_total:
+        return None
+    return max(0.0, min(1.0, float(r_total) / float(c_total)))
 
 
 def _fmt_optional_total(agg: Dict[str, Any]) -> str:
@@ -733,6 +752,9 @@ class RunContext:
 
         # Model requests
         self.model_calls: List[Dict[str, Any]] = []
+        # The scalar run configuration (thinking mode, reasoning level, ...),
+        # kept so the report can say which settings produced the token mix.
+        self.run_configuration: Dict[str, Any] = {}
 
         # Segment & batch timings
         self.segment_durations: List[float] = []
@@ -922,6 +944,7 @@ class RunContext:
             if isinstance(role_config, dict):
                 snapshot[role] = {key: role_config[key] for key in ("provider", "model", "reasoning_effort", "reasoning_mode")
                                   if isinstance(role_config.get(key), str)}
+        self.run_configuration = dict(snapshot)
         self.record_point("run_configuration", configuration=snapshot, resume=resume,
                           app_version=app_version(), build_id=build_id(),
                           build_identity_scope="artifact_or_git_head_excludes_uncommitted_changes")
@@ -1032,6 +1055,8 @@ class RunContext:
                 rec["purpose"] = (metadata or {}).get("purpose")
             self.model_calls.append(rec)
             self._write_request_event({"event": "model_call", **rec})
+        # Outside the lock: the notice writes runtime state, which takes its own.
+        _reasoning_watch.notice_from_record(self.job_id, self.run_id, rec)
 
     def record_batch(
         self,
@@ -1705,6 +1730,14 @@ class RunContext:
         tu = {k: (m.get("token_usage") or {}).get(k, _empty) for k in (
             "prompt_tokens", "completion_tokens", "cached_tokens", "total_tokens",
             "reasoning_tokens", "reasoning_chars")}
+        reasoning_share = _reasoning_share(tu["reasoning_tokens"], tu["completion_tokens"])
+        cfg = getattr(self, "run_configuration", None) or {}
+        thinking_text = (f"thinking mode `{cfg.get('reasoning_mode') or 'provider_default'}`, "
+                         f"reasoning level `{cfg.get('reasoning_effort') or 'not set'}`")
+        reasoning_share_text = (
+            f"{reasoning_share * 100:.1f}% of reported output tokens ({thinking_text})"
+            if reasoning_share is not None
+            else f"unknown (reasoning or output tokens not reported; {thinking_text})")
         tps = m.get("tokens_per_second")
         tps_text = f"{tps} tokens/s" if tps is not None else "unknown (no completion usage reported)"
 
@@ -1737,6 +1770,17 @@ class RunContext:
         unacc_pct = summary.get("unaccounted_pct", 0.0)
         if unacc_pct >= 15.0 and unacc >= 5.0:
             bottlenecks.append(f"- **Unaccounted Idle Gap**: **{unacc}s** ({unacc_pct}%) of active work time is outside recorded pipeline stages (potential queueing, UI reruns, or lock waits).")
+
+        # Thinking that was never switched off.  Decode time grows with every
+        # output token, so a run whose output is mostly reasoning is slow for a
+        # reason no pipeline stage shows (2026-11-19: 89% on a whole novel).
+        completion_total = tu["completion_tokens"].get("total") or 0
+        if (reasoning_share is not None and reasoning_share >= REASONING_HEAVY_SHARE
+                and completion_total >= REASONING_HEAVY_MIN_OUTPUT_TOKENS):
+            bottlenecks.append(
+                f"- **Reasoning-Heavy Output**: **{reasoning_share * 100:.1f}%** of output tokens were "
+                f"reasoning ({thinking_text}). Every call waits for that reasoning to be generated; "
+                f"turning thinking off on a connection that supports it shortens each call.")
 
         # Model retries
         if err.get("retries", 0) > 0:
@@ -1846,6 +1890,7 @@ class RunContext:
 - **Total Requests**: {m.get('total_calls', 0)} (Successful: {m.get('successful_calls', 0)}, Failed: {m.get('failed_calls', 0)})
 - **Tokens Breakdown** (unreported = unknown, not zero): Prompt: {_fmt_optional_total(tu['prompt_tokens'])} | Cached: {_fmt_optional_total(tu['cached_tokens'])} | Output: {_fmt_optional_total(tu['completion_tokens'])} | Reasoning: {_fmt_optional_total(tu['reasoning_tokens'])} | Total: {_fmt_optional_total(tu['total_tokens'])}
 - **Reasoning Text Returned** (chars, not tokens): {_fmt_optional_total(tu['reasoning_chars'])}
+- **Reasoning Share of Output**: {reasoning_share_text}
 - **Throughput**: {tps_text}
 - **Latency**: Avg {m.get('avg_call_latency_s', 0.0)} s | P50 {lp.get('model_call_seconds', {}).get('p50', 0.0)} s | P95 {lp.get('model_call_seconds', {}).get('p95', 0.0)} s | Max {lp.get('model_call_seconds', {}).get('max', 0.0)} s
 

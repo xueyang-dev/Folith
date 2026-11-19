@@ -997,6 +997,7 @@ from folith.engine.document_export import (  # noqa: F401  (re-export: core keep
     translations_to_pdf,
     translations_to_word,
 )
+from folith.engine import reasoning_catalog as _reasoning_catalog  # noqa: F401  (#540: dispatch + unified level field)
 from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps its public surface)
     _fetch_gemini_models,
     _llm_request_controller,
@@ -2688,6 +2689,12 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             runtime_job_id,
             purpose=_current_llm_purpose(),
             operation_id=_current_llm_operation_id(),
+            reasoning_level=_reasoning_catalog.level_record(
+                provider, model,
+                mode=_resolve_reasoning_mode(reasoning_mode),
+                effort=_reasoning_catalog.resolve_effort(
+                    provider, model, reasoning_effort,
+                    getattr(_LLM_CTX, "reasoning_effort", None))),
         )
         if _runtime_cancel_requested(runtime_job_id):
             raise RuntimeError("任务已请求取消")
@@ -2808,45 +2815,24 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
     resolved_base, client = _acquire_openai_compat_client(cfg, provider, api_key, base_url)
     if max_attempts is not None:
         client = client.with_options(max_retries=max(0, int(max_attempts) - 1))
-    resolved_reasoning = (reasoning_effort if reasoning_effort is not None
-                          else getattr(_LLM_CTX, "reasoning_effort", None))
-    if resolved_reasoning and resolved_reasoning not in reasoning_effort_options(
-            provider, model):
-        # The thread setting belongs to the translator role.  A separate
-        # reviewer or an unknown relay model must not inherit it accidentally.
-        resolved_reasoning = None
+    resolved_reasoning = _reasoning_catalog.resolve_effort(
+        provider, model, reasoning_effort, getattr(_LLM_CTX, "reasoning_effort", None))
     resolved_reasoning_mode = _resolve_reasoning_mode(reasoning_mode)
     request = {
         "model": model,
         "messages": [{"role": "system", "content": system_prompt},
                      {"role": "user", "content": user_prompt}],
     }
-    # Reasoning models may reject sampling controls such as temperature;
-    # when the user explicitly selects reasoning, omit it for official
-    # recognized reasoning families and let the model's policy take over.
-    if resolved_reasoning:
-        request["reasoning_effort"] = resolved_reasoning
-        if not str(model or "").lower().startswith(
-                ("o1", "o3", "o4-mini", "gpt-5", "gpt-6",
-                 "deepseek-r1", "qwq")):
-            request["temperature"] = temperature
-    else:
-        request["temperature"] = temperature
-    if provider == "OpenAI" and str(model or "").lower().startswith(
-            ("o1", "o3", "o4", "gpt-5", "gpt-6")) and "-chat" not in str(model).lower():
-        if resolved_reasoning != "none":
-            request.pop("temperature", None)
+    # The verified reasoning controls are data in reasoning_catalog; applying
+    # a chosen level to the wire request happens there, not in these branches.
+    _reasoning_catalog.apply_to_request(
+        request, provider, model,
+        effort=resolved_reasoning, mode=resolved_reasoning_mode, temperature=temperature)
     if response_format and cfg.get("capabilities", {}).get(
             "supports_response_format"):
         request["response_format"] = response_format
     elif response_format and provider == "Local Gateway":
         raise ValueError("Local Gateway does not advertise structured-output support")
-    if resolved_reasoning_mode == "thinking_disabled":
-        # Same DeepSeek-family control the OCR path sends; opt-in only.
-        request["extra_body"] = {"thinking": {"type": "disabled"}}
-    elif resolved_reasoning_mode == "thinking_disabled_vllm":
-        # vLLM/SGLang chat-template switch, as dots3-note-prev expects.
-        request["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
     if provider == "OpenCode Go":
         session_id = runtime_job_id or getattr(_LLM_CTX, "opencode_session", None)
         if not session_id:
@@ -2888,7 +2874,9 @@ def _call_llm_transport(cfg, provider, api_key, model, system_prompt, user_promp
                 reasoning_chars=(len(reasoning_text) if isinstance(reasoning_text, str) else None),
                 ttft_s=None,
                 metadata={"usage_available": usage is not None,
-                          "reasoning_mode": resolved_reasoning_mode or "provider_default"},
+                          **{_reasoning_catalog.LEVEL_FIELD: _reasoning_catalog.level_record(
+                              provider, model,
+                              mode=resolved_reasoning_mode, effort=resolved_reasoning)}},
             )
     finally:
         if not _llm_transport.client_pool_enabled():
@@ -8822,10 +8810,12 @@ def _runtime_telemetry_request_started(job_id, *, purpose=None, operation_id=Non
         coalescer.request_started(purpose=purpose, operation_id=operation_id)
 
 
-def _runtime_telemetry_request_finished(job_id, *, purpose=None, operation_id=None):
+def _runtime_telemetry_request_finished(job_id, *, purpose=None, operation_id=None,
+                                        reasoning_level=None):
     coalescer = _runtime_telemetry_coalescer(job_id)
     if coalescer is not None:
-        coalescer.request_finished(purpose=purpose, operation_id=operation_id)
+        coalescer.request_finished(purpose=purpose, operation_id=operation_id,
+                                   reasoning_level=reasoning_level)
 
 
 # ---------------------------------------------------------------------------

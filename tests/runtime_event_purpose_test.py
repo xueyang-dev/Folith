@@ -115,7 +115,7 @@ def test_llm_call_purpose_scopes_to_the_thread_and_restores(monkeypatch):
                         lambda job, *, purpose=None, operation_id=None:
                         captured.append(("start", purpose)))
     monkeypatch.setattr(core, "_runtime_telemetry_request_finished",
-                        lambda job, *, purpose=None, operation_id=None:
+                        lambda job, *, purpose=None, operation_id=None, **kwargs:
                         captured.append(("finish", purpose)))
     monkeypatch.setattr(core, "_runtime_cancel_requested", lambda job: False)
     monkeypatch.setattr(core, "_runtime_pause_checkpoint", lambda job: None)

@@ -74,28 +74,13 @@ def set_llm_base_url(base_url):
 def reasoning_effort_options(provider, model):
     """Return safe reasoning-effort values for a known reasoning model.
 
-    OpenAI-compatible relays do not expose a portable capability schema.  We
-    therefore only offer the control for recognizable reasoning model names;
-    unknown custom models remain in automatic mode so an unsupported request
-    parameter cannot break translation.
+    The prefix whitelists moved into :mod:`folith.engine.reasoning_catalog`;
+    this public helper keeps its old contract for callers and tests.  Unknown
+    custom models still get no control so an unsupported request parameter
+    cannot break translation.
     """
-    if provider == "Local Gateway":
-        # 网关是 OpenAI 兼容的本地服务，实测接受 reasoning_effort 并按档位少推理
-        # （同一任务：默认 917 个推理 token，"low" 226 个）。它前面挂的是推理模型，
-        # 不调档位的密排页会把输出预算全花在思考上。三个档位是界面上的通用子集。
-        return ("low", "medium", "high") if str(model or "").strip() else ()
-    cfg = _c.PROVIDERS.get(provider) or {}
-    if cfg.get("kind") not in {"openai", "openai_compat"}:
-        return ()
-    name = str(model or "").strip().lower()
-    if not name:
-        return ()
-    # OpenAI reasoning families and common compatible relay names.  The UI
-    # deliberately uses the portable low/medium/high subset.
-    prefixes = ("o1", "o3", "o4-mini", "gpt-5", "gpt-6", "deepseek-r1", "qwq")
-    if "-chat" in name or not name.startswith(prefixes):
-        return ()
-    return ("low", "medium", "high")
+    from folith.engine import reasoning_catalog as _catalog
+    return _catalog.effort_options(provider, model)
 
 
 def set_llm_reasoning_effort(value):
@@ -109,43 +94,16 @@ REASONING_MODES = ("provider_default", "thinking_disabled", "thinking_disabled_v
 # usage-ledger role -> configurable role.  Reviewer is intentionally absent.
 _MODE_ROLE_OF = {"translation": "translator", "annotation": "translator",
                  "translator": "translator", "auxiliary": "auxiliary"}
-# Model families whose endpoint was verified to honour an explicit "stop
-# thinking" control, and the wire shape that control takes.  A family absent
-# here is offered no switch at all: an unverified request parameter must never
-# reach a relay that could reject it or, worse, ignore it silently.
-_THINKING_CONTROL_MODELS = {
-    # vLLM/SGLang chat-template switch, verified against dots3-note-prev.
-    "thinking_disabled_vllm": (("dots3", "dots-"), None),
-    # DeepSeek's own switch, verified on the official endpoint (page reads with
-    # it came back with 0 reasoning tokens) and on OpenCode Go's deepseek model.
-    # With thinking on, these models spend most of the output on reasoning and,
-    # on vision pages, the whole output budget, so the family reads "off" unless
-    # the user chose otherwise.  Only these model names were measured: older names
-    # such as deepseek-chat are not thinking models and get nothing.  A custom relay serving a deepseek-named model
-    # is not covered: nobody measured what it forwards.
-    "thinking_disabled": (("deepseek-flash", "deepseek-v4"), frozenset({"DeepSeek", "OpenCode Go"})),
-}
 
 
 def thinking_control_options(provider, model):
     """Return the thinking switches a model's endpoint is known to honour.
 
-    Mirrors :func:`reasoning_effort_options`: the control is offered only for
-    recognizable names, so an unknown custom model stays on its provider
-    default rather than receiving a parameter it may not understand.
+    Same contract as before, now backed by :mod:`folith.engine.reasoning_catalog`
+    so the matching rules and their evidence live in one place.
     """
-    if provider == "Local Gateway":
-        # 网关收下 DeepSeek 的 thinking 字段（HTTP 200），但并不停思考：实测同一请求
-        # 反而把整个预算给了推理、正文为空。所以网关连接只给「推理强度」，不给这个开关。
-        return ()
-    cfg = _c.PROVIDERS.get(provider) or {}
-    if cfg.get("kind") not in {"openai", "openai_compat"}:
-        return ()
-    name = str(model or "").strip().lower()
-    if not name:
-        return ()
-    return tuple(mode for mode, (prefixes, providers) in _THINKING_CONTROL_MODELS.items()
-                 if name.startswith(prefixes) and (providers is None or provider in providers))
+    from folith.engine import reasoning_catalog as _catalog
+    return _catalog.thinking_options(provider, model)
 
 
 def connection_thinking_mode():

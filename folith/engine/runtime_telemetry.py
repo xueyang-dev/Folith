@@ -54,10 +54,10 @@ class _RuntimeTelemetryCoalescer:
                     phase="waiting_llm", event_name="llm_request_started",
                     purpose=purpose, operation_id=operation_id)
 
-    def request_finished(self, purpose=None, *, operation_id=None):
+    def request_finished(self, purpose=None, *, operation_id=None, reasoning_level=None):
         self.submit(active_delta=-1, status="running", phase="running",
                     event_name="llm_response_received", purpose=purpose,
-                    operation_id=operation_id)
+                    operation_id=operation_id, reasoning_level=reasoning_level)
 
     def request_failed(self, error=None, *, purpose=None, operation_id=None):
         self.submit(force=True, active_delta=-1, status="running", phase="running",
