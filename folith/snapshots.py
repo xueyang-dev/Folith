@@ -128,7 +128,8 @@ def state_identity(state: Dict[str, Any]) -> str:
     value = {key: item for key, item in (state or {}).items()
              if key not in ("_source_bin", "delivery_snapshots",
                             "latest_delivery_snapshot_version", "final_qa",
-                            "dependency_impact", "snapshot_revision")}
+                            "dependency_impact", "snapshot_revision",
+                            "translation_state_identity")}
     academic = value.get("academic_state")
     if isinstance(academic, dict):
         value["academic_state"] = {key: item for key, item in academic.items()

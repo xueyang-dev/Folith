@@ -408,6 +408,10 @@ def save_job_state_atomic(
     # pure function of already-prepared inputs.
     with _pprof.phase("state_pre_reconcile"):
         d = _ensure_job_dir(_get_output_dir(output_dir), job_id)
+        # #514: persist the approved-state identity once, so the home list can
+        # compare it with the snapshot manifest without re-reading a 30 MB state.
+        from folith import snapshots as _snapshots
+        state["translation_state_identity"] = _snapshots.state_identity(state)
 
     with _pprof.phase("review_truth_reconcile") as sink:
         _translation_evidence.reconcile_runtime_review_truth(state)
@@ -493,6 +497,7 @@ def build_job_summary(job_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
                                                      for pair in pairs) / max(len(paras), len(pairs))))
                              if pairs else None),
         "review_count": len(findings),
+        "translation_state_identity": state.get("translation_state_identity"),
     }
 
 
