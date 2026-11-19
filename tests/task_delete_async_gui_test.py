@@ -243,7 +243,9 @@ def test_deleting_five_stuck_engines_never_blocks_the_gui_thread(window_env):
             # The cancel request is written off the GUI thread; under load the
             # write can land after the batch returned.  Wait for it instead of
             # reading once immediately (the Windows flake behind this assert).
-            assert _pump(app, lambda: core.load_runtime_state(job_id)
+            # The closure binds ``job_id`` explicitly: it is a loop variable, and
+            # a late-binding lambda would read the last job's state (ruff B023).
+            assert _pump(app, lambda job_id=job_id: core.load_runtime_state(job_id)
                          .get("cancel_requested") is True), "拒绝之前必须先发取消"
             assert core.load_job_state(job_id) is not None
 
