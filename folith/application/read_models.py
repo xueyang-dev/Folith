@@ -342,6 +342,22 @@ def _sort_key(row: JobSummary):
 # queries
 # ---------------------------------------------------------------------------
 
+_LIGHT_CACHE_LOADED: set[str] = set()
+
+
+def _load_delivery_light_cache_once(out: Path) -> None:
+    """One disk read per process, before the task list is built (#514)."""
+    key = str(out)
+    if key in _LIGHT_CACHE_LOADED:
+        return
+    _LIGHT_CACHE_LOADED.add(key)
+    try:
+        from folith.engine import delivery_state as _delivery_state
+        _delivery_state.load_light_status_cache(out)
+    except Exception:  # noqa: BLE001 - the cache is an optimisation
+        pass
+
+
 def list_jobs(*, output_dir: Optional[Path] = None) -> List[JobSummary]:
     """The canonical job list: every task directory, including unreadable ones."""
     out = _output_dir(output_dir)
@@ -353,6 +369,7 @@ def list_jobs(*, output_dir: Optional[Path] = None) -> List[JobSummary]:
     rows: List[JobSummary] = []
     known: set = set()
     candidates: List[Path] = []
+    _load_delivery_light_cache_once(out)
     for entry in entries:
         if not entry.is_dir():
             continue

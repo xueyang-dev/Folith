@@ -766,6 +766,7 @@ def delivery_snapshot_status(job_id, state=None):
 #: job dir -> ((latest snapshot version, state signature), status) for
 #: ``delivery_snapshot_status_light``; one entry per task.
 _LIGHT_STATUS_CACHE = {}
+_IDENTITY_CACHE: dict = {}  # job_root -> (state_identity, state mtime, state size)
 
 
 def delivery_snapshot_status_light(job_id):
@@ -789,9 +790,25 @@ def delivery_snapshot_status_light(job_id):
     cached = _LIGHT_STATUS_CACHE.get(str(job_root))
     if cached is not None and cached[0] == key:
         return dict(cached[1])
-    state = _c.load_job_state(job_id)
-    matches = _snapshots.state_matches_identity(
-        state or {}, latest.get("translation_state_identity"))
+    # #514: the task list only needs to know whether the frozen snapshot still
+    # matches the persisted state.  Reading the full state (and its isolated copy)
+    # for every delivered task cost ~4 s at startup.  The state identity is stored
+    # on the snapshot at save time; compare against a cached value when the state
+    # file is unchanged since the last time we computed it.
+    cached_identity, cached_mtime, cached_size = _IDENTITY_CACHE.get(str(job_root), (None, None, None))
+    current = _job_repository.state_signature(job_id, output_dir=job_root.parent)
+    fresh = cached_identity is not None and current is not None and \
+        current[1] == cached_mtime and current[2] == cached_size
+    if fresh:
+        matches = cached_identity == latest.get("translation_state_identity")
+    else:
+        state = _c.load_job_state(job_id)
+        matches = _snapshots.state_matches_identity(
+            state or {}, latest.get("translation_state_identity"))
+        if current is not None and state is not None:
+            from folith import snapshots as _snaps
+            _IDENTITY_CACHE[str(job_root)] = (
+                _snaps.state_identity(state), current[1], current[2])
     names = [item.get("name") for item in latest.get("assets") or []]
     integrity = bool(names) and all(
         name and _snapshots.asset_path(job_root, version, name).is_file() for name in names)

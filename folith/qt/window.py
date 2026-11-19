@@ -376,8 +376,7 @@ class MainWindow(QMainWindow):
         self._install_quit_filter()
         self._build_menus()
         self._restore_geometry()
-        self.refresh_home()
-        self.refresh_pending_badge(force=True)
+        self.refresh_pending_badge(force=True)  # #514: refresh_home moved after show
         self.refresh_engine_label()
         if self.data_dir_notice:
             # `enforce_output_dir` 是**替用户把相对路径改回数据目录并成功了**
@@ -400,6 +399,7 @@ class MainWindow(QMainWindow):
             lambda _index: self._later(400, self._offer_tips))
         # 窗口出现之后再判断是否首次使用（欢迎窗口要以主窗口为父、居中在它上面）。
         self._later(500, self.maybe_start_onboarding)
+        self._later(0, self.refresh_home)
 
     def _later(self, delay_ms: int, callback) -> None:
         """Own delayed UI work so deleting the window cancels its timers."""
