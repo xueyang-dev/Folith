@@ -240,8 +240,11 @@ def test_deleting_five_stuck_engines_never_blocks_the_gui_thread(window_env):
                 f"{names[job_id]} 的拒绝没有出现在提示里：{refused_text}"
             # 拒绝 = 目录保留 + 真的发过取消（不是"看都没看就拒绝"）。
             assert core.job_dir(job_id).exists(), "被拒绝的任务目录必须还在"
-            assert core.load_runtime_state(job_id).get("cancel_requested") is True, \
-                "拒绝之前必须先发取消"
+            # The cancel request is written off the GUI thread; under load the
+            # write can land after the batch returned.  Wait for it instead of
+            # reading once immediately (the Windows flake behind this assert).
+            assert _pump(app, lambda: core.load_runtime_state(job_id)
+                         .get("cancel_requested") is True), "拒绝之前必须先发取消"
             assert core.load_job_state(job_id) is not None
 
         # (c) 删除没有在目录还在被写的时候动手（E-4b 的并发安全）。
