@@ -2745,5 +2745,6 @@
   "将保存编辑并停止正在运行的任务，重新打开后可以继续。": "Ausstehende Bearbeitungen werden gespeichert und laufende Aufgaben gestoppt; danach können Sie fortfahren.",
   "需要重启 Folith": "Folith neu starten",
   "立即重启": "Jetzt neu starten",
-  "语言已保存，下次启动时生效": "Sprache gespeichert; sie wird beim nächsten Start wirksam."
+  "语言已保存，下次启动时生效": "Sprache gespeichert; sie wird beim nächsten Start wirksam.",
+  "关闭提示": "Hinweis schließen"
 }

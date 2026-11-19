@@ -2745,5 +2745,6 @@
   "将保存编辑并停止正在运行的任务，重新打开后可以继续。": "Se guardarán las ediciones pendientes y se detendrán las tareas en curso; podrá continuar al reabrir.",
   "需要重启 Folith": "Reiniciar Folith",
   "立即重启": "Reiniciar ahora",
-  "语言已保存，下次启动时生效": "Idioma guardado; se aplicará en el próximo inicio."
+  "语言已保存，下次启动时生效": "Idioma guardado; se aplicará en el próximo inicio.",
+  "关闭提示": "Cerrar aviso"
 }

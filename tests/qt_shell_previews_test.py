@@ -303,7 +303,7 @@ def test_projects_page_changes_refresh_the_task_library(window, app, monkeypatch
     assert main.projects.changed
 
 
-def test_notifications_use_top_toast_without_bottom_bar(window, app):
+def test_notifications_use_bottom_centre_toast_without_bottom_bar(window, app):
     main = window["window"]
     from PySide6.QtWidgets import QStatusBar
 
@@ -311,7 +311,9 @@ def test_notifications_use_top_toast_without_bottom_bar(window, app):
     main._notice("已保存", task=False)
     app.processEvents()
     assert main.toast.isVisible() and main.last_notice() == "已保存"
-    assert main.toast.y() < 80
+    # #520：小通知固定在窗口底部中央，不再占顶部标题区。
+    assert main.toast.y() > main.height() // 2
+    assert abs((main.toast.x() + main.toast.width() // 2) - main.width() // 2) <= 2
     main.toast.close_button.click()
     assert not main.toast.isVisible()
 
