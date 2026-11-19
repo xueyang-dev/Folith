@@ -125,6 +125,7 @@ __all__ = [
     "send_continue",
     "set_launch_command",
     "shutdown_all",
+    "publish_starting_status",
     "start_engine",
     "stop_and_wait",
     "supervisor",
@@ -929,6 +930,31 @@ def _preflight(job_id: str) -> str:
     return ""
 
 
+def publish_starting_status(job_id: str) -> bool:
+    """Say "starting" from *this* process, before the child can say anything.
+
+    The child cannot write a status until it has imported `core` (~0.65-1.0 s,
+    E-1), and the in-process path writes ``queued``/``starting`` synchronously
+    in `core.start_job_worker`.  Without this write the subprocess path shows the
+    *previous* status for that whole second, so pressing Start looks like
+    nothing happened -- which is exactly what G-E item 4 forbids.
+
+    Best effort on purpose: a contended runtime-write lock must delay a status
+    line, never Start itself.  The phase label matches the in-process one so the
+    workbench renders the same "准备中" and the handover to the child's own write
+    is invisible.
+    """
+    try:
+        _core().update_runtime_state(
+            job_id, on_timeout="skip", status="queued", phase="starting",
+            phase_label="准备中",
+            event="正在启动后台引擎进程", event_name="engine_starting",
+            event_visibility="technical", event_category="orchestration")
+    except Exception:  # noqa: BLE001 - a status write must never block Start
+        return False
+    return True
+
+
 def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
                  filename: str = "") -> EngineOutcome:
     """Spawn one engine child and hand it the start line.  Returns immediately.
@@ -977,6 +1003,12 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
         log_dir=log_dir, secrets=_secrets_in(connection))
     line = engine_protocol.encode_start_request(
         job_id, connection, mode=mode, filename=filename)
+    # The child owns every later status; this one is Ours so Start has feedback
+    # within a second instead of after the child's cold start (G-E item 4).  It
+    # must land *before* the start line: a child that fails instantly publishes
+    # its own terminal state, and writing "starting" afterwards would overwrite
+    # the truth with a status that never happened.
+    publish_starting_status(job_id)
     if not sup.send_line(line):
         sup.abandon()
         try:

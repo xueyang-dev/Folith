@@ -2738,5 +2738,11 @@
   "双语文件导入有提示": "The bilingual file was imported with notices",
   "另有 {v0} 个单元按「不翻译」排除，不会进入工作台。": "{v0} more unit(s) were excluded as \"do not translate\" and do not appear in the workbench.",
   "显示全部 ({v0})": "Show all ({v0})",
-  "连接操作": "Connection actions"
+  "连接操作": "Connection actions",
+  "切换语言后需要重启才能完全生效": "Switching language needs a restart to take full effect",
+  "切换到「{v0}」需要重启 Folith 才能完全生效。": "Switching to \"{v0}\" requires a restart for Folith to apply it fully.",
+  "将保存编辑并停止正在运行的任务，重新打开后可以继续。": "Pending edits will be saved and running tasks stopped; you can continue after reopening.",
+  "需要重启 Folith": "Restart Folith",
+  "立即重启": "Restart now",
+  "语言已保存，下次启动时生效": "Language saved; it will take effect on next launch."
 }

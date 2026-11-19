@@ -86,3 +86,21 @@ def test_generator_refuses_to_fill_the_disk(monkeypatch) -> None:
         assert "REFUSED" in str(exc)
     else:
         raise AssertionError("a 10 GB free disk must be refused for a 21-task dir")
+def test_zip_ignores_file_mtimes(tmp_path) -> None:
+    """同一份内容、不同的 mtime，仍然是同一串字节。
+
+    这是 #541 在 RV 里红的那条：`ZipFile.write` 把文件 mtime 写进条目头，两次生成
+    只要跨过 zip 的 2 秒时间粒度就得到不同 sha。这里把 mtime 明确拉开一天，钉住
+    "sha 只由内容决定"。
+    """
+    import os
+
+    mod = _module()
+    mod.generate(tmp_path / "a", tasks=2, seed=5, segments=8)
+    sha_a = mod.zip_dir(tmp_path / "a", tmp_path / "a.zip")
+    stamp = 1_600_000_000  # 2020-09-13
+    for index, path in enumerate(sorted((tmp_path / "a").rglob("*"))):
+        if path.is_file():
+            os.utime(path, (stamp + index * 3600, stamp + index * 3600))
+    sha_b = mod.zip_dir(tmp_path / "a", tmp_path / "a2.zip")
+    assert sha_a == sha_b

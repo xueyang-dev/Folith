@@ -407,6 +407,9 @@ def _main(argv: list[str] | None = None) -> int:
     finally:
         monitor.stop()
         log("qt client exited")
+    # #547：旧窗口已在 closeEvent 里释放单实例锁；此时才允许新进程去拿锁。
+    from folith.desktop import relaunch
+    relaunch.after_exit()
     return int(code)
 
 

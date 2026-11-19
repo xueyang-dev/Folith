@@ -211,3 +211,58 @@ def test_badge_counts_are_computed_once_per_refresh_with_the_cheap_path(env, mon
     overview = adapter.projects_overview()
     rows = len(overview["projects"]) + 1            # 每个项目（含未分类）各数一次，不是每条候选一次
     assert calls["lite"] == rows and calls["full"] == 0, calls
+
+
+def test_project_list_reads_infer_direction_without_full_task_states(env, monkeypatch):  # noqa: F811
+    """Inferred project directions come from the cached digests.
+
+    ``core.list_jobs`` loads and copies every task's full state; calling it once
+    per project made the projects page take seconds while holding the GIL.
+    """
+    from tests.project_language_fixture import add_job
+
+    adapter, core = env["adapter"], env["core"]
+    ids = build(core)
+    loose = core.create_project("没设方向的项目")["project_id"]
+    add_job(core, "loose-a", "a.docx", project_id=loose, source="English", target="日本語")
+    add_job(core, "loose-b", "b.docx", project_id=loose, source="English", target="日本語")
+    add_job(core, "loose-c", "c.docx", project_id=loose, source="English", target="Deutsch")
+
+    def forbidden(*_a, **_k):
+        raise AssertionError("project list reads must not load every full task state")
+
+    monkeypatch.setattr(core, "list_jobs", forbidden)
+    overview = adapter.projects_overview()
+    row = next(p for p in overview["projects"] if p["project_id"] == loose)
+    assert (row["source_lang"], row["target_lang"], row["direction_inferred"]) == \
+        ("English", "日本語", True)
+    detail = adapter.project_detail(loose)
+    assert detail["project"]["target_lang"] == "日本語"
+    choice = next(c for c in adapter.import_wizard_project_choices()
+                  if c["project_id"] == loose)
+    assert choice["target_lang"] == "日本語"
+    target = next(t for t in adapter.move_targets(["notes"]) if t["project_id"] == loose)
+    assert target is not None
+    assert ids["device"] in {p["project_id"] for p in overview["projects"]}
+
+
+def test_candidate_rows_match_per_candidate_context(env):  # noqa: F811
+    """Hoisting the glossary normalization keeps rows identical to the slow path."""
+    from folith import knowledge, language_assets
+
+    _adapter, core = env["adapter"], env["core"]
+    build(core)
+    state = core.load_job_state("manual-ch3")
+    state["semantic_units"] = [{"start_segment": 100, "end_segment": 10_000, "label": "第 3 章"}]
+    for candidate in state["knowledge_candidates"]:
+        if candidate["source"] == "status light":      # 与任务术语表「状态灯」冲突
+            candidate["observed_target"] = "指示灯"
+    rows = language_assets.build_candidate_rows([{"job_id": "manual-ch3", "state": state}])
+    by_source = {r["source"]: r for r in rows}
+    clash = by_source["status light"]
+    slow = knowledge.candidate_context(
+        dict(next(c for c in state["knowledge_candidates"] if c["source"] == "status light")),
+        dict(state))
+    assert clash["conflicts"] == slow["conflicts"] and clash["has_conflict"]
+    assert clash["is_new"] is False and by_source["hub"]["is_new"] is True
+    assert clash["first_reference"].startswith("第 3 章 · #")

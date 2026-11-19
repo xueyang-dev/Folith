@@ -86,6 +86,32 @@ def read_digests(core) -> list[dict]:
     return digests
 
 
+def grouped_by_project(core) -> dict[str, list[dict]] | None:
+    """摘要按任务归属的项目分组；读不出来时返回 ``None``（调用方退回逐项目读取）。
+
+    逐个项目推断语言方向时用它：``project_direction`` 不传任务时会走
+    ``core.list_jobs()``，为每个项目把全部任务的完整状态读出并复制一遍。
+    """
+    try:
+        digests = read_digests(core)
+    except Exception:  # noqa: BLE001 - 列表必须仍能显示，只是变慢
+        return None
+    grouped: dict[str, list[dict]] = {}
+    for job in digests:
+        grouped.setdefault(core.resolved_project_id(job.get("state") or {}), []).append(job)
+    return grouped
+
+
+def jobs_of(grouped: dict[str, list[dict]] | None, project_id: str) -> list[dict] | None:
+    """``grouped_by_project`` 里某个项目的任务；项目 ID 按任务归属同样的规则归一。"""
+    if grouped is None:
+        return None
+    from folith import project as project_model
+    key = project_model.canonical_project_id(project_id) \
+        if str(project_id or "").strip() else project_model.SYSTEM_PROJECT_ID
+    return grouped.get(str(key), [])
+
+
 def clear() -> None:
     with _LOCK:
         _CACHE.clear()
