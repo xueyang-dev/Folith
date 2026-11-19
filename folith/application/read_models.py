@@ -290,6 +290,7 @@ def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
         # The list only shows the version and divergence: skip the asset
         # hashing and the per-refresh state reload of the strict check.
         snapshot = core.delivery_snapshot_status_light(job_id)
+        import time as _t; _t.sleep(0)  # #514: give the GUI thread a turn
         latest = snapshot.get("latest") or {}
         snapshot_version = latest.get("snapshot_version")
         diverged = bool(snapshot.get("diverged"))
@@ -353,7 +354,12 @@ def list_jobs(*, output_dir: Optional[Path] = None) -> List[JobSummary]:
     rows: List[JobSummary] = []
     known: set = set()
     candidates: List[Path] = []
-    for entry in entries:
+    # #514: yield the GIL between tasks so the GUI thread keeps beating while
+    # this scan runs on a worker.  Without it, 30MB state reads starve the GUI
+    # for seconds even though the work is already off the GUI thread.
+    import time as _time
+    for index, entry in enumerate(entries):
+        _time.sleep(0)  # #514: yield between every task
         if not entry.is_dir():
             continue
         if not ((entry / "state.json").is_file() or (entry / "summary.json").is_file()):
