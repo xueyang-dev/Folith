@@ -564,9 +564,12 @@ class ConnectionLibrary(QWidget):
         row.addWidget(state, 0, Qt.AlignmentFlag.AlignVCenter)
         # 编辑 / 删除收进「⋯」：一行里不再摆两个整按钮（#517）。
         actions = QToolButton()
-        actions.setIcon(icons.icon("more", 14, "text-secondary"))
-        actions.setIconSize(QSize(14, 14))
-        actions.setAccessibleName(i18n.tr('连接操作'))
+        actions.setObjectName("iconButton")   # 与行内图标按钮同款：无边框，且 QSS 去掉菜单箭头
+        actions.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        actions.setIcon(icons.icon("more", 16, "text-secondary"))
+        actions.setIconSize(QSize(16, 16))
+        actions.setCursor(Qt.CursorShape.PointingHandCursor)
+        actions.setAccessibleName(i18n.tr('{v0} 的更多操作', v0=p["name"]))
         actions.setToolTip(i18n.tr('连接操作'))
         actions.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(actions)

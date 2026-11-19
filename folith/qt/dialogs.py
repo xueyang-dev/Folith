@@ -169,6 +169,8 @@ class EngineDialog(QDialog):
         self.language_preference = i18n.language()
         self.academic_preference = False
         self._loading = True
+        #: #517：首次显示才居中一次；之后的高度变化只动底边，顶边保持不动。
+        self._centered_once = False
 
         from .settings_pages import AboutPage, ReadingPage, StoragePage
 
@@ -254,8 +256,9 @@ class EngineDialog(QDialog):
         from . import macwindow
 
         macwindow.hide_when_app_inactive(self)
-        # 首次显示时窗口管理器可能已把它放到了靠下的位置；按当前屏幕重新夹一遍。
-        self._clamp_to_screen()
+        # 首次显示时窗口管理器可能已把它放到了靠下的位置：只在这里居中一次。
+        self._clamp_to_screen(recenter=not self._centered_once)
+        self._centered_once = True
         # 页面 sizeHint 要等第一次布局才算得准：构造期 _fit_height 拿到的是旧值，
         # 会按偏矮的内容把窗口定死，「用途」因此要滚动才看得见。布局完成后再量一次。
         QTimer.singleShot(0, self, self._refit_after_show)
@@ -282,13 +285,16 @@ class EngineDialog(QDialog):
         widget = self.stack.currentWidget()
         return next((key for key, page in self.pages.items() if page is widget), "general")
 
-    def _clamp_to_screen(self) -> None:
-        """把整窗（含标题栏）夹进当前屏幕的可用区域并居中。
+    def _clamp_to_screen(self, *, recenter: bool = False) -> None:
+        """把整窗（含标题栏）夹进当前屏幕的可用区域。
 
         `QScreen.availableGeometry()` 已经排除了 macOS 的 Dock / 菜单栏和
         Windows 的任务栏，所以一个跨平台的 Qt 调用就够；共享界面里不写
-        任何平台专属代码（`AGENTS.md`）。主窗口完整落在可用区域内时优先
-        相对它居中，否则退回到可用区域本身居中。
+        任何平台专属代码（`AGENTS.md`）。
+
+        `recenter=True` 只在首次显示时用：相对主窗口（放得下时）或可用区居中。
+        其余情况（尤其高度动画的每一帧）保持顶边/左边不动，只有底边或右边
+        超出可用区时才上推/左移——macOS 设置窗口是顶边固定、往下伸缩的。
         """
         screen = self.screen() or QGuiApplication.primaryScreen()
         if screen is None:
@@ -304,25 +310,32 @@ class EngineDialog(QDialog):
         if (width, height) != (client.width(), client.height()):
             self.resize(width, height)
             frame = self.frameGeometry()
-        parent = self.parentWidget()
-        anchor = parent.frameGeometry() if parent is not None and parent.isVisible() else QRect()
-        if not anchor.isValid() or not area.contains(anchor):
-            anchor = area
-        center = anchor.center()
-        frame_x = center.x() - frame.width() // 2
-        frame_y = center.y() - frame.height() // 2
+        if recenter:
+            parent = self.parentWidget()
+            anchor = parent.frameGeometry() if parent is not None and parent.isVisible() else QRect()
+            if not anchor.isValid() or not area.contains(anchor):
+                anchor = area
+            center = anchor.center()
+            frame_x = center.x() - frame.width() // 2
+            frame_y = center.y() - frame.height() // 2
+        else:
+            frame_x, frame_y = frame.left(), frame.top()
         # right()/bottom() 是闭区间，所以能放下的最靠右/下位置要 +1。
         frame_x = max(area.left(), min(frame_x, area.right() - frame.width() + 1))
         frame_y = max(area.top(), min(frame_y, area.bottom() - frame.height() + 1))
-        # move() 收的是 widget 左上角，frameGeometry() 含装饰：把差值减回去。
-        delta = frame.topLeft() - self.geometry().topLeft()
-        self.move(frame_x - delta.x(), frame_y - delta.y())
+        # move() 对顶层窗口定位的就是整窗（含装饰）左上角；个别平台会差一个
+        # 装饰偏移，按实际 frameGeometry 再校正一次，避免每次夹取都漂移几像素。
+        self.move(frame_x, frame_y)
+        actual = self.frameGeometry().topLeft()
+        if actual.x() != frame_x or actual.y() != frame_y:
+            self.move(self.x() + frame_x - actual.x(), self.y() + frame_y - actual.y())
 
     def _fit_height(self) -> None:
         """窗口高度随当前页的内容伸缩（macOS 设置窗口的行为），不超出屏幕。
 
         `resize()` 从当前顶边往下长：窗口若原本开得靠下，底部（含「测试并保存」）
-        就会被 Dock / 任务栏挡住。所以每次高度变化后都重新夹回可用区域并居中。
+        就会被 Dock / 任务栏挡住。所以每次高度变化后都夹回可用区域；居中只在
+        首次显示做一次，之后顶边不动，避免切换页面时窗口上下跳。
         """
         page = self.stack.currentWidget()
         inner = page.widget() if isinstance(page, QScrollArea) else page

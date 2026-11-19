@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QRect  # noqa: E402
+from PySide6.QtCore import QRect, Qt  # noqa: E402
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QPushButton,  # noqa: E402
                                QScrollArea, QToolButton)
 
@@ -59,30 +59,57 @@ def _dialog(connections: int = 0) -> dialogs.EngineDialog:
 
 # ------------------------------------------------------------- 几何 ----------
 
-def test_height_change_clamps_the_whole_window_into_available_area(app, monkeypatch):
+def test_height_change_clamps_without_recentering(app, monkeypatch):
+    """未显示时的高度变化只夹回可用区，不提前居中（居中留给首次显示）。"""
     dialog = _dialog(connections=10)
     monkeypatch.setattr(dialog, "screen", lambda: _FakeScreen(AREA))
     try:
-        # 窗口原本开在屏幕下方：resize 往下长会把底部按钮推到 Dock 后面。
         dialog.move(900, 1200)
         dialog.show_page("models")
         app.processEvents()
-        frame = dialog.frameGeometry()
-        assert AREA.contains(frame), (frame, AREA)
-        assert abs(frame.center().x() - AREA.center().x()) <= 2
-        assert abs(frame.center().y() - AREA.center().y()) <= 2
+        assert AREA.contains(dialog.frameGeometry()), dialog.frameGeometry()
+        assert abs(dialog.frameGeometry().center().x() - AREA.center().x()) > 2
     finally:
         dialog.close()
 
 
-def test_first_show_recenters_a_window_opened_below_the_screen(app, monkeypatch):
+def test_first_show_centres_a_window_opened_below_the_screen(app, monkeypatch):
     dialog = _dialog(connections=10)
     monkeypatch.setattr(dialog, "screen", lambda: _FakeScreen(AREA))
     try:
         dialog.move(400, 2000)
         dialog.show()
         app.processEvents()
-        assert AREA.contains(dialog.frameGeometry()), dialog.frameGeometry()
+        frame = dialog.frameGeometry()
+        assert AREA.contains(frame), frame
+        assert abs(frame.center().x() - AREA.center().x()) <= 2
+        assert abs(frame.center().y() - AREA.center().y()) <= 2
+    finally:
+        dialog.close()
+
+
+def test_height_change_keeps_the_top_edge_when_the_screen_fits(app, monkeypatch):
+    """#533 返修：切到更高的页时窗口顶边不动，只有底边往下长。"""
+    dialog = _dialog(connections=0)
+    monkeypatch.setattr(dialog, "screen", lambda: _FakeScreen(AREA))
+    try:
+        dialog.show()
+        app.processEvents()
+        top_before = dialog.frameGeometry().top()
+        height_before = dialog.height()
+        library = dialog.connection_library
+        library.profiles = [
+            {"id": f"c{i}", "name": f"连接 {i}", "provider": "OpenAI",
+             "model": f"model-{i}", "api_key": f"k{i}", "base_url": "",
+             "models": [f"model-{i}"], "custom": False}
+            for i in range(10)
+        ]
+        library.refresh()
+        dialog.show_page("models")
+        app.processEvents()
+        assert dialog.height() > height_before, (height_before, dialog.height())
+        assert dialog.frameGeometry().top() == top_before
+        assert AREA.contains(dialog.frameGeometry())
     finally:
         dialog.close()
 
@@ -142,6 +169,10 @@ def test_connection_rows_use_one_line_and_a_row_menu(app):
             assert actions is not None and actions.menu() is not None
             labels = [action.text() for action in actions.menu().actions()]
             assert "编辑" in labels and "删除" in labels
+            # #533 返修：干净的 more 图标按钮，不叠下拉箭头、不带文字。
+            assert actions.objectName() == "iconButton"
+            assert actions.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+            assert not actions.text()
     finally:
         dialog.close()
 
