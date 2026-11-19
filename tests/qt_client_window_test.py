@@ -4903,8 +4903,9 @@ def test_514_async_home_refresh_does_not_scan_on_the_gui_thread(client, monkeypa
         calls.append("called")
         return []
 
-    monkeypatch.setattr(_adapter, "list_jobs", slow_list_jobs)
     window = client["window"]
+    monkeypatch.setattr(_adapter, "list_jobs", slow_list_jobs)
+    calls.clear()  # fixture construction may have called it before the spy
     window._home_generation = 0
     window._refresh_home_async()
     # The submit goes to the worker; the GUI thread must not have called it.
