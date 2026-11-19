@@ -109,8 +109,30 @@ def _job_id(seed: int, index: int) -> str:
     return hashlib.sha256(f"synthetic:{seed}:{index}".encode()).hexdigest()[:16]
 
 
+#: A-22: refuse to generate when the target disk is too full.  Each task costs
+#: roughly ``segments * 3 MB`` at the current shape; require 3x that plus 10 GB.
+MIN_FREE_BYTES = 10 * 1024**3
+EST_BYTES_PER_SEGMENT = 3 * 1024**2
+
+
+def check_free_space(out: Path, tasks: int, segments: int) -> None:
+    target = out if out.exists() else out.parent
+    if not target.exists():
+        target = Path("/tmp")
+    try:
+        free = shutil.disk_usage(target).free
+    except OSError as exc:
+        raise SystemExit(f"cannot check free space for {target}: {exc}") from exc
+    needed = tasks * segments * EST_BYTES_PER_SEGMENT * 3 + MIN_FREE_BYTES
+    if free < needed:
+        raise SystemExit(
+            f"REFUSED: only {free / 1024**3:.1f} GB free on {target}, "
+            f"need at least {needed / 1024**3:.1f} GB for {tasks} tasks x {segments} segments")
+
+
 def generate(out: Path, tasks: int, seed: int, segments: int) -> dict:
     """写数据目录，返回统计（不含本机家目录）。"""
+    check_free_space(out, tasks, segments)
     rng = random.Random(seed)
     out.mkdir(parents=True, exist_ok=True)
     delivered = 0
