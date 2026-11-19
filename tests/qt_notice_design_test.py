@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FOLITH_QT_NONINTERACTIVE"] = "1"
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QEvent, Qt  # noqa: E402
+from PySide6.QtCore import QEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from folith.qt import notifications  # noqa: E402
