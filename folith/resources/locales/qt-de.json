@@ -2746,6 +2746,7 @@
   "需要重启 Folith": "Folith neu starten",
   "立即重启": "Jetzt neu starten",
   "语言已保存，下次启动时生效": "Sprache gespeichert; sie wird beim nächsten Start wirksam.",
-  "关闭提示": "Hinweis schließen",
-  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "Der Großteil der Modellausgabe sind Gedankenschritte, die sich nicht abschalten ließen; die Übersetzung wird dadurch deutlich langsamer"
+"关闭提示": "Hinweis schließen",
+  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "Der Großteil der Modellausgabe sind Gedankenschritte, die sich nicht abschalten ließen; die Übersetzung wird dadurch deutlich langsamer",
+  "正在载入任务…": "Aufgaben werden geladen…"
 }

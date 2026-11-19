@@ -13,9 +13,14 @@ import os
 import sys
 from pathlib import Path
 
+# A-29: take both names from the product constants instead of hardcoding the
+# legacy brand in a measurement script (the brand regression test forbids it).
+from folith import brand as _brand
+from folith.desktop import paths as _paths
+
 _FORBIDDEN = (
-    Path.home() / "Library" / "Application Support" / "Folith",
-    Path.home() / "Library" / "Application Support" / "FolioThread",
+    Path.home() / "Library" / "Application Support" / _paths.APP_DIR_NAME,
+    Path.home() / "Library" / "Application Support" / _brand.LEGACY_BRAND,
 )
 
 

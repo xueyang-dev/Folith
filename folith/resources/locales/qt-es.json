@@ -2746,6 +2746,7 @@
   "需要重启 Folith": "Reiniciar Folith",
   "立即重启": "Reiniciar ahora",
   "语言已保存，下次启动时生效": "Idioma guardado; se aplicará en el próximo inicio.",
-  "关闭提示": "Cerrar aviso",
-  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "La mayor parte de la salida del modelo es razonamiento; no se pudo desactivar, por lo que la traducción será mucho más lenta"
+"关闭提示": "Cerrar aviso",
+  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "La mayor parte de la salida del modelo es razonamiento; no se pudo desactivar, por lo que la traducción será mucho más lenta",
+  "正在载入任务…": "Cargando las tareas…"
 }

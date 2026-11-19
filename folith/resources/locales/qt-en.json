@@ -2745,6 +2745,7 @@
   "需要重启 Folith": "Restart Folith",
   "立即重启": "Restart now",
   "语言已保存，下次启动时生效": "Language saved; it will take effect on next launch.",
-  "关闭提示": "Dismiss tip",
-  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "Most model output is thinking; thinking could not be turned off, so translation will be noticeably slower"
+"关闭提示": "Dismiss tip",
+  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "Most model output is thinking; thinking could not be turned off, so translation will be noticeably slower",
+  "正在载入任务…": "Loading tasks…"
 }
