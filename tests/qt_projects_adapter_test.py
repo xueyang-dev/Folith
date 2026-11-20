@@ -318,3 +318,62 @@ def test_state_view_shares_nested_objects_with_cache(env) -> None:  # noqa: F811
     sig = state_signature("view-job-2")
     cached = repo._STATE_CACHE[sig]
     assert view is not None and view["pairs"] is cached["pairs"]
+
+
+# ---------------------------------------------------------------------------
+# A-34: the shallow view must produce exactly the same digest as a full state.
+# ---------------------------------------------------------------------------
+def test_view_digest_is_field_for_field_equal_to_full_state_digest(env, monkeypatch) -> None:  # noqa: F811
+    from folith import project_digest
+    from folith.storage import job_repository as repo
+
+    core = env["core"]
+    state = core.new_job_state("context.docx")
+    state["pairs"] = [
+        {"source": "Plug in the hub.", "target": "插入集线器。"},
+        {"source": "Turn on night mode.", "target": "打开夜间模式。"},
+    ]
+    state["semantic_units"] = [
+        {"start_segment": 0, "end_segment": 0, "label": "第 1 章"},
+        {"start_segment": 1, "end_segment": 1, "label": "第 2 章"},
+    ]
+    state["knowledge_candidates"] = [{
+        "source": "hub", "observed_target": "集线器", "first_observed_segment": 0,
+        "occurrences": [0], "decision": None,
+    }]
+    state["glossary"] = [{"source": "hub", "preferred": "集线器"}]
+    core.save_job_state("digest-view-job", state)
+    core.load_job_state("digest-view-job")  # warm the state cache
+
+    full = core.load_job_state("digest-view-job")
+    expected = project_digest._build("digest-view-job", full)
+
+    # Go through the real read_digests path, whose view key list is what we
+    # are testing.  Clear its cache so this task is actually rebuild.
+    project_digest.clear()
+    digests = project_digest.read_digests(core)
+    digest = next(d for d in digests if d["job_id"] == "digest-view-job")
+    assert digest == expected, "the read_digests view changed candidate rows"
+    for key in ("pairs", "semantic_units", "knowledge_candidates", "glossary"):
+        if expected["candidate_rows"]:
+            assert digest["candidate_rows"] == expected["candidate_rows"]
+
+
+def test_project_overview_does_not_pollute_cached_state(env) -> None:  # noqa: F811
+    """A-34 condition 3: after a full overview + candidate render, the cached
+    canonical state must be byte-for-byte unchanged."""
+    import json
+    from folith.storage import job_repository as repo
+
+    adapter = env["adapter"]
+    core = env["core"]
+    build(core)  # seeds several jobs with candidates
+    core.load_job_state("manual-ch3")  # warm
+    sig = repo.state_signature("manual-ch3")
+    before = json.dumps(repo._STATE_CACHE[sig], ensure_ascii=False, sort_keys=True)
+
+    adapter.projects_overview()
+    adapter.pending_total()
+
+    after = json.dumps(repo._STATE_CACHE[sig], ensure_ascii=False, sort_keys=True)
+    assert after == before, "the read-only view mutated the cached canonical state"

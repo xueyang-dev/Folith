@@ -74,8 +74,12 @@ def read_digests(core) -> list[dict]:
         # A3: read-only consumer -- a shallow projection avoids the pickle
         # round-trip of a book-sized state (and the gen2 GC it triggers).
         from folith.storage import job_repository as _repo
+        # A-34: build_candidate_rows reads more than SLIM_KEYS -- candidate
+        # context needs `pairs`, section labels need `semantic_units`.  Keep the
+        # view complete so digest rows stay byte-identical to the full-state path.
         state = _repo.load_job_state_view(
-            job_id, (*SLIM_KEYS, "pipeline_config"), output_dir=output_dir)
+            job_id, (*SLIM_KEYS, "pipeline_config", "pairs", "semantic_units"),
+            output_dir=output_dir)
         if state is None:
             continue
         STATS["loads"] += 1
