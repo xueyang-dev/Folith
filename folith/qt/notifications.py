@@ -66,17 +66,20 @@ class Toast(QFrame):
         self._detail = ""
         self._message = ""
         self._tone = "info"
+        self._slot = 0
         self.hide()
         parent.installEventFilter(self)
         for control in (self.close_button, self.details, self.label):
             control.installEventFilter(self)
 
-    def present(self, message: str, *, error=False, detail="", tone: str = ""):
+    def present(self, message: str, *, error=False, detail="", tone: str = "",
+                slot: int = 0):
         self._motion.stop("fade")
         self._effect.setOpacity(1)
         self._tone = tone_of(error, tone)
         self._message = " ".join(message.split())
         self._detail = detail
+        self._slot = max(0, int(slot))
         status = TONE_STATUS[self._tone]
         self.icon_label.setPixmap(icons.pixmap(TONE_ICONS[self._tone], 16,
                                                theme.STATUS_TONES[status]))
@@ -108,8 +111,9 @@ class Toast(QFrame):
         self.label.setText(self._elided())
         self.label.setToolTip(self._message)
         self.adjustSize()
-        # #520：底部中央、状态区上方；不随菜单栏高度变化，也不压住窗口标题。
-        y = max(0, parent.height() - self.height() - 24)
+        # #520：底部中央，最多三条；slot 0 最靠上（最新），older ones below.
+        base = max(0, parent.height() - self.height() - 24 - 2 * (self.height() + 8))
+        y = base + self._slot * (self.height() + 8)
         self.move((parent.width() - self.width()) // 2, y)
 
     def eventFilter(self, watched, event):
@@ -252,3 +256,80 @@ class NoticeBanner(QFrame):
         super().resizeEvent(event)
         if self.isVisible():
             self._elide()
+
+
+class ToastStack:
+    """#520: at most three toasts, newest on top, older ones stacked below.
+
+    A plain object (not a QWidget): every geometry/visibility attribute the
+    main window and tests read is forwarded explicitly to the visible toasts,
+    so nothing ever measures an invisible container.  Errors/warnings stay until
+    the user closes them; success/info fade on their own.
+    """
+
+    MAX_VISIBLE = 3
+
+    def __init__(self, parent) -> None:
+        self.parent = parent
+        self._toasts: list[Toast] = []
+
+    def present(self, message: str, *, error=False, detail="", tone: str = "") -> Toast:
+        self._toasts = [t for t in self._toasts if not t.isHidden()]
+        while len(self._toasts) >= self.MAX_VISIBLE:
+            victim = next((t for t in self._toasts if t._tone not in ("error", "warning")),
+                          self._toasts[0])
+            self._toasts.remove(victim)
+            victim.hide()
+            victim.deleteLater()
+        toast = Toast(self.parent)
+        self._toasts.append(toast)
+        # Newest gets slot 0 (the topmost position); older ones shift down.
+        for slot, existing in enumerate(reversed(self._toasts[:-1]), start=1):
+            existing._slot = slot
+            existing._place()
+        toast.present(message, error=error, detail=detail, tone=tone, slot=0)
+        return toast
+
+    def close_all(self) -> None:
+        for toast in self._toasts:
+            toast.hide()
+        self._toasts.clear()
+
+    def _fade(self) -> None:
+        for toast in self._toasts:
+            if toast._tone not in ("error", "warning"):
+                toast._fade()
+
+    def visible(self) -> list[Toast]:
+        return [t for t in self._toasts if not t.isHidden()]
+
+    # ---- explicit delegation -----------------------------------------------
+    def __getattr__(self, name):
+        toasts = object.__getattribute__(self, "_toasts")
+        if not toasts:
+            raise AttributeError(name)
+        return getattr(toasts[-1], name)
+
+    def newest(self) -> Toast | None:
+        return self._toasts[-1] if self._toasts else None
+
+    def isVisible(self):  # noqa: N802 - Qt 命名
+        return bool(self.visible())
+
+    def isHidden(self):  # noqa: N802 - Qt 命名
+        return not self.isVisible()
+
+    def y(self):  # noqa: N802 - Qt 命名
+        return self._toasts[-1].y() if self._toasts else 0
+
+    def x(self):  # noqa: N802 - Qt 命名
+        return self._toasts[-1].x() if self._toasts else 0
+
+    def width(self):  # noqa: N802 - Qt 命名
+        return self._toasts[-1].width() if self._toasts else 0
+
+    def height(self):  # noqa: N802 - Qt 命名
+        return self._toasts[-1].height() if self._toasts else 0
+
+    def hide(self) -> None:
+        self.close_all()

@@ -137,6 +137,7 @@ class EngineConfig:
     connections: list[dict] = field(default_factory=list)
     connection_roles: dict[str, str] = field(default_factory=dict)
     connection_models: dict[str, str] = field(default_factory=dict)
+    connection_levels: dict[str, str] = field(default_factory=dict)
 
     # -- persistence -------------------------------------------------------
     @classmethod
@@ -157,12 +158,8 @@ class EngineConfig:
             cfg.reviewer_model = str(reviewer.get("model") or "")
             cfg.reviewer_api_key = str(reviewer.get("api_key") or "")
             cfg.reviewer_base_url = str(reviewer.get("base_url") or "")
-        cfg.connections = list(saved.get("connections") or [])
-        cfg.connection_roles = dict(saved.get("connection_roles") or {})
-        cfg.connection_models = dict(saved.get("connection_models") or {})
-        cfg.ensure_connections()
-        from folith.model_connections import effective_config
-        return effective_config(cfg, cfg.connections, cfg.connection_roles)
+        from folith.engine import effort_settings
+        return effort_settings.migrate_loaded(cfg, saved)
 
     def ensure_connections(self):
         # Migrate existing connections in memory; the next explicit save writes
@@ -224,6 +221,7 @@ class EngineConfig:
             reasoning_effort=self.reasoning_effort or None,
             connections=self.connections, connection_roles=self.connection_roles,
             connection_models=self.connection_models,
+            connection_levels=self.connection_levels,
             reviewer=(
                 {"provider": self.reviewer_provider,
                  "model": self.reviewer_model,
@@ -496,12 +494,14 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
         # starting a task reports the reason through the shared command's
         # `connection_problem()` (the same readable message as before).
         base_url = None
+    from folith.engine import effort_settings
+    # #540 PR-2：翻译档位在客户端映射成核心认识的两个标量，运行时路径不变。
     return {
         "provider": config.provider,
         "model": config.model,
         "api_key": config.api_key,
         "translator_base_url": base_url,
-        "reasoning_effort": config.reasoning_effort,
+        "reasoning_effort": effort_settings.translation_effort(config),
         "reviewer_mode": config.reviewer_mode,
         "reviewer_provider": config.reviewer_provider,
         "reviewer_model": config.reviewer_model,

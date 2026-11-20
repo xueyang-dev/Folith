@@ -335,8 +335,8 @@ class MainWindow(QMainWindow):
             shell, top_band=lambda: shell_layout.contentsMargins().top() + components.Sheet.GAP)
         self.stack.currentChanged.connect(self._sync_sidebar)
 
-        from .notifications import Toast
-        self.toast = Toast(self)
+        from .notifications import ToastStack
+        self.toast = ToastStack(self)   # #520：最多三条堆叠，最新在最下
         self._last_notice = ""
 
         self._current_job_id = ""

@@ -64,6 +64,8 @@ class ConnectionLibrary(QWidget):
         dialog._vision_view = adapter.vision_connection_view()
         dialog.vision_connection_box = style.ComboBox()
         self.selectors = {}
+        #: #540 PR-2：每个用途一个「思考强度」下拉，选项来自该模型的目录。
+        self.level_selectors: dict[str, "object"] = {}
         #: 翻译 / 审校行：所选模型不匹配该角色时显示一行警告（#258）。保存仍然允许。
         self.capability_warnings: dict[str, components.StatusLabel] = {}
         self.role_group = components.FormGroup()
@@ -75,12 +77,13 @@ class ConnectionLibrary(QWidget):
             box.setAccessibleName(i18n.tr(connection_status.ROLE_LABELS[role]))
             box.currentIndexChanged.connect(lambda _i, r=role: self.select(r))
             model_box = self.make_model_selector(role)
+            level_box = self.make_level_selector(role)
             if role != "vision":
                 self.selectors[role] = box
                 self.role_group.add_row(
-                    self._role_row_with_warning(role, i18n.tr(label), box, model_box))
+                    self._role_row_with_warning(role, i18n.tr(label), box, model_box, level_box))
             else:
-                self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box))
+                self.role_group.add_row(_setting_row(i18n.tr(label), box, model_box, level_box))
             if role == "vision":
                 # #48 / #258：所选视觉模型的能力提示——OCR 专用、仅文本或未知，如实显示。
                 # 能力警告可能不止一行（别的语言更长），所以折行显示，不省略。
@@ -230,9 +233,7 @@ class ConnectionLibrary(QWidget):
         add.clicked.connect(self.add_model)
         manual.addWidget(self.models, 1)
         manual.addWidget(add)
-        body.addWidget(dialog.reasoning_row)
-        body.addWidget(dialog.thinking_row)
-        body.addWidget(dialog.thinking_hint)
+        # #540 PR-2：推理强度 / 思考两行已移到「用途」区的思考强度列；连接只管地址/密钥/模型。
         dialog.model_box.setParent(self.editor)
         dialog.model_box.hide()          # 数据模型：列表里看到的就是它的条目
         model = dialog.model_box.model()
@@ -519,6 +520,8 @@ class ConnectionLibrary(QWidget):
             self.fill_selector(box, role)
         if hasattr(self.dialog, "vision_connection_box"):
             self.fill_selector(self.dialog.vision_connection_box, "vision")
+        for role in ("translation", "reviewer", "vision"):
+            self.update_level_selector(role)
 
     def _show_all_connections(self):
         self._show_all = True
@@ -555,6 +558,12 @@ class ConnectionLibrary(QWidget):
         detail = f"{provider} · {p['model']}"
         if len(models) > 1:
             detail = i18n.tr('{v0} 等 {v1} 个模型', v0=detail, v1=len(models))
+        # #540 PR-2：连接行摘要带这条连接默认模型的思考档位；不认识的模型不写。
+        from folith.engine import effort_settings
+        level_labels = [i18n.tr(label) for _key, label in
+                        effort_settings.choices(p["provider"], p["model"])[1:]]
+        if level_labels:
+            detail += " · " + i18n.tr('思考：{v0}', v0=" / ".join(level_labels))
         meta = style.ElideLabel(detail, mode=Qt.TextElideMode.ElideRight)
         style.set_text_role(meta, "meta")
         row.addWidget(meta, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -596,6 +605,64 @@ class ConnectionLibrary(QWidget):
         self.roles[role] = str(box.currentData() or "")
         self.update_model_selector(role)
 
+    def make_level_selector(self, role):
+        box = style.ComboBox()
+        box.setMinimumContentsLength(10)
+        box.setAccessibleName(i18n.tr('{v0}的思考强度', v0=i18n.tr(connection_status.ROLE_LABELS[role])))
+        box.currentIndexChanged.connect(lambda _i, r=role: self._set_level(r, box))
+        self.level_selectors[role] = box
+        return box
+
+    def _set_level(self, role, box):
+        value = str(box.currentData() or "")
+        self.dialog.config.connection_levels[role] = value
+
+    def _level_provider_model(self, role):
+        if role == "vision":
+            profile = next((p for p in self.profiles if p["id"] == self.roles.get("vision")), None)
+            if profile is None:
+                translation = next((p for p in self.profiles
+                                    if p["id"] == self.roles.get("translation")), None)
+                return (translation or {}).get("provider", ""), (translation or {}).get("model", "")
+            return profile.get("provider", ""), self.role_models.get("vision") or profile.get("model", "")
+        profile = next((p for p in self.profiles if p["id"] == self.roles.get(role)), None)
+        return (profile or {}).get("provider", ""), self.role_models.get(role, "") or (profile or {}).get("model", "")
+
+    def update_level_selector(self, role):
+        from folith.engine import effort_settings
+
+        box = self.level_selectors.get(role)
+        if box is None:
+            return
+        provider, model = self._level_provider_model(role)
+        current = str(self.dialog.config.connection_levels.get(role) or "")
+        choices = effort_settings.choices(provider, model)
+        box.blockSignals(True)
+        box.clear()
+        for key, label in choices:
+            box.addItem(i18n.tr('旧设置：{v0}', v0=label) if effort_settings.is_legacy(key, provider, model)
+                        else i18n.tr(label), key)
+        index = box.findData(current)
+        box.setCurrentIndex(index if index >= 0 else 0)
+        box.blockSignals(False)
+        box.setEnabled(bool(model))
+        from folith.engine import effort_settings
+        if not model or not effort_settings.choices(provider, model)[1:]:
+            # #540 C-21：目录里没有这个模型 → 灰字「服务默认」不可选 + 专门说明。
+            box.setEnabled(False)
+            box.setToolTip(i18n.tr('这个模型没有已验证的思考档位'))
+        elif effort_settings.cannot_switch(provider, model):
+            box.setToolTip(i18n.tr('这个模型无法关闭思考；可在这里调整推理强度。'))
+        else:
+            box.setToolTip(i18n.tr('只列这个模型已验证的思考档位。'))
+        # 没有显式选择时沿用翻译行，但要显示继承来的实际档位。
+        if not current and role in effort_settings.INHERITING_ROLES:
+            inherited = effort_settings.effective_level(
+                self.dialog.config.connection_levels, role)
+            find = box.findData(inherited)
+            if find >= 0:
+                box.setCurrentIndex(find)
+
     def make_model_selector(self, role):
         box = style.ComboBox()
         box.setSizeAdjustPolicy(box.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -628,6 +695,7 @@ class ConnectionLibrary(QWidget):
         box.setVisible(profile is not None)
         box.blockSignals(False)
         self._update_capability_warning(role)
+        self.update_level_selector(role)
 
     def _update_vision_hint(self):
         """「视觉」用途当前选中的模型：目录声明 / 实测结果 / 未知，三态如实显示。
@@ -693,6 +761,7 @@ class ConnectionLibrary(QWidget):
         self.roles[role] = str(box.currentData() or "")
         self.role_models.pop(role, None)
         self.update_model_selector(role)
+        self.update_level_selector(role)
 
     def add_model(self):
         """手动添加模型：加进目录并选中最后一个。"""

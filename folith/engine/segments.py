@@ -216,8 +216,11 @@ def excluded_segment_records(state):
             record["scope_key"] = str(item["scope_key"])
         records.append(record)
     # 兼容极早期状态：pair 上直接带 excluded 标记。
-    for index, pair in enumerate((state or {}).get("pairs") or []):
-        if not isinstance(pair, dict) or not is_excluded(pair):
+    # G3: inline is_excluded() (which is just `bool(pair.get("excluded"))`) so
+    # a 10k-pair scan does not make 10k Python function calls per selection.
+    pairs = (state or {}).get("pairs") or []
+    for index, pair in enumerate(pairs):
+        if not isinstance(pair, dict) or not pair.get("excluded"):
             continue
         records.append({
             "excluded_id": segment_uid(pair) or f"index-{index}",

@@ -2044,6 +2044,9 @@ S4_IDLE_SECONDS = 120.0
 S4_IDLE_SAMPLE_SECONDS = 15.0
 S4_RSS_GROWTH_MB = 64.0
 S4_RSS_GROWTH_FRACTION = 0.20
+#: S6 (#455 plan A): seconds of quiet between flows, sampled -- the same process
+#: must not creep up while it is idle between tasks.  0 keeps S4 unchanged.
+S6_FLOW_IDLE_SECONDS = 0.0
 #: Distinct fixtures the loop rotates through (the product de-duplicates imports).
 S4_FIXTURE_POOL = 12
 
@@ -2190,7 +2193,7 @@ class _EnduranceDriver:
                  settle_timeout, result, sample_seconds=S4_SAMPLE_SECONDS,
                  cycle_timeout=S4_CYCLE_TIMEOUT_S, idle_seconds=S4_IDLE_SECONDS,
                  idle_sample_seconds=S4_IDLE_SAMPLE_SECONDS, clock=time.monotonic,
-                 fixture_builder=None):
+                 fixture_builder=None, flow_idle_seconds=S6_FLOW_IDLE_SECONDS):
         self.app = app
         self.window = window
         self.adapter = adapter
@@ -2203,6 +2206,9 @@ class _EnduranceDriver:
         self.cycle_timeout = max(5.0, float(cycle_timeout))
         self.idle_seconds = max(0.0, float(idle_seconds))
         self.idle_sample_seconds = max(1.0, float(idle_sample_seconds))
+        self.flow_idle_seconds = max(0.0, float(flow_idle_seconds))
+        self.flow_idle_rss_mb: list[float] = []
+        self._flow_idle_until = 0.0
         self.clock = clock
         self.state = "created"
         self.finished = False
@@ -2280,8 +2286,24 @@ class _EnduranceDriver:
         now = self.clock()
         if now >= self._deadline:
             self._begin_idle(now)
+        elif self.flow_idle_seconds > 0:
+            self._flow_idle_until = now + self.flow_idle_seconds
+            self.state = "flow_idle"
         else:
             self._start_cycle()
+
+    def _tick_flow_idle(self, now: float) -> None:
+        """S6: quiet time between two flows, sampled in the same process."""
+        if now - getattr(self, "_last_flow_idle_sample", 0.0) >= 1.0:
+            self._last_flow_idle_sample = now
+            rss = current_rss_mb()
+            if rss is not None:
+                self.flow_idle_rss_mb.append(rss)
+        if now >= self._flow_idle_until or now >= self._deadline:
+            if now >= self._deadline:
+                self._begin_idle(now)
+            else:
+                self._start_cycle()
 
     def _begin_idle(self, now: float) -> None:
         self._idle_until = now + self.idle_seconds
@@ -2445,6 +2467,72 @@ class _EnduranceDriver:
 #: S5 exists because S1 measures them on a 1,000-paragraph document while the
 #: plan's numbers are for a finished 10,000-segment task.
 S5_DEFAULT_SEGMENTS = 10000
+#: Reported beside the five G3 operations, without a budget (B-44): they are what
+#: a user feels first, and a release note must not lack them.
+OBSERVATION_OPERATIONS = ("start_translation", "open_task")
+#: Set when this module is imported, i.e. at process start: the clock for
+#: "启动到可交互" (B-44 / #514).
+_PROCESS_STARTED_AT = time.monotonic()
+
+
+def select_frozen_main(listing, app_path: str) -> tuple[int | None, str]:
+    """Pick the app's main process out of ``[(pid, command), ...]``.
+
+    ``pgrep -f <app path>`` is not enough: the harness that launched the app
+    repeats the path on its own command line, and the app forks a
+    ``--ui-watchdog`` child.  A "last pid wins" heuristic therefore sampled the
+    watchdog (measured: 50 MB against the real process's 315 MB), which is worse
+    than no number at all.
+
+    The main process is the entry whose command line **starts with the app
+    binary** (that excludes the harness) and does not carry ``--ui-watchdog``.
+    Requiring the start of the command line -- rather than the path appearing
+    anywhere -- is also what makes this work for a plain GUI launch, where no
+    ``--selftest`` flag exists.
+    """
+    app = str(app_path)
+    for pid, command in listing:
+        if not command.startswith(app):
+            continue
+        if "--ui-watchdog" in command:
+            continue
+        return int(pid), command
+    return None, ""
+
+
+def _process_listing(app_path: str) -> list[tuple[int, str]]:
+    """``[(pid, command)]`` for every process whose command line mentions the app."""
+    import subprocess
+
+    try:
+        found = subprocess.run(["pgrep", "-f", str(app_path)],
+                               capture_output=True, text=True, timeout=5)
+        pids = [line.strip() for line in found.stdout.splitlines() if line.strip()]
+        if not pids:
+            return []
+        listing = subprocess.run(["ps", "-p", ",".join(pids), "-o", "pid=,command="],
+                                 capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    rows: list[tuple[int, str]] = []
+    for line in listing.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            rows.append((int(parts[0]), parts[1]))
+        except ValueError:
+            continue
+    return rows
+
+
+def frozen_app_main_pid(app_path: str) -> tuple[int | None, str]:
+    """The frozen app's main process for a running build, or ``(None, "")``."""
+    return select_frozen_main(_process_listing(str(app_path)), str(app_path))
+
+
+class _SeededTaskReady(Exception):
+    """Control flow: the task came from a seed, so the build path is skipped."""
 
 
 class _InteractionDriver(_ScenarioDriver):
@@ -2465,7 +2553,10 @@ class _InteractionDriver(_ScenarioDriver):
         self._started = self.clock()
         self.job_id = self.preset_job
         self.result["job_id"] = self.job_id
-        self.result["steps"].append({"step": "task_open_requested", "ok": True})
+        # Open from the first callback, as this driver always did: opening a
+        # 10,000-segment seeded task takes long enough that deferring the call to
+        # a tick made the open-state machine race its own deadline.
+        self._open_requested_at = self.clock()
         self.window.open_job(self.job_id)
 
     def _tick_open(self, now: float) -> None:
@@ -2480,6 +2571,12 @@ class _InteractionDriver(_ScenarioDriver):
                 self._finish(settled=False)
             return
         self.result["steps"].append({"step": "opened", "ok": True})
+        # B-44 observational row: opening a task is one of the two things users
+        # feel first.  No budget (the plan never set one), but measured and
+        # reported so the release table can compare versions.
+        if getattr(self, "_open_requested_at", None):
+            self.operations.add("open_task", "complete",
+                                (now - self._open_requested_at) * 1000.0)
         self._interact_until = now + self.seconds
         self._last_scroll = self._last_edit = self._last_page = now
         self._last_panel = now
@@ -2517,6 +2614,9 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
                     }}
     paths, app, window, adapter, monitor, jank = _prepare_window(
         args, data_dir, log_dir, result)
+    # "启动到可交互": process start -> the window exists and is usable.  No budget
+    # (the plan set none), but B-44 wants it in the report and the release table.
+    interactive_at = time.monotonic()
     operations = OperationRecorder()
 
     # -- build the finished big task (not measured) ------------------------
@@ -2524,6 +2624,23 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
     build_started = time.monotonic()
     task_build: dict = {}
     try:
+        if getattr(args, "seed_template", ""):
+            # The 10,000-segment task the plan's budgets are defined on cannot be
+            # produced by translating a 10,000-paragraph document in a measurement
+            # window; it is seeded from a task the engine really finished
+            # (_seed_tiled_task, the same path S3 uses), and the report says so.
+            seeded = _seed_tiled_task(
+                adapter, str(args.seed_template), segments,
+                fixture=fixture, filename=f"g3-{segments}-segments.epub")
+            result["steps"].append({"step": "task_seeded", "ok": True, **seeded})
+            task_build = {"job_id": seeded["job_id"],
+                          "segments": seeded.get("segments") or segments,
+                          "seeded_from": str(args.seed_template),
+                          "build_seconds": round(time.monotonic() - build_started, 2)}
+            job_id = task_build["job_id"]
+            pairs = int(task_build["segments"])
+            result["steps"].append({"step": "task_built", "ok": True, **task_build})
+            raise _SeededTaskReady()
         config = window.config
         created = adapter.import_documents([fixture], config)[0]
         job_id = created.job_id
@@ -2563,6 +2680,8 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
                 "note": "the built task's segment count is the fixture's; pass "
                         "--seed-template/--seed-segments for the 10,000-segment "
                         "task the plan's budgets are defined on"})
+    except _SeededTaskReady:
+        pass
     except Exception as exc:  # noqa: BLE001 - reported, not swallowed
         import traceback
 
@@ -2594,8 +2713,18 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
                        "page": driver.pages, "panel": driver.panels},
             "build": task_build,
         }
-        result["g3"] = g3_report(operations, segments=int(task_build.get("segments") or 0),
-                                 failures=result["failures"])
+        result["g3"] = g3_report(
+            operations, segments=int(task_build.get("segments") or 0),
+            failures=result["failures"],
+            observational={
+                "start_to_interactive": {
+                    "label": "启动到可交互（进程启动 → 窗口可用）",
+                    "p95_ms": round((interactive_at - _PROCESS_STARTED_AT) * 1000.0, 2),
+                    "count": 1,
+                    "budget_ms": None,
+                    "observational": True,
+                },
+            })
         result["run_window"] = {
             "measured": False,
             "present": False,
@@ -2606,7 +2735,8 @@ def run_source_s5(args: argparse.Namespace, fixture: Path, data_dir: Path,
 
 
 def g3_report(operations: OperationRecorder, *, segments: int,
-              failures: list[str] | None = None) -> dict:
+              failures: list[str] | None = None,
+              observational: dict | None = None) -> dict:
     """The G3 table: each core operation's p95 against the plan's budget.
 
     ``ok`` requires every operation to have been sampled *and* to be within
@@ -2636,11 +2766,29 @@ def g3_report(operations: OperationRecorder, *, segments: int,
                       "count": entry.get("count"),
                       "budget_ms": float(spec.get("budget_ms")),
                       "within_budget": within}
+    # B-44: two more things a user feels first -- how long the app takes to be
+    # usable (start to interactive) and how long opening a task takes -- are
+    # reported beside the five, with no budget and no say in pass/fail, because
+    # the plan never set a number for them.  They are measured, labelled and
+    # compared across versions; they are not silently promoted to gates.
+    observational = dict(observational or {})
+    for name in OBSERVATION_OPERATIONS:
+        entry = ((per_operation.get(name) or {}).get("phases") or {}).get("complete") or {}
+        if not entry.get("measured") or entry.get("p95") is None:
+            continue
+        observational[name] = {
+            "label": SUPPORT_OPERATIONS[name]["label"],
+            "p95_ms": round(float(entry["p95"]), 2),
+            "count": entry.get("count"),
+            "budget_ms": None,
+            "observational": True,
+        }
     ok = bool(not missing and not over_budget and not (failures or []))
     return {
         "scenario": "G3",
         "task_segments": segments,
         "operations": rows,
+        "observational": observational,
         "missing": missing,
         "over_budget": over_budget,
         "budgets_from": "0.8.2 plan §10 (p95, 10,000-segment task)",
@@ -2690,7 +2838,8 @@ def run_source_s4(args: argparse.Namespace, fixtures: list[Path], data_dir: Path
         cycle_timeout=float(getattr(args, "s4_cycle_timeout", S4_CYCLE_TIMEOUT_S)),
         idle_seconds=float(getattr(args, "s4_idle_seconds", S4_IDLE_SECONDS)),
         idle_sample_seconds=float(
-            getattr(args, "s4_idle_sample_seconds", S4_IDLE_SAMPLE_SECONDS)))
+            getattr(args, "s4_idle_sample_seconds", S4_IDLE_SAMPLE_SECONDS)),
+        flow_idle_seconds=float(getattr(args, "s6_flow_idle_seconds", S6_FLOW_IDLE_SECONDS)))
     started = time.monotonic()
     try:
         _drive_event_loop(app, driver, result)
@@ -2698,6 +2847,19 @@ def run_source_s4(args: argparse.Namespace, fixtures: list[Path], data_dir: Path
             cycles=driver.cycles, crashes=driver.crashes,
             not_responding=driver.not_responding,
             rss_samples=driver.rss_samples, idle_rss_mb=driver.idle_rss_mb)
+        if driver.flow_idle_rss_mb:
+            idle = driver.flow_idle_rss_mb
+            result["endurance"]["flow_idle_rss_mb"] = [round(v, 1) for v in idle]
+            # Compare the quiet windows of the first and the last three flows: the
+            # first flow includes startup allocation, so a single pair would report
+            # the interpreter warming up as a leak (measured: -88 MB in a smoke).
+            window = 3
+            head = idle[:window * 3]
+            tail = idle[-window * 3:]
+            if head and tail:
+                import statistics as _stats
+                result["endurance"]["flow_idle_growth_mb"] = round(
+                    _stats.median(tail) - _stats.median(head), 1)
         result["cycles"] = driver.cycle_records
         result["handle_samples"] = driver.handle_samples
         result["translation"] = {
@@ -3613,6 +3775,9 @@ def main(argv: list[str] | None = None) -> int:
                              "counted as a not-responding episode")
     parser.add_argument("--s4-idle-seconds", type=float, default=S4_IDLE_SECONDS,
                         help="quiet tail after the last S4 cycle (idle RSS baseline)")
+    parser.add_argument("--s6-flow-idle-seconds", type=float, default=S6_FLOW_IDLE_SECONDS,
+                        help="S6 (plan A): quiet seconds between flows in the same "
+                             "process, sampled as the between-task leak evidence")
     parser.add_argument("--s4-idle-sample-seconds", type=float,
                         default=S4_IDLE_SAMPLE_SECONDS,
                         help="sampling interval inside the S4 idle tail")
