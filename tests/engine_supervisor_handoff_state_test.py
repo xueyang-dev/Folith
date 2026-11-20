@@ -563,3 +563,62 @@ def test_a_transient_read_failure_is_retried_and_still_publishes(isolated, gatew
     except OSError:
         text = ""
     assert "supervisor " in text and " failed: OSError" in text, text[-400:]
+
+
+def test_an_unreadable_ownership_answer_does_not_publish_over_a_live_run(
+        isolated, gateway, handoff, monkeypatch):
+    """B-53 (b): no answer about ownership means nothing may be written.
+
+    E-6s's protection is explicit: an unreadable state raises instead of being
+    read as "no owner", because the terminal write lands on a live run and clears
+    the user's ``cancel_requested`` / ``exit_requested``.  When every retry fails,
+    the monitor must finish with ``terminal_published == False`` and leave both
+    the status and the request flags alone.
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6swatchunreadable1"
+    _create_job(job_id)
+
+    def never_answers(_self):
+        raise OSError("simulated unreadable ownership answer")
+
+    # Installed before the supervisor is created: by the time the executor's pid is
+    # visible, _watch may already be inside _await_run_end.
+    monkeypatch.setattr(supervisor_module.EngineSupervisor, "_await_run_end",
+                        never_answers)
+    sup = _start_engine(job_id, gateway)
+    _hand_off(sup, handoff)
+    assert _wait_until(
+        lambda: bool((_runtime(job_id).get("worker") or {}).get("owner_pid")),
+        timeout=180), _runtime(job_id)
+    owner_pid = int((_runtime(job_id).get("worker") or {}).get("owner_pid") or 0)
+
+    # The user asked to stop: that request has to survive an unanswerable probe.
+    core.update_runtime_state(job_id, exit_requested=True, cancel_requested=True,
+                              on_timeout="retry")
+    # Fail the *ownership probe* while the state stays readable: that is the only
+    # shape in which "give up instead of writing blind" is a decision.  (Failing
+    # the state read would block the publish too, so the gate could not be seen.)
+    # SIGKILL: the child must not get to publish a terminal state itself, or
+    # "nothing was written" would be trivially true.
+    os.kill(owner_pid, signal.SIGKILL if hasattr(signal, "SIGKILL") else signal.SIGTERM)
+    assert _wait_until(lambda: sup.wait_finished(0), timeout=60), \
+        "the supervisor never finished"
+    monkeypatch.undo()
+
+    assert sup.terminal_published is False, "nothing may be published blind"
+    runtime = _runtime(job_id)
+    assert runtime.get("status") != "interrupted", runtime
+    assert runtime.get("error") is None, runtime
+    # The request flags are the *reason* the write must not happen; their exact
+    # value is not asserted here because the executor rewrites the state while it
+    # dies.  What is asserted is that the monitor did not publish over it.
+    try:
+        text = Path(core.runtime_technical_log_path(job_id)).read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    # Recording is best effort by design (a failing logger must not break the
+    # monitor), so the log is checked only when it was written at all.
+    if text:
+        assert "supervisor " in text, text[-400:]

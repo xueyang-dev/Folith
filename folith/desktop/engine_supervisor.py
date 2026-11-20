@@ -612,8 +612,7 @@ class EngineSupervisor:
             if evidence:
                 for attempt in range(TERMINAL_PUBLISH_ATTEMPTS):
                     try:
-                        self._publish_terminal_state()
-                        self._terminal_published = True
+                        self._terminal_published = bool(self._publish_terminal_state())
                         break
                     except Exception as exc:  # noqa: BLE001
                         self._record_watch_failure("publish_terminal_state", exc)
@@ -743,7 +742,7 @@ class EngineSupervisor:
         self._drain.join(timeout=STDIO_SETTLE_SECONDS)
         return not self._output_closed.is_set()
 
-    def _publish_terminal_state(self) -> None:
+    def _publish_terminal_state(self) -> bool:
         """Never trust the exit code: only ``runtime_state.json`` says success.
 
         Called only after :meth:`_await_run_end`, i.e. only when the run has no
@@ -763,7 +762,7 @@ class EngineSupervisor:
         status = str(runtime.get("status") or "")
         if status in TERMINAL_STATUSES:
             self._clear_recorded_owner(runtime)
-            return
+            return True
         code = self._exit_code
         # The user's request outlives this handle.  The child may have stopped at
         # a batch boundary and written "cancelling" (or "interrupted") with the
@@ -796,7 +795,7 @@ class EngineSupervisor:
         # silently, and the "reopen offers resume" contract depends on this
         # write; a final loss is counted and written to the technical log by
         # ``_write_terminal_runtime_state`` rather than swallowed.
-        core._write_terminal_runtime_state(
+        written = core._write_terminal_runtime_state(
             self.job_id, what="engine_process_exited",
             status="interrupted", phase="interrupted",
             phase_label=message, cancel_requested=cancel_requested,
@@ -805,6 +804,9 @@ class EngineSupervisor:
             event_visibility="user", event_category="lifecycle",
             progress=True, heartbeat=True,
             worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+        # ``_write_terminal_runtime_state`` retries internally and reports whether
+        # the truth landed; the monitor's flag must follow that, not the call.
+        return bool(written)
 
     def _clear_recorded_owner(self, runtime: Dict[str, Any]) -> None:
         """Drop a worker block left behind by a run that already is terminal.
