@@ -4894,19 +4894,32 @@ def test_inspector_status_line_is_translated(client):
 # ---------------------------------------------------------------------------
 # #514: the home list must not be built synchronously before the first frame.
 # ---------------------------------------------------------------------------
-def test_514_async_home_refresh_does_not_scan_on_the_gui_thread(client, monkeypatch) -> None:
+def test_514_async_home_refresh_does_not_scan_on_the_gui_thread(client, monkeypatch) -> None:  # noqa: F811
+    import threading
+    import time
+
+    from PySide6.QtCore import QCoreApplication
+
     import folith.qt.adapter as _adapter
 
-    calls: list[str] = []
+    gui_ident = threading.get_ident()
+    call_threads: list[int] = []
 
     def slow_list_jobs():
-        calls.append("called")
+        call_threads.append(threading.get_ident())
         return []
 
     window = client["window"]
     monkeypatch.setattr(_adapter, "list_jobs", slow_list_jobs)
-    calls.clear()  # fixture construction may have called it before the spy
+    call_threads.clear()  # fixture construction may have called it before the spy
     window._home_generation = 0
     window._refresh_home_async()
-    # The submit goes to the worker; the GUI thread must not have called it.
-    assert calls == []
+    # The worker may finish before this assertion -- that is fine.  What the
+    # test must prove is that no call ever happened on the GUI thread.
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not call_threads:
+        QCoreApplication.processEvents()
+        time.sleep(0.005)
+    assert call_threads, "the home list was never built"
+    assert gui_ident not in call_threads, "list_jobs ran on the GUI thread"
+    assert all(t != gui_ident for t in call_threads)
