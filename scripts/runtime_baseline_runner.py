@@ -2453,17 +2453,33 @@ OBSERVATION_OPERATIONS = ("start_translation", "open_task")
 _PROCESS_STARTED_AT = time.monotonic()
 
 
-def frozen_app_main_pid(app_path: str) -> tuple[int | None, str]:
-    """The *pytest-style* main process of a running frozen build, or ``(None, "")``.
+def select_frozen_main(listing, app_path: str) -> tuple[int | None, str]:
+    """Pick the app's main process out of ``[(pid, command), ...]``.
 
-    ``pgrep -f <app path>`` is not enough to find it: the harness that launched the
-    app repeats the path on its own command line, and the app forks a
-    ``--ui-watchdog`` child right afterwards.  A "last pid wins" heuristic
-    therefore samples the watchdog (measured: 50 MB against the real process's
-    315 MB), which is worse than no number at all.  The main process is the one
-    whose command line runs the app and carries ``--selftest`` without
-    ``--ui-watchdog``.
+    ``pgrep -f <app path>`` is not enough: the harness that launched the app
+    repeats the path on its own command line, and the app forks a
+    ``--ui-watchdog`` child.  A "last pid wins" heuristic therefore sampled the
+    watchdog (measured: 50 MB against the real process's 315 MB), which is worse
+    than no number at all.
+
+    The main process is the entry whose command line **starts with the app
+    binary** (that excludes the harness) and does not carry ``--ui-watchdog``.
+    Requiring the start of the command line -- rather than the path appearing
+    anywhere -- is also what makes this work for a plain GUI launch, where no
+    ``--selftest`` flag exists.
     """
+    app = str(app_path)
+    for pid, command in listing:
+        if not command.startswith(app):
+            continue
+        if "--ui-watchdog" in command:
+            continue
+        return int(pid), command
+    return None, ""
+
+
+def _process_listing(app_path: str) -> list[tuple[int, str]]:
+    """``[(pid, command)]`` for every process whose command line mentions the app."""
     import subprocess
 
     try:
@@ -2471,25 +2487,26 @@ def frozen_app_main_pid(app_path: str) -> tuple[int | None, str]:
                                capture_output=True, text=True, timeout=5)
         pids = [line.strip() for line in found.stdout.splitlines() if line.strip()]
         if not pids:
-            return None, ""
-        listing = subprocess.run(["ps", "-p", ",".join(pids), "-o", "pid=,rss=,command="],
+            return []
+        listing = subprocess.run(["ps", "-p", ",".join(pids), "-o", "pid=,command="],
                                  capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
-        return None, ""
+        return []
+    rows: list[tuple[int, str]] = []
     for line in listing.stdout.splitlines():
-        parts = line.strip().split(None, 2)
-        if len(parts) != 3:
-            continue
-        pid, _rss, command = parts
-        if str(app_path) not in command:
-            continue
-        if "--ui-watchdog" in command or "--selftest" not in command:
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
             continue
         try:
-            return int(pid), command
+            rows.append((int(parts[0]), parts[1]))
         except ValueError:
             continue
-    return None, ""
+    return rows
+
+
+def frozen_app_main_pid(app_path: str) -> tuple[int | None, str]:
+    """The frozen app's main process for a running build, or ``(None, "")``."""
+    return select_frozen_main(_process_listing(str(app_path)), str(app_path))
 
 
 class _SeededTaskReady(Exception):

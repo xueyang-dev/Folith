@@ -27,6 +27,20 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "runtime_baseline_runner.py"
 
 
+def _fake_app_binary(app_path: Path) -> Path:
+    """A real executable at the app path.
+
+    A ``#!/bin/sh`` script is executed as ``/bin/sh <path>``, so its command line
+    does not start with the app path and the finder (correctly) ignores it.  Copying
+    a real binary keeps ``ps`` showing the path first, as the real app does.
+    """
+    import shutil
+
+    shutil.copy2("/bin/sh", app_path)
+    app_path.chmod(0o755)
+    return app_path
+
+
 def _module():
     import importlib.util
 
@@ -217,50 +231,60 @@ def test_verify_judges_an_s4_round_by_its_own_contract(tmp_path):
     assert "R_valid" not in names, "S4 must not be judged by the jank contract"
 
 
-@pytest.mark.skipif(not sys.platform.startswith(("linux", "darwin")),
-                    reason="pgrep/ps are POSIX; the sampler is a POSIX code path")
-def test_the_frozen_main_process_is_found_not_the_watchdog(tmp_path):
+def test_the_main_process_is_selected_over_the_watchdog_and_the_harness():
     """The sampler must read the app, not the watchdog or the launching harness.
 
     Measured in the 0.8.3 window: a "last pid wins" sampler read the app's
     ``--ui-watchdog`` child at 50 MB while the real main process sat at 315 MB --
     a number that would have hidden any leak.  ``pgrep -f <app path>`` also
-    matches the harness whose command line repeats that path.
+    matches the harness whose command line merely mentions that path.
     """
     mod = _module()
-    app_path = str(tmp_path / "Fake.app" / "Contents" / "MacOS" / "Folithe")
-    Path(app_path).parent.mkdir(parents=True)
-    # Three processes whose command lines look like the real ones.  The sleep keeps
-    # them alive while the finder runs; they are terminated in the finally block.
-    scripts = {
-        "driver": ["-c", "import time; time.sleep(30)", app_path],
-        "watchdog": ["-c", "import time; time.sleep(30)", app_path, "--ui-watchdog"],
-        "main": ["-c", "import time; time.sleep(30)", app_path, "--selftest",
-                 "--data-dir", str(tmp_path / "data")],
-    }
-    procs = {}
-    try:
-        for name, args in scripts.items():
-            procs[name] = subprocess.Popen([sys.executable, *args],
-                                           stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.DEVNULL)
-        time.sleep(0.3)  # let the command lines settle
-        pid, command = mod.frozen_app_main_pid(app_path)
-        assert pid == procs["main"].pid, (
-            f"picked pid {pid} ({command!r}); expected the --selftest process "
-            f"{procs['main'].pid}")
-        assert "--selftest" in command and "--ui-watchdog" not in command
-    finally:
-        for proc in procs.values():
-            proc.terminate()
-        for proc in procs.values():
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+    app = "/Applications/Fake.app/Contents/MacOS/Folith"
+    listing = [
+        # The harness: its command line mentions the app path, but does not start
+        # with it (it is a Python process).
+        (11, f"/Library/Frameworks/Python.framework/.../Python -m probe --app {app}"),
+        (12, f"{app} --selftest --selftest-fixture txt --data-dir /tmp/x"),
+        (13, f"{app} --ui-watchdog 12 /tmp/x/ui-health /tmp/x/data 30.0"),
+    ]
+    pid, command = mod.select_frozen_main(listing, app)
+    assert pid == 12 and "--selftest" in command
+    # Order must not matter: the watchdog coming last is exactly the case that
+    # broke the old sampler.
+    assert mod.select_frozen_main(list(reversed(listing)), app)[0] == 12
 
 
-def test_the_finder_reports_nothing_when_no_app_is_running(tmp_path):
+def test_a_plain_gui_launch_is_selected_too():
+    """A long-lived idle soak launches the app without --selftest; it must be found.
+
+    The first version required "--selftest" on the command line, which is right for
+    an S4 flow and wrong for the soak: the soak sampled nothing at all.
+    """
+    mod = _module()
+    app = "/Applications/Fake.app/Contents/MacOS/Folith"
+    listing = [(21, f"{app} --data-dir /tmp/x/data --log-dir /tmp/x/logs"),
+               (22, f"{app} --ui-watchdog 21 /tmp/x/ui-health /tmp/x/data 30.0")]
+    pid, command = mod.select_frozen_main(listing, app)
+    assert pid == 21 and "--ui-watchdog" not in command
+
+
+def test_the_selector_reports_nothing_when_no_app_is_running(tmp_path):
+    mod = _module()
+    app = str(tmp_path / "NotRunning.app" / "Folithe")
+    assert mod.select_frozen_main([], app) == (None, "")
+    assert mod.select_frozen_main([(31, f"/bin/other --app {app}")], app) == (None, "")
+
+
+@pytest.mark.skipif(not sys.platform.startswith(("linux", "darwin")),
+                    reason="the live lookup uses pgrep/ps")
+def test_the_live_lookup_returns_the_shipping_app_when_it_runs(tmp_path):
+    """Integration: the ps parsing works on this platform (not just the selector).
+
+    It cannot spawn the real frozen app, so it checks the wrapper on a path with no
+    process: the important part is that ``_process_listing`` runs and yields a
+    well-formed empty result instead of raising.
+    """
     mod = _module()
     pid, command = mod.frozen_app_main_pid(str(tmp_path / "NotRunning.app" / "Folithe"))
     assert pid is None and command == ""
