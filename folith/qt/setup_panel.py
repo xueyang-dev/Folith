@@ -1225,10 +1225,15 @@ class TaskSetupPanel(QWidget):
 
         # 实时汇总：把"选了哪套方案"与"实际会产出什么"直接对上。方案是**快捷入口**，
         # 勾选才是事实，两者一旦不一致就换到「自定义」，这一行说的就是事实。
+        # #521：共用摘要组件（与交付页同一套视觉），收起时也一眼看到会产出什么。
+        from .delivery_summary import DeliverySummaryRow
+        self.delivery_summary_row = DeliverySummaryRow()
+        self.delivery_section.body_layout.addWidget(self.delivery_summary_row)
         self.delivery_summary = QLabel("")
         self.delivery_summary.setObjectName("hint")
         self.delivery_summary.setWordWrap(True)
         self.delivery_summary.setContentsMargins(4, 0, 0, 0)
+        self.delivery_summary.setVisible(False)   # 事实只由共用摘要行说一遍
         body.addWidget(self.delivery_summary)
 
         self.translation_group = self._build_delivery_group(
@@ -2036,8 +2041,12 @@ class TaskSetupPanel(QWidget):
                         continue
                     names.append(i18n.tr(str(item.get("title") or item.get("key"))))
         if hasattr(self, "delivery_section"):
-            self.delivery_section.set_summary(
-                " · ".join(names) if names else i18n.tr('尚未选择交付文件'))
+            current = str(self.delivery_seg.value() or "")
+            label = next((i18n.tr(str(p.get("label") or p.get("key")))
+                          for p in (self._choices.get("delivery_presets") or [])
+                          if str(p.get("key")) == current), i18n.tr('标准交付'))
+            self.delivery_summary_row.set_summary(label, text)
+            self.delivery_section.set_summary(text)
 
     def _report_box_checked(self) -> bool:
         box = self._delivery_boxes.get("enable_report")
