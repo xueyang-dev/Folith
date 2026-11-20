@@ -160,6 +160,11 @@ class Toast(QFrame):
         self.timer.stop()
         self._motion.stop("fade")
         super().hideEvent(event)
+        # A-50: reflow the remaining stack as soon as one toast disappears
+        # (auto-fade or close button), so the bottom stays glued to 24 px.
+        stack = getattr(self, "_stack", None)
+        if stack is not None:
+            QTimer.singleShot(0, self, stack._prune_and_reflow)
 
     def _show_details(self):
         # Non-modal, selectable complete text; closing it returns to the editor.
@@ -289,6 +294,7 @@ class ToastStack:
             victim.hide()
             victim.deleteLater()
         toast = Toast(self.parent)
+        toast._stack = self
         self._toasts.append(toast)
         # Newest gets slot 0 (the topmost position); older ones shift down.
         for slot, existing in enumerate(reversed(self._toasts[:-1]), start=1):
@@ -296,6 +302,13 @@ class ToastStack:
             existing._place()
         toast.present(message, error=error, detail=detail, tone=tone, slot=0)
         return toast
+
+    def _prune_and_reflow(self) -> None:
+        """Drop hidden toasts and re-place the rest so the stack stays bottom-anchored."""
+        self._toasts = [t for t in self._toasts if not t.isHidden()]
+        for slot, toast in enumerate(reversed(self._toasts)):
+            toast._slot = slot
+            toast._place()
 
     def close_all(self) -> None:
         for toast in self._toasts:
