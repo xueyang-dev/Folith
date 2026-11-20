@@ -365,7 +365,8 @@ class EngineDialog(QDialog):
     CONNECTION_FIELDS = frozenset({
         "provider", "model", "api_key", "base_url", "reasoning_effort",
         "reviewer_mode", "reviewer_provider", "reviewer_model", "reviewer_api_key",
-        "reviewer_base_url", "connections", "connection_roles", "connection_models"})
+        "reviewer_base_url", "connections", "connection_roles", "connection_models",
+        "connection_levels"})
 
     def _watch_immediate_fields(self) -> None:
         for box in (self.auto_term_box, self.review_box, self.tm_box, self.understanding_box,
@@ -1061,7 +1062,8 @@ class EngineDialog(QDialog):
         "reviewer_base_url", "ocr_language", "ocr_mode", "ocr_backend",
         "deliver_plain_docx", "deliver_bilingual_docx", "deliver_terms_xlsx",
         "deliver_evidence", "deliver_pdf", "deliver_original_pdf", "deliver_original_docx",
-        "deliver_epub", "connections", "connection_roles", "connection_models", "default_translation_mode",
+        "deliver_epub", "connections", "connection_roles", "connection_models",
+        "connection_levels", "default_translation_mode",
     })
 
     def _collect(self) -> adapter.EngineConfig:
@@ -1081,10 +1083,9 @@ class EngineDialog(QDialog):
             enable_understanding=self.understanding_box.isChecked(),
             enable_source_cleanup=self.cleanup_box.isChecked(),
             enable_report=self.report_box.isChecked(),
-            # 当前模型提供推理强度选项时才取对话框里的选择；不提供时这一项没有显示，
-            # 保留原值（核心对不支持的模型会忽略它），不能被一次"保存"悄悄清掉。
-            reasoning_effort=str(self.reasoning_box.currentData() or "")
-            if self.reasoning_box.count() > 1 else self.config.reasoning_effort,
+            # #540 PR-2：档位跟着用途走，连接只保存地址/密钥/模型；保留旧值以兼容降级。
+            reasoning_effort=str(self.config.reasoning_effort or ""),
+            connection_levels=dict(self.config.connection_levels),
         )
         # 优先取条目 data（核心取值）；没有选中条目时用输入文本（用户手填的代码）。
         index = self.ocr_language_box.currentIndex()
@@ -1224,7 +1225,8 @@ class EngineDialog(QDialog):
         index = self.reasoning_box.findData(current)
         self.reasoning_box.setCurrentIndex(max(index, 0))
         self.reasoning_box.blockSignals(False)
-        self.reasoning_row.setVisible(bool(options))
+        # #540 PR-2：这一行已从连接编辑器移走，只保留数据兼容，不再显示。
+        self.reasoning_row.setVisible(False)
 
     def _thinking_scope_labels(self) -> list[str]:
         """连接「思考」开关实际作用到的角色，按引擎的真实分支列，不凭印象。
@@ -1252,11 +1254,9 @@ class EngineDialog(QDialog):
                 i18n.tr(adapter.THINKING_MODE_LABELS.get(value, value)), value)
         self.thinking_box.setCurrentIndex(max(self.thinking_box.findData(current), 0))
         self.thinking_box.blockSignals(False)
-        visible = bool(options)
-        self.thinking_row.setVisible(visible)
-        self.thinking_hint.setText(
-            i18n.tr('作用于：{v0}', v0='、'.join(self._thinking_scope_labels())))
-        self.thinking_hint.setVisible(visible)
+        # #540 PR-2：思考开关已移到「用途」区的思考强度列，编辑器不再显示这两行。
+        self.thinking_row.setVisible(False)
+        self.thinking_hint.setVisible(False)
 
     def _fetch_models(self) -> None:
         provider = self.provider_box.currentText().strip()
