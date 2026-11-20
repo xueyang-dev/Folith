@@ -192,3 +192,31 @@ def test_task_notices_expire_back_to_the_run_status(window, app, monkeypatch):
     assert bench.run_status.line.text() == before
     assert any('磁盘只读' in row['label'] for row in adapter.activity_events('done-task')), \
         'the full text stays in the run log'
+
+
+# ---------------------------------------------------------------------------
+# U-5: the toast stack must sit on the content-area bottom, not float above
+# two imaginary slots, and must be centred in the content area (right of the
+# sidebar), not in the whole window.
+# ---------------------------------------------------------------------------
+def test_toast_stack_is_bottom_anchored_and_content_centered(window):
+    """U-5: a single toast sits on the content-area bottom, centred in the
+    content area (right of the sidebar), not floating above two empty slots."""
+    main = window['window']
+    main.toast.close_all()
+    main._notice('only-one-toast', task=False)
+    toast = main.toast.visible()[0]
+    sidebar = main.sidebar_clip
+    left = sidebar.width() if sidebar.isVisibleTo(main) else 0
+    content_center = left + (main.width() - left) / 2
+    assert abs((toast.x() + toast.width() / 2) - content_center) <= 1
+    assert abs((toast.y() + toast.height()) - (main.height() - 24)) <= 1
+    # Two and three toasts must still be fully on screen and non-overlapping.
+    for count in (2, 3):
+        main.toast.close_all()
+        for i in range(count):
+            main._notice('toast-' + str(i) + 'x' * (5 - len(str(i))), task=False)
+        boxes = sorted((t.y(), t.y() + t.height()) for t in main.toast.visible())
+        assert len(boxes) == count
+        assert all(0 <= top < bottom <= main.height() for top, bottom in boxes)
+        assert all(boxes[i + 1][0] >= boxes[i][1] for i in range(count - 1))
