@@ -188,6 +188,30 @@ def assign_missing_segment_uids(state, *, job_id=""):
     return assigned
 
 
+#: G3: the legacy-compatibility pass below scans every pair calling
+#: is_excluded(), and was re-run on each segment selection (~10k calls per
+#: click).  Cache the result per state instance and pairs generation; the
+#: fingerprint changes whenever a pair/exclusion record is added or removed,
+#: and every save passes a fresh state object.
+_EXCLUDED_RECORDS_CACHE: dict = {}
+_EXCLUDED_RECORDS_CACHE_LIMIT = 32
+
+
+def _excluded_cache_key(state):
+    """A cheap content fingerprint for the legacy excluded flags.
+
+    A-40: length alone cannot detect an in-place toggle of one pair's
+    `excluded` flag, and id(state) is recycled.  Scan pair indexes once per
+    call just for that key (O(n) dict lookups, but no is_excluded() calls and
+    no 10k-element deep copies), so a toggle invalidates the cache at once.
+    """
+    pairs = (state or {}).get("pairs") or []
+    excluded = (state or {}).get("excluded_segments") or []
+    flags = tuple(i for i, pair in enumerate(pairs)
+                  if isinstance(pair, dict) and pair.get("excluded"))
+    return (len(pairs), len(excluded), flags)
+
+
 def excluded_segment_records(state):
     """被排除段落的清单——导出、交付说明与「恢复」入口的唯一来源。
 
@@ -195,6 +219,10 @@ def excluded_segment_records(state):
     不进入翻译、不计入待完成数量、不参与审校门禁、不进导出；而原文与当时的译文
     在这里完整保留，所以恢复是精确还原而不是重新猜。
     """
+    key = _excluded_cache_key(state)
+    cached = _EXCLUDED_RECORDS_CACHE.get(key)
+    if cached is not None:
+        return cached
     records = []
     for position, item in enumerate((state or {}).get("excluded_segments") or []):
         if not isinstance(item, dict):
@@ -229,6 +257,9 @@ def excluded_segment_records(state):
             "excluded_by": str(pair.get("excluded_by") or ""),
             "restorable": False,
         })
+    if len(_EXCLUDED_RECORDS_CACHE) >= _EXCLUDED_RECORDS_CACHE_LIMIT:
+        _EXCLUDED_RECORDS_CACHE.clear()
+    _EXCLUDED_RECORDS_CACHE[key] = records
     return records
 
 

@@ -417,3 +417,49 @@ def test_old_task_without_candidates_still_opens(job_env):
     view = core.candidate_view(job_id)
     assert view == []
     assert core.pending_candidate_count(job_id) == 0
+
+
+# ---------------------------------------------------------------------------
+# G3: excluded_segment_records must not rescan 10k pairs on every selection.
+# ---------------------------------------------------------------------------
+def test_excluded_records_are_cached_per_state_generation() -> None:
+    from folith.engine import segments
+
+    pairs = [{"source": f"s{i}", "target": f"t{i}"} for i in range(10000)]
+    pairs[42]["excluded"] = True
+    state = {"pairs": pairs, "excluded_segments": []}
+    first = segments.excluded_segment_records(state)
+    assert len(first) == 1 and first[0]["segment_index"] == 42
+    # Same state -> same cached list object, no second 10k scan.
+    assert segments.excluded_segment_records(state) is first
+    # Adding a modern exclusion changes the fingerprint and invalidates.
+    state["excluded_segments"] = [{"index": 7, "source": "s7"}]
+    second = segments.excluded_segment_records(state)
+    assert second is not first
+    assert any(r.get("segment_index") == 7 for r in second)
+
+
+def test_excluded_records_returns_cached_object_on_repeat() -> None:  # noqa: F811
+    from folith.engine import segments
+
+    pairs = [{"source": str(i)} for i in range(10000)]
+    state = {"pairs": pairs}
+    first = segments.excluded_segment_records(state)
+    # A-40's fingerprint is O(n) on cheap dict lookups; the expensive part
+    # (is_excluded() over 10k pairs / rebuilding records) must be cached.
+    assert segments.excluded_segment_records(state) is first
+
+
+def test_excluded_cache_invalidates_on_in_place_flag_toggle() -> None:  # noqa: F811
+    """A-40: toggling one pair's `excluded` without changing any length must
+    immediately change the result (the old length-only key missed this)."""
+    from folith.engine import segments
+
+    pairs = [{"source": str(i)} for i in range(20)]
+    state = {"pairs": pairs, "excluded_segments": []}
+    assert segments.excluded_segment_records(state) == []
+    pairs[7]["excluded"] = True
+    changed = segments.excluded_segment_records(state)
+    assert len(changed) == 1 and changed[0]["segment_index"] == 7
+    pairs[7]["excluded"] = False
+    assert segments.excluded_segment_records(state) == []
