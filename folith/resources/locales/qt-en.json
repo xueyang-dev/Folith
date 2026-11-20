@@ -1931,6 +1931,7 @@
   "在{v0}中显示完整日志": "Show technical log in {v0}",
   "在{v0}中显示数据目录": "Reveal data directory in {v0}",
   "在{v0}中显示": "Reveal in {v0}",
+  "在 {v0} 中显示": "Reveal in {v0}",
   "已在{v0}中显示。": "Shown in {v0}.",
   "双击文件可在{v0}中显示": "Double-click a file to reveal it in {v0}",
   "所有文档和密钥都只保存在这台{v0}上。": "All documents and keys stay on this {v0}.",
@@ -2753,7 +2754,7 @@
   "这个模型无法关闭思考；可在这里调整推理强度。": "This model cannot turn thinking off; adjust the reasoning level here.",
   "只列这个模型已验证的思考档位。": "Only this model's verified thinking levels are listed.",
   "这个模型没有已验证的思考档位": "This model has no verified thinking levels",
-"思考：{v0}": "Thinking: {v0}",
+  "思考：{v0}": "Thinking: {v0}",
   "交付内容：{v0} · {v1}": "Delivery: {v0} · {v1}",
   "标准交付": "Standard delivery",
   "自动处理（实验）：{v0}": "Auto-handle (experimental): {v0}",
@@ -2762,6 +2763,7 @@
   "只对本任务生效 · 每条可撤销 · 不改译文": "This task only · each record reversible · translations unchanged",
   "已自动处理 {v0} 条": "Auto-handled {v0} findings",
   "当前没有可以按确定依据处理的问题": "No findings with deterministic evidence right now",
-  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Off; earlier auto-handled records remain in the Auto-handled (audit) group and can be revoked individually.",
-  "{v0}（沿用翻译）": "{v0} (inherited from translation)"
+"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Off; earlier auto-handled records remain in the Auto-handled (audit) group and can be revoked individually.",
+  "{v0}（沿用翻译）": "{v0} (inherited from translation)",
+  "计算中…": "Calculating…"
 }

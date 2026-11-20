@@ -1932,6 +1932,7 @@
   "在{v0}中显示完整日志": "Mostrar el registro técnico en {v0}",
   "在{v0}中显示数据目录": "Mostrar la carpeta de datos en el {v0}",
   "在{v0}中显示": "Mostrar en el {v0}",
+  "在 {v0} 中显示": "Mostrar en el {v0}",
   "已在{v0}中显示。": "Mostrado en el {v0}.",
   "双击文件可在{v0}中显示": "Doble clic en un archivo para mostrarlo en el {v0}",
   "所有文档和密钥都只保存在这台{v0}上。": "Todos los documentos y claves se quedan en este {v0}.",
@@ -2754,7 +2755,7 @@
   "这个模型无法关闭思考；可在这里调整推理强度。": "Este modelo no puede desactivar el razonamiento; ajuste aquí el nivel.",
   "只列这个模型已验证的思考档位。": "Solo se muestran los niveles verificados de este modelo.",
   "这个模型没有已验证的思考档位": "Este modelo no tiene niveles de razonamiento verificados",
-"思考：{v0}": "Razonamiento: {v0}",
+  "思考：{v0}": "Razonamiento: {v0}",
   "交付内容：{v0} · {v1}": "Entrega: {v0} · {v1}",
   "标准交付": "Entrega estándar",
   "自动处理（实验）：{v0}": "Manejo automático (experimental): {v0}",
@@ -2763,6 +2764,7 @@
   "只对本任务生效 · 每条可撤销 · 不改译文": "Solo esta tarea · cada registro reversible · sin cambiar la traducción",
   "已自动处理 {v0} 条": "Se manejaron automáticamente {v0} hallazgos",
   "当前没有可以按确定依据处理的问题": "No hay hallazgos con evidencia determinista en este momento",
-  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Desactivado; los registros automáticos anteriores siguen en el grupo Automático (auditoría) y se pueden revocar.",
-  "{v0}（沿用翻译）": "{v0} (heredado de traducción)"
+"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Desactivado; los registros automáticos anteriores siguen en el grupo Automático (auditoría) y se pueden revocar.",
+  "{v0}（沿用翻译）": "{v0} (heredado de traducción)",
+  "计算中…": "Calculando…"
 }
