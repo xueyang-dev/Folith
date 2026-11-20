@@ -2762,8 +2762,16 @@
   "关": "Off",
   "只对本任务生效 · 每条可撤销 · 不改译文": "This task only · each record reversible · translations unchanged",
   "已自动处理 {v0} 条": "Auto-handled {v0} findings",
-  "当前没有可以按确定依据处理的问题": "No findings with deterministic evidence right now",
-"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Off; earlier auto-handled records remain in the Auto-handled (audit) group and can be revoked individually.",
+"当前没有可以按确定依据处理的问题": "No findings with deterministic evidence right now",
+  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Off; earlier auto-handled records remain in the Auto-handled (audit) group and can be revoked individually.",
   "{v0}（沿用翻译）": "{v0} (inherited from translation)",
-  "计算中…": "Calculating…"
+  "计算中…": "Calculating…",
+  "下一项": "Next",
+  "暂存建议": "Stage suggestion",
+  "审校：下一项": "Review: Next",
+  "审校：暂存建议": "Review: Stage suggestion",
+  "审校：确认问题存在": "Review: Confirm issue exists",
+  "审校：确认已解决": "Review: Confirm resolved",
+  "审校：保留当前译文": "Review: Keep current translation",
+  "审校：修改译文": "Review: Edit translation"
 }

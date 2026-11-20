@@ -73,6 +73,14 @@ _CUSTOM = {
     "escape": "Esc",
     "previous_segment": "Up",
     "next_segment": "Down",
+    # Audit-stage actions (C5 / #524): single-letter bindings, one definition
+    # for both the QShortcut and the visible keycap hint.
+    "review_next": "N",
+    "review_apply": "A",
+    "review_open": "O",
+    "review_confirm": "C",
+    "review_keep": "K",
+    "review_edit": "E",
 }
 
 

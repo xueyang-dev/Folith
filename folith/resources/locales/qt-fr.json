@@ -2763,8 +2763,16 @@
   "关": "Désactivé",
   "只对本任务生效 · 每条可撤销 · 不改译文": "Cette tâche uniquement · chaque enregistrement réversible · traduction inchangée",
   "已自动处理 {v0} 条": "{v0} constats traités automatiquement",
-  "当前没有可以按确定依据处理的问题": "Aucun constat à preuve déterministe pour l'instant",
-"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Désactivé ; les enregistrements restent dans le groupe Traitement automatique (audit) et peuvent être annulés.",
+"当前没有可以按确定依据处理的问题": "Aucun constat à preuve déterministe pour l'instant",
+  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Désactivé ; les enregistrements restent dans le groupe Traitement automatique (audit) et peuvent être annulés.",
   "{v0}（沿用翻译）": "{v0} (hérité de la traduction)",
-  "计算中…": "Calcul en cours…"
+  "计算中…": "Calcul en cours…",
+  "下一项": "Suivant",
+  "暂存建议": "Enregistrer la suggestion",
+  "审校：下一项": "Révision : Suivant",
+  "审校：暂存建议": "Révision : Enregistrer la suggestion",
+  "审校：确认问题存在": "Révision : Confirmer le problème",
+  "审校：确认已解决": "Révision : Confirmer la résolution",
+  "审校：保留当前译文": "Révision : Conserver la traduction actuelle",
+  "审校：修改译文": "Révision : Modifier la traduction"
 }
