@@ -1085,6 +1085,13 @@ QComboBox {{
 }}
 QComboBox:hover {{ border-color: {t['border-strong']}; }}
 QComboBox:focus {{ border-color: {t['accent']}; }}
+/* #540：禁用的档位下拉（目录里没有的模型）用灰字 + 极淡轮廓，
+   与可点的下拉一眼可分；hover/focus 不覆盖禁用态。 */
+QComboBox:disabled {{
+    background: transparent; color: {t['disabled-ink']};
+    border-color: {t['border-faint']};
+}}
+QComboBox:disabled:hover, QComboBox:disabled:focus {{ border-color: {t['border-faint']}; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{
     background: {t['bg-surface-raised']};
