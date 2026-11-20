@@ -636,3 +636,43 @@ def test_an_unreadable_ownership_answer_does_not_publish_over_a_live_run(
     # monitor), so the log is checked only when it was written at all.
     if text:
         assert "supervisor " in text, text[-400:]
+
+
+def test_a_cancelling_run_still_converges_to_interrupted(isolated, gateway, handoff):
+    """B-61: ``cancelling`` must not be a resting state for a dead executor.
+
+    Seen on a Windows CI run of an unrelated PR: the runtime was left at
+    ``cancelling`` with ``error: None`` while ``wait_finished`` said the monitor was
+    done -- the same "terminal write did not land" family as #570's ``queued``.
+    Whatever the intermediate status was, a run whose executor is gone has to end
+    resumable: ``interrupted`` with a visible reason.
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6scancelling1"
+    _create_job(job_id)
+    sup = _start_engine(job_id, gateway)
+    _hand_off(sup, handoff)
+    assert _wait_until(
+        lambda: bool((_runtime(job_id).get("worker") or {}).get("owner_pid")),
+        timeout=180), _runtime(job_id)
+    owner_pid = int((_runtime(job_id).get("worker") or {}).get("owner_pid") or 0)
+    assert _wait_until(lambda: _status(job_id) in {"queued", "starting", "running",
+                                                   "waiting_external"}, timeout=120), \
+        _runtime(job_id)
+
+    # The child had begun stopping: this is the state the Windows run was stuck in.
+    core.update_runtime_state(job_id, status="cancelling", cancel_requested=True,
+                              on_timeout="retry")
+    assert _status(job_id) == "cancelling", _runtime(job_id)
+
+    os.kill(owner_pid, signal.SIGKILL if hasattr(signal, "SIGKILL") else signal.SIGTERM)
+    assert _wait_until(lambda: sup.wait_finished(0), timeout=60), \
+        "the supervisor never finished after the executor died"
+    runtime = _runtime(job_id)
+    assert runtime.get("status") == "interrupted", f"{runtime} ||| {_diagnose(sup, job_id)}"
+    # A user's stop is not a crash: ``cancel_requested`` survives and the reason is
+    # the "you stopped it" message, not ``EngineProcessExited`` (#453).  What must
+    # hold here is that ``cancelling`` is not a resting state for a dead executor.
+    assert runtime.get("cancel_requested") is True, runtime
+    assert (runtime.get("error") or {}).get("type") in (None, "EngineProcessExited"), runtime
+    assert "engine_process_exited" in _events(job_id), _events(job_id)
