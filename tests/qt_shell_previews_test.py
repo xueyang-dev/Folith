@@ -311,9 +311,12 @@ def test_notifications_use_bottom_centre_toast_without_bottom_bar(window, app):
     main._notice("已保存", task=False)
     app.processEvents()
     assert main.toast.isVisible() and main.last_notice() == "已保存"
-    # #520：小通知固定在窗口底部中央，不再占顶部标题区。
+    # U-5：通知贴内容区底部，并按内容区（侧边栏右侧）居中。
     assert main.toast.y() > main.height() // 2
-    assert abs((main.toast.x() + main.toast.width() // 2) - main.width() // 2) <= 2
+    sidebar = main.sidebar_clip
+    left = sidebar.width() if sidebar.isVisibleTo(main) else 0
+    content_center = left + (main.width() - left) // 2
+    assert abs((main.toast.x() + main.toast.width() // 2) - content_center) <= 2
     main.toast.close_button.click()
     assert not main.toast.isVisible()
 
