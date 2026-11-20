@@ -2746,6 +2746,7 @@
   "需要重启 Folith": "Redémarrer Folith",
   "立即重启": "Redémarrer maintenant",
   "语言已保存，下次启动时生效": "Langue enregistrée ; elle prendra effet au prochain lancement.",
-  "关闭提示": "Fermer l'astuce",
-  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "L'essentiel de la sortie du modèle est du raisonnement, qui n'a pas pu être désactivé : la traduction sera nettement plus lente"
+"关闭提示": "Fermer l'astuce",
+  "模型输出大多是思考过程，思考未能关闭，翻译会明显变慢": "L'essentiel de la sortie du modèle est du raisonnement, qui n'a pas pu être désactivé : la traduction sera nettement plus lente",
+  "正在载入任务…": "Chargement des tâches…"
 }

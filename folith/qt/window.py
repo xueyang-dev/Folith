@@ -376,7 +376,7 @@ class MainWindow(QMainWindow):
         self._install_quit_filter()
         self._build_menus()
         self._restore_geometry()
-        self.refresh_home()
+        self.home.set_status(i18n.tr("正在载入任务…")); self._refresh_home_async()  # #514
         self.refresh_pending_badge(force=True)
         self.refresh_engine_label()
         if self.data_dir_notice:

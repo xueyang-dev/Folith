@@ -136,17 +136,18 @@ def _status_label(job_id: str, summary: Mapping[str, Any], signature: str) -> st
     """
     if "status_label" in summary:
         return str(summary["status_label"])
-    core = _core()
+    # #514: derive the label from the summary itself.  Loading the full state
+    # here made every cold list refresh read a 30 MB state per delivered task.
+    progress = str(summary.get("progress_label") or "待处理")
+    status = str(summary.get("runtime_status") or "")
+    if status and status != "idle":
+        label = progress or status
+    else:
+        label = progress
     key = _label_cache_key(job_id, summary, signature)
     cached = _LABEL_CACHE.get(key)
     if cached is not None:
         return cached
-    try:
-        state = core.load_job_state(job_id)
-        label = core.task_status_label(state or {}, job_id) if state \
-            else str(summary.get("progress_label") or "待处理")
-    except Exception as exc:  # noqa: BLE001 - a label must never break the list
-        label = f"{summary.get('progress_label') or '待处理'}（状态读取失败：{exc}）"
     if len(_LABEL_CACHE) > _LABEL_CACHE_LIMIT:
         _LABEL_CACHE.clear()
     _LABEL_CACHE[key] = label
@@ -290,6 +291,7 @@ def _summary_row(job_id: str, summary: Mapping[str, Any]) -> JobSummary:
         # The list only shows the version and divergence: skip the asset
         # hashing and the per-refresh state reload of the strict check.
         snapshot = core.delivery_snapshot_status_light(job_id)
+        import time as _t; _t.sleep(0)  # #514: give the GUI thread a turn
         latest = snapshot.get("latest") or {}
         snapshot_version = latest.get("snapshot_version")
         diverged = bool(snapshot.get("diverged"))
@@ -353,7 +355,12 @@ def list_jobs(*, output_dir: Optional[Path] = None) -> List[JobSummary]:
     rows: List[JobSummary] = []
     known: set = set()
     candidates: List[Path] = []
-    for entry in entries:
+    # #514: yield the GIL between tasks so the GUI thread keeps beating while
+    # this scan runs on a worker.  Without it, 30MB state reads starve the GUI
+    # for seconds even though the work is already off the GUI thread.
+    import time as _time
+    for index, entry in enumerate(entries):
+        _time.sleep(0)  # #514: yield between every task
         if not entry.is_dir():
             continue
         if not ((entry / "state.json").is_file() or (entry / "summary.json").is_file()):
