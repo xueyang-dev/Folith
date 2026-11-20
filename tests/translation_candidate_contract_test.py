@@ -422,7 +422,9 @@ def test_old_task_without_candidates_still_opens(job_env):
 # ---------------------------------------------------------------------------
 # G3: excluded_segment_records must not rescan 10k pairs on every selection.
 # ---------------------------------------------------------------------------
-def test_excluded_records_are_cached_per_state_generation() -> None:
+def test_excluded_records_include_legacy_and_modern() -> None:  # noqa: F811
+    """The result must contain both modern exclusion records and legacy
+    per-pair flags, with no stale state between calls."""
     from folith.engine import segments
 
     pairs = [{"source": f"s{i}", "target": f"t{i}"} for i in range(10000)]
@@ -430,28 +432,14 @@ def test_excluded_records_are_cached_per_state_generation() -> None:
     state = {"pairs": pairs, "excluded_segments": []}
     first = segments.excluded_segment_records(state)
     assert len(first) == 1 and first[0]["segment_index"] == 42
-    # A-41: records are rebuilt fresh each call (only the excluded index set
-    # is cached), so assert equality rather than object identity.
-    assert segments.excluded_segment_records(state) == first
-    # Adding a modern exclusion changes the fingerprint and invalidates.
     state["excluded_segments"] = [{"index": 7, "source": "s7"}]
     second = segments.excluded_segment_records(state)
     assert any(r.get("segment_index") == 7 for r in second)
 
 
-def test_excluded_records_returns_cached_object_on_repeat() -> None:  # noqa: F811
-    from folith.engine import segments
-
-    pairs = [{"source": str(i)} for i in range(10000)]
-    state = {"pairs": pairs}
-    first = segments.excluded_segment_records(state)
-    # A-41: records are rebuilt; only the excluded-index scan is cached.
-    assert segments.excluded_segment_records(state) == first
-
-
-def test_excluded_cache_invalidates_on_in_place_flag_toggle() -> None:  # noqa: F811
+def test_excluded_records_follow_in_place_flag_toggle() -> None:  # noqa: F811
     """A-40: toggling one pair's `excluded` without changing any length must
-    immediately change the result (the old length-only key missed this)."""
+    immediately change the result."""
     from folith.engine import segments
 
     pairs = [{"source": str(i)} for i in range(20)]
@@ -462,6 +450,23 @@ def test_excluded_cache_invalidates_on_in_place_flag_toggle() -> None:  # noqa: 
     assert len(changed) == 1 and changed[0]["segment_index"] == 7
     pairs[7]["excluded"] = False
     assert segments.excluded_segment_records(state) == []
+
+
+def test_excluded_records_inline_the_excluded_check() -> None:  # noqa: F811
+    """A-42: the 10k-pair compatibility scan must not make 10k Python calls
+    to is_excluded(); the check is inlined as a dict lookup."""
+    from folith.engine import segments
+
+    real = segments.is_excluded
+    calls: list = []
+    segments.is_excluded = lambda pair: calls.append(pair) or real(pair)
+    try:
+        pairs = [{"source": str(i)} for i in range(2000)]
+        state = {"pairs": pairs}
+        segments.excluded_segment_records(state)
+    finally:
+        segments.is_excluded = real
+    assert calls == [], "compatibility scan still calls is_excluded() per pair"
 
 
 def test_excluded_records_follow_reason_and_source_edits() -> None:  # noqa: F811

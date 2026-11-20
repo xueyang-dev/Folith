@@ -188,35 +188,6 @@ def assign_missing_segment_uids(state, *, job_id=""):
     return assigned
 
 
-#: G3: the legacy-compatibility pass used to call is_excluded() on every one
-#: of 10k pairs on every segment selection.  Cache only the *set of excluded
-#: pair indexes* (cheap O(n) dict-key scan), never the assembled records: the
-#: record text (source, reason, node_id, scope label) changes independently of
-#: the index, and caching records returned stale text (A-41).
-_EXCLUDED_INDEXES_CACHE: dict = {}
-_EXCLUDED_INDEXES_CACHE_LIMIT = 32
-
-
-def _excluded_cache_key(state):
-    """A cheap content fingerprint for the legacy excluded flags.
-
-    A-40: length alone cannot detect an in-place toggle of one pair's
-    `excluded` flag, and id(state) is recycled.  Scan pair indexes once per
-    call just for that key (O(n) dict lookups, but no is_excluded() calls and
-    no 10k-element deep copies), so a toggle invalidates the cache at once.
-    """
-    pairs = (state or {}).get("pairs") or []
-    flags = tuple(i for i, pair in enumerate(pairs)
-                  if isinstance(pair, dict) and pair.get("excluded"))
-    cached = _EXCLUDED_INDEXES_CACHE.get(flags)
-    if cached is not None:
-        return cached
-    if len(_EXCLUDED_INDEXES_CACHE) >= _EXCLUDED_INDEXES_CACHE_LIMIT:
-        _EXCLUDED_INDEXES_CACHE.clear()
-    _EXCLUDED_INDEXES_CACHE[flags] = flags
-    return flags
-
-
 def excluded_segment_records(state):
     """被排除段落的清单——导出、交付说明与「恢复」入口的唯一来源。
 
@@ -224,10 +195,6 @@ def excluded_segment_records(state):
     不进入翻译、不计入待完成数量、不参与审校门禁、不进导出；而原文与当时的译文
     在这里完整保留，所以恢复是精确还原而不是重新猜。
     """
-    # Only cache which pair indexes carry the legacy `excluded` flag.  The
-    # records below are rebuilt from the current state every call, so a
-    # changed reason/source/node_id is never served from the cache.
-    flags = _excluded_cache_key(state)
     records = []
     for position, item in enumerate((state or {}).get("excluded_segments") or []):
         if not isinstance(item, dict):
@@ -249,10 +216,11 @@ def excluded_segment_records(state):
             record["scope_key"] = str(item["scope_key"])
         records.append(record)
     # 兼容极早期状态：pair 上直接带 excluded 标记。
+    # G3: inline is_excluded() (which is just `bool(pair.get("excluded"))`) so
+    # a 10k-pair scan does not make 10k Python function calls per selection.
     pairs = (state or {}).get("pairs") or []
-    for index in flags:
-        pair = pairs[index] if index < len(pairs) else None
-        if not isinstance(pair, dict):
+    for index, pair in enumerate(pairs):
+        if not isinstance(pair, dict) or not pair.get("excluded"):
             continue
         records.append({
             "excluded_id": segment_uid(pair) or f"index-{index}",
