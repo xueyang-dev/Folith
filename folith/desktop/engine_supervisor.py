@@ -156,7 +156,13 @@ EXIT_STOP_BUDGET = 0.6
 #: thread doing ``Popen.poll()`` plus, once, a ``runtime_state`` read.
 #: Bounded attempts to write the terminal state; see ``_watch``.  Three is enough
 #: for a transient file lock and short enough that the GUI never waits on it.
-TERMINAL_PUBLISH_ATTEMPTS = 3
+#: Total time the monitor may spend establishing and writing the terminal truth.
+#: A fixed attempt count gave up too early: the inner write already waits for the
+#: runtime lock (2 s) and the Windows file replacement (5 s), so three 0.2 s
+#: retries could exhaust the outer loop while the inner work was still going
+#: (#570: status stayed "queued").  A budget in seconds matches what the caller
+#: waits for, and every wait is recorded.
+TERMINAL_EVIDENCE_BUDGET_SECONDS = 15.0
 TERMINAL_PUBLISH_RETRY_SECONDS = 0.2
 POLL_SECONDS = 0.15
 
@@ -589,6 +595,7 @@ class EngineSupervisor:
         self._exit_code = self.proc.returncode
         _remember_exit(self.job_id, self._exit_code)
         evidence = ""
+        started = time.monotonic()
         try:
             # E-6s: the handle exiting is a claim about *my* child, not about the
             # run.  Never publish a terminal state while the run still has an
@@ -596,28 +603,35 @@ class EngineSupervisor:
             # "unreadable" is not "no owner"; publishing then writes over a live
             # run and clears the user's cancel/exit request.
             #
-            # The old code had one ``except Exception: pass`` around both steps,
-            # which turned a transient read failure into "monitor finished, no
-            # terminal write, no log" (the intermittent Windows symptom).  Retrying
-            # recovers the common case; giving up stays a non-publish on the record.
-            for attempt in range(TERMINAL_PUBLISH_ATTEMPTS):
+            # Budget in *seconds*, not attempts: the write path itself waits for
+            # the runtime lock (2 s) and, on Windows, for ReplaceFileW (5 s), so an
+            # attempt count gave up while the inner work was still legitimate.
+            while time.monotonic() - started < TERMINAL_EVIDENCE_BUDGET_SECONDS:
                 try:
                     self._await_run_end()
                     evidence = "ended"
                     break
                 except Exception as exc:  # noqa: BLE001 - retried, then recorded
-                    self._record_watch_failure("await_run_end", exc)
-                    if attempt + 1 < TERMINAL_PUBLISH_ATTEMPTS:
-                        time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
+                    waited = time.monotonic() - started
+                    self._record_watch_failure(
+                        f"await_run_end after {waited:.1f}s", exc)
+                    time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
             if evidence:
-                for attempt in range(TERMINAL_PUBLISH_ATTEMPTS):
+                publish_started = time.monotonic()
+                while time.monotonic() - publish_started < TERMINAL_EVIDENCE_BUDGET_SECONDS:
                     try:
                         self._terminal_published = bool(self._publish_terminal_state())
                         break
                     except Exception as exc:  # noqa: BLE001
-                        self._record_watch_failure("publish_terminal_state", exc)
-                        if attempt + 1 < TERMINAL_PUBLISH_ATTEMPTS:
-                            time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
+                        waited = time.monotonic() - publish_started
+                        self._record_watch_failure(
+                            f"publish_terminal_state after {waited:.1f}s", exc)
+                        time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
+            else:
+                self._record_watch_failure(
+                    f"evidence not established within "
+                    f"{TERMINAL_EVIDENCE_BUDGET_SECONDS:.0f}s",
+                    RuntimeError("ownership evidence could not be read"))
         finally:
             # Owner cleanup belongs to the terminal boundary, not to a branch:
             # an engine that ended must leave neither a token nor a pid that
