@@ -24,7 +24,7 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
-def test_toast_stack_caps_at_three_and_newest_is_slot_zero(app):
+def test_toast_stack_caps_at_three_and_newest_is_on_top(app):
     parent = QWidget()
     parent.resize(1000, 700)
     stack = notifications.ToastStack(parent)
@@ -36,8 +36,11 @@ def test_toast_stack_caps_at_three_and_newest_is_slot_zero(app):
     assert t4._slot == 0
     assert t1.isHidden(), "oldest transient is dropped"
     assert t3._slot == 1 and t2._slot == 2
-    # newest sits lowest on screen
-    assert t4.y() > t3.y() > t2.y()
+    # newest is top-most: its y is the smallest; older ones sit below it.
+    assert t4.y() < t3.y() < t2.y()
+    # the stack's geometry methods report the newest toast, not an empty widget
+    assert stack.y() == t4.y() and stack.x() == t4.x()
+    assert stack.width() == t4.width() and not stack.isHidden()
 
 
 def test_error_toast_in_the_stack_is_not_auto_dropped(app):

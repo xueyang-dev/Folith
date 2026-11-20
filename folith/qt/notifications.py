@@ -11,7 +11,7 @@ import weakref
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
-                               QPushButton, QToolButton, QVBoxLayout, QWidget)
+                               QPushButton, QToolButton, QVBoxLayout)
 
 from . import i18n, icons, motion, style, theme
 
@@ -111,8 +111,9 @@ class Toast(QFrame):
         self.label.setText(self._elided())
         self.label.setToolTip(self._message)
         self.adjustSize()
-        # #520：底部中央、状态区上方；多条堆叠时 slot 0 最靠下（最新），往上叠。
-        y = max(0, parent.height() - self.height() - 24 - self._slot * (self.height() + 8))
+        # #520：底部中央，最多三条；slot 0 最靠上（最新），older ones below.
+        base = max(0, parent.height() - self.height() - 24 - 2 * (self.height() + 8))
+        y = base + self._slot * (self.height() + 8)
         self.move((parent.width() - self.width()) // 2, y)
 
     def eventFilter(self, watched, event):
@@ -257,37 +258,32 @@ class NoticeBanner(QFrame):
             self._elide()
 
 
-class ToastStack(QWidget):
-    """#520: at most three toasts, newest at the bottom, older ones stacked above.
+class ToastStack:
+    """#520: at most three toasts, newest on top, older ones stacked below.
 
-    Owns the ``Toast`` instances so callers keep using one ``present()`` entry
-    point.  Errors/warnings stay until the user closes them; success/info fade
-    on their own.  Hover pauses *all* visible timers (the top-most toast under
-    the cursor keeps the whole stack from disappearing mid-read).
+    A plain object (not a QWidget): every geometry/visibility attribute the
+    main window and tests read is forwarded explicitly to the visible toasts,
+    so nothing ever measures an invisible container.  Errors/warnings stay until
+    the user closes them; success/info fade on their own.
     """
 
     MAX_VISIBLE = 3
 
     def __init__(self, parent) -> None:
-        super().__init__(parent)
         self.parent = parent
         self._toasts: list[Toast] = []
-        super().hide()       # the container draws nothing; only children show
 
     def present(self, message: str, *, error=False, detail="", tone: str = "") -> Toast:
-        # A toast whose fade finished is no longer visible; retire it before
-        # deciding what to drop so an old faded card does not occupy a slot.
         self._toasts = [t for t in self._toasts if not t.isHidden()]
-        toast = Toast(self.parent)
-        self._toasts.append(toast)
-        # Drop the oldest transient toasts beyond the cap; keep sticky errors.
-        while len(self._toasts) > self.MAX_VISIBLE:
+        while len(self._toasts) >= self.MAX_VISIBLE:
             victim = next((t for t in self._toasts if t._tone not in ("error", "warning")),
                           self._toasts[0])
             self._toasts.remove(victim)
             victim.hide()
             victim.deleteLater()
-        # Newest is slot 0 (bottom); the rest shift up by one.
+        toast = Toast(self.parent)
+        self._toasts.append(toast)
+        # Newest gets slot 0 (the topmost position); older ones shift down.
         for slot, existing in enumerate(reversed(self._toasts[:-1]), start=1):
             existing._slot = slot
             existing._place()
@@ -300,38 +296,25 @@ class ToastStack(QWidget):
         self._toasts.clear()
 
     def _fade(self) -> None:
-        # Fade every transient toast; a single call retires the visible stack.
-        patched = self.__dict__.get("underMouse")
         for toast in self._toasts:
-            if toast._tone in ("error", "warning"):
-                continue
-            if patched is not None:
-                toast.underMouse = patched
-            toast._fade()
+            if toast._tone not in ("error", "warning"):
+                toast._fade()
 
     def visible(self) -> list[Toast]:
         return [t for t in self._toasts if not t.isHidden()]
 
-    # ---- drop-in widget interface -------------------------------------------
-    # The main window keeps one ``toast`` attribute; delegate widget/attribute
-    # reads to the newest toast so existing call sites and tests keep working.
-
+    # ---- explicit delegation -----------------------------------------------
     def __getattr__(self, name):
-        # Forward everything (incl. private test hooks) to the newest toast.
-        # ``_toasts`` itself is read with object.__getattribute__ to avoid recursion.
         toasts = object.__getattribute__(self, "_toasts")
         if not toasts:
             raise AttributeError(name)
         return getattr(toasts[-1], name)
 
-    def event(self, event):  # noqa: N802 - Qt 命名
-        # Tests and callers send Enter/Leave to the stack; forward to newest.
-        if event.type() in (QEvent.Type.Enter, QEvent.Type.Leave) and self._toasts:
-            return self._toasts[-1].event(event)
-        return super().event(event)
+    def newest(self) -> Toast | None:
+        return self._toasts[-1] if self._toasts else None
 
     def isVisible(self):  # noqa: N802 - Qt 命名
-        return any(not t.isHidden() for t in self._toasts)
+        return bool(self.visible())
 
     def isHidden(self):  # noqa: N802 - Qt 命名
         return not self.isVisible()
