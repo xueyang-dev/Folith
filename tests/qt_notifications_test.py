@@ -199,7 +199,7 @@ def test_task_notices_expire_back_to_the_run_status(window, app, monkeypatch):
 # two imaginary slots, and must be centred in the content area (right of the
 # sidebar), not in the whole window.
 # ---------------------------------------------------------------------------
-def test_toast_stack_is_bottom_anchored_and_content_centered(window):
+def test_toast_stack_is_bottom_anchored_and_content_centered(window):  # noqa: F811
     """U-5: a single toast sits on the content-area bottom, centred in the
     content area (right of the sidebar), not floating above two empty slots."""
     main = window['window']
