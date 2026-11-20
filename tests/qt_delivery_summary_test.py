@@ -63,3 +63,15 @@ def test_setup_uses_a_compact_overview(qapp):
     panel.show()
     qapp.processEvents()
     assert panel.scroll.verticalScrollBar().maximum() == 0, "common case fits without scrolling"
+
+
+def test_unknown_delivery_preset_is_labelled_custom(qapp):
+    """C-27: a preset key not in the choices must not be called 标准交付."""
+    from folith.qt.setup_panel import TaskSetupPanel
+
+    panel = TaskSetupPanel()
+    panel._choices["delivery_presets"] = [{"key": "standard", "label": "标准交付"}]
+    # The active key has no matching entry -> truth is "custom", not the default preset.
+    panel.delivery_seg.value = lambda: "unknown-key"
+    panel._sync_delivery_summary()
+    assert panel.delivery_summary_row.preset.text() == "自定义"

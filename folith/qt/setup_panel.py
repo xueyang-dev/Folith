@@ -503,7 +503,8 @@ class TaskSetupPanel(QWidget):
         page.setSpacing(theme_module.SPACE["xl"] + 8)
         # 两栏作为一个整体居中：宽屏上左右留白对称，内容不贴在一边。
         page.addStretch(1)
-        # #521：准备页用紧凑左栏（小封面），常见情况在 1280×800 / 1366×768 免滚动。
+        # #521：准备页用紧凑左栏（小封面），为后续「整页免滚动」腾出纵向空间。
+        # 是否真正免滚动要在不同文档/窗口尺寸下逐项验收，本 PR 不先下结论。
         from .setup_overview import CompactOverview
         self.overview = CompactOverview()
         page.addWidget(self.overview, 0, Qt.AlignmentFlag.AlignTop)
@@ -2045,7 +2046,7 @@ class TaskSetupPanel(QWidget):
             current = str(self.delivery_seg.value() or "")
             label = next((i18n.tr(str(p.get("label") or p.get("key")))
                           for p in (self._choices.get("delivery_presets") or [])
-                          if str(p.get("key")) == current), i18n.tr('标准交付'))
+                          if str(p.get("key")) == current), i18n.tr('自定义'))
             self.delivery_summary_row.set_summary(label, text)
             self.delivery_section.set_summary(text)
 
