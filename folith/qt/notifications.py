@@ -111,10 +111,17 @@ class Toast(QFrame):
         self.label.setText(self._elided())
         self.label.setToolTip(self._message)
         self.adjustSize()
-        # #520：底部中央，最多三条；slot 0 最靠上（最新），older ones below.
-        base = max(0, parent.height() - self.height() - 24 - 2 * (self.height() + 8))
-        y = base + self._slot * (self.height() + 8)
-        self.move((parent.width() - self.width()) // 2, y)
+        # U-5: the whole stack sits on the bottom of the *content area*
+        # (right of the sidebar), and is centred in that area, not the window.
+        sidebar = getattr(parent, "sidebar_clip", None)
+        left = sidebar.width() if sidebar is not None and sidebar.isVisibleTo(parent) else 0
+        content_width = max(1, parent.width() - left)
+        stack = getattr(parent, "toast", None)
+        count = max(1, len(getattr(stack, '_toasts', ()))) if stack is not None else 1
+        h = self.height()
+        y_last = parent.height() - 24 - h
+        y = y_last - (count - 1 - self._slot) * (h + 8)
+        self.move(left + (content_width - self.width()) // 2, max(0, y))
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.Resize and watched is self.parentWidget() and self.isVisible():
