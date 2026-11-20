@@ -618,15 +618,17 @@ class ConnectionLibrary(QWidget):
         self.dialog.config.connection_levels[role] = value
 
     def _level_provider_model(self, role):
-        if role == "vision":
-            profile = next((p for p in self.profiles if p["id"] == self.roles.get("vision")), None)
-            if profile is None:
-                translation = next((p for p in self.profiles
-                                    if p["id"] == self.roles.get("translation")), None)
-                return (translation or {}).get("provider", ""), (translation or {}).get("model", "")
-            return profile.get("provider", ""), self.role_models.get("vision") or profile.get("model", "")
         profile = next((p for p in self.profiles if p["id"] == self.roles.get(role)), None)
-        return (profile or {}).get("provider", ""), self.role_models.get(role, "") or (profile or {}).get("model", "")
+        from folith.engine import effort_settings
+        if profile is None and role in effort_settings.INHERITING_ROLES:
+            # No dedicated connection: the inherited level is expressed with
+            # the translation model's own catalogue (U-11).
+            profile = next((p for p in self.profiles
+                            if p["id"] == self.roles.get("translation")), None)
+            return (profile or {}).get("provider", ""), (profile or {}).get("model", "")
+        if profile is None:
+            return "", ""
+        return profile.get("provider", ""), self.role_models.get(role, "") or profile.get("model", "")
 
     def update_level_selector(self, role):
         from folith.engine import effort_settings
@@ -639,10 +641,18 @@ class ConnectionLibrary(QWidget):
         choices = effort_settings.choices(provider, model)
         box.blockSignals(True)
         box.clear()
+        # 没有显式选择时沿用翻译行：显示继承来的实际档位并标注出处（U-11）。
+        inherited = ""
+        if not current and role in effort_settings.INHERITING_ROLES:
+            inherited = effort_settings.effective_level(
+                self.dialog.config.connection_levels, role)
         for key, label in choices:
-            box.addItem(i18n.tr('旧设置：{v0}', v0=label) if effort_settings.is_legacy(key, provider, model)
-                        else i18n.tr(label), key)
-        index = box.findData(current)
+            text = i18n.tr('旧设置：{v0}', v0=label) if effort_settings.is_legacy(key, provider, model) \
+                else i18n.tr(label)
+            if inherited and key == inherited:
+                text = i18n.tr('{v0}（沿用翻译）', v0=text)
+            box.addItem(text, key)
+        index = box.findData(inherited or current)
         box.setCurrentIndex(index if index >= 0 else 0)
         box.blockSignals(False)
         box.setEnabled(bool(model))
@@ -655,13 +665,6 @@ class ConnectionLibrary(QWidget):
             box.setToolTip(i18n.tr('这个模型无法关闭思考；可在这里调整推理强度。'))
         else:
             box.setToolTip(i18n.tr('只列这个模型已验证的思考档位。'))
-        # 没有显式选择时沿用翻译行，但要显示继承来的实际档位。
-        if not current and role in effort_settings.INHERITING_ROLES:
-            inherited = effort_settings.effective_level(
-                self.dialog.config.connection_levels, role)
-            find = box.findData(inherited)
-            if find >= 0:
-                box.setCurrentIndex(find)
 
     def make_model_selector(self, role):
         box = style.ComboBox()
@@ -690,9 +693,14 @@ class ConnectionLibrary(QWidget):
             chosen = self.role_models.get(role, "")
             box.setCurrentText(chosen if chosen in models else profile["model"])
             self.role_models[role] = box.currentText()
+            box.setEnabled(True)
         else:
             self.role_models[role] = ""
-        box.setVisible(profile is not None)
+            # #540 C-35 (U-7)：沿用翻译模型时第二列保留占位，思考强度始终在第三列。
+            box.clear()
+            box.addItem(i18n.tr('沿用翻译模型'), "")
+            box.setEnabled(False)
+        box.setVisible(True)
         box.blockSignals(False)
         self._update_capability_warning(role)
         self.update_level_selector(role)
