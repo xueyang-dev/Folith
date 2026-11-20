@@ -41,7 +41,6 @@ from PySide6.QtWidgets import (
 
 from . import adapter
 from . import components
-from .doc_overview import DocumentOverview
 from . import i18n
 from . import icons
 from .source_outline_panel import SourceOutlineSection
@@ -504,7 +503,9 @@ class TaskSetupPanel(QWidget):
         page.setSpacing(theme_module.SPACE["xl"] + 8)
         # 两栏作为一个整体居中：宽屏上左右留白对称，内容不贴在一边。
         page.addStretch(1)
-        self.overview = DocumentOverview()
+        # #521：准备页用紧凑左栏（小封面），常见情况在 1280×800 / 1366×768 免滚动。
+        from .setup_overview import CompactOverview
+        self.overview = CompactOverview()
         page.addWidget(self.overview, 0, Qt.AlignmentFlag.AlignTop)
         content = QWidget()
         content.setMinimumWidth(420)

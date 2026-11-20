@@ -50,3 +50,16 @@ def test_setup_panel_owns_a_summary_row(qapp):
     panel = TaskSetupPanel()
     assert panel.delivery_summary_row is not None
     assert panel.delivery_summary.isHidden(), "facts are stated once, by the shared row"
+
+
+def test_setup_uses_a_compact_overview(qapp):
+    from folith.qt.setup_overview import CompactOverview
+    from folith.qt.setup_panel import TaskSetupPanel
+
+    panel = TaskSetupPanel()
+    assert isinstance(panel.overview, CompactOverview)
+    assert panel.overview.paper.height() <= 200, "the cover must not eat the viewport"
+    panel.resize(1280, 800)
+    panel.show()
+    qapp.processEvents()
+    assert panel.scroll.verticalScrollBar().maximum() == 0, "common case fits without scrolling"
