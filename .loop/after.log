@@ -1,0 +1,37 @@
+FOLITH_FROM /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/__init__.py
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+JOB 071baa7d30bd6576
+qt.qpa.fonts: Populating font family aliases took 79 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+CACHE_ATTR True CACHE_SIZE 1
+         2021149 function calls (2020901 primitive calls) in 0.640 seconds
+
+   Ordered by: cumulative time
+   List reduced from 604 to 15 due to restriction <15>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       20    0.005    0.000    0.383    0.019 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/views.py:7611(select_segment)
+       20    0.000    0.000    0.377    0.019 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/views.py:7554(_select_only)
+       57    0.000    0.000    0.351    0.006 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/views.py:2934(<lambda>)
+       57    0.001    0.000    0.351    0.006 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/views.py:6848(_row_selected)
+       57    0.000    0.000    0.331    0.006 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/views.py:6866(_load_selected_row)
+       57    0.003    0.000    0.315    0.006 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/views.py:6689(_render_segment_detail)
+       20    0.001    0.000    0.260    0.013 {method 'setCurrentCell' of 'PySide6.QtWidgets.QTableWidget' objects}
+       60    0.059    0.001    0.257    0.004 {built-in method processEvents}
+  173/114    0.003    0.000    0.167    0.001 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/views.py:7115(_place_inline_editor)
+    57/38    0.000    0.000    0.150    0.004 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/segment_editor.py:464(<lambda>)
+   132/76    0.002    0.000    0.144    0.002 {method 'hide' of 'PySide6.QtWidgets.QWidget' objects}
+       19    0.000    0.000    0.143    0.008 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/segment_editor.py:273(hide_all)
+      465    0.000    0.000    0.141    0.000 {built-in method builtins.next}
+      573    0.001    0.000    0.120    0.000 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/segment_editor.py:344(paint)
+      573    0.004    0.000    0.120    0.000 /Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2902(paint)
+
+
+

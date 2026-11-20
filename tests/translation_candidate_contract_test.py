@@ -430,12 +430,12 @@ def test_excluded_records_are_cached_per_state_generation() -> None:
     state = {"pairs": pairs, "excluded_segments": []}
     first = segments.excluded_segment_records(state)
     assert len(first) == 1 and first[0]["segment_index"] == 42
-    # Same state -> same cached list object, no second 10k scan.
-    assert segments.excluded_segment_records(state) is first
+    # A-41: records are rebuilt fresh each call (only the excluded index set
+    # is cached), so assert equality rather than object identity.
+    assert segments.excluded_segment_records(state) == first
     # Adding a modern exclusion changes the fingerprint and invalidates.
     state["excluded_segments"] = [{"index": 7, "source": "s7"}]
     second = segments.excluded_segment_records(state)
-    assert second is not first
     assert any(r.get("segment_index") == 7 for r in second)
 
 
@@ -445,9 +445,8 @@ def test_excluded_records_returns_cached_object_on_repeat() -> None:  # noqa: F8
     pairs = [{"source": str(i)} for i in range(10000)]
     state = {"pairs": pairs}
     first = segments.excluded_segment_records(state)
-    # A-40's fingerprint is O(n) on cheap dict lookups; the expensive part
-    # (is_excluded() over 10k pairs / rebuilding records) must be cached.
-    assert segments.excluded_segment_records(state) is first
+    # A-41: records are rebuilt; only the excluded-index scan is cached.
+    assert segments.excluded_segment_records(state) == first
 
 
 def test_excluded_cache_invalidates_on_in_place_flag_toggle() -> None:  # noqa: F811
@@ -463,3 +462,22 @@ def test_excluded_cache_invalidates_on_in_place_flag_toggle() -> None:  # noqa: 
     assert len(changed) == 1 and changed[0]["segment_index"] == 7
     pairs[7]["excluded"] = False
     assert segments.excluded_segment_records(state) == []
+
+
+def test_excluded_records_follow_reason_and_source_edits() -> None:  # noqa: F811
+    """A-41: same excluded indexes, changed text -> records must update."""
+    from folith.engine import segments
+
+    records = [{"index": 0, "source": "orig", "target": "t",
+                "reason": "first reason", "node_id": "n0001"}]
+    state = {"pairs": [{"source": "orig"}], "excluded_segments": records}
+    first = segments.excluded_segment_records(state)
+    assert first[0]["reason"] == "first reason"
+    assert first[0]["node_id"] == "n0001"
+    records[0]["reason"] = "second reason"
+    records[0]["source"] = "changed"
+    records[0]["node_id"] = "n0002"
+    second = segments.excluded_segment_records(state)
+    assert second[0]["reason"] == "second reason"
+    assert second[0]["source"] == "changed"
+    assert second[0]["node_id"] == "n0002"

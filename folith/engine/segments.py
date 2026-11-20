@@ -188,13 +188,13 @@ def assign_missing_segment_uids(state, *, job_id=""):
     return assigned
 
 
-#: G3: the legacy-compatibility pass below scans every pair calling
-#: is_excluded(), and was re-run on each segment selection (~10k calls per
-#: click).  Cache the result per state instance and pairs generation; the
-#: fingerprint changes whenever a pair/exclusion record is added or removed,
-#: and every save passes a fresh state object.
-_EXCLUDED_RECORDS_CACHE: dict = {}
-_EXCLUDED_RECORDS_CACHE_LIMIT = 32
+#: G3: the legacy-compatibility pass used to call is_excluded() on every one
+#: of 10k pairs on every segment selection.  Cache only the *set of excluded
+#: pair indexes* (cheap O(n) dict-key scan), never the assembled records: the
+#: record text (source, reason, node_id, scope label) changes independently of
+#: the index, and caching records returned stale text (A-41).
+_EXCLUDED_INDEXES_CACHE: dict = {}
+_EXCLUDED_INDEXES_CACHE_LIMIT = 32
 
 
 def _excluded_cache_key(state):
@@ -206,10 +206,15 @@ def _excluded_cache_key(state):
     no 10k-element deep copies), so a toggle invalidates the cache at once.
     """
     pairs = (state or {}).get("pairs") or []
-    excluded = (state or {}).get("excluded_segments") or []
     flags = tuple(i for i, pair in enumerate(pairs)
                   if isinstance(pair, dict) and pair.get("excluded"))
-    return (len(pairs), len(excluded), flags)
+    cached = _EXCLUDED_INDEXES_CACHE.get(flags)
+    if cached is not None:
+        return cached
+    if len(_EXCLUDED_INDEXES_CACHE) >= _EXCLUDED_INDEXES_CACHE_LIMIT:
+        _EXCLUDED_INDEXES_CACHE.clear()
+    _EXCLUDED_INDEXES_CACHE[flags] = flags
+    return flags
 
 
 def excluded_segment_records(state):
@@ -219,10 +224,10 @@ def excluded_segment_records(state):
     不进入翻译、不计入待完成数量、不参与审校门禁、不进导出；而原文与当时的译文
     在这里完整保留，所以恢复是精确还原而不是重新猜。
     """
-    key = _excluded_cache_key(state)
-    cached = _EXCLUDED_RECORDS_CACHE.get(key)
-    if cached is not None:
-        return cached
+    # Only cache which pair indexes carry the legacy `excluded` flag.  The
+    # records below are rebuilt from the current state every call, so a
+    # changed reason/source/node_id is never served from the cache.
+    flags = _excluded_cache_key(state)
     records = []
     for position, item in enumerate((state or {}).get("excluded_segments") or []):
         if not isinstance(item, dict):
@@ -244,8 +249,10 @@ def excluded_segment_records(state):
             record["scope_key"] = str(item["scope_key"])
         records.append(record)
     # 兼容极早期状态：pair 上直接带 excluded 标记。
-    for index, pair in enumerate((state or {}).get("pairs") or []):
-        if not isinstance(pair, dict) or not is_excluded(pair):
+    pairs = (state or {}).get("pairs") or []
+    for index in flags:
+        pair = pairs[index] if index < len(pairs) else None
+        if not isinstance(pair, dict):
             continue
         records.append({
             "excluded_id": segment_uid(pair) or f"index-{index}",
@@ -257,9 +264,6 @@ def excluded_segment_records(state):
             "excluded_by": str(pair.get("excluded_by") or ""),
             "restorable": False,
         })
-    if len(_EXCLUDED_RECORDS_CACHE) >= _EXCLUDED_RECORDS_CACHE_LIMIT:
-        _EXCLUDED_RECORDS_CACHE.clear()
-    _EXCLUDED_RECORDS_CACHE[key] = records
     return records
 
 

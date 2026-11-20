@@ -1,0 +1,561 @@
+{
+  "scenario": "S5",
+  "implemented": true,
+  "report_version": 1,
+  "measurement": {
+    "version": 3,
+    "driver": "qt_event_loop_callbacks",
+    "instrumentation_split": true,
+    "phases": {
+      "R": "翻译中: the run window (translation start → task settled)",
+      "I": "完成后: the scenario window minus the run window",
+      "i_phase_min_seconds": 15.0,
+      "void_rule": "a round whose I phase is shorter than i_phase_min_seconds is void; the report counts it",
+      "discarded_rounds": 1
+    },
+    "operations": {
+      "unit": "ms",
+      "core": [
+        "open_panel",
+        "page_switch",
+        "scroll",
+        "select_segment",
+        "type_echo"
+      ],
+      "budgets_ms": {
+        "scroll": 50.0,
+        "select_segment": 100.0,
+        "type_echo": 50.0,
+        "page_switch": 150.0,
+        "open_panel": 100.0
+      },
+      "phases": [
+        "setup",
+        "run",
+        "complete"
+      ],
+      "missing": []
+    },
+    "tool_share": {
+      "definition": "the sampler's instrumentation stalls (predicate polling and other harness-only work) divided by all stalls including them",
+      "reported_as": "excluding_tool / including_tool per phase and tier",
+      "measured": true,
+      "reason": null
+    }
+  },
+  "started_at": "2026-11-20T10:51:19.145+00:00",
+  "finished_at": "2026-11-20T10:51:59.515+00:00",
+  "fixture": {
+    "kind": "epub",
+    "paragraphs": 8,
+    "path": "/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/.loop/v-run/fixtures/s1-8p.epub"
+  },
+  "window_control": {
+    "controlled_by": "the harness event loop",
+    "seconds_applied": true,
+    "seconds": 30.0
+  },
+  "environment": {
+    "mode": "source_offscreen",
+    "offscreen": true,
+    "platform": "darwin",
+    "python_version": "3.11.3",
+    "frozen_app": null,
+    "base_url_is_mock": true,
+    "real_engine": null,
+    "data_dir": "/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/.loop/v-data"
+  },
+  "translation": {
+    "settled": true,
+    "completed": true,
+    "mode": "s5_interaction_budget",
+    "cycles": {
+      "scroll": 39,
+      "edit": 9,
+      "page": 5,
+      "panel": 4
+    },
+    "build": {
+      "job_id": "071baa7d30bd6576",
+      "segments": 10000,
+      "seeded_from": "e0b03fbc97bf6296",
+      "build_seconds": 0.13
+    }
+  },
+  "steps": [
+    {
+      "step": "task_seeded",
+      "ok": true,
+      "job_id": "071baa7d30bd6576",
+      "template": "e0b03fbc97bf6296",
+      "copies": 500,
+      "segments": 10000,
+      "findings": 20
+    },
+    {
+      "step": "task_built",
+      "ok": true,
+      "job_id": "071baa7d30bd6576",
+      "segments": 10000,
+      "seeded_from": "e0b03fbc97bf6296",
+      "build_seconds": 0.13
+    },
+    {
+      "step": "opened",
+      "ok": true
+    }
+  ],
+  "failures": [],
+  "metrics": {
+    "gui_jank": {
+      "measured": false,
+      "reason": "empty stall window: the producer returned no sampler block"
+    },
+    "gui_jank_process": {
+      "measured": false,
+      "reason": "this mode did not collect a session-level stall view"
+    },
+    "run_window": {
+      "measured": false,
+      "present": false,
+      "reason": "S5 measures the five interaction operations on a finished task: there is no translating window, so R does not apply"
+    },
+    "run_record_window": {
+      "measured": false,
+      "reason": "no run record carried a measured translating window"
+    },
+    "phases": {
+      "definition": {
+        "R": "运行窗口卡顿次数 ÷ 运行窗口时长（翻译中）",
+        "I": "(场景窗口次数 − 运行窗口次数) ÷ (场景窗口时长 − 运行窗口时长)（完成后）",
+        "tiers_ms": {
+          "slow": 100.0,
+          "severe": 500.0
+        },
+        "i_phase_min_seconds": 15.0,
+        "tool_split": "excluding_tool = the sampler's product counters; including_tool = product + the sampler's instrumentation counters (the harness's own stalls)"
+      },
+      "tool_split_measured": true,
+      "tool_split_reason": null,
+      "R": {
+        "measured": false,
+        "reason": "the scenario window was not measured, so R has no basis"
+      },
+      "I": {
+        "measured": false,
+        "reason": "the scenario window was not measured, so I has no basis"
+      },
+      "valid_round": false,
+      "discarded_rounds": 1,
+      "discard_reasons": [
+        "empty stall window: the producer returned no sampler block"
+      ]
+    },
+    "operations": {
+      "unit": "ms",
+      "clock": "time.monotonic around the operation call (synchronous GUI-thread span)",
+      "phases": [
+        "setup",
+        "run",
+        "complete"
+      ],
+      "phase_meaning": {
+        "setup": "before the translation started (import, open, start)",
+        "run": "while the translation was running (R window)",
+        "complete": "after it finished (the I phase)"
+      },
+      "operations": {
+        "scroll": {
+          "label": "滚动段落网格",
+          "core": true,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": true,
+              "count": 39,
+              "avg": 10.388,
+              "min": 0.186,
+              "max": 91.679,
+              "p50": 4.952,
+              "p90": 19.178,
+              "p95": 26.274,
+              "p99": 91.679,
+              "budget_ms": 50.0,
+              "p95_within_budget": true
+            }
+          }
+        },
+        "select_segment": {
+          "label": "选中段落到详情渲染完成",
+          "core": true,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": true,
+              "count": 9,
+              "avg": 58.651,
+              "min": 2.569,
+              "max": 215.976,
+              "p50": 56.791,
+              "p90": 85.354,
+              "p95": 215.976,
+              "p99": 215.976,
+              "budget_ms": 100.0,
+              "p95_within_budget": false
+            }
+          }
+        },
+        "type_echo": {
+          "label": "键入到回显",
+          "core": true,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": true,
+              "count": 9,
+              "avg": 7.94,
+              "min": 0.519,
+              "max": 44.396,
+              "p50": 1.156,
+              "p90": 13.733,
+              "p95": 44.396,
+              "p99": 44.396,
+              "budget_ms": 50.0,
+              "p95_within_budget": true
+            }
+          }
+        },
+        "page_switch": {
+          "label": "切换阶段页",
+          "core": true,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": true,
+              "count": 5,
+              "avg": 51.452,
+              "min": 0.314,
+              "max": 143.043,
+              "p50": 45.936,
+              "p90": 143.043,
+              "p95": 143.043,
+              "p99": 143.043,
+              "budget_ms": 150.0,
+              "p95_within_budget": true,
+              "first_ms": 0.314,
+              "first_budget_ms": 300.0,
+              "first_within_budget": true
+            }
+          }
+        },
+        "open_panel": {
+          "label": "打开抽屉或浮层",
+          "core": true,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": true,
+              "count": 2,
+              "avg": 55.542,
+              "min": 6.854,
+              "max": 104.229,
+              "p50": 6.854,
+              "p90": 104.229,
+              "p95": 104.229,
+              "p99": 104.229,
+              "budget_ms": 100.0,
+              "p95_within_budget": false
+            }
+          },
+          "variants": {
+            "followup_drawer": 1,
+            "activity_popover": 1
+          }
+        },
+        "import": {
+          "label": "导入文档",
+          "core": false,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            }
+          }
+        },
+        "open_task": {
+          "label": "打开任务（点击到工作台可用）",
+          "core": false,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": true,
+              "count": 1,
+              "avg": 2209.462,
+              "min": 2209.462,
+              "max": 2209.462,
+              "p50": 2209.462,
+              "p90": 2209.462,
+              "p95": 2209.462,
+              "p99": 2209.462
+            }
+          }
+        },
+        "start_translation": {
+          "label": "开始/继续翻译",
+          "core": false,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            }
+          }
+        },
+        "submit_edit": {
+          "label": "提交译文修改",
+          "core": false,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": true,
+              "count": 9,
+              "avg": 63.431,
+              "min": 1.907,
+              "max": 172.38,
+              "p50": 88.394,
+              "p90": 102.672,
+              "p95": 172.38,
+              "p99": 172.38
+            }
+          }
+        },
+        "close_panel": {
+          "label": "收起抽屉或浮层",
+          "core": false,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": true,
+              "count": 2,
+              "avg": 3.38,
+              "min": 0.198,
+              "max": 6.562,
+              "p50": 0.198,
+              "p90": 6.562,
+              "p95": 6.562,
+              "p99": 6.562
+            }
+          }
+        },
+        "switch_task": {
+          "label": "切换任务（S3）",
+          "core": false,
+          "phases": {
+            "setup": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "run": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            },
+            "complete": {
+              "measured": false,
+              "count": 0,
+              "reason": "no sample of this operation in this phase"
+            }
+          }
+        }
+      },
+      "missing": [],
+      "note": "p95 is a percentile of the samples in that phase; a phase with no sample is reported as unmeasured, never as a zero latency"
+    },
+    "ui_health": {
+      "available": true,
+      "timeout_seconds": 30.0,
+      "directory": "/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/.loop/v-run/logs/ui-health/session-2wadzs1x"
+    },
+    "run_records": []
+  },
+  "r_only": false,
+  "seeded": {},
+  "tasks": {},
+  "operations_skipped": {},
+  "limits": [
+    "offscreen QPA: no compositor, no GPU paint path, no native input events",
+    "this harness drives the window from Python; a real user's input timing differs",
+    "one machine per run: a baseline needs the same scenarios on macOS and Windows",
+    "per-operation latency is the synchronous GUI-thread span of the call; work a later paint/timer does is outside it",
+    "the broadcast of rendered frames is not measured; frame pacing is approximate"
+  ],
+  "real_machine_baseline": false,
+  "motion": {
+    "reduce_motion": true,
+    "motion_enabled": false,
+    "env_value": "",
+    "source": "forced by the offscreen/non-interactive QPA"
+  },
+  "motion_enabled": false,
+  "note": "offscreen/mock numbers are labelled and cannot replace the macOS/Windows frozen-app baseline the issue asks for",
+  "g3": {
+    "scenario": "G3",
+    "task_segments": 10000,
+    "operations": {
+      "scroll": {
+        "label": "滚动段落网格",
+        "p95_ms": 26.27,
+        "count": 39,
+        "budget_ms": 50.0,
+        "within_budget": true
+      },
+      "select_segment": {
+        "label": "选中段落到详情渲染完成",
+        "p95_ms": 215.98,
+        "count": 9,
+        "budget_ms": 100.0,
+        "within_budget": false
+      },
+      "type_echo": {
+        "label": "键入到回显",
+        "p95_ms": 44.4,
+        "count": 9,
+        "budget_ms": 50.0,
+        "within_budget": true
+      },
+      "page_switch": {
+        "label": "切换阶段页",
+        "p95_ms": 143.04,
+        "count": 5,
+        "budget_ms": 150.0,
+        "within_budget": true
+      },
+      "open_panel": {
+        "label": "打开抽屉或浮层",
+        "p95_ms": 104.23,
+        "count": 2,
+        "budget_ms": 100.0,
+        "within_budget": false
+      }
+    },
+    "observational": {
+      "start_to_interactive": {
+        "label": "启动到可交互（进程启动 → 窗口可用）",
+        "p95_ms": 1790.63,
+        "count": 1,
+        "budget_ms": null,
+        "observational": true
+      },
+      "open_task": {
+        "label": "打开任务（点击到工作台可用）",
+        "p95_ms": 2209.46,
+        "count": 1,
+        "budget_ms": null,
+        "observational": true
+      }
+    },
+    "missing": [],
+    "over_budget": [
+      "select_segment",
+      "open_panel"
+    ],
+    "budgets_from": "0.8.2 plan §10 (p95, 10,000-segment task)",
+    "ok": false,
+    "verdict": "fail:over:select_segment,over:open_panel"
+  },
+  "ok": false
+}

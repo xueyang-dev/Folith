@@ -1,0 +1,64 @@
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+qt.qpa.fonts: Populating font family aliases took 73 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+This plugin does not support raise()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support raise()
+This plugin does not support grabbing the keyboard
+This plugin does not support raise()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+This plugin does not support raise()
+This plugin does not support grabbing the keyboard
+This plugin does not support raise()
+This plugin does not support propagateSizeHints()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+This plugin does not support propagateSizeHints()
+/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/folith/qt/style.py:2149: RuntimeWarning: libpyside: Failed to disconnect (None) from signal "clicked()".
+  self._action.clicked.disconnect()
+{
+  "ok": false,
+  "report": "/Users/xueyang/Dev/FolioThread/.loop/worktrees/g3-locate/.loop/v-run/runtime-baseline.json",
+  "scenario": "S5",
+  "task_segments": 10000,
+  "p95_ms": {
+    "scroll": 26.27,
+    "select_segment": 215.98,
+    "type_echo": 44.4,
+    "page_switch": 143.04,
+    "open_panel": 104.23
+  },
+  "missing": [],
+  "over_budget": [
+    "select_segment",
+    "open_panel"
+  ],
+  "verdict": "fail:over:select_segment,over:open_panel"
+}
