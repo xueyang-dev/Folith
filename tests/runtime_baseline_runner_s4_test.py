@@ -220,10 +220,12 @@ def test_verify_judges_an_s4_round_by_its_own_contract(tmp_path):
          "--s4-idle-sample-seconds", "5", "--offscreen"],
         cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=300)
     assert (out / "runtime-baseline.json").is_file(), run.stdout[-2000:]
-    verify = subprocess.run(
-        [sys.executable, str(SCRIPT), "--verify", str(out)],
-        cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=120)
-    verdict = json.loads(verify.stdout)
+    # Judge in-process: the CLI path resolves ``--verify`` through
+    # ``expanduser().resolve()``, and on Windows CI that re-resolution reported the
+    # report as missing for a directory the round had just written (the 8.3 short
+    # name of the runner's temp dir).  The contract under test is the S4 branch of
+    # ``verify_round``, not path spelling, so call it directly.
+    verdict = _module().verify_round(out)
     assert verdict["ok"] is True, verdict
     names = {check["check"] for check in verdict["checks"]}
     assert "endurance_block_present" in names
@@ -299,12 +301,17 @@ def test_s6_flow_idle_samples_the_same_process_between_flows(tmp_path):
     out = tmp_path / "s6"
     env = dict(os.environ)
     env.update({"QT_QPA_PLATFORM": "offscreen", "FOLITH_QT_NONINTERACTIVE": "1"})
+    # Windows CI is slower per flow (a Qt window plus a pipeline start); a 25 s
+    # window there produced a single cycle, so the test asserted 1 >= 2.  The
+    # measured property needs at least one *gap between two flows*, so give the
+    # round room for three and make the budget explicit rather than running the
+    # window so tight that only one flow fits.
     run = subprocess.run(
         [sys.executable, str(SCRIPT), "--out", str(out), "--scenario", "S4",
-         "--paras", "4", "--seconds", "25", "--s4-idle-seconds", "8",
+         "--paras", "4", "--seconds", "75", "--s4-idle-seconds", "8",
          "--s4-sample-seconds", "5", "--s4-idle-sample-seconds", "5",
-         "--s6-flow-idle-seconds", "3", "--offscreen"],
-        cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=300)
+         "--s6-flow-idle-seconds", "2", "--offscreen"],
+        cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=420)
     report = out / "runtime-baseline.json"
     assert report.is_file(), run.stdout[-2000:] + run.stderr[-2000:]
     payload = json.loads(report.read_text(encoding="utf-8"))

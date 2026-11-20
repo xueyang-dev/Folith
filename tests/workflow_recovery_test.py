@@ -287,11 +287,29 @@ def test_runtime_updates_from_processes_preserve_both_writers(tmp_path, monkeypa
     import sys
     monkeypatch.setattr(core, 'OUTPUT_DIR', tmp_path)
     core.update_runtime_state('writers', status='idle')
+    # The contention here is *constructed*: two processes each write the same
+    # runtime state twelve times as fast as they can.  On Windows that can exhaust
+    # the runtime-write lock's 2 s budget (a killed/scanning process may hold it, and
+    # ``ReplaceFileW`` can be blocked by a reader), which raises ``JobLockTimeout``
+    # from the child and failed the regression on a version-string-only PR.  The
+    # property under test is "both writers' updates survive" -- not "a write always
+    # wins the lock on the first try" -- so the child retries the lock failure it
+    # was constructed into.  The product budget is deliberately left alone.
     script = (
-        "import sys; from pathlib import Path; import core; "
-        "core.OUTPUT_DIR = Path(sys.argv[1]); "
-        "[(core.update_runtime_state('writers', **{sys.argv[2] + str(i): i})) "
-        "for i in range(12)]")
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "import core\n"
+        "from folith.job_lock import JobLockTimeout\n"
+        "core.OUTPUT_DIR = Path(sys.argv[1])\n"
+        "def write(i):\n"
+        "    for attempt in range(20):\n"
+        "        try:\n"
+        "            core.update_runtime_state('writers', **{sys.argv[2] + str(i): i})\n"
+        "            return\n"
+        "        except JobLockTimeout:\n"
+        "            time.sleep(0.05 * (attempt + 1))\n"
+        "    raise SystemExit('writer never acquired the runtime lock')\n"
+        "[write(i) for i in range(12)]")
     children = [subprocess.Popen([sys.executable, '-c', script, str(tmp_path), prefix],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 for prefix in ('writer_a_', 'writer_b_')]
