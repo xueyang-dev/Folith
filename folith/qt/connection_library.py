@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMenu, QPushButton, QScrollArea,
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 from . import adapter, components, connection_status, i18n, icons, style
@@ -153,7 +153,8 @@ class ConnectionLibrary(QWidget):
     def _build_editor(self):
         from .dialogs import _setting_row
         dialog = self.dialog
-        self.editor = QDialog(dialog)
+        from .dialog_fit import FittedDialog
+        self.editor = FittedDialog(dialog)
         self.editor.setObjectName("connectionEditor")
         self.editor.setWindowTitle(i18n.tr('添加连接'))
         self.editor.setModal(True)

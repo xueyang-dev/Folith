@@ -11,7 +11,7 @@ import dataclasses
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
@@ -237,8 +237,16 @@ class EngineDialog(QDialog):
         body.setContentsMargins(20, theme_module.SPACE["sm"], 20, theme_module.SPACE["md"])
         body.setSpacing(theme_module.SPACE["sm"])
         body.addWidget(self.stack, 1)
-        body.addWidget(self._pinned_actions)
-        body.addWidget(self._status)
+        # C-35 (U-7)：底栏压到一行——状态文字在按钮左侧，中间细分隔线过渡。
+        footer = QWidget()
+        footer.setObjectName("settingsFooter")
+        footer_row = QHBoxLayout(footer)
+        footer_row.setContentsMargins(20, theme_module.SPACE["xs"], 20,
+                                      theme_module.SPACE["xs"])
+        footer_row.setSpacing(theme_module.SPACE["sm"])
+        footer_row.addWidget(self._status, 1)
+        footer_row.addWidget(self._pinned_actions, 0)
+        body.addWidget(footer)
         self._pinned_layout.addWidget(self._apply_row("models"))
 
         # 立即生效：改动合并 250 ms 再落盘（拖动、连续输入不会每一下都写一次）。
@@ -286,49 +294,9 @@ class EngineDialog(QDialog):
         return next((key for key, page in self.pages.items() if page is widget), "general")
 
     def _clamp_to_screen(self, *, recenter: bool = False) -> None:
-        """把整窗（含标题栏）夹进当前屏幕的可用区域。
-
-        `QScreen.availableGeometry()` 已经排除了 macOS 的 Dock / 菜单栏和
-        Windows 的任务栏，所以一个跨平台的 Qt 调用就够；共享界面里不写
-        任何平台专属代码（`AGENTS.md`）。
-
-        `recenter=True` 只在首次显示时用：相对主窗口（放得下时）或可用区居中。
-        其余情况（尤其高度动画的每一帧）保持顶边/左边不动，只有底边或右边
-        超出可用区时才上推/左移——macOS 设置窗口是顶边固定、往下伸缩的。
-        """
-        screen = self.screen() or QGuiApplication.primaryScreen()
-        if screen is None:
-            return
-        area = screen.availableGeometry()
-        frame = self.frameGeometry()
-        client = self.geometry()
-        # resize() 改的是客户区，availableGeometry() 要装的是整窗：先把装饰扣掉。
-        extra_w = max(0, frame.width() - client.width())
-        extra_h = max(0, frame.height() - client.height())
-        width = min(max(client.width(), self.minimumWidth()), max(1, area.width() - extra_w))
-        height = min(max(client.height(), self.minimumHeight()), max(1, area.height() - extra_h))
-        if (width, height) != (client.width(), client.height()):
-            self.resize(width, height)
-            frame = self.frameGeometry()
-        if recenter:
-            parent = self.parentWidget()
-            anchor = parent.frameGeometry() if parent is not None and parent.isVisible() else QRect()
-            if not anchor.isValid() or not area.contains(anchor):
-                anchor = area
-            center = anchor.center()
-            frame_x = center.x() - frame.width() // 2
-            frame_y = center.y() - frame.height() // 2
-        else:
-            frame_x, frame_y = frame.left(), frame.top()
-        # right()/bottom() 是闭区间，所以能放下的最靠右/下位置要 +1。
-        frame_x = max(area.left(), min(frame_x, area.right() - frame.width() + 1))
-        frame_y = max(area.top(), min(frame_y, area.bottom() - frame.height() + 1))
-        # move() 对顶层窗口定位的就是整窗（含装饰）左上角；个别平台会差一个
-        # 装饰偏移，按实际 frameGeometry 再校正一次，避免每次夹取都漂移几像素。
-        self.move(frame_x, frame_y)
-        actual = self.frameGeometry().topLeft()
-        if actual.x() != frame_x or actual.y() != frame_y:
-            self.move(self.x() + frame_x - actual.x(), self.y() + frame_y - actual.y())
+        """把整窗夹进当前屏幕的可用区域（C-35）：统一 helper，所有页共用。"""
+        from .dialog_fit import fit_to_screen
+        fit_to_screen(self, recenter=recenter)
 
     def _fit_height(self) -> None:
         """窗口高度随当前页的内容伸缩（macOS 设置窗口的行为），不超出屏幕。
@@ -342,10 +310,12 @@ class EngineDialog(QDialog):
         wanted = inner.sizeHint().height() + 120
         screen = self.screen() or QGuiApplication.primaryScreen()
         area = screen.availableGeometry() if screen is not None else None
-        cap = int(area.height() * 0.85) if area is not None else 820
-        target = max(360, min(wanted, cap, 820))
-        if area is not None:
-            target = min(target, area.height())
+        # C-35：不再用 85% / 820 的猜测。窗口取内容所需高度，但不超过可用区域；
+        # 超出时页面自己的 QScrollArea 滚动，标题和底栏固定。
+        from .dialog_fit import max_client_height
+
+        max_height = max_client_height(self) if area is not None else 820
+        target = max(360, min(wanted, max_height))
         from . import motion
 
         def set_height(value: float) -> None:
