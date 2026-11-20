@@ -2754,5 +2754,7 @@
   "这个模型无法关闭思考；可在这里调整推理强度。": "Dieses Modell kann das Denken nicht abschalten; hier die Stufe anpassen.",
   "只列这个模型已验证的思考档位。": "Nur die verifizierten Denkstufen dieses Modells sind gelistet.",
   "这个模型没有已验证的思考档位": "Für dieses Modell gibt es keine verifizierten Denkstufen",
-  "思考：{v0}": "Denken: {v0}"
+  "思考：{v0}": "Denken: {v0}",
+  "交付内容：{v0} · {v1}": "Lieferung: {v0} · {v1}",
+  "标准交付": "Standardlieferung"
 }

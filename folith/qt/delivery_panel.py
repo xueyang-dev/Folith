@@ -1130,6 +1130,10 @@ class _Header(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme_module.SPACE["md"])
+        # #521：与准备页「交付内容」共用同一条摘要组件（方案 + 文件数），
+        # 收起状态下也能一眼看到有多少成果；chevron 由交付页自己不需要，关掉。
+        from .delivery_summary import DeliverySummaryRow
+        self.summary_row = DeliverySummaryRow(self, chevron=False)
 
         identity = QHBoxLayout()
         layout.addLayout(identity)
@@ -1184,6 +1188,7 @@ class _Header(QWidget):
             meta_layout.addWidget(item, 0, Qt.AlignmentFlag.AlignVCenter)
         meta_layout.addStretch(1)
         column.addWidget(self.meta_row)
+        column.addWidget(self.summary_row)   # #521：与准备页共用的交付摘要行
         column.addSpacing(theme_module.SPACE["sm"])
 
         self.actions = components.FlowRow(spacing=theme_module.SPACE["md"], fill=False)
@@ -1269,6 +1274,11 @@ class _Header(QWidget):
                 i18n.tr('交付于 {v0}', v0=model.frozen_at)
                 if model.frozen_at else i18n.tr('交付时间未知'))
         self.meta_row.setVisible(frozen)
+        self.summary_row.set_summary(
+            i18n.tr('已冻结 v{v0}', v0=version) if frozen and version is not None
+            else i18n.tr('交付内容'),
+            count_label(model.file_count))
+        self.summary_row.setVisible(bool(model.file_count))
         self.set_frozen_actions(frozen)
 
     def set_download_blocked(self, blocked: bool) -> None:

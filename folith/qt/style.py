@@ -652,6 +652,8 @@ QFrame#popover QScrollArea, QFrame#popover QScrollArea > QWidget > QWidget {{ ba
 /* #520 小通知卡片：与页面同一层表面，圆角 + 发丝线；语气只在图标和文字上，不铺彩底。 */
 QFrame#noticeToast {{ background: {t['bg-surface']}; border: 1px solid {t['border-hairline']}; border-radius: {r['md']}px; }}
 QFrame#noticeBanner {{ background: {t['bg-surface']}; border: 1px solid {t['border-hairline']}; border-radius: {r['md']}px; }}
+/* #521：准备页与交付页共用的交付摘要行：一张带圆角的浅面，图标 + 方案 + 文件数。 */
+QFrame#deliverySummaryRow {{ background: {t['bg-surface']}; border: 1px solid {t['border-hairline']}; border-radius: {r['md']}px; }}
 /* 检查与修复是浮层里的内容：底色交给浮层（「凸」字卡片同一层表面），自己不再铺一层。 */
 QFrame#followupDrawer {{ background: transparent; border: none; }}
 QFrame#followupDrawer QScrollArea, QFrame#followupDrawer QScrollArea > QWidget > QWidget {{ background: transparent; }}
