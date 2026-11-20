@@ -154,6 +154,10 @@ EXIT_STOP_BUDGET = 0.6
 
 #: Watch cadence of the monitor thread.  Not a GUI timer: it is a plain daemon
 #: thread doing ``Popen.poll()`` plus, once, a ``runtime_state`` read.
+#: Bounded attempts to write the terminal state; see ``_watch``.  Three is enough
+#: for a transient file lock and short enough that the GUI never waits on it.
+TERMINAL_PUBLISH_ATTEMPTS = 3
+TERMINAL_PUBLISH_RETRY_SECONDS = 0.2
 POLL_SECONDS = 0.15
 
 #: How long the output drain thread gets to report the EOF the kernel has
@@ -392,6 +396,7 @@ class EngineSupervisor:
         self._bound_worker_id = ""
         self._started_at = time.monotonic()
         self._finished = threading.Event()
+        self._terminal_published = False
         self._output = bytearray()
         self._output_closed = threading.Event()
         #: Why the monitor believes the run ended (support/diagnostics only).
@@ -582,14 +587,28 @@ class EngineSupervisor:
         self._exit_code = self.proc.returncode
         _remember_exit(self.job_id, self._exit_code)
         try:
+            # E-6s: the handle exiting is a claim about *my* child, not about the
+            # run.  Never publish a terminal state while the run still has an
+            # owner.  This used to be one ``except Exception: pass`` around both
+            # steps, so a single probe failure (a transient read of
+            # runtime_state.json on Windows, a lock timeout) left the run at
+            # "running" forever while the monitor still reported itself finished:
+            # no terminal state, no error, nothing in the log.  Each step now
+            # fails loudly and the terminal write is attempted regardless --
+            # a late truth is recoverable, a run stuck at "running" is not.
             try:
-                # E-6s: the handle exiting is a claim about *my* child, not
-                # about the run.  Never publish a terminal state while the run
-                # still has an owner.
                 self._await_run_end()
-                self._publish_terminal_state()
-            except Exception:  # noqa: BLE001 - the monitor must never die noisily
-                pass
+            except Exception as exc:  # noqa: BLE001 - recorded, then publish anyway
+                self._record_watch_failure("await_run_end", exc)
+            for attempt in range(TERMINAL_PUBLISH_ATTEMPTS):
+                try:
+                    self._publish_terminal_state()
+                    self._terminal_published = True
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    self._record_watch_failure("publish_terminal_state", exc)
+                    if attempt + 1 < TERMINAL_PUBLISH_ATTEMPTS:
+                        time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
         finally:
             # Owner cleanup belongs to the terminal boundary, not to a branch:
             # an engine that ended must leave neither a token nor a pid that
@@ -601,7 +620,28 @@ class EngineSupervisor:
             except Exception:  # noqa: BLE001 - token release is best effort
                 pass
             _forget(self)
+            if not self._terminal_published:
+                # ``_finished`` is the "terminal truth is on disk" boundary that
+                # callers (and tests) wait on.  Reaching here without it means the
+                # contract was not met; waiting would hang, so it is set, but the
+                # failure is on the record instead of being invisible.
+                self._record_watch_failure(
+                    "finished_without_terminal_state",
+                    RuntimeError("the monitor finished without publishing a terminal state"))
             self._finished.set()
+
+    def _record_watch_failure(self, step: str, exc: BaseException) -> None:
+        """Put a monitor failure where a human can find it (never raise).
+
+        The technical log is the only place the GUI does not show but support can
+        read; a failed terminal write used to go nowhere at all.
+        """
+        try:
+            _core()._append_runtime_technical_log(
+                self.job_id,
+                f"supervisor {step} failed: {type(exc).__name__}: {exc}")
+        except Exception:  # noqa: BLE001 - recording must never break the monitor
+            pass
 
     def _await_run_end(self) -> None:
         """Wait until nothing owns the run, not just until the handle exited.

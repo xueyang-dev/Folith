@@ -517,3 +517,55 @@ def test_a_wrapped_launch_is_refused_before_a_process_exists(isolated, monkeypat
     assert supervisor_module.supervisor(job_id) is None
     assert core.engine_owner(job_id) == {}, "a refused launch must not register"
     assert _status(job_id) != "interrupted", _runtime(job_id)
+
+
+def test_a_probe_failure_still_publishes_the_terminal_state(isolated, gateway, handoff,
+                                                           monkeypatch):
+    """B-51: the monitor used to finish while leaving the run at "running".
+
+    ``_watch`` wrapped ``_await_run_end`` and ``_publish_terminal_state`` in one
+    ``except Exception: pass`` and set ``_finished`` in ``finally``.  A single
+    transient read failure therefore produced exactly the Windows symptom: no
+    terminal write, ``error`` still ``None``, and callers told "finished".  The
+    probe is now allowed to fail; the terminal write is not.
+    """
+    from folith.desktop import engine_supervisor as supervisor_module
+
+    data_dir, _log_dir = isolated
+    job_id = "e6swatchfail1"
+    _create_job(job_id)
+    sup = _start_engine(job_id, gateway)
+    _hand_off(sup, handoff)
+    assert _wait_until(
+        lambda: bool((_runtime(job_id).get("worker") or {}).get("owner_pid")),
+        timeout=180), _runtime(job_id)
+    owner_pid = int((_runtime(job_id).get("worker") or {}).get("owner_pid") or 0)
+
+    real_load = core.load_runtime_state
+    fail = {"count": 1}
+
+    def flaky_load(runtime_job_id):
+        if fail["count"] > 0:
+            fail["count"] -= 1
+            raise OSError("simulated transient state read failure")
+        return real_load(runtime_job_id)
+
+    monkeypatch.setattr(core, "load_runtime_state", flaky_load)
+    os.kill(owner_pid, signal.SIGTERM)
+    assert _wait_until(lambda: sup.wait_finished(0), timeout=60), \
+        "the supervisor never finished after the executor died"
+    monkeypatch.setattr(core, "load_runtime_state", real_load)
+
+    runtime = _runtime(job_id)
+    assert runtime.get("status") == "interrupted", runtime
+    assert (runtime.get("error") or {}).get("type") == "EngineProcessExited", runtime
+    log_path = core.runtime_technical_log_path(job_id)
+    try:
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    # Either probe can meet the injected failure first (both read the state); the
+    # contract is that *a* monitor failure is recorded, not which one.
+    assert "supervisor " in text and " failed: OSError" in text, (
+        "the swallowed probe failure must be visible in the technical log: "
+        f"{text[-500:]}")
