@@ -60,7 +60,9 @@ def test_triage_mode_is_a_switched_row_with_visible_state(qapp):
     assert "只对本任务生效" in row.note.text()
     seen = []
     row.toggled.connect(seen.append)
-    row.setChecked(False)
+    row.setChecked(True)      # programmatic apply must not write back
+    assert seen == []
+    row.click()               # a real user click emits once
     assert seen == [False]
 
 

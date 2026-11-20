@@ -61,8 +61,21 @@ class TriageModeRow(QFrame):
         return self.switch.isChecked()
 
     def setChecked(self, value: bool) -> None:  # noqa: N802 - Qt 命名
+        # Programmatic apply must not emit `toggled` (the old QCheckBox setChecked
+        # didn't either); the review panel's no-write-back tests rely on this.
+        self.switch.blockSignals(True)
         self.switch.setChecked(bool(value))
+        self.switch.blockSignals(False)
         self._sync_state(bool(value))
+
+    def click(self) -> None:  # noqa: N802 - Qt 命名
+        self.switch.click()
+
+    def isEnabled(self) -> bool:  # noqa: N802 - Qt 命名
+        return self.switch.isEnabled()
+
+    def setToolTip(self, text: str) -> None:  # noqa: N802 - Qt 命名
+        self.switch.setToolTip(text)
 
     def setEnabled(self, value: bool) -> None:  # noqa: N802 - Qt 命名
         self.switch.setEnabled(bool(value))
