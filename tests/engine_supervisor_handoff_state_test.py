@@ -168,6 +168,20 @@ def handoff(tmp_path, monkeypatch):
     return release
 
 
+def _diagnose(sup, job_id: str) -> str:
+    """Everything we wish the Windows CI log had said the first time."""
+    parts = [f"terminal_published={getattr(sup, 'terminal_published', None)!r}",
+             f"exit_code={getattr(sup, '_exit_code', None)!r}",
+             f"end_evidence={getattr(sup, '_end_evidence', '')!r}"]
+    try:
+        parts.append("technical_log=" + Path(
+            core.runtime_technical_log_path(job_id)).read_text(
+                encoding="utf-8", errors="replace")[-800:])
+    except OSError as exc:
+        parts.append(f"technical_log=<unreadable: {exc}>")
+    return " | ".join(parts)
+
+
 def _wait_until(predicate, timeout: float = 120.0, interval: float = 0.02) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -554,9 +568,9 @@ def test_a_transient_read_failure_is_retried_and_still_publishes(isolated, gatew
     monkeypatch.setattr(core, "load_runtime_state", real_load)
 
     runtime = _runtime(job_id)
-    assert runtime.get("status") == "interrupted", runtime
+    assert runtime.get("status") == "interrupted", f"{runtime} ||| {_diagnose(sup, job_id)}"
     assert (runtime.get("error") or {}).get("type") == "EngineProcessExited", runtime
-    assert sup.terminal_published is True, "the retry should have published"
+    assert sup.terminal_published is True, f"the retry should have published ||| {_diagnose(sup, job_id)}"
     try:
         text = Path(core.runtime_technical_log_path(job_id)).read_text(
             encoding="utf-8", errors="replace")
