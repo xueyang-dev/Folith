@@ -20,6 +20,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "runtime_baseline_runner.py"
@@ -213,3 +215,52 @@ def test_verify_judges_an_s4_round_by_its_own_contract(tmp_path):
     assert "endurance_block_present" in names
     assert "idle_rss_measured" in names
     assert "R_valid" not in names, "S4 must not be judged by the jank contract"
+
+
+@pytest.mark.skipif(not sys.platform.startswith(("linux", "darwin")),
+                    reason="pgrep/ps are POSIX; the sampler is a POSIX code path")
+def test_the_frozen_main_process_is_found_not_the_watchdog(tmp_path):
+    """The sampler must read the app, not the watchdog or the launching harness.
+
+    Measured in the 0.8.3 window: a "last pid wins" sampler read the app's
+    ``--ui-watchdog`` child at 50 MB while the real main process sat at 315 MB --
+    a number that would have hidden any leak.  ``pgrep -f <app path>`` also
+    matches the harness whose command line repeats that path.
+    """
+    mod = _module()
+    app_path = str(tmp_path / "Fake.app" / "Contents" / "MacOS" / "Folithe")
+    Path(app_path).parent.mkdir(parents=True)
+    # Three processes whose command lines look like the real ones.  The sleep keeps
+    # them alive while the finder runs; they are terminated in the finally block.
+    scripts = {
+        "driver": ["-c", "import time; time.sleep(30)", app_path],
+        "watchdog": ["-c", "import time; time.sleep(30)", app_path, "--ui-watchdog"],
+        "main": ["-c", "import time; time.sleep(30)", app_path, "--selftest",
+                 "--data-dir", str(tmp_path / "data")],
+    }
+    procs = {}
+    try:
+        for name, args in scripts.items():
+            procs[name] = subprocess.Popen([sys.executable, *args],
+                                           stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
+        time.sleep(0.3)  # let the command lines settle
+        pid, command = mod.frozen_app_main_pid(app_path)
+        assert pid == procs["main"].pid, (
+            f"picked pid {pid} ({command!r}); expected the --selftest process "
+            f"{procs['main'].pid}")
+        assert "--selftest" in command and "--ui-watchdog" not in command
+    finally:
+        for proc in procs.values():
+            proc.terminate()
+        for proc in procs.values():
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+def test_the_finder_reports_nothing_when_no_app_is_running(tmp_path):
+    mod = _module()
+    pid, command = mod.frozen_app_main_pid(str(tmp_path / "NotRunning.app" / "Folithe"))
+    assert pid is None and command == ""

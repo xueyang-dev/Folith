@@ -2453,6 +2453,45 @@ OBSERVATION_OPERATIONS = ("start_translation", "open_task")
 _PROCESS_STARTED_AT = time.monotonic()
 
 
+def frozen_app_main_pid(app_path: str) -> tuple[int | None, str]:
+    """The *pytest-style* main process of a running frozen build, or ``(None, "")``.
+
+    ``pgrep -f <app path>`` is not enough to find it: the harness that launched the
+    app repeats the path on its own command line, and the app forks a
+    ``--ui-watchdog`` child right afterwards.  A "last pid wins" heuristic
+    therefore samples the watchdog (measured: 50 MB against the real process's
+    315 MB), which is worse than no number at all.  The main process is the one
+    whose command line runs the app and carries ``--selftest`` without
+    ``--ui-watchdog``.
+    """
+    import subprocess
+
+    try:
+        found = subprocess.run(["pgrep", "-f", str(app_path)],
+                               capture_output=True, text=True, timeout=5)
+        pids = [line.strip() for line in found.stdout.splitlines() if line.strip()]
+        if not pids:
+            return None, ""
+        listing = subprocess.run(["ps", "-p", ",".join(pids), "-o", "pid=,rss=,command="],
+                                 capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+    for line in listing.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3:
+            continue
+        pid, _rss, command = parts
+        if str(app_path) not in command:
+            continue
+        if "--ui-watchdog" in command or "--selftest" not in command:
+            continue
+        try:
+            return int(pid), command
+        except ValueError:
+            continue
+    return None, ""
+
+
 class _SeededTaskReady(Exception):
     """Control flow: the task came from a seed, so the build path is skipped."""
 
