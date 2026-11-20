@@ -154,6 +154,16 @@ EXIT_STOP_BUDGET = 0.6
 
 #: Watch cadence of the monitor thread.  Not a GUI timer: it is a plain daemon
 #: thread doing ``Popen.poll()`` plus, once, a ``runtime_state`` read.
+#: Bounded attempts to write the terminal state; see ``_watch``.  Three is enough
+#: for a transient file lock and short enough that the GUI never waits on it.
+#: Total time the monitor may spend establishing and writing the terminal truth.
+#: A fixed attempt count gave up too early: the inner write already waits for the
+#: runtime lock (2 s) and the Windows file replacement (5 s), so three 0.2 s
+#: retries could exhaust the outer loop while the inner work was still going
+#: (#570: status stayed "queued").  A budget in seconds matches what the caller
+#: waits for, and every wait is recorded.
+TERMINAL_EVIDENCE_BUDGET_SECONDS = 15.0
+TERMINAL_PUBLISH_RETRY_SECONDS = 0.2
 POLL_SECONDS = 0.15
 
 #: How long the output drain thread gets to report the EOF the kernel has
@@ -392,6 +402,9 @@ class EngineSupervisor:
         self._bound_worker_id = ""
         self._started_at = time.monotonic()
         self._finished = threading.Event()
+        self._terminal_published = False
+        #: Public and queryable: did this monitor write a terminal state?
+        self.terminal_published = False
         self._output = bytearray()
         self._output_closed = threading.Event()
         #: Why the monitor believes the run ended (support/diagnostics only).
@@ -581,15 +594,44 @@ class EngineSupervisor:
             time.sleep(POLL_SECONDS)
         self._exit_code = self.proc.returncode
         _remember_exit(self.job_id, self._exit_code)
+        evidence = ""
+        started = time.monotonic()
         try:
-            try:
-                # E-6s: the handle exiting is a claim about *my* child, not
-                # about the run.  Never publish a terminal state while the run
-                # still has an owner.
-                self._await_run_end()
-                self._publish_terminal_state()
-            except Exception:  # noqa: BLE001 - the monitor must never die noisily
-                pass
+            # E-6s: the handle exiting is a claim about *my* child, not about the
+            # run.  Never publish a terminal state while the run still has an
+            # owner -- and never publish one when the answer cannot be read:
+            # "unreadable" is not "no owner"; publishing then writes over a live
+            # run and clears the user's cancel/exit request.
+            #
+            # Budget in *seconds*, not attempts: the write path itself waits for
+            # the runtime lock (2 s) and, on Windows, for ReplaceFileW (5 s), so an
+            # attempt count gave up while the inner work was still legitimate.
+            while time.monotonic() - started < TERMINAL_EVIDENCE_BUDGET_SECONDS:
+                try:
+                    self._await_run_end()
+                    evidence = "ended"
+                    break
+                except Exception as exc:  # noqa: BLE001 - retried, then recorded
+                    waited = time.monotonic() - started
+                    self._record_watch_failure(
+                        f"await_run_end after {waited:.1f}s", exc)
+                    time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
+            if evidence:
+                publish_started = time.monotonic()
+                while time.monotonic() - publish_started < TERMINAL_EVIDENCE_BUDGET_SECONDS:
+                    try:
+                        self._terminal_published = bool(self._publish_terminal_state())
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        waited = time.monotonic() - publish_started
+                        self._record_watch_failure(
+                            f"publish_terminal_state after {waited:.1f}s", exc)
+                        time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
+            else:
+                self._record_watch_failure(
+                    f"evidence not established within "
+                    f"{TERMINAL_EVIDENCE_BUDGET_SECONDS:.0f}s",
+                    RuntimeError("ownership evidence could not be read"))
         finally:
             # Owner cleanup belongs to the terminal boundary, not to a branch:
             # an engine that ended must leave neither a token nor a pid that
@@ -601,7 +643,29 @@ class EngineSupervisor:
             except Exception:  # noqa: BLE001 - token release is best effort
                 pass
             _forget(self)
+            # ``_finished`` says "the monitor is done"; ``terminal_published`` says
+            # whether it wrote the truth.  A caller that needs the truth can tell
+            # them apart instead of reading a stale "running" as final.
+            self.terminal_published = self._terminal_published
+            if not self._terminal_published:
+                self._record_watch_failure(
+                    "finished_without_terminal_state",
+                    RuntimeError("terminal state could not be established; "
+                                 "nothing was published"))
             self._finished.set()
+
+    def _record_watch_failure(self, step: str, exc: BaseException) -> None:
+        """Put a monitor failure where a human can find it (never raise).
+
+        The technical log is the only place the GUI does not show but support can
+        read; a failed terminal write used to go nowhere at all.
+        """
+        try:
+            _core()._append_runtime_technical_log(
+                self.job_id,
+                f"supervisor {step} failed: {type(exc).__name__}: {exc}")
+        except Exception:  # noqa: BLE001 - recording must never break the monitor
+            pass
 
     def _await_run_end(self) -> None:
         """Wait until nothing owns the run, not just until the handle exited.
@@ -692,7 +756,7 @@ class EngineSupervisor:
         self._drain.join(timeout=STDIO_SETTLE_SECONDS)
         return not self._output_closed.is_set()
 
-    def _publish_terminal_state(self) -> None:
+    def _publish_terminal_state(self) -> bool:
         """Never trust the exit code: only ``runtime_state.json`` says success.
 
         Called only after :meth:`_await_run_end`, i.e. only when the run has no
@@ -712,7 +776,7 @@ class EngineSupervisor:
         status = str(runtime.get("status") or "")
         if status in TERMINAL_STATUSES:
             self._clear_recorded_owner(runtime)
-            return
+            return True
         code = self._exit_code
         # The user's request outlives this handle.  The child may have stopped at
         # a batch boundary and written "cancelling" (or "interrupted") with the
@@ -745,7 +809,7 @@ class EngineSupervisor:
         # silently, and the "reopen offers resume" contract depends on this
         # write; a final loss is counted and written to the technical log by
         # ``_write_terminal_runtime_state`` rather than swallowed.
-        core._write_terminal_runtime_state(
+        written = core._write_terminal_runtime_state(
             self.job_id, what="engine_process_exited",
             status="interrupted", phase="interrupted",
             phase_label=message, cancel_requested=cancel_requested,
@@ -754,6 +818,9 @@ class EngineSupervisor:
             event_visibility="user", event_category="lifecycle",
             progress=True, heartbeat=True,
             worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+        # ``_write_terminal_runtime_state`` retries internally and reports whether
+        # the truth landed; the monitor's flag must follow that, not the call.
+        return bool(written)
 
     def _clear_recorded_owner(self, runtime: Dict[str, Any]) -> None:
         """Drop a worker block left behind by a run that already is terminal.

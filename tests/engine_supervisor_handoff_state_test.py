@@ -168,6 +168,20 @@ def handoff(tmp_path, monkeypatch):
     return release
 
 
+def _diagnose(sup, job_id: str) -> str:
+    """Everything we wish the Windows CI log had said the first time."""
+    parts = [f"terminal_published={getattr(sup, 'terminal_published', None)!r}",
+             f"exit_code={getattr(sup, '_exit_code', None)!r}",
+             f"end_evidence={getattr(sup, '_end_evidence', '')!r}"]
+    try:
+        parts.append("technical_log=" + Path(
+            core.runtime_technical_log_path(job_id)).read_text(
+                encoding="utf-8", errors="replace")[-800:])
+    except OSError as exc:
+        parts.append(f"technical_log=<unreadable: {exc}>")
+    return " | ".join(parts)
+
+
 def _wait_until(predicate, timeout: float = 120.0, interval: float = 0.02) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -517,3 +531,148 @@ def test_a_wrapped_launch_is_refused_before_a_process_exists(isolated, monkeypat
     assert supervisor_module.supervisor(job_id) is None
     assert core.engine_owner(job_id) == {}, "a refused launch must not register"
     assert _status(job_id) != "interrupted", _runtime(job_id)
+
+
+def test_a_transient_read_failure_is_retried_and_still_publishes(isolated, gateway,
+                                                               handoff, monkeypatch):
+    """B-53 (a): one unreadable state read must be retried, not swallowed.
+
+    The old ``except Exception: pass`` turned this into "monitor finished, no
+    terminal write, no log" -- the intermittent Windows symptom.  Retrying
+    recovers it: the executor is already dead, so the retry reads the truth and
+    publishes ``interrupted``.
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6swatchfail1"
+    _create_job(job_id)
+    sup = _start_engine(job_id, gateway)
+    _hand_off(sup, handoff)
+    assert _wait_until(
+        lambda: bool((_runtime(job_id).get("worker") or {}).get("owner_pid")),
+        timeout=180), _runtime(job_id)
+    owner_pid = int((_runtime(job_id).get("worker") or {}).get("owner_pid") or 0)
+
+    real_load = core.load_runtime_state
+    state = {"fail": 1}
+
+    def flaky_load(runtime_job_id):
+        if state["fail"] > 0:
+            state["fail"] -= 1
+            raise OSError("simulated transient state read failure")
+        return real_load(runtime_job_id)
+
+    monkeypatch.setattr(core, "load_runtime_state", flaky_load)
+    os.kill(owner_pid, signal.SIGTERM)
+    assert _wait_until(lambda: sup.wait_finished(0), timeout=60), \
+        "the supervisor never finished after the executor died"
+    monkeypatch.setattr(core, "load_runtime_state", real_load)
+
+    runtime = _runtime(job_id)
+    assert runtime.get("status") == "interrupted", f"{runtime} ||| {_diagnose(sup, job_id)}"
+    assert (runtime.get("error") or {}).get("type") == "EngineProcessExited", runtime
+    assert sup.terminal_published is True, f"the retry should have published ||| {_diagnose(sup, job_id)}"
+    try:
+        text = Path(core.runtime_technical_log_path(job_id)).read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    assert "supervisor " in text and " failed: OSError" in text, text[-400:]
+
+
+def test_an_unreadable_ownership_answer_does_not_publish_over_a_live_run(
+        isolated, gateway, handoff, monkeypatch):
+    """B-53 (b): no answer about ownership means nothing may be written.
+
+    E-6s's protection is explicit: an unreadable state raises instead of being
+    read as "no owner", because the terminal write lands on a live run and clears
+    the user's ``cancel_requested`` / ``exit_requested``.  When every retry fails,
+    the monitor must finish with ``terminal_published == False`` and leave both
+    the status and the request flags alone.
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6swatchunreadable1"
+    _create_job(job_id)
+
+    def never_answers(_self):
+        raise OSError("simulated unreadable ownership answer")
+
+    # Installed before the supervisor is created: by the time the executor's pid is
+    # visible, _watch may already be inside _await_run_end.
+    monkeypatch.setattr(supervisor_module.EngineSupervisor, "_await_run_end",
+                        never_answers)
+    sup = _start_engine(job_id, gateway)
+    _hand_off(sup, handoff)
+    assert _wait_until(
+        lambda: bool((_runtime(job_id).get("worker") or {}).get("owner_pid")),
+        timeout=180), _runtime(job_id)
+    owner_pid = int((_runtime(job_id).get("worker") or {}).get("owner_pid") or 0)
+
+    # The user asked to stop: that request has to survive an unanswerable probe.
+    core.update_runtime_state(job_id, exit_requested=True, cancel_requested=True,
+                              on_timeout="retry")
+    # Fail the *ownership probe* while the state stays readable: that is the only
+    # shape in which "give up instead of writing blind" is a decision.  (Failing
+    # the state read would block the publish too, so the gate could not be seen.)
+    # SIGKILL: the child must not get to publish a terminal state itself, or
+    # "nothing was written" would be trivially true.
+    os.kill(owner_pid, signal.SIGKILL if hasattr(signal, "SIGKILL") else signal.SIGTERM)
+    assert _wait_until(lambda: sup.wait_finished(0), timeout=60), \
+        "the supervisor never finished"
+    monkeypatch.undo()
+
+    assert sup.terminal_published is False, "nothing may be published blind"
+    runtime = _runtime(job_id)
+    assert runtime.get("status") != "interrupted", runtime
+    assert runtime.get("error") is None, runtime
+    # The request flags are the *reason* the write must not happen; their exact
+    # value is not asserted here because the executor rewrites the state while it
+    # dies.  What is asserted is that the monitor did not publish over it.
+    try:
+        text = Path(core.runtime_technical_log_path(job_id)).read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    # Recording is best effort by design (a failing logger must not break the
+    # monitor), so the log is checked only when it was written at all.
+    if text:
+        assert "supervisor " in text, text[-400:]
+
+
+def test_a_cancelling_run_still_converges_to_interrupted(isolated, gateway, handoff):
+    """B-61: ``cancelling`` must not be a resting state for a dead executor.
+
+    Seen on a Windows CI run of an unrelated PR: the runtime was left at
+    ``cancelling`` with ``error: None`` while ``wait_finished`` said the monitor was
+    done -- the same "terminal write did not land" family as #570's ``queued``.
+    Whatever the intermediate status was, a run whose executor is gone has to end
+    resumable: ``interrupted`` with a visible reason.
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6scancelling1"
+    _create_job(job_id)
+    sup = _start_engine(job_id, gateway)
+    _hand_off(sup, handoff)
+    assert _wait_until(
+        lambda: bool((_runtime(job_id).get("worker") or {}).get("owner_pid")),
+        timeout=180), _runtime(job_id)
+    owner_pid = int((_runtime(job_id).get("worker") or {}).get("owner_pid") or 0)
+    assert _wait_until(lambda: _status(job_id) in {"queued", "starting", "running",
+                                                   "waiting_external"}, timeout=120), \
+        _runtime(job_id)
+
+    # The child had begun stopping: this is the state the Windows run was stuck in.
+    core.update_runtime_state(job_id, status="cancelling", cancel_requested=True,
+                              on_timeout="retry")
+    assert _status(job_id) == "cancelling", _runtime(job_id)
+
+    os.kill(owner_pid, signal.SIGKILL if hasattr(signal, "SIGKILL") else signal.SIGTERM)
+    assert _wait_until(lambda: sup.wait_finished(0), timeout=60), \
+        "the supervisor never finished after the executor died"
+    runtime = _runtime(job_id)
+    assert runtime.get("status") == "interrupted", f"{runtime} ||| {_diagnose(sup, job_id)}"
+    # A user's stop is not a crash: ``cancel_requested`` survives and the reason is
+    # the "you stopped it" message, not ``EngineProcessExited`` (#453).  What must
+    # hold here is that ``cancelling`` is not a resting state for a dead executor.
+    assert runtime.get("cancel_requested") is True, runtime
+    assert (runtime.get("error") or {}).get("type") in (None, "EngineProcessExited"), runtime
+    assert "engine_process_exited" in _events(job_id), _events(job_id)
