@@ -19,7 +19,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QSizePolicy, QTextBrowser,
     QTextEdit, QVBoxLayout, QWidget,
 )
@@ -351,13 +351,11 @@ class ReviewPanel(QWidget):
         self.concept_button = button(i18n.tr('概念决策'), "list")
         self.concept_button.clicked.connect(self.conceptRequested.emit)
         # clicked 只在用户操作时发出；apply() 同步勾选状态不会反过来写任务。
-        self.triage_toggle = QCheckBox(i18n.tr('自动处理有确定依据的问题（实验）'))
+        # #523：模式开关放进右上控制区，状态用文字写明，说明常驻可见。
+        from .triage_mode import TriageModeRow
+        self.triage_toggle = TriageModeRow()
         self.triage_toggle.setObjectName("reviewTriageToggle")
-        self.triage_toggle.setToolTip(i18n.tr(
-            '只对本任务生效。有确定依据的发现会移入「自动处理（审计）」组，每条都能撤销；'
-            '不修改译文，不调用模型，也不放宽交付门禁。'))
-        self.triage_toggle.setAccessibleDescription(self.triage_toggle.toolTip())
-        self.triage_toggle.clicked.connect(
+        self.triage_toggle.toggled.connect(
             lambda checked: self.triageToggleRequested.emit(bool(checked)))
         self.batch_unify_button = button(i18n.tr('批量统一译名（{v0}）', v0=0), "check-circle")
         self.batch_unify_button.clicked.connect(self.batchUnifyRequested.emit)
@@ -402,7 +400,7 @@ class ReviewPanel(QWidget):
         for widget in (self.evidence_toggle, self.review_all_button,
                        self.batch_unify_button, self.concept_button):
             controls_flow.addWidget(widget)
-        top.addWidget(self.triage_toggle)
+        controls_row.addWidget(self.triage_toggle, 0)
 
         # ---- 左：队列 --------------------------------------------------------
         self.list = QListWidget()
@@ -743,8 +741,17 @@ class ReviewPanel(QWidget):
         # #289: 审计列表。开关关闭时视图里没有 `auto_handled_items` 这个键，
         # 下面的列表就是空的，页面渲染与今天完全一致。
         self._triage_on = bool(self._view.get("qa_triage_enabled"))
+        previous = getattr(self, "_triage_feedback_state", None)
         self.triage_toggle.setChecked(self._triage_on)
         self.triage_toggle.setEnabled(not busy)
+        # #523：切换后当次刷新给出可见结果；同一状态的后续轮询不重复刷提示。
+        if previous is not None and previous != self._triage_on and not busy:
+            if self._triage_on:
+                self.triage_toggle.show_result(int(
+                    (self._view.get("group_counts") or {}).get("auto") or 0))
+            else:
+                self.triage_toggle.show_disabled_notice()
+        self._triage_feedback_state = self._triage_on
         self._auto = [item for item in (self._view.get("auto_handled_items") or [])]
         self._auto_by_key = {
             str(item.get("triage_record_key")): item for item in self._auto

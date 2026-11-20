@@ -2754,7 +2754,14 @@
   "这个模型无法关闭思考；可在这里调整推理强度。": "Este modelo no puede desactivar el razonamiento; ajuste aquí el nivel.",
   "只列这个模型已验证的思考档位。": "Solo se muestran los niveles verificados de este modelo.",
   "这个模型没有已验证的思考档位": "Este modelo no tiene niveles de razonamiento verificados",
-  "思考：{v0}": "Razonamiento: {v0}",
+"思考：{v0}": "Razonamiento: {v0}",
   "交付内容：{v0} · {v1}": "Entrega: {v0} · {v1}",
-  "标准交付": "Entrega estándar"
+  "标准交付": "Entrega estándar",
+  "自动处理（实验）：{v0}": "Manejo automático (experimental): {v0}",
+  "开": "Sí",
+  "关": "No",
+  "只对本任务生效 · 每条可撤销 · 不改译文": "Solo esta tarea · cada registro reversible · sin cambiar la traducción",
+  "已自动处理 {v0} 条": "Se manejaron automáticamente {v0} hallazgos",
+  "当前没有可以按确定依据处理的问题": "No hay hallazgos con evidencia determinista en este momento",
+  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Desactivado; los registros automáticos anteriores siguen en el grupo Automático (auditoría) y se pueden revocar."
 }
