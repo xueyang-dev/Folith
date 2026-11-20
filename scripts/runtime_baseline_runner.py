@@ -2044,6 +2044,9 @@ S4_IDLE_SECONDS = 120.0
 S4_IDLE_SAMPLE_SECONDS = 15.0
 S4_RSS_GROWTH_MB = 64.0
 S4_RSS_GROWTH_FRACTION = 0.20
+#: S6 (#455 plan A): seconds of quiet between flows, sampled -- the same process
+#: must not creep up while it is idle between tasks.  0 keeps S4 unchanged.
+S6_FLOW_IDLE_SECONDS = 0.0
 #: Distinct fixtures the loop rotates through (the product de-duplicates imports).
 S4_FIXTURE_POOL = 12
 
@@ -2190,7 +2193,7 @@ class _EnduranceDriver:
                  settle_timeout, result, sample_seconds=S4_SAMPLE_SECONDS,
                  cycle_timeout=S4_CYCLE_TIMEOUT_S, idle_seconds=S4_IDLE_SECONDS,
                  idle_sample_seconds=S4_IDLE_SAMPLE_SECONDS, clock=time.monotonic,
-                 fixture_builder=None):
+                 fixture_builder=None, flow_idle_seconds=S6_FLOW_IDLE_SECONDS):
         self.app = app
         self.window = window
         self.adapter = adapter
@@ -2203,6 +2206,9 @@ class _EnduranceDriver:
         self.cycle_timeout = max(5.0, float(cycle_timeout))
         self.idle_seconds = max(0.0, float(idle_seconds))
         self.idle_sample_seconds = max(1.0, float(idle_sample_seconds))
+        self.flow_idle_seconds = max(0.0, float(flow_idle_seconds))
+        self.flow_idle_rss_mb: list[float] = []
+        self._flow_idle_until = 0.0
         self.clock = clock
         self.state = "created"
         self.finished = False
@@ -2280,8 +2286,24 @@ class _EnduranceDriver:
         now = self.clock()
         if now >= self._deadline:
             self._begin_idle(now)
+        elif self.flow_idle_seconds > 0:
+            self._flow_idle_until = now + self.flow_idle_seconds
+            self.state = "flow_idle"
         else:
             self._start_cycle()
+
+    def _tick_flow_idle(self, now: float) -> None:
+        """S6: quiet time between two flows, sampled in the same process."""
+        if now - getattr(self, "_last_flow_idle_sample", 0.0) >= 1.0:
+            self._last_flow_idle_sample = now
+            rss = current_rss_mb()
+            if rss is not None:
+                self.flow_idle_rss_mb.append(rss)
+        if now >= self._flow_idle_until or now >= self._deadline:
+            if now >= self._deadline:
+                self._begin_idle(now)
+            else:
+                self._start_cycle()
 
     def _begin_idle(self, now: float) -> None:
         self._idle_until = now + self.idle_seconds
@@ -2816,7 +2838,8 @@ def run_source_s4(args: argparse.Namespace, fixtures: list[Path], data_dir: Path
         cycle_timeout=float(getattr(args, "s4_cycle_timeout", S4_CYCLE_TIMEOUT_S)),
         idle_seconds=float(getattr(args, "s4_idle_seconds", S4_IDLE_SECONDS)),
         idle_sample_seconds=float(
-            getattr(args, "s4_idle_sample_seconds", S4_IDLE_SAMPLE_SECONDS)))
+            getattr(args, "s4_idle_sample_seconds", S4_IDLE_SAMPLE_SECONDS)),
+        flow_idle_seconds=float(getattr(args, "s6_flow_idle_seconds", S6_FLOW_IDLE_SECONDS)))
     started = time.monotonic()
     try:
         _drive_event_loop(app, driver, result)
@@ -2824,6 +2847,19 @@ def run_source_s4(args: argparse.Namespace, fixtures: list[Path], data_dir: Path
             cycles=driver.cycles, crashes=driver.crashes,
             not_responding=driver.not_responding,
             rss_samples=driver.rss_samples, idle_rss_mb=driver.idle_rss_mb)
+        if driver.flow_idle_rss_mb:
+            idle = driver.flow_idle_rss_mb
+            result["endurance"]["flow_idle_rss_mb"] = [round(v, 1) for v in idle]
+            # Compare the quiet windows of the first and the last three flows: the
+            # first flow includes startup allocation, so a single pair would report
+            # the interpreter warming up as a leak (measured: -88 MB in a smoke).
+            window = 3
+            head = idle[:window * 3]
+            tail = idle[-window * 3:]
+            if head and tail:
+                import statistics as _stats
+                result["endurance"]["flow_idle_growth_mb"] = round(
+                    _stats.median(tail) - _stats.median(head), 1)
         result["cycles"] = driver.cycle_records
         result["handle_samples"] = driver.handle_samples
         result["translation"] = {
@@ -3739,6 +3775,9 @@ def main(argv: list[str] | None = None) -> int:
                              "counted as a not-responding episode")
     parser.add_argument("--s4-idle-seconds", type=float, default=S4_IDLE_SECONDS,
                         help="quiet tail after the last S4 cycle (idle RSS baseline)")
+    parser.add_argument("--s6-flow-idle-seconds", type=float, default=S6_FLOW_IDLE_SECONDS,
+                        help="S6 (plan A): quiet seconds between flows in the same "
+                             "process, sampled as the between-task leak evidence")
     parser.add_argument("--s4-idle-sample-seconds", type=float,
                         default=S4_IDLE_SAMPLE_SECONDS,
                         help="sampling interval inside the S4 idle tail")

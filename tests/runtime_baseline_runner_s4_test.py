@@ -288,3 +288,28 @@ def test_the_live_lookup_returns_the_shipping_app_when_it_runs(tmp_path):
     mod = _module()
     pid, command = mod.frozen_app_main_pid(str(tmp_path / "NotRunning.app" / "Folithe"))
     assert pid is None and command == ""
+
+def test_s6_flow_idle_samples_the_same_process_between_flows(tmp_path):
+    """Plan A (#455): leak evidence is what idle RSS does *between* flows.
+
+    S4 measured 1141 independent processes, so nothing could accumulate; S6 keeps
+    one process and takes a quiet sample after each flow.  This is the 2-minute
+    CI version: enough flows with a short gap to prove the mode runs and reports.
+    """
+    out = tmp_path / "s6"
+    env = dict(os.environ)
+    env.update({"QT_QPA_PLATFORM": "offscreen", "FOLITH_QT_NONINTERACTIVE": "1"})
+    run = subprocess.run(
+        [sys.executable, str(SCRIPT), "--out", str(out), "--scenario", "S4",
+         "--paras", "4", "--seconds", "25", "--s4-idle-seconds", "8",
+         "--s4-sample-seconds", "5", "--s4-idle-sample-seconds", "5",
+         "--s6-flow-idle-seconds", "3", "--offscreen"],
+        cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=300)
+    report = out / "runtime-baseline.json"
+    assert report.is_file(), run.stdout[-2000:] + run.stderr[-2000:]
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    endurance = payload["endurance"]
+    assert endurance["cycles"] >= 2, endurance
+    samples = endurance.get("flow_idle_rss_mb") or []
+    assert samples, "S6 must sample idle RSS between flows"
+    assert endurance.get("flow_idle_growth_mb") is not None, endurance
