@@ -2751,5 +2751,6 @@
   "{v0}的思考强度": "Thinking level for {v0}",
   "旧设置：{v0}": "Legacy: {v0}",
   "这个模型无法关闭思考；可在这里调整推理强度。": "This model cannot turn thinking off; adjust the reasoning level here.",
-  "只列这个模型已验证的思考档位。": "Only this model's verified thinking levels are listed."
+  "只列这个模型已验证的思考档位。": "Only this model's verified thinking levels are listed.",
+  "这个模型没有已验证的思考档位": "This model has no verified thinking levels"
 }

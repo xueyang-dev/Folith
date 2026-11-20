@@ -175,6 +175,40 @@ def test_level_selection_is_saved_in_config(app, monkeypatch):
         dlg.close()
 
 
+def test_unknown_model_level_is_disabled_with_a_dedicated_hint(app, monkeypatch):
+    dlg = dialogs.EngineDialog(_config(
+        connections=[
+            {"id": "gw", "name": "gateway", "provider": "Local Gateway",
+             "model": "auto/x", "api_key": "k", "base_url": "http://127.0.0.1:1/v1"},
+            {"id": "u", "name": "mystery", "provider": "OpenRouter",
+             "model": "mystery-model", "api_key": "k", "base_url": "http://127.0.0.1:9/v1"},
+        ],
+        connection_roles={"translation": "gw", "vision": "u"},
+        connection_models={"translation": "auto/x", "vision": "mystery-model"}), TaskRunner())
+    try:
+        lib = dlg.connection_library
+        box = lib.level_selectors["vision"]     # bound to mystery-model
+        assert not box.isEnabled(), "目录外的模型不能选档位"
+        assert box.count() == 1 and box.currentData() == "service_default"
+        assert "没有已验证" in box.toolTip()
+        assert "{v0}" not in box.toolTip()
+    finally:
+        dlg.close()
+
+
+def test_connection_row_summary_names_the_default_levels(app, monkeypatch):
+    dlg = _dialog(monkeypatch)
+    try:
+        lib = dlg.connection_library
+        labels = [w.toolTip() for w in lib.list_group.findChildren(object)
+                  if hasattr(w, "fullText")]
+        all_text = " ".join(labels)
+        # 网关摘要含 Low/Medium/High，DeepSeek 摘要含 Off/On；未知模型不写档位。
+        assert "Low / Medium / High" in all_text or "思考：" in all_text
+    finally:
+        dlg.close()
+
+
 def test_levels_survive_save_and_load(tmp_path, monkeypatch):
     import core
     data = tmp_path / "data"

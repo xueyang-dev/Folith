@@ -558,6 +558,12 @@ class ConnectionLibrary(QWidget):
         detail = f"{provider} · {p['model']}"
         if len(models) > 1:
             detail = i18n.tr('{v0} 等 {v1} 个模型', v0=detail, v1=len(models))
+        # #540 PR-2：连接行摘要带这条连接默认模型的思考档位；不认识的模型不写。
+        from folith.engine import effort_settings
+        level_labels = [i18n.tr(label) for _key, label in
+                        effort_settings.choices(p["provider"], p["model"])[1:]]
+        if level_labels:
+            detail += " · " + i18n.tr('思考：{v0}', v0=" / ".join(level_labels))
         meta = style.ElideLabel(detail, mode=Qt.TextElideMode.ElideRight)
         style.set_text_role(meta, "meta")
         row.addWidget(meta, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -640,7 +646,12 @@ class ConnectionLibrary(QWidget):
         box.setCurrentIndex(index if index >= 0 else 0)
         box.blockSignals(False)
         box.setEnabled(bool(model))
-        if effort_settings.cannot_switch(provider, model):
+        from folith.engine import effort_settings
+        if not model or not effort_settings.choices(provider, model)[1:]:
+            # #540 C-21：目录里没有这个模型 → 灰字「服务默认」不可选 + 专门说明。
+            box.setEnabled(False)
+            box.setToolTip(i18n.tr('这个模型没有已验证的思考档位'))
+        elif effort_settings.cannot_switch(provider, model):
             box.setToolTip(i18n.tr('这个模型无法关闭思考；可在这里调整推理强度。'))
         else:
             box.setToolTip(i18n.tr('只列这个模型已验证的思考档位。'))

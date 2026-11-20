@@ -2752,5 +2752,6 @@
   "{v0}的思考强度": "Nivel de razonamiento para {v0}",
   "旧设置：{v0}": "Anterior: {v0}",
   "这个模型无法关闭思考；可在这里调整推理强度。": "Este modelo no puede desactivar el razonamiento; ajuste aquí el nivel.",
-  "只列这个模型已验证的思考档位。": "Solo se muestran los niveles verificados de este modelo."
+  "只列这个模型已验证的思考档位。": "Solo se muestran los niveles verificados de este modelo.",
+  "这个模型没有已验证的思考档位": "Este modelo no tiene niveles de razonamiento verificados"
 }

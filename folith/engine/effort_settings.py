@@ -8,6 +8,8 @@ already understands, so no runtime path changes.
 """
 from __future__ import annotations
 
+import dataclasses
+
 from typing import Any, Mapping
 
 from folith.engine import reasoning_catalog as catalog
@@ -82,6 +84,29 @@ def migrate(config: Any) -> dict[str, str]:
         if mode in ("thinking_disabled", "thinking_disabled_vllm"):
             result[role] = "off"
     return result
+
+
+def migrate_loaded(config, saved: dict) -> "object":
+    """Migration entry point used by ``EngineConfig.load`` (keeps adapter short)."""
+    from folith.model_connections import effective_config
+
+    cfg = dataclasses.replace(
+        config,
+        connections=list(saved.get("connections") or []),
+        connection_roles=dict(saved.get("connection_roles") or {}),
+        connection_models=dict(saved.get("connection_models") or {}),
+        connection_levels=dict(saved.get("connection_levels") or {}),
+    )
+    cfg.ensure_connections()
+    cfg.connection_levels = migrate(cfg)
+    return effective_config(cfg, cfg.connections, cfg.connection_roles)
+
+
+def translation_effort(config) -> str:
+    """The legacy scalar for a config's translation role (client mapping only)."""
+    effort, _mode = to_job_fields(config.connection_levels, "translation",
+                                  config.provider, config.model)
+    return effort or str(getattr(config, "reasoning_effort", "") or "")
 
 
 def is_legacy(level: str, provider: str, model: str) -> bool:

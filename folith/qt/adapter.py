@@ -75,9 +75,12 @@ TARGET_LANGUAGES: tuple[str, ...] = (
 
 DEFAULT_STYLE_RULES = _DEFAULT_STYLE_RULES
 
-# Oversized documents are refused before reading: a guard against accidental picks,
-# not a product limit; the formats/cap come from the shared application contract
-# so the client never advertises a format the core cannot ingest.
+# A single document larger than this is refused up front instead of being read
+# into memory and then failing deep inside the pipeline.  The limit is a guard
+# against an accidental pick (a disk image, a video), not a product boundary.
+# The accepted formats and the size cap come from the shared application
+# contract, so the desktop client can never advertise a format the core engine
+# cannot actually ingest.
 SUPPORTED_SUFFIXES = SOURCE_SUFFIXES  # compatibility alias for existing callers
 
 
@@ -117,7 +120,9 @@ class EngineConfig:
     reviewer_api_key: str = ""
     reviewer_base_url: str = ""
     reviewer_mode: str = "same"  # "same" | "separate"
-    # Delivery formats: declared for a new task, written to its delivery_config at creation.
+    # Delivery formats the user declares for a new task.  These are written into
+    # the job's own `delivery_config` at creation time, so the core's delivery
+    # gate and snapshot use exactly what the user asked for.
     deliver_plain_docx: bool = True
     deliver_bilingual_docx: bool = True
     deliver_pdf: bool = False
@@ -153,15 +158,8 @@ class EngineConfig:
             cfg.reviewer_model = str(reviewer.get("model") or "")
             cfg.reviewer_api_key = str(reviewer.get("api_key") or "")
             cfg.reviewer_base_url = str(reviewer.get("base_url") or "")
-        cfg.connections = list(saved.get("connections") or [])
-        cfg.connection_roles = dict(saved.get("connection_roles") or {})
-        cfg.connection_models = dict(saved.get("connection_models") or {})
-        cfg.connection_levels = dict(saved.get("connection_levels") or {})
-        cfg.ensure_connections()
         from folith.engine import effort_settings
-        cfg.connection_levels = effort_settings.migrate(cfg)
-        from folith.model_connections import effective_config
-        return effective_config(cfg, cfg.connections, cfg.connection_roles)
+        return effort_settings.migrate_loaded(cfg, saved)
 
     def ensure_connections(self):
         # Migrate existing connections in memory; the next explicit save writes
@@ -491,17 +489,19 @@ def job_config_values(config: EngineConfig, state: dict | None = None) -> dict:
     try:
         base_url = config.translator_base_url()
     except ValueError:
-        # Incomplete connections are reported, never raised: import needs no endpoint.
+        # An incomplete connection is *reported*, never raised, at the mapping
+        # step: importing a document does not need a usable endpoint, and
+        # starting a task reports the reason through the shared command's
+        # `connection_problem()` (the same readable message as before).
         base_url = None
     from folith.engine import effort_settings
-    level_effort, _mode = effort_settings.to_job_fields(
-        config.connection_levels, "translation", config.provider, config.model)
+    # #540 PR-2：翻译档位在客户端映射成核心认识的两个标量，运行时路径不变。
     return {
         "provider": config.provider,
         "model": config.model,
         "api_key": config.api_key,
         "translator_base_url": base_url,
-        "reasoning_effort": level_effort or config.reasoning_effort,
+        "reasoning_effort": effort_settings.translation_effort(config),
         "reviewer_mode": config.reviewer_mode,
         "reviewer_provider": config.reviewer_provider,
         "reviewer_model": config.reviewer_model,
