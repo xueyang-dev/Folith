@@ -2754,5 +2754,6 @@
   "只列这个模型已验证的思考档位。": "Only this model's verified thinking levels are listed.",
   "这个模型没有已验证的思考档位": "This model has no verified thinking levels",
   "思考：{v0}": "Thinking: {v0}",
-  "交付内容：{v0} · {v1}": "Delivery: {v0} · {v1}"
+  "交付内容：{v0} · {v1}": "Delivery: {v0} · {v1}",
+  "标准交付": "Standard delivery"
 }
