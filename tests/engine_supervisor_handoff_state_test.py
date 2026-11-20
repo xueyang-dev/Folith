@@ -519,17 +519,15 @@ def test_a_wrapped_launch_is_refused_before_a_process_exists(isolated, monkeypat
     assert _status(job_id) != "interrupted", _runtime(job_id)
 
 
-def test_a_probe_failure_still_publishes_the_terminal_state(isolated, gateway, handoff,
-                                                           monkeypatch):
-    """B-51: the monitor used to finish while leaving the run at "running".
+def test_a_transient_read_failure_is_retried_and_still_publishes(isolated, gateway,
+                                                               handoff, monkeypatch):
+    """B-53 (a): one unreadable state read must be retried, not swallowed.
 
-    ``_watch`` wrapped ``_await_run_end`` and ``_publish_terminal_state`` in one
-    ``except Exception: pass`` and set ``_finished`` in ``finally``.  A single
-    transient read failure therefore produced exactly the Windows symptom: no
-    terminal write, ``error`` still ``None``, and callers told "finished".  The
-    probe is now allowed to fail; the terminal write is not.
+    The old ``except Exception: pass`` turned this into "monitor finished, no
+    terminal write, no log" -- the intermittent Windows symptom.  Retrying
+    recovers it: the executor is already dead, so the retry reads the truth and
+    publishes ``interrupted``.
     """
-
     data_dir, _log_dir = isolated
     job_id = "e6swatchfail1"
     _create_job(job_id)
@@ -541,11 +539,11 @@ def test_a_probe_failure_still_publishes_the_terminal_state(isolated, gateway, h
     owner_pid = int((_runtime(job_id).get("worker") or {}).get("owner_pid") or 0)
 
     real_load = core.load_runtime_state
-    fail = {"count": 1}
+    state = {"fail": 1}
 
     def flaky_load(runtime_job_id):
-        if fail["count"] > 0:
-            fail["count"] -= 1
+        if state["fail"] > 0:
+            state["fail"] -= 1
             raise OSError("simulated transient state read failure")
         return real_load(runtime_job_id)
 
@@ -558,13 +556,10 @@ def test_a_probe_failure_still_publishes_the_terminal_state(isolated, gateway, h
     runtime = _runtime(job_id)
     assert runtime.get("status") == "interrupted", runtime
     assert (runtime.get("error") or {}).get("type") == "EngineProcessExited", runtime
-    log_path = core.runtime_technical_log_path(job_id)
+    assert sup.terminal_published is True, "the retry should have published"
     try:
-        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+        text = Path(core.runtime_technical_log_path(job_id)).read_text(
+            encoding="utf-8", errors="replace")
     except OSError:
         text = ""
-    # Either probe can meet the injected failure first (both read the state); the
-    # contract is that *a* monitor failure is recorded, not which one.
-    assert "supervisor " in text and " failed: OSError" in text, (
-        "the swallowed probe failure must be visible in the technical log: "
-        f"{text[-500:]}")
+    assert "supervisor " in text and " failed: OSError" in text, text[-400:]

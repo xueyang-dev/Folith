@@ -397,6 +397,8 @@ class EngineSupervisor:
         self._started_at = time.monotonic()
         self._finished = threading.Event()
         self._terminal_published = False
+        #: Public and queryable: did this monitor write a terminal state?
+        self.terminal_published = False
         self._output = bytearray()
         self._output_closed = threading.Event()
         #: Why the monitor believes the run ended (support/diagnostics only).
@@ -586,29 +588,37 @@ class EngineSupervisor:
             time.sleep(POLL_SECONDS)
         self._exit_code = self.proc.returncode
         _remember_exit(self.job_id, self._exit_code)
+        evidence = ""
         try:
             # E-6s: the handle exiting is a claim about *my* child, not about the
             # run.  Never publish a terminal state while the run still has an
-            # owner.  This used to be one ``except Exception: pass`` around both
-            # steps, so a single probe failure (a transient read of
-            # runtime_state.json on Windows, a lock timeout) left the run at
-            # "running" forever while the monitor still reported itself finished:
-            # no terminal state, no error, nothing in the log.  Each step now
-            # fails loudly and the terminal write is attempted regardless --
-            # a late truth is recoverable, a run stuck at "running" is not.
-            try:
-                self._await_run_end()
-            except Exception as exc:  # noqa: BLE001 - recorded, then publish anyway
-                self._record_watch_failure("await_run_end", exc)
+            # owner -- and never publish one when the answer cannot be read:
+            # "unreadable" is not "no owner"; publishing then writes over a live
+            # run and clears the user's cancel/exit request.
+            #
+            # The old code had one ``except Exception: pass`` around both steps,
+            # which turned a transient read failure into "monitor finished, no
+            # terminal write, no log" (the intermittent Windows symptom).  Retrying
+            # recovers the common case; giving up stays a non-publish on the record.
             for attempt in range(TERMINAL_PUBLISH_ATTEMPTS):
                 try:
-                    self._publish_terminal_state()
-                    self._terminal_published = True
+                    self._await_run_end()
+                    evidence = "ended"
                     break
-                except Exception as exc:  # noqa: BLE001
-                    self._record_watch_failure("publish_terminal_state", exc)
+                except Exception as exc:  # noqa: BLE001 - retried, then recorded
+                    self._record_watch_failure("await_run_end", exc)
                     if attempt + 1 < TERMINAL_PUBLISH_ATTEMPTS:
                         time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
+            if evidence:
+                for attempt in range(TERMINAL_PUBLISH_ATTEMPTS):
+                    try:
+                        self._publish_terminal_state()
+                        self._terminal_published = True
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        self._record_watch_failure("publish_terminal_state", exc)
+                        if attempt + 1 < TERMINAL_PUBLISH_ATTEMPTS:
+                            time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
         finally:
             # Owner cleanup belongs to the terminal boundary, not to a branch:
             # an engine that ended must leave neither a token nor a pid that
@@ -620,14 +630,15 @@ class EngineSupervisor:
             except Exception:  # noqa: BLE001 - token release is best effort
                 pass
             _forget(self)
+            # ``_finished`` says "the monitor is done"; ``terminal_published`` says
+            # whether it wrote the truth.  A caller that needs the truth can tell
+            # them apart instead of reading a stale "running" as final.
+            self.terminal_published = self._terminal_published
             if not self._terminal_published:
-                # ``_finished`` is the "terminal truth is on disk" boundary that
-                # callers (and tests) wait on.  Reaching here without it means the
-                # contract was not met; waiting would hang, so it is set, but the
-                # failure is on the record instead of being invisible.
                 self._record_watch_failure(
                     "finished_without_terminal_state",
-                    RuntimeError("the monitor finished without publishing a terminal state"))
+                    RuntimeError("terminal state could not be established; "
+                                 "nothing was published"))
             self._finished.set()
 
     def _record_watch_failure(self, step: str, exc: BaseException) -> None:
