@@ -353,9 +353,12 @@ def test_view_digest_is_field_for_field_equal_to_full_state_digest(env, monkeypa
     digests = project_digest.read_digests(core)
     digest = next(d for d in digests if d["job_id"] == "digest-view-job")
     assert digest == expected, "the read_digests view changed candidate rows"
-    for key in ("pairs", "semantic_units", "knowledge_candidates", "glossary"):
-        if expected["candidate_rows"]:
-            assert digest["candidate_rows"] == expected["candidate_rows"]
+    # A-37: do not let the equivalence check pass vacuously when the fixture
+    # produced no candidate rows or no positions -- that is exactly the case
+    # where a missing `pairs` key would go unnoticed.
+    assert expected["candidate_rows"], "fixture produced no candidate rows"
+    assert expected["candidate_rows"][0].get("positions"), "no position labels to compare"
+    assert digest["candidate_rows"] == expected["candidate_rows"]
 
 
 def test_project_overview_does_not_pollute_cached_state(env) -> None:  # noqa: F811
