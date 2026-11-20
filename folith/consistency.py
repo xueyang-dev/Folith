@@ -203,7 +203,9 @@ def _safe_replace_with_spans(text, variants_to_replace, replacement, protected_f
 
 def current_occurrences(record, pairs):
     variants = {spelling(item.get('target')) for item in record.get('observations') or []}
-    variants.add(spelling(record.get('preferred_target')))
+    preferred = spelling(record.get('preferred_target'))
+    if preferred:
+        variants.add(preferred)
     pattern = _pattern(variants)
     if pattern is None:
         return []
@@ -212,18 +214,62 @@ def current_occurrences(record, pairs):
     recorded_indexes = set(record.get('occurrences') or []) | {
         item.get('segment_id') for item in record.get('observations') or []}
     recorded_indexes.add(record.get('first_seen_segment'))
-    indexes = sorted(index for index in recorded_indexes
-                     if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(pairs))
-    for index in indexes or range(len(pairs)):
+    recorded = sorted(index for index in recorded_indexes
+                      if isinstance(index, int) and not isinstance(index, bool)
+                      and 0 <= index < len(pairs))
+    # #522: after a decision the entity is locked; new bare occurrences in other
+    # segments must still surface, so a locked record scans every segment.
+    locked = record.get('status') == 'locked'
+    indexes = range(len(pairs)) if locked else (recorded or range(len(pairs)))
+    for index in indexes:
         pair = pairs[index]
         if pair.get('excluded') or not any(term_matches(source, pair.get('source') or '') for source in sources if source):
             continue
         target = pair.get('target') or ''
-        matched = list(dict.fromkeys(match.group() for match in pattern.finditer(target)))
+        matched = []
+        for match in pattern.finditer(target):
+            value = match.group()
+            if (locked and preferred and preferred.casefold() in target.casefold()
+                    and value != preferred
+                    and _is_longer_valid_phrase(match, target, pair.get('source') or '',
+                                               sources, variants)):
+                continue
+            if value not in matched:
+                matched.append(value)
         if matched:
             rows.append({'index': index, 'source': pair.get('source') or '',
                          'target': target, 'variants': matched})
     return rows
+
+
+def _is_longer_valid_phrase(match, target, source, sources, variants):
+    """A locked name inside a longer legitimate phrase is not a mismatch (#522).
+
+    "Crown colophon" -> "皇冠标识" is correct even though 皇冠 begins with the
+    locked name 皇冠出版社's bare form 皇冠.  Only applies when the match is a
+    proper prefix of a longer target compound AND the source segment contains a
+    longer source phrase built from a known source form (e.g. "Crown colophon").
+    """
+    end = match.end()
+    if end >= len(target):
+        return False
+    following = target[end:]
+    # A boundary punctuation / whitespace ends the name; continuing CJK/alnum
+    # characters mean it is part of a longer compound.
+    if not following[:1].isalnum():
+        return False
+    for source_form in sources:
+        if not source_form:
+            continue
+        for later in re.finditer(re.escape(source_form), source, re.IGNORECASE):
+            if later.end() >= len(source):
+                continue
+            # allow a space between "Crown" and "colophon" in the source
+            rest = source[later.end():].lstrip()
+            if not rest or not rest[:1].isalnum():
+                continue
+            return True
+    return False
 
 
 def findings(records, pairs, concept_decisions=None):
@@ -255,6 +301,18 @@ def findings(records, pairs, concept_decisions=None):
             {spelling(value).casefold() for row in rows for value in row['variants']})
         preferred = spelling(record.get('preferred_target')).casefold()
         accepted = {spelling(value).casefold() for value in record.get('accepted_variants') or []}
+        if record.get('status') == 'locked':
+            # #522: only segments whose rendering actually differs from the
+            # locked choice belong on the card; a segment that uses the full
+            # preferred name must not be listed just because another segment
+            # has a bare variant.
+            rows = [row for row in rows
+                    if {spelling(v).casefold() for v in row['variants']}
+                    - {preferred} - accepted]
+            if not rows:
+                continue
+            variants = _distinct_variants(
+                {spelling(v).casefold() for row in rows for v in row['variants']})
         locked_mismatch = record.get('status') == 'locked' and variants - {preferred}
         decision = concept_of(record) if concept_of else None
         if decision and decision.get('keep_variants'):
