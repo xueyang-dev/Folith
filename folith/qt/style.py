@@ -2312,14 +2312,19 @@ class StatStrip(QFrame):
             # 名称放不下时省略、完整文字进悬停提示。
             name = ElideLabel(label)
             name.setObjectName("statLabel")
+            # #523：ElideLabel 的 sizePolicy 是 Ignored（最小宽 0），加上 row 末尾的
+            # stretch，四个标签会被挤成 0 宽、名字全没了。给名称一个最小宽度，
+            # 只让数值和发丝线有 stretch；真放不下时才由 ElideLabel 省略。
+            name.setMinimumWidth(max(28, min(120, len(label) * 9 + 12)))
             value = QLabel("—")
             value.setObjectName("statValue")
             cell_layout.addWidget(name)
             cell_layout.addWidget(value)
-            row.addWidget(cell)
+            row.addWidget(cell, 1)
             self._cells[key] = cell
             self._values[key] = value
-        row.addStretch(1)
+        # Cells already stretch; a trailing stretch would take all extra width
+        # and squeeze the labels back to their minimum.
 
     def set_value(self, key: str, value, *, emphasis: str = "default") -> None:
         label = self._values.get(key)
