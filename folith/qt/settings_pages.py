@@ -453,6 +453,12 @@ LOCAL_SHORTCUTS = (
     ("escape", "编辑框：把焦点还给段落网格；检查与修复：收起面板"),
     ("previous_segment", "段落网格：上一段"),
     ("next_segment", "段落网格：下一段"),
+    ("review_next", i18n.tr('审校：下一项')),
+    ("review_apply", i18n.tr('审校：暂存建议')),
+    ("review_open", i18n.tr('审校：确认问题存在')),
+    ("review_confirm", i18n.tr('审校：确认已解决')),
+    ("review_keep", i18n.tr('审校：保留当前译文')),
+    ("review_edit", i18n.tr('审校：修改译文')),
 )
 
 

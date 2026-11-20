@@ -2779,5 +2779,13 @@
   "（已缓存）": "(cached)",
   "双语文件（XLIFF 1.2 / SDLXLIFF / MQXLIFF） ({v0})": "Bilingual files (XLIFF 1.2 / SDLXLIFF / MQXLIFF) ({v0})",
   "此格式目前只支持原样导出": "This format currently supports export only",
-  "也会清理各项目内的派生缓存；项目翻译记忆与任务正文保留。": "Derived caches inside each project are also cleared; project TM and task bodies are kept."
+  "也会清理各项目内的派生缓存；项目翻译记忆与任务正文保留。": "Derived caches inside each project are also cleared; project TM and task bodies are kept.",
+  "下一项": "Next",
+  "暂存建议": "Stage suggestion",
+  "审校：下一项": "Review: Next",
+  "审校：暂存建议": "Review: Stage suggestion",
+  "审校：确认问题存在": "Review: Confirm issue exists",
+  "审校：确认已解决": "Review: Confirm resolved",
+  "审校：保留当前译文": "Review: Keep current translation",
+  "审校：修改译文": "Review: Edit translation"
 }

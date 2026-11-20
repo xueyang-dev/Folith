@@ -522,6 +522,22 @@ class GlanceStrip(QFrame):
 # --------------------------------------------------------------------------
 # Search bar
 # --------------------------------------------------------------------------
+class KeyHint(QLabel):
+    """应用统一的键帽：只接受 :mod:`platform_ui` 里的动作名。
+
+    ``shortcut_text(action)`` 用 ``NativeText`` 渲染，所以 macOS 显示 ⌘/⌥，
+    Windows 显示 Ctrl/Alt；绑定与提示来自同一条定义（AGENTS.md）。
+    """
+
+    def __init__(self, action: str, parent: QWidget | None = None) -> None:
+        super().__init__(platform_ui.shortcut_text(action), parent)
+        self.setObjectName("keyHint")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAccessibleName(platform_ui.shortcut_text(action))
+        self.adjustSize()
+
+
 class SearchBar(QLineEdit):
     """搜索框：前置放大镜、右侧快捷键提示（⌘K），聚焦或有内容时提示自动收起。"""
 
