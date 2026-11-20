@@ -417,3 +417,72 @@ def test_old_task_without_candidates_still_opens(job_env):
     view = core.candidate_view(job_id)
     assert view == []
     assert core.pending_candidate_count(job_id) == 0
+
+
+# ---------------------------------------------------------------------------
+# G3: excluded_segment_records must not rescan 10k pairs on every selection.
+# ---------------------------------------------------------------------------
+def test_excluded_records_include_legacy_and_modern() -> None:  # noqa: F811
+    """The result must contain both modern exclusion records and legacy
+    per-pair flags, with no stale state between calls."""
+    from folith.engine import segments
+
+    pairs = [{"source": f"s{i}", "target": f"t{i}"} for i in range(10000)]
+    pairs[42]["excluded"] = True
+    state = {"pairs": pairs, "excluded_segments": []}
+    first = segments.excluded_segment_records(state)
+    assert len(first) == 1 and first[0]["segment_index"] == 42
+    state["excluded_segments"] = [{"index": 7, "source": "s7"}]
+    second = segments.excluded_segment_records(state)
+    assert any(r.get("segment_index") == 7 for r in second)
+
+
+def test_excluded_records_follow_in_place_flag_toggle() -> None:  # noqa: F811
+    """A-40: toggling one pair's `excluded` without changing any length must
+    immediately change the result."""
+    from folith.engine import segments
+
+    pairs = [{"source": str(i)} for i in range(20)]
+    state = {"pairs": pairs, "excluded_segments": []}
+    assert segments.excluded_segment_records(state) == []
+    pairs[7]["excluded"] = True
+    changed = segments.excluded_segment_records(state)
+    assert len(changed) == 1 and changed[0]["segment_index"] == 7
+    pairs[7]["excluded"] = False
+    assert segments.excluded_segment_records(state) == []
+
+
+def test_excluded_records_inline_the_excluded_check() -> None:  # noqa: F811
+    """A-42: the 10k-pair compatibility scan must not make 10k Python calls
+    to is_excluded(); the check is inlined as a dict lookup."""
+    from folith.engine import segments
+
+    real = segments.is_excluded
+    calls: list = []
+    segments.is_excluded = lambda pair: calls.append(pair) or real(pair)
+    try:
+        pairs = [{"source": str(i)} for i in range(2000)]
+        state = {"pairs": pairs}
+        segments.excluded_segment_records(state)
+    finally:
+        segments.is_excluded = real
+    assert calls == [], "compatibility scan still calls is_excluded() per pair"
+
+
+def test_excluded_records_follow_reason_and_source_edits() -> None:  # noqa: F811
+    """A-41: same excluded indexes, changed text -> records must update."""
+    from folith.engine import segments
+
+    records = [{"index": 0, "source": "orig", "target": "t",
+                "reason": "first reason", "node_id": "n0001"}]
+    state = {"pairs": [{"source": "orig"}], "excluded_segments": records}
+    first = segments.excluded_segment_records(state)
+    assert first[0]["reason"] == "first reason"
+    assert first[0]["node_id"] == "n0001"
+    records[0]["reason"] = "second reason"
+    records[0]["source"] = "changed"
+    records[0]["node_id"] = "n0002"
+    second = segments.excluded_segment_records(state)
+    assert second[0]["reason"] == "second reason"
+    assert second[0]["source"] == "changed"
+    assert second[0]["node_id"] == "n0002"
