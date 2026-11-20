@@ -280,6 +280,28 @@ def snapshot_revision(job_id: str, output_dir: Optional[Path] = None) -> Optiona
     return int(raw.get("snapshot_revision") or 0)
 
 
+def load_job_state_view(job_id: str, keys, output_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """Return a read-only projection of the cached state (#514/A3).
+
+    Unlike :func:`load_job_state_cached` this never pickle-round-trips a
+    30 MB state: it copies only the requested top-level keys.  Callers must not
+    mutate nested values -- the returned lists/dicts are shared with the cached
+    canonical state.  Use this only for read-only consumers (project digests,
+    the home list); every write path must keep using the isolated copy.
+    """
+    signature = state_signature(job_id, output_dir=output_dir)
+    if signature is not None:
+        with _STATE_CACHE_LOCK:
+            cached = _STATE_CACHE.get(signature)
+            if isinstance(cached, dict):
+                return {key: cached[key] for key in keys if key in cached}
+    # Cold path: fall back to the normal loader (one isolated copy).
+    state = load_job_state_cached(job_id, output_dir=output_dir)
+    if not isinstance(state, dict):
+        return None
+    return {key: state[key] for key in keys if key in state}
+
+
 def load_job_state_cached(
     job_id: str,
     output_dir: Optional[Path] = None,
