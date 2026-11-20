@@ -325,7 +325,6 @@ def test_state_view_shares_nested_objects_with_cache(env) -> None:  # noqa: F811
 # ---------------------------------------------------------------------------
 def test_view_digest_is_field_for_field_equal_to_full_state_digest(env, monkeypatch) -> None:  # noqa: F811
     from folith import project_digest
-    from folith.storage import job_repository as repo
 
     core = env["core"]
     state = core.new_job_state("context.docx")
