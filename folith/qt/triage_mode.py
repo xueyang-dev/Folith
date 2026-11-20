@@ -28,6 +28,7 @@ class TriageModeRow(QFrame):
         outer.setSpacing(theme.SPACE["xs"])
 
         row = QHBoxLayout()
+        outer.addLayout(row)   # attach before filling (SIGSEGV guard, see qt_layout_item_wrapper_test)
         row.setSpacing(theme.SPACE["sm"])
         self.switch = components.Switch(self)
         self.switch.setObjectName("reviewTriageToggle")
@@ -38,6 +39,7 @@ class TriageModeRow(QFrame):
         self.switch.toggled.connect(self.toggled.emit)
 
         text = QVBoxLayout()
+        row.addLayout(text, 1)   # attach before filling
         text.setContentsMargins(0, 0, 0, 0)
         text.setSpacing(0)
         self.state = QLabel("")
@@ -47,8 +49,6 @@ class TriageModeRow(QFrame):
         text.addWidget(self.state)
         text.addWidget(self.note)
         row.addWidget(self.switch, 0, Qt.AlignmentFlag.AlignVCenter)
-        row.addLayout(text, 1)
-        outer.addLayout(row)
 
         self.feedback = QLabel("")
         self.feedback.setObjectName("hint")
