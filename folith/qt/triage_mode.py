@@ -1,5 +1,7 @@
 """The review auto-handle mode switch with visible state and feedback (#523).
 
+Screenshot evidence: see docs/evidence/0.8.6-c523-review-header.md (full page).
+
 The mode is a lasting per-task setting; a bare checkbox under the headline
 made it look like a one-shot trigger.  This widget puts it in the top-right
 control row, states the mode in words, keeps the one-line explanation visible,
