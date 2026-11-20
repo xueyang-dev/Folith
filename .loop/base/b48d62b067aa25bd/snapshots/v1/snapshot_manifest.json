@@ -1,0 +1,13 @@
+{
+  "snapshot_version": 1,
+  "job_id": "b48d62b067aa25bd",
+  "assets": [
+    {
+      "name": "delivery.docx"
+    }
+  ],
+  "artifact_hashes": {
+    "delivery.docx": "6014be58144a3afb4cf116a7f743ea0f3af262ff209023ac87bf1b29f8ee2319"
+  },
+  "translation_state_identity": "1d80c663304a95d54aaa5a44a31febf184f772439202dd673dab0f71a20bbde5"
+}

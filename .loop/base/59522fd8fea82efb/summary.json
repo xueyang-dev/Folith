@@ -1,0 +1,12 @@
+{
+  "job_id": "59522fd8fea82efb",
+  "filename": "synthetic-000.docx",
+  "attention_count": 15,
+  "attention_tone": "warning",
+  "segment_count": 30,
+  "target_lang": "zh-CN",
+  "runtime_status": "idle",
+  "updated_at": "synthetic-11-000",
+  "project_id": null,
+  "progress_label": "已完成"
+}
