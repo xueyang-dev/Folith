@@ -529,7 +529,6 @@ def test_a_probe_failure_still_publishes_the_terminal_state(isolated, gateway, h
     terminal write, ``error`` still ``None``, and callers told "finished".  The
     probe is now allowed to fail; the terminal write is not.
     """
-    from folith.desktop import engine_supervisor as supervisor_module
 
     data_dir, _log_dir = isolated
     job_id = "e6swatchfail1"
