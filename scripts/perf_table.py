@@ -43,6 +43,13 @@ BUDGET_LINES = {
 }
 #: 表里的顺序就是用户在一次任务里遇到它们的顺序。
 OPERATION_ORDER = ["scroll", "select_segment", "type_echo", "page_switch", "open_panel"]
+#: B-44 的观测项：用户最先感受到的两件事。计划没给预算，所以它们**不参与
+#: pass/fail**，但必须出现在表里并跨版本比较——发布说明不能缺这两行。
+OBSERVATION_ORDER = ["start_to_interactive", "open_task"]
+OBSERVATION_LABELS = {
+    "start_to_interactive": "启动到可交互（进程启动 → 窗口可用）",
+    "open_task": "打开任务（点击 → 工作台可用）",
+}
 RED = 'style="color:#b00020"'
 
 
@@ -72,6 +79,19 @@ def resolve_report(path: Path) -> Path:
 
 def load_report(path: Path) -> dict:
     return json.loads(resolve_report(path).read_text(encoding="utf-8"))
+
+
+def observation_p95(report: dict) -> dict[str, float]:
+    """``{observation: p95_ms}`` -- measured, compared, but not judged."""
+    if not report:
+        return {}
+    block = (report.get("g3") or {}).get("observational") or {}
+    result: dict[str, float] = {}
+    for name in OBSERVATION_ORDER:
+        row = block.get(name) or {}
+        if row.get("p95_ms") is not None:
+            result[name] = float(row["p95_ms"])
+    return result
 
 
 def operation_p95(report: dict) -> dict[str, float]:
@@ -170,6 +190,17 @@ def build_table(*, previous: dict, current: dict, previous_label: str,
         f"预算线：「一帧」= {FRAME_MS:.1f} ms @60 Hz（滚动、键入这类逐帧操作）；"
         f"「100 ms」= 用户感觉即时的上界。单位 ms，越小越好。",
     ]
+    obs_prev = observation_p95(previous)
+    obs_curr = observation_p95(current)
+    if obs_curr:
+        lines += ["", "观测项（无预算、不参与 pass/fail；用户最先感受到的两件事）：", "",
+                  f"| 观测项 | {previous_label} p95 | {current_label} p95 |", "| --- | ---: | ---: |"]
+        for name in OBSERVATION_ORDER:
+            if obs_curr.get(name) is None and obs_prev.get(name) is None:
+                continue
+            lines.append(
+                f"| {OBSERVATION_LABELS[name]} | {_delta_cell(obs_prev.get(name), obs_curr.get(name))} | "
+                f"{'—' if obs_curr.get(name) is None else f'{obs_curr[name]:.0f} ms'} |")
     rates_prev = jank_rates(previous)
     rates_curr = jank_rates(current)
     if rates_curr:

@@ -117,3 +117,28 @@ def test_the_cli_writes_the_markdown_file(tmp_path):
                      "--out", str(out)]) == 0
     text = out.read_text(encoding="utf-8")
     assert "滚动段落网格" in text and "5.0" in text
+
+
+def test_the_two_observational_items_are_listed_without_a_budget():
+    """B-44: start-to-interactive and open-task must appear, but never as gates.
+
+    They have no budget (the plan set none), so the table lists them separately,
+    compares versions the same way, and must not attach a pass/fail mark.
+    """
+    mod = _module()
+    current = _round({"scroll": 5.0})
+    current["g3"]["observational"] = {
+        "start_to_interactive": {"p95_ms": 3208.0, "budget_ms": None,
+                                 "observational": True},
+        "open_task": {"p95_ms": 4682.0, "budget_ms": None, "observational": True},
+    }
+    table = mod.build_table(previous=_round({"scroll": 5.0}), current=current,
+                            previous_label="0.8.2", current_label="0.8.3")
+    assert "启动到可交互" in table and "3208" in table
+    assert "打开任务" in table and "4682" in table
+    assert "观测项" in table
+    observation_rows = [line for line in table.splitlines()
+                        if "启动到可交互" in line or "打开任务" in line]
+    for row in observation_rows:
+        assert mod.RED not in row, "an observation has no budget to fail"
+        assert "✗" not in row and "✓" not in row
