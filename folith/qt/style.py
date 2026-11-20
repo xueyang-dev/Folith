@@ -620,6 +620,9 @@ QToolButton#settingsTab:hover {{ background: {t['bg-hover']}; }}
 QToolButton#settingsTab:checked {{ background: {t['bg-selected']}; color: {t['text-primary']}; }}
 QFrame#settingsToolbar {{ background: {t['bg-surface']}; border: none;
     border-bottom: 1px solid {t['border-hairline']}; }}
+/* C-35 (U-7)：设置底栏与内容同色，只用一条发丝线分隔，状态与按钮同一行。 */
+QWidget#settingsFooter {{ background: {t['bg-surface']};
+    border-top: 1px solid {t['border-hairline']}; }}
 QLabel#monoValue {{ font-family: "SF Mono", Menlo, monospace; font-size: {f['caption']}px;
     color: {t['text-secondary']}; }}
 QLabel#metricInline {{ font-weight: 600; color: {t['text-primary']}; }}
