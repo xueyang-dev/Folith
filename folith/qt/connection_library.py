@@ -411,7 +411,7 @@ class ConnectionLibrary(QWidget):
         self.reset()
 
     def test_and_save(self):
-        from .dialogs import _set_status
+        from .dialogs import _set_status, connection_error_text
         profile = self._editor_profile(quiet=True)
         if profile is None:
             self._editor_profile()          # 把原因写到状态行
@@ -424,15 +424,17 @@ class ConnectionLibrary(QWidget):
         def done(result):
             ok, message = result
             self.save_button.setEnabled(True)
+            self.dialog.test_label.setVisible(True)
             if ok and self.save():
                 self.close_editor()
                 return
-            _set_status(self.dialog.test_label, i18n.tr('连接失败，未保存：{v0}', v0=message), "danger")
+            _set_status(self.dialog.test_label, i18n.tr('连接失败，未保存：{v0}', v0=connection_error_text(message)), "danger")
             self.force_save_button.setVisible(True)
 
         def failed(message, _detail):
             self.save_button.setEnabled(True)
-            _set_status(self.dialog.test_label, i18n.tr('连接失败，未保存：{v0}', v0=message), "danger")
+            self.dialog.test_label.setVisible(True)
+            _set_status(self.dialog.test_label, i18n.tr('连接失败，未保存：{v0}', v0=connection_error_text(message)), "danger")
             self.force_save_button.setVisible(True)
 
         self.dialog.runner.submit(adapter.test_connection, config, on_done=done,
