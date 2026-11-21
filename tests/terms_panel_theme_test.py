@@ -2,8 +2,6 @@
 the status dot colour must depend only on status (not on row selection)."""
 from __future__ import annotations
 
-from PySide6.QtCore import QSize
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from folith.qt import theme
@@ -28,31 +26,54 @@ def _bg(name):  # noqa: F811
 
 
 def test_terms_panel_root_paints_token_background(window):  # noqa: F811
-    """A-53: sample the rendered sidebar, not the QSS string. The three blank
-    spots around banner/table/action rows must not be black."""
-    image = _rendered(window)
-    panel = window['window'].workbench.terms_panel
-    width = panel.width()
-    samples = []
-    for x, y in ((20, 40), (width - 12, panel.height() // 2),
-                 (width // 2, panel.height() - 8)):
-        if 0 <= x < image.width() and 0 <= y < image.height():
-            samples.append(image.pixelColor(x, y).name())
-    allowed = {_bg('bg-surface'), _bg('bg-page')}
-    assert samples and all(color in allowed for color in samples)
-    assert '#000000' not in samples
+    """A-53/A-54: simulate a light Folith theme on a machine whose system
+    palette is near-black (the user's case). The panel root must still paint
+    the token background; sampling the rendered sidebar catches a black root."""
+    from PySide6.QtGui import QColor, QPalette
 
-
-def test_status_dot_colour_is_independent_of_selection(window):  # noqa: F811
-    """U-8: the dot icon must declare the same pixmap for every QIcon mode,
-    otherwise Qt derives a brown variant for selected rows."""
-    panel = window['window'].workbench.terms_panel
+    main = window['window']
+    main.workbench.set_terms_open(True)
+    panel = main.workbench.terms_panel
     panel.apply('test-job', {'rows': [
         {'source': 'alpha', 'preferred': '甲', 'status': 'provisional'},
-        {'source': 'beta', 'preferred': '乙', 'status': 'provisional'},
     ]}, force=True)
-    assert panel.table.rowCount() >= 2
-    icons = [panel.table.item(row, 2).icon() for row in range(2)]
-    for mode in (QIcon.Mode.Normal, QIcon.Mode.Selected, QIcon.Mode.Active):
-        images = [i.pixmap(QSize(8, 8), mode).toImage() for i in icons]
-        assert bytes(images[0].constBits()) == bytes(images[1].constBits())
+    main.theme_preference = 'light'
+    main.apply_theme_preference()
+    palette = QApplication.instance().palette()
+    palette.setColor(QPalette.ColorRole.Window, QColor('#050505'))
+    palette.setColor(QPalette.ColorRole.Base, QColor('#050505'))
+    QApplication.instance().setPalette(palette)
+    panel.setPalette(palette)
+    for _ in range(20):
+        QApplication.processEvents()
+    image = panel.grab().toImage()
+    expected = theme.qcolor(theme.tokens('light')['bg-surface']).name()
+    for x, y in ((20, 40), (panel.width() // 2, panel.height() - 8)):
+        assert image.pixelColor(x, y).name() == expected
+
+
+def test_selected_status_dot_and_text_match_unselected(window):  # noqa: F811
+    """A-54: compare rendered pixels of selected/unselected rows' status
+    cells -- selection may change the background, never the dot/text colour."""
+    panel = window['window'].workbench.terms_panel
+    panel.apply('t', {'rows': [
+        {'source': 'a', 'preferred': '甲', 'status': 'provisional'},
+        {'source': 'b', 'preferred': '乙', 'status': 'provisional'},
+    ]}, force=True)
+    panel.table.setCurrentCell(0, 2)
+    for _ in range(20):
+        QApplication.processEvents()
+    image = panel.table.viewport().grab().toImage()
+    inks = []
+    for row in (0, 1):
+        rect = panel.table.visualRect(panel.table.model().index(row, 2))
+        counts = {}
+        for x in range(rect.left() + 2, rect.left() + 18):
+            for y in range(rect.top() + 2, rect.top() + rect.height() - 2):
+                color = image.pixelColor(x, y).name()
+                counts[color] = counts.get(color, 0) + 1
+        # The most frequent non-near-white colour is the status ink.
+        inks.append(max(((c, n) for c, n in counts.items()
+                         if c not in ('#ffffff', '#f9fafb', '#f4f6f8')),
+                        key=lambda item: item[1])[0])
+    assert inks[0] == inks[1]

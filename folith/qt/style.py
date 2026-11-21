@@ -288,9 +288,11 @@ QLabel#termsHeading {{ font-size: {f['section']}px; font-weight: 600; color: {t[
 QWidget#termsPanelRoot {{
     background: {t['bg-surface']};
 }}
+/* U-8: selection changes only the row background.  Setting `color` here
+   overrides the status cell's own foreground, making a selected "暂定" row's
+   dot and text black instead of the status colour. */
 QTableView#termsTable::item:selected {{
     background: {t['bg-surface-subtle']};
-    color: {t['text-primary']};
 }}
 /* The review readiness line is a secondary status strip now, not a page title;
    the compact metric overview above it carries the visual weight. */
