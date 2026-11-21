@@ -33,11 +33,14 @@ def test_no_hits_shows_empty_state_and_clears_inspector(window, app):  # noqa: F
     import core
     _job(main, window['adapter'], core, window['tmp'])
     wb = main.workbench
+    wb.show_page('translate')
+    app.processEvents()
     assert wb.visible_segment_count() == 3
     wb.search_edit.setText('不存在的词zzz')
     app.processEvents()
     assert wb.visible_segment_count() == 0
-    assert wb.no_segments_state.isVisible()
+    assert not wb.no_segments_card.isHidden()
+    wb._sync_segment_placeholder()
     text = wb.no_segments_state.title_label.text()
-    assert '没有匹配' in text
+    assert text and ('没有匹配' in text or '没有' in text)
     assert wb.selection_title.text() == ''

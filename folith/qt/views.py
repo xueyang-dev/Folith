@@ -62,7 +62,6 @@ from .style import Card, Chip
 
 DRAFT_AUTOSAVE_MS = 1500
 
-
 TERMINOLOGY_CONFLICT_KINDS = (
     ("all", "全部冲突类型"),
     ("multiple", "同一源术语多个译名"),
@@ -72,7 +71,6 @@ TERMINOLOGY_CONFLICT_KINDS = (
     ("ai", "AI 建议与人工决定冲突"),
     ("other", "其他术语一致性问题"),
 )
-
 
 def terminology_conflict_kind(item: dict) -> str:
     """Classify a terminology review item without creating a second queue.
@@ -97,7 +95,6 @@ def terminology_conflict_kind(item: dict) -> str:
             or "首选译名" in summary or "锁定保留项" in summary:
         return "missing"
     return "other"
-
 
 def terminology_conflict_label(kind: str) -> str:
     label = next((label for code, label in TERMINOLOGY_CONFLICT_KINDS
@@ -5761,21 +5758,24 @@ class WorkbenchView(QWidget):
         * 已开始且有段落 → 网格 + 检查器；
         * 已开始但没有段落（筛选为空、全被排除）→ 一段说明。
 
+        判据用 `_all_rows` 判任务是否在翻译；表格可见性另看 `_visible_rows`：
+        筛选结果为空时表格应让位给空态，而不是在它下面留一块空白。
         """
         started = self._task_started()
         has_rows = bool(self._all_rows)
+        visible_rows = self._visible_rows()
         show_setup = not started
         was_setup = getattr(self, "_showing_setup", show_setup)
         self._showing_setup = show_setup
         self.setup_page.setVisible(show_setup)
         self.toolbar_bar.setVisible(started and has_rows)
-        self.translation_split.setVisible(started and has_rows)
-        self.no_segments_card.setVisible(started and (not has_rows or not self._visible_rows()))
+        self.translation_split.setVisible(started and has_rows and bool(visible_rows))
+        self.no_segments_card.setVisible(started and (not has_rows or not visible_rows))
         if was_setup and started and has_rows:
             self._motion.reveal("translation-body", self.translation_split, kind="body")
-        if not self._visible_rows():
+        if not visible_rows:
             self.selection_title.setText("")
-        if show_setup or (has_rows and self._visible_rows()):
+        if show_setup or (has_rows and visible_rows):
             return
         state = self._state or {}
         recognising = self._recognition_progress()
@@ -5802,9 +5802,9 @@ class WorkbenchView(QWidget):
 
     def _render_segments(self) -> None:
         """按可见集合更新网格；重建时按稳定段身份恢复选中，不触碰编辑器。"""
-        self._sync_segment_placeholder()
         previous_rows = self._rows
         self._rows = self._visible_rows()
+        self._sync_segment_placeholder()
         old_count = self.segment_list.rowCount()
         new_count = len(self._rows)
         # Rows only appended at the end (a translation run committing a batch):
