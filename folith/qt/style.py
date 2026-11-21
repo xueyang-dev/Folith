@@ -281,6 +281,19 @@ QLabel#faint {{ font-size: {f['caption']}px; color: {t['text-muted']}; }}
 QLabel#metric {{ font-size: {f['metric']}px; font-weight: 700; color: {t['text-primary']}; }}
 /* These existing semantic names previously fell through to the body style. */
 QLabel#termsHeading {{ font-size: {f['section']}px; font-weight: 600; color: {t['text-primary']}; }}
+/* U-8: TermsPanel roots autoFillBackground=True.  Without a QSS background
+   it fills with palette(window), which is dark on macOS light theme -> the
+   whole panel (banner/table margins/action rows) turns black.  Paint the root
+   with the panel token so everything laid directly on it inherits it. */
+QWidget#termsPanelRoot {{
+    background: {t['bg-surface']};
+}}
+/* U-8: selection changes only the row background.  Setting `color` here
+   overrides the status cell's own foreground, making a selected "暂定" row's
+   dot and text black instead of the status colour. */
+QTableView#termsTable::item:selected {{
+    background: {t['bg-surface-subtle']};
+}}
 /* The review readiness line is a secondary status strip now, not a page title;
    the compact metric overview above it carries the visual weight. */
 QLabel#reviewHeadline {{ font-size: {f['body']}px; font-weight: 600; color: {t['text-secondary']}; }}

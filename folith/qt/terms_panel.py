@@ -55,6 +55,8 @@ class _TermsEditorCard(Card):
 class TermsPanel(QWidget):
     """术语表编辑器。"""
 
+    ROOT_OBJECT_NAME = "termsPanelRoot"
+
     workspaceRequested = Signal()
     locateRequested = Signal(dict)
     segmentRequested = Signal(int)
@@ -73,6 +75,11 @@ class TermsPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName(TermsPanel.ROOT_OBJECT_NAME)
+        # U-8: WA_StyledBackground makes the QSS background actually paint;
+        # without it the root falls back to palette(window) which is dark on
+        # macOS light theme, and everything laid directly on it looks black.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._view: dict = {}
         self._job_id = ""
         self._rows: list[dict] = []
@@ -716,6 +723,18 @@ class TermsPanel(QWidget):
             for column, value in enumerate(values):
                 item = (components.status_cell(str(value or ""), tone) if column == 2
                         else QTableWidgetItem(str(value or "")))
+                if column == 2:
+                    # U-8: Qt derives a different QIcon variant for selected
+                    # rows (brown instead of the status orange).  Pin every
+                    # mode to the same pixmap so the dot colour depends only
+                    # on the status.
+                    from PySide6.QtGui import QIcon
+                    dot = item.icon()
+                    same = dot.pixmap(QSize(8, 8), QIcon.Mode.Normal)
+                    for mode in (QIcon.Mode.Selected, QIcon.Mode.Active,
+                                 QIcon.Mode.Disabled):
+                        dot.addPixmap(same, mode)
+                    item.setIcon(dot)
                 item.setData(Qt.ItemDataRole.UserRole, index)
                 if column == 3:
                     item.setData(Qt.ItemDataRole.DisplayRole, int(row.get('occurrences') or 0))
