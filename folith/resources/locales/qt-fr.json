@@ -266,6 +266,7 @@
   "低置信度分组建议，请先确认这些形式属于同一概念。": "Suggestion de regroupement à faible niveau de confiance. Confirmez d’abord que ces formes désignent le même concept.",
   "何时识别": "Quand reconnaître",
   "作者": "Auteur",
+  "X 主页": "Profil X",
   "作者检查关键页面与版式": "L'auteur vérifie les pages clés et la mise en page",
   "作者补充证据": "Éléments de preuve complémentaires de l'auteur",
   "作者视觉复核": "Revue visuelle de l'auteur",
@@ -2764,7 +2765,7 @@
   "只对本任务生效 · 每条可撤销 · 不改译文": "Cette tâche uniquement · chaque enregistrement réversible · traduction inchangée",
   "已自动处理 {v0} 条": "{v0} constats traités automatiquement",
   "当前没有可以按确定依据处理的问题": "Aucun constat à preuve déterministe pour l'instant",
-"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Désactivé ; les enregistrements restent dans le groupe Traitement automatique (audit) et peuvent être annulés.",
+  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Désactivé ; les enregistrements restent dans le groupe Traitement automatique (audit) et peuvent être annulés.",
   "{v0}（沿用翻译）": "{v0} (hérité de la traduction)",
   "计算中…": "Calcul en cours…"
 }
