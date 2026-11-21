@@ -1,10 +1,10 @@
-"""The two paths that take ``.worker.lock`` must agree on the teardown rule.
+"""The worker-lock settle rule lives in one helper (save path).
 
-A save and a direct stage call both need the job's execution lock.  They used to
-disagree: the save waited ``WORKER_LOCK_SETTLE_SECONDS`` once the runtime said the
-run was terminal, the direct path failed at once -- so while the worker thread was
-still winding down, saving worked and a manual review was refused with
-"任务正在后台处理".  Windows CI exposed it in ``qt_window_migration_test``.
+Saving used to inline its own copy of "wait out a teardown when the run is already
+terminal".  ``acquire_worker_lock_or_settle`` now owns that rule so the direct and
+save paths cannot drift apart by accident; the direct path keeps its *immediate*
+refusal on purpose (within one process the POSIX lock is not a duplicate detector,
+and ``manual_review_execution_test`` pins the error a second worker sees).
 """
 from __future__ import annotations
 
