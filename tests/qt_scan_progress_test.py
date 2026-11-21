@@ -71,7 +71,7 @@ def test_other_runs_keep_the_ordinary_empty_state(app):
 @pytest.mark.parametrize("language", ["en", "es", "ru", "ar", "fr", "de"])
 @pytest.mark.parametrize("state,title,hint", [
     ({}, '还没有可编辑的段落', '这份文档目前没有切分出的段落。点上方「开始翻译」会导入并切分正文；进度会自动保存，可以随时离开再回来。'),
-    ({"paras": ["source"]}, '当前筛选下没有段落', '清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。'),
+    ({"paras": ["source"]}, '没有匹配的段落', '清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。'),
     ({"excluded_segments": [{"source": "source"}]}, '所有段落都被排除了', '被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，原文与当前译文都完整保留。'),
 ])
 def test_empty_states_use_selected_locale(app, language, state, title, hint):
