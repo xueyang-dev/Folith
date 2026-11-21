@@ -2766,5 +2766,11 @@
   "当前没有可以按确定依据处理的问题": "Aucun constat à preuve déterministe pour l'instant",
 "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Désactivé ; les enregistrements restent dans le groupe Traitement automatique (audit) et peuvent être annulés.",
   "{v0}（沿用翻译）": "{v0} (hérité de la traduction)",
-  "计算中…": "Calcul en cours…"
+  "计算中…": "Calcul en cours…",
+  "AI 解读": "Explication IA",
+  "请先选择一条问题。": "Sélectionnez d'abord un élément.",
+  "找不到任务状态，无法解读。": "État de la tâche introuvable.",
+  "没有可用的模型连接，无法解读。": "Aucune connexion de modèle.",
+  "解读失败：{v0}": "Échec de l'explication : {v0}",
+  "（已缓存）": "(en cache)"
 }
