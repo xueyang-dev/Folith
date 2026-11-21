@@ -2769,5 +2769,6 @@
   "计算中…": "Wird berechnet…",
   "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "Der Anbieter hat diesen Schlüssel für das Modell abgelehnt: prüfen Sie in der Konsole, ob das Modell für diesen Schlüssel freigeschaltet ist.",
   "已清除筛选，显示第 {v0} 段": "Filter gelöscht, Absatz {v0} wird angezeigt",
-  "没有匹配的段落": "Keine passenden Absätze"
+  "没有匹配的段落": "Keine passenden Absätze",
+  "找不到第 {v0} 段，未更改筛选。": "Segment {v0} nicht gefunden; Filter unverändert."
 }

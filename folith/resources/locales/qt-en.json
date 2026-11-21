@@ -2768,5 +2768,6 @@
   "计算中…": "Calculating…",
   "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "The provider rejected this key for that model: check your provider console that the model is enabled for this key.",
   "已清除筛选，显示第 {v0} 段": "Filters cleared, showing segment {v0}",
-  "没有匹配的段落": "No matching segments"
+  "没有匹配的段落": "No matching segments",
+  "找不到第 {v0} 段，未更改筛选。": "Segment {v0} not found; filters unchanged."
 }
