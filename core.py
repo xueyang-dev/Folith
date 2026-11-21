@@ -11320,21 +11320,14 @@ WORKER_LOCK_SETTLE_SECONDS = 2.0
 def _acquire_save_worker_lock(job_id, runtime):
     """Take ``.worker.lock`` for an external save, waiting out a teardown.
 
-    Returns the lock stream, or ``None`` when the job really is busy.
+    One rule, shared with the direct-stage path (:func:`folith.engine.locks.
+    acquire_worker_lock_or_settle`): an active run refuses at once, a terminal one
+    gets ``WORKER_LOCK_SETTLE_SECONDS`` for the worker thread to let go.
     """
-    path = job_dir(job_id) / ".worker.lock"
-    lock = _job_lock.acquire(path, blocking=False)
-    if lock is not None:
-        return lock
-    if str(runtime.get("status") or "") in RUNTIME_ACTIVE_STATUSES:
-        return None
-    deadline = time.monotonic() + WORKER_LOCK_SETTLE_SECONDS
-    while time.monotonic() < deadline:
-        time.sleep(0.02)
-        lock = _job_lock.acquire(path, blocking=False)
-        if lock is not None:
-            return lock
-    return None
+    from folith.engine.locks import acquire_worker_lock_or_settle
+
+    return acquire_worker_lock_or_settle(
+        job_id, status=runtime.get("status"))
 
 
 @_serialized_job_mutation
