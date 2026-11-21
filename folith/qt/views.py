@@ -62,7 +62,6 @@ from .style import Card, Chip
 
 DRAFT_AUTOSAVE_MS = 1500
 
-
 TERMINOLOGY_CONFLICT_KINDS = (
     ("all", "全部冲突类型"),
     ("multiple", "同一源术语多个译名"),
@@ -72,7 +71,6 @@ TERMINOLOGY_CONFLICT_KINDS = (
     ("ai", "AI 建议与人工决定冲突"),
     ("other", "其他术语一致性问题"),
 )
-
 
 def terminology_conflict_kind(item: dict) -> str:
     """Classify a terminology review item without creating a second queue.
@@ -97,7 +95,6 @@ def terminology_conflict_kind(item: dict) -> str:
             or "首选译名" in summary or "锁定保留项" in summary:
         return "missing"
     return "other"
-
 
 def terminology_conflict_label(kind: str) -> str:
     label = next((label for code, label in TERMINOLOGY_CONFLICT_KINDS
@@ -3663,7 +3660,7 @@ class WorkbenchView(QWidget):
         self.followup_panel.repairRequested.connect(self.entityRepairRequested.emit)
         self.followup_panel.acceptRequested.connect(self.entityAcceptRequested.emit)
         self.followup_panel.rescanRequested.connect(self.rescanRequested.emit)
-        self.followup_panel.locateRequested.connect(self._locate_segment_from_followup)
+        self.followup_panel.locateRequested.connect(self._locate_segment)
         self.followup_panel.profileEditRequested.connect(self.profileEditRequested.emit)
         # 在下拉卡片里：「需要处理 · N」是重复信息（盾牌上已经有数字），不显示。
         self.followup_panel.set_show_overview(False)
@@ -5251,13 +5248,18 @@ class WorkbenchView(QWidget):
         self.followup_panel.set_preview(preview, source, target)
         self.review_panel.conflict.set_preview(preview, source, target)
 
-    def _locate_segment_from_followup(self, index: int) -> None:
-        """「检查与修复」里点一个失败批次：回到翻译页并选中那一段（清掉会挡住它的筛选）。"""
-        self.show_page("translate")
+    def _locate_segment(self, index: int) -> None:
+        self.show_page("translate")  # jump from any entry; clear hiding filters
         if not self.select_segment(index):
             self.search_edit.clear()
             self.set_status_filter("全部")
-            self.select_segment(index)
+            for widget in (self.only_edited_box, self.only_issues_box, *self.filter_actions.values()):
+                widget.setChecked(False)
+            self._filters_changed()
+            if self.select_segment(index):
+                self.set_task_notice(i18n.tr("已清除筛选，显示第 {v0} 段", v0=index + 1))
+        self.segment_list.scrollTo(self.segment_list.model().index(max(0, self._position_of_loaded_segment() or 0), 0))
+        self.focus_editor()
 
     def _render_details(self) -> None:
         """任务详情只在打开这一页、且状态对象换了时重算。
@@ -5607,9 +5609,7 @@ class WorkbenchView(QWidget):
 
     def show_segment_for_edit(self, index: int) -> None:
         """从审校页跳到翻译页的某一段（用户要自己改译文）。"""
-        self.tabs.setCurrentIndex(0)
-        self.select_segment(int(index))
-        self.focus_editor()
+        self._locate_segment(int(index))
 
     # ================= 过滤（复用核心语义） =================
     def set_status_filter(self, name: str) -> None:
@@ -5758,21 +5758,24 @@ class WorkbenchView(QWidget):
         * 已开始且有段落 → 网格 + 检查器；
         * 已开始但没有段落（筛选为空、全被排除）→ 一段说明。
 
-        判据用 `_all_rows`（总段数）而不是过滤后的 `_rows`：筛选结果为空时
-        表格空着是**正确**的，不能把它说成"这份文档没有段落"。
+        判据用 `_all_rows` 判任务是否在翻译；表格可见性另看 `_visible_rows`：
+        筛选结果为空时表格应让位给空态，而不是在它下面留一块空白。
         """
         started = self._task_started()
         has_rows = bool(self._all_rows)
+        visible_rows = self._visible_rows()
         show_setup = not started
         was_setup = getattr(self, "_showing_setup", show_setup)
         self._showing_setup = show_setup
         self.setup_page.setVisible(show_setup)
         self.toolbar_bar.setVisible(started and has_rows)
-        self.translation_split.setVisible(started and has_rows)
-        self.no_segments_card.setVisible(started and not has_rows)
+        self.translation_split.setVisible(started and has_rows and bool(visible_rows))
+        self.no_segments_card.setVisible(started and (not has_rows or not visible_rows))
         if was_setup and started and has_rows:
             self._motion.reveal("translation-body", self.translation_split, kind="body")
-        if show_setup or has_rows:
+        if not visible_rows:
+            self.selection_title.setText("")
+        if show_setup or (has_rows and visible_rows):
             return
         state = self._state or {}
         recognising = self._recognition_progress()
@@ -5789,7 +5792,7 @@ class WorkbenchView(QWidget):
             hint = i18n.tr('被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，'
                            '原文与当前译文都完整保留。')
         elif state.get("paras") or state.get("pairs"):
-            title = i18n.tr('当前筛选下没有段落')
+            title = i18n.tr('没有匹配的段落')
             hint = i18n.tr('清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。')
         else:
             title = i18n.tr('还没有可编辑的段落')
@@ -5799,9 +5802,9 @@ class WorkbenchView(QWidget):
 
     def _render_segments(self) -> None:
         """按可见集合更新网格；重建时按稳定段身份恢复选中，不触碰编辑器。"""
-        self._sync_segment_placeholder()
         previous_rows = self._rows
         self._rows = self._visible_rows()
+        self._sync_segment_placeholder()
         old_count = self.segment_list.rowCount()
         new_count = len(self._rows)
         # Rows only appended at the end (a translation run committing a batch):
@@ -6534,12 +6537,8 @@ class WorkbenchView(QWidget):
         if not items:
             return
         index = items[0].get("segment_index")
-        self.show_page("translate")
         if isinstance(index, int) and index >= 0:
-            # `segment_list` 是 QTableWidget，选择由工作台负责（它还要同步检查器、
-            # 浮层编辑框与行高）；以前写成了 `self.segment_list.select_segment(...)`
-            # 并套了 hasattr 兜底，于是这一跳从来没发生过（审查阻断项）。
-            self.select_segment(index)
+            self._locate_segment(index)
 
     def _fill_supplements(self, items: list[dict]) -> None:
         """按"还能补生成的文件"重建按钮（每秒刷新：清单没变就不动控件）。"""

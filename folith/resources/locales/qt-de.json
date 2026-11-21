@@ -2764,8 +2764,10 @@
   "只对本任务生效 · 每条可撤销 · 不改译文": "Nur für diese Aufgabe · jede Bewertung rückgängig machbar · Übersetzung unverändert",
   "已自动处理 {v0} 条": "{v0} Befunde automatisch bearbeitet",
   "当前没有可以按确定依据处理的问题": "Derzeit keine Befunde mit eindeutigen Belegen",
-"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Aus; frühere Einträge bleiben in der Gruppe „Automatisch bearbeitet (Audit)“ und können einzeln widerrufen werden.",
+  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Aus; frühere Einträge bleiben in der Gruppe „Automatisch bearbeitet (Audit)“ und können einzeln widerrufen werden.",
   "{v0}（沿用翻译）": "{v0} (von Übersetzung geerbt)",
   "计算中…": "Wird berechnet…",
-  "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "Der Anbieter hat diesen Schlüssel für das Modell abgelehnt: prüfen Sie in der Konsole, ob das Modell für diesen Schlüssel freigeschaltet ist."
+  "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "Der Anbieter hat diesen Schlüssel für das Modell abgelehnt: prüfen Sie in der Konsole, ob das Modell für diesen Schlüssel freigeschaltet ist.",
+  "已清除筛选，显示第 {v0} 段": "Filter gelöscht, Absatz {v0} wird angezeigt",
+  "没有匹配的段落": "Keine passenden Absätze"
 }
