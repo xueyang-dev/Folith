@@ -2764,13 +2764,10 @@
   "只对本任务生效 · 每条可撤销 · 不改译文": "Solo esta tarea · cada registro reversible · sin cambiar la traducción",
   "已自动处理 {v0} 条": "Se manejaron automáticamente {v0} hallazgos",
   "当前没有可以按确定依据处理的问题": "No hay hallazgos con evidencia determinista en este momento",
-"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Desactivado; los registros automáticos anteriores siguen en el grupo Automático (auditoría) y se pueden revocar.",
+  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Desactivado; los registros automáticos anteriores siguen en el grupo Automático (auditoría) y se pueden revocar.",
   "{v0}（沿用翻译）": "{v0} (heredado de traducción)",
   "计算中…": "Calculando…",
-<<<<<<< HEAD
   "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "El proveedor rechazó esta clave para ese modelo: comprueba en su consola que el modelo esté habilitado para esta clave.",
-  "已清除筛选，显示第 {v0} 段": "Filtros borrados; se muestra el segmento {v0}"
-=======
+  "已清除筛选，显示第 {v0} 段": "Filtros borrados; se muestra el segmento {v0}",
   "没有匹配的段落": "No hay segmentos coincidentes"
->>>>>>> 1165eca0 (fix(0.8.3/A-57): search superscripts as text and show a clear zero-result state)
 }
