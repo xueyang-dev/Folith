@@ -2765,5 +2765,11 @@
   "当前没有可以按确定依据处理的问题": "No findings with deterministic evidence right now",
 "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Off; earlier auto-handled records remain in the Auto-handled (audit) group and can be revoked individually.",
   "{v0}（沿用翻译）": "{v0} (inherited from translation)",
-  "计算中…": "Calculating…"
+  "计算中…": "Calculating…",
+  "AI 解读": "AI explain",
+  "请先选择一条问题。": "Select an item first.",
+  "找不到任务状态，无法解读。": "Job state not found; cannot explain.",
+  "没有可用的模型连接，无法解读。": "No model connection configured; cannot explain.",
+  "解读失败：{v0}": "Explanation failed: {v0}",
+  "（已缓存）": "(cached)"
 }
