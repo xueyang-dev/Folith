@@ -39,6 +39,14 @@ What this file pins
    can never reach a launcher by accident).
 5. ``engine_process_exited`` is the signature of the defect: it may never
    appear while the run is still executing.
+6. CX-07 §1: a terminal retry must not write over a run that was taken over.
+   The old monitor's first write failed, the user resumed, the replacement
+   engine is live — the old monitor's retry re-checks ownership at the moment
+   of the write and abandons instead of publishing ``interrupted`` over the
+   replacement and clearing its worker id.
+7. CX-07 §7: the app's exit must not fund a background terminal retry.  When
+   every write fails, ``shutdown_all`` still finishes at its own budget and
+   the monitor ends at once (the retry waits on ``request_stop``'s halt).
 
 The child is the repository's real entry (``qt_client.py --engine-host``); the
 supervisor is the real ``folith.desktop.engine_supervisor``; the model endpoint
@@ -50,6 +58,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -172,7 +181,8 @@ def _diagnose(sup, job_id: str) -> str:
     """Everything we wish the Windows CI log had said the first time."""
     parts = [f"terminal_published={getattr(sup, 'terminal_published', None)!r}",
              f"exit_code={getattr(sup, '_exit_code', None)!r}",
-             f"end_evidence={getattr(sup, '_end_evidence', '')!r}"]
+             f"end_evidence={getattr(sup, '_end_evidence', '')!r}",
+             f"taken_over={getattr(sup, '_taken_over', '')!r}"]
     try:
         parts.append("technical_log=" + Path(
             core.runtime_technical_log_path(job_id)).read_text(
@@ -676,3 +686,169 @@ def test_a_cancelling_run_still_converges_to_interrupted(isolated, gateway, hand
     assert runtime.get("cancel_requested") is True, runtime
     assert (runtime.get("error") or {}).get("type") in (None, "EngineProcessExited"), runtime
     assert "engine_process_exited" in _events(job_id), _events(job_id)
+
+
+# ---------------------------------------------------------------------------
+# 6. CX-07 §1: a terminal retry must not write over a run that was taken over
+# ---------------------------------------------------------------------------
+
+def test_a_terminal_retry_does_not_overwrite_a_run_that_was_taken_over(
+        isolated, gateway, monkeypatch):
+    """The old monitor's retry must not reuse "no owner" as a lease.
+
+    The old engine died mid-run and its monitor's first terminal write failed
+    once (an ``OSError`` from the atomic replace, say).  The UI already shows
+    the synthesized ``interrupted``, so the user resumes; the replacement
+    engine holds ``.worker.lock`` and has published its own ``worker_id``.
+    The old monitor's retry used to reuse the "no owner" evidence from before
+    the failure and write ``interrupted`` over the live replacement, clearing
+    its worker id (CX-07 §1).  Every write attempt now re-checks ownership at
+    the moment of the write and abandons when a new engine owns the task.
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6stakeover1"
+    _create_job(job_id)
+    # The durable state a dying engine leaves mid-run: active, no owner left.
+    core.update_runtime_state(job_id, status="running", phase="translating")
+
+    before_write = threading.Event()
+    race_ready = threading.Event()
+    calls: list[dict] = []
+    real_write = core._write_terminal_runtime_state
+
+    def one_failed_write(write_job_id, **kwargs):
+        monitor = threading.current_thread().name
+        if monitor.startswith("folith-engine-monitor") and write_job_id == job_id:
+            calls.append({
+                "held_before": exit_flow.worker_lock_held(data_dir, job_id),
+                "runtime": dict(core.load_runtime_state(job_id) or {}),
+            })
+            if len(calls) == 1:
+                before_write.set()
+                if not race_ready.wait(120):
+                    raise TimeoutError("fixture stalled: the resume never came")
+                raise OSError("CX07 replace temporarily failed")
+        return real_write(write_job_id, **kwargs)
+
+    monkeypatch.setattr(core, "_write_terminal_runtime_state", one_failed_write)
+
+    # The old engine: a handle that is already dead and never published.
+    command = [sys.executable, "-c", "raise SystemExit(7)"]
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT)
+    proc.wait(timeout=10)
+    old = supervisor_module.EngineSupervisor(
+        job_id, proc, token="old-token", command=command,
+        data_dir=data_dir, log_dir=_log_dir, secrets=())
+    assert before_write.wait(30), "the old monitor never attempted its write"
+
+    # What the user sees, and why the resume below is legitimate: the
+    # synthesized view already reports the dead run as ``interrupted``.
+    observed = core.get_job_runtime_status(job_id) or {}
+    assert observed.get("status") == "interrupted", observed
+
+    # The user resumes through the product path; the replacement engine is real.
+    new = None
+    try:
+        assert commands.start_job(job_id, _settings(gateway), file_bytes=None), \
+            "the command layer refused the resume"
+        new = supervisor_module.supervisor(job_id)
+        assert new is not None, "the resume never registered a supervisor"
+        assert _wait_until(
+            lambda: exit_flow.worker_lock_held(data_dir, job_id)
+            and bool((_runtime(job_id).get("worker") or {}).get("worker_id")),
+            timeout=180), _runtime(job_id)
+        active = _runtime(job_id)
+        assert new.running, "the replacement engine is not running"
+        assert active.get("status") in {"queued", "starting", "running",
+                                        "waiting_external"}, active
+
+        # The interleaving the release diff caught: the old monitor's first
+        # write fails exactly now, between the replacement's registration and
+        # its retry.
+        race_ready.set()
+        assert old.wait_finished(10), \
+            f"the old monitor never finished: {_diagnose(old, job_id)}"
+    finally:
+        race_ready.set()
+
+    assert len(calls) == 1, (
+        f"the old monitor attempted {len(calls)} terminal writes; the retry "
+        f"should have abandoned at the takeover: {calls}")
+    assert old.terminal_published is False, _diagnose(old, job_id)
+    assert old._taken_over, _diagnose(old, job_id)
+    final = _runtime(job_id)
+    assert final.get("status") in {"queued", "starting", "running",
+                                  "waiting_external"}, final
+    assert (final.get("worker") or {}).get("worker_id"), (
+        f"the retry cleared the replacement's worker id: {final}")
+    assert new.running, "the replacement engine died during the test"
+    assert exit_flow.worker_lock_held(data_dir, job_id)
+    assert "engine_process_exited" not in _events(job_id), _events(job_id)
+    try:
+        text = Path(core.runtime_technical_log_path(job_id)).read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    assert "taken over" in text, text[-800:]
+
+    # The replacement engine is this test's to stop.
+    new.request_stop()
+    assert new.wait(30), "the replacement engine did not stop"
+    assert new.wait_finished(5), _diagnose(new, job_id)
+
+
+# ---------------------------------------------------------------------------
+# 7. CX-07 §7: app exit must not fund a background terminal retry
+# ---------------------------------------------------------------------------
+
+def test_shutdown_does_not_wait_for_a_failing_terminal_retry(
+        isolated, monkeypatch, tmp_path):
+    """A failing terminal write must not hold the app's exit budget.
+
+    With the child gone and every terminal write failing, the publish retry
+    used to keep the monitor alive past ``shutdown_all``: the caller's bounded
+    ``_finished`` wait then paid for it (1.01 s in the release diff, against a
+    0.00 s baseline).  The retry now waits on ``request_stop``'s halt event,
+    so the monitor ends at once and the exit path stays within its budget;
+    the technical log keeps the failure and the next launch heals the state.
+    """
+    job_id = "e6sshutdownretry1"
+    _create_job(job_id)
+    crash = tmp_path / "dying_entry.py"
+    crash.write_text(
+        "import sys\n"
+        "sys.stdin.readline()  # the start line arrives\n"
+        "sys.exit(7)           # no runtime state is published\n",
+        encoding="utf-8")
+    monkeypatch.setattr(supervisor_module, "_SOURCE_ENTRY", crash)
+
+    entered = threading.Event()
+    attempts: list[int] = []
+    real_write = core._write_terminal_runtime_state
+
+    def failing_write(write_job_id, **kwargs):
+        if write_job_id == job_id:
+            attempts.append(1)
+            entered.set()
+            raise OSError("simulated failing atomic replace")
+        return real_write(write_job_id, **kwargs)
+
+    monkeypatch.setattr(core, "_write_terminal_runtime_state", failing_write)
+    sup = _start_engine(job_id, "http://127.0.0.1:9/v1")
+    assert sup is not None
+    assert entered.wait(30), "the monitor never attempted its terminal write"
+
+    report = supervisor_module.shutdown_all(
+        budget=supervisor_module.EXIT_STOP_BUDGET)
+
+    assert job_id in report["stopped"], report
+    assert sup.wait_finished(0) is True, (
+        f"the monitor outlived the shutdown: {report} ||| {_diagnose(sup, job_id)}")
+    # One attempt is the intent; a second can only appear if the test process
+    # was starved for a whole retry beat before ``request_stop`` landed, so
+    # the bound is the beat count, not the exact count.
+    assert len(attempts) <= 2, (
+        f"{len(attempts)} terminal write attempts after the shutdown asked "
+        f"the monitor to go: {attempts}")
+    assert report["waited"] < supervisor_module.EXIT_STOP_BUDGET, report
