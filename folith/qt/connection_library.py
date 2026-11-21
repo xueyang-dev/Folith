@@ -646,7 +646,7 @@ class ConnectionLibrary(QWidget):
         inherited = ""
         if not current and role in effort_settings.INHERITING_ROLES:
             inherited = effort_settings.effective_level(
-                self.dialog.config.connection_levels, role)
+                self.dialog.config.connection_levels, role) or "service_default"
         for key, label in choices:
             text = i18n.tr('旧设置：{v0}', v0=label) if effort_settings.is_legacy(key, provider, model) \
                 else i18n.tr(label)
