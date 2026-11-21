@@ -74,21 +74,21 @@ def load_runtime_state(job_id):
     """Read the durable worker status without changing the workflow state."""
     core = _core()
     if not job_id:
-        return _runtime_defaults()
+        return core._runtime_defaults()
     try:
-        raw = json.loads(core._atomic_file.read_shared_text(runtime_state_path(job_id)))
+        raw = json.loads(core._atomic_file.read_shared_text(core.runtime_state_path(job_id)))
     except (OSError, TypeError, ValueError):
-        return _runtime_defaults()
+        return core._runtime_defaults()
     if not isinstance(raw, dict):
-        return _runtime_defaults()
-    result = _runtime_defaults()
+        return core._runtime_defaults()
+    result = core._runtime_defaults()
     result.update(raw)
     result["schema_version"] = core.RUNTIME_SCHEMA_VERSION
     if result.get("status") == "cancel_requested":
         result["status"] = "cancelling"
     worker = result.get("worker")
-    result["worker"] = {**_runtime_defaults()["worker"], **worker} \
-        if isinstance(worker, dict) else dict(_runtime_defaults()["worker"])
+    result["worker"] = {**core._runtime_defaults()["worker"], **worker} \
+        if isinstance(worker, dict) else dict(core._runtime_defaults()["worker"])
     result["events"] = [item for item in result.get("events") or []
                          if isinstance(item, dict)
                          and item.get("visibility") == "user"][-24:]
@@ -118,9 +118,9 @@ def _append_runtime_event(job_id, event, *, stage=None, operation=None, metadata
     core = _core()
     event_name = event_name or (event.get("event") if isinstance(event, dict) else None)
     if not event_name:
-        event_name = _runtime_event_code(event.get("message") if isinstance(event, dict)
+        event_name = core._runtime_event_code(event.get("message") if isinstance(event, dict)
                                          else event)
-    visibility, category = _runtime_event_meta(event_name, visibility, category)
+    visibility, category = core._runtime_event_meta(event_name, visibility, category)
     record = {
         "timestamp": core._utc_now_iso(),
         "job_id": job_id,
@@ -136,7 +136,7 @@ def _append_runtime_event(job_id, event, *, stage=None, operation=None, metadata
         record["pipeline"] = "document_pipeline"
     if metadata:
         record["metadata"] = metadata
-    path = runtime_events_path(job_id)
+    path = core.runtime_events_path(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     try:
@@ -174,13 +174,13 @@ def _runtime_event_lines_reverse(path):
             yield pending.decode("utf-8")
 
 def read_runtime_events(job_id, limit=None, *, visibility=None, category=None):
-    path = runtime_events_path(job_id)
+    path = core.runtime_events_path(job_id)
     if not path.is_file():
         return []
     events = []
     try:
         newest_first = bool(limit and limit > 0)
-        lines = (_runtime_event_lines_reverse(path) if newest_first else
+        lines = (core._runtime_event_lines_reverse(path) if newest_first else
                  path.read_text(encoding="utf-8").splitlines())
         for line in lines:
             try:
@@ -188,7 +188,7 @@ def read_runtime_events(job_id, limit=None, *, visibility=None, category=None):
             except (TypeError, ValueError):
                 continue
             if isinstance(value, dict):
-                event_visibility, event_category = _runtime_event_meta(
+                event_visibility, event_category = core._runtime_event_meta(
                     value.get("event"), value.get("visibility"), value.get("category"))
                 normalized = {**value, "visibility": event_visibility,
                               "category": event_category}
@@ -259,7 +259,7 @@ def _submit_runtime_status(job_id, **changes):
     or the writer was closed), so the behaviour never depends on whether the
     writer exists.
     """
-    writer = _runtime_status_writer(job_id)
+    writer = core._runtime_status_writer(job_id)
     if writer is None:
         return {}
     return writer.submit(**changes)
