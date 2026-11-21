@@ -132,16 +132,40 @@ def _make_stuck_jobs(count: int = STUCK_JOBS) -> list[str]:
     return ids
 
 
-def _run_with_heartbeat(app, start, done, timeout: float = BATCH_TIMEOUT_SECONDS):
+def _freeze_stacks() -> list[str]:
+    """Every thread's stack, for attributing a GUI-thread freeze (#442).
+
+    A heartbeat gap says *that* the thread was blocked; only stacks say what it
+    was doing.  Both the GUI thread and the workers are captured: a worker that
+    holds the GIL for over a second looks exactly like a blocked GUI thread from
+    the outside.
+    """
+    import sys
+    import threading
+    import traceback
+
+    frames = sys._current_frames()
+    names = {thread.ident: thread.name for thread in threading.enumerate()}
+    blocks = []
+    for ident, frame in frames.items():
+        label = "MainThread" if ident == threading.main_thread().ident else names.get(ident, str(ident))
+        stack = "".join(traceback.format_stack(frame, limit=12))
+        blocks.append(f"--- {label} ---\n{stack}")
+    return blocks
+
+
+def _run_with_heartbeat(app, start, done, timeout: float = BATCH_TIMEOUT_SECONDS,
+                        *, capture_stacks_after: float | None = None):
     """在 GUI 线程跑 ``start()``，同时让 16 ms ``QTimer`` 记录心跳间隙。
 
-    返回 ``(start_seconds, gaps, finished)``。间隙列表以 ``start()`` 的进入时刻
+    返回 ``(start_seconds, gaps, finished, freezes)``。间隙列表以 ``start()`` 的进入时刻
     开头、以泵结束时刻收尾：同步删除时心跳整段发不出来，第一个间隙就直接等于
     冻结时长（不会因为"回来后心跳立刻正常"被掩盖）。
     """
     from PySide6.QtCore import QTimer
 
     beats: list[float] = []
+    freezes: list[list[str]] = []
     timer = QTimer()
     timer.setInterval(HEARTBEAT_MS)
     timer.timeout.connect(lambda: beats.append(time.monotonic()))
@@ -153,6 +177,13 @@ def _run_with_heartbeat(app, start, done, timeout: float = BATCH_TIMEOUT_SECONDS
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline and not done():
+        # Freeze attribution (#442): capture all-thread stacks *while* the GUI
+        # thread is stalled, before any pending timer is delivered (delivering it
+        # would reset the reference and hide a stall that started earlier).
+        if capture_stacks_after is not None and not freezes:
+            reference = beats[-1] if beats else began
+            if time.monotonic() - reference > max(capture_stacks_after, 0.05):
+                freezes.append(_freeze_stacks())
         app.processEvents()
         time.sleep(0.005)
     app.processEvents()
@@ -161,7 +192,7 @@ def _run_with_heartbeat(app, start, done, timeout: float = BATCH_TIMEOUT_SECONDS
 
     marks = [began, *beats, ended]
     gaps = [later - earlier for earlier, later in zip(marks, marks[1:])]
-    return start_seconds, gaps, bool(done())
+    return start_seconds, gaps, bool(done()), freezes
 
 
 def _pump(app, predicate, timeout: float = 30.0) -> bool:
@@ -201,8 +232,9 @@ def test_deleting_five_stuck_engines_never_blocks_the_gui_thread(window_env):
         def start() -> None:
             assert window.delete_jobs(ids) is True, "确认之后这一批必须被交出去"
 
-        start_seconds, gaps, finished = _run_with_heartbeat(
-            app, start, lambda: not window._delete_in_flight)
+        start_seconds, gaps, finished, freezes = _run_with_heartbeat(
+            app, start, lambda: not window._delete_in_flight,
+            capture_stacks_after=GUI_BLOCK_LIMIT_SECONDS)
 
         assert finished, "整批删除没有在预算内结束"
         assert len(asked) == 1, f"整批只该确认一次：{asked}"
@@ -215,8 +247,10 @@ def test_deleting_five_stuck_engines_never_blocks_the_gui_thread(window_env):
         print(f"[E-4e] {len(ids)} 个卡住的任务，整批耗时由后台承担：{detail}")
         assert start_seconds < GUI_BLOCK_LIMIT_SECONDS, \
             f"delete_jobs 在 GUI 线程上阻塞太久：{detail}"
-        assert worst < GUI_BLOCK_LIMIT_SECONDS, \
+        assert worst < GUI_BLOCK_LIMIT_SECONDS, (
             f"删除期间 GUI 线程冻结超过 {GUI_BLOCK_LIMIT_SECONDS * 1000:.0f} ms：{detail}"
+            + ("\n\n冻结时的全部线程栈（#442 归因）：\n" + "\n".join(freezes[0])
+               if freezes else "\n\n（冻结窗口内没有抓到栈）"))
 
         # (b) 5 个任务都被处理：该删的没了，该拒的还在。
         delete_failures = [item for item in window.failures
