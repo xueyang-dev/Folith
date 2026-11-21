@@ -2769,5 +2769,6 @@
   "计算中…": "Calculando…",
   "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "El proveedor rechazó esta clave para ese modelo: comprueba en su consola que el modelo esté habilitado para esta clave.",
   "已清除筛选，显示第 {v0} 段": "Filtros borrados; se muestra el segmento {v0}",
-  "没有匹配的段落": "No hay segmentos coincidentes"
+  "没有匹配的段落": "No hay segmentos coincidentes",
+  "找不到第 {v0} 段，未更改筛选。": "No se encontró el segmento {v0}; los filtros no cambiaron."
 }

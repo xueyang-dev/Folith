@@ -176,6 +176,8 @@ def test_delivery_fix_button_jumps_to_the_blocking_segment(translated):
     并套了 ``hasattr`` 兜底，于是这一跳从来没发生过——审查把这条列为阻断项。
     """
     seen: list[int] = []
+    # A-63: the locate guard requires the target to exist in the work set.
+    translated._all_rows = [type("Row", (), {"index": i})() for i in range(5)]
     translated.blocking_items = lambda: [{"segment_index": 4}]  # type: ignore[method-assign]
     translated.select_segment = lambda index: seen.append(index) or True  # type: ignore[method-assign]
     translated._go_fix_blocking()

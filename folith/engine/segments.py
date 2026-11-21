@@ -1903,9 +1903,10 @@ def translation_visible_indexes(state, search="", status_filter="全部",
         target = str(pair.get("target") or "")
         if query:
             paragraph_query = query.lstrip("#").strip()
-            # A-57: '²'.isdigit() is True but int('²') raises.  Only ASCII
-            # digits denote a paragraph number; everything else is text.
-            if re.fullmatch(r"[0-9]+", paragraph_query):
+            # A-57/A-63: '²'.isdigit() is True but int('²') raises, while
+            # Unicode decimal digits (٢, ۲, ２) parse fine.  isdecimal()
+            # accepts the latter and leaves superscripts to text search.
+            if paragraph_query.isdecimal():
                 if int(paragraph_query) != index + 1:
                     continue
             elif query not in f"{source}\n{target}".casefold():

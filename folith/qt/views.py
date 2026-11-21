@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import i18n, platform_ui
-from . import adapter, xliff_io
+from . import adapter, xliff_io, locate_guard
 from folith.workbench_rows import DOMAINS as _DOMAIN_NAMES
 from . import components
 from . import motion
@@ -61,7 +61,6 @@ from . import segment_editor
 from .style import Card, Chip
 
 DRAFT_AUTOSAVE_MS = 1500
-
 TERMINOLOGY_CONFLICT_KINDS = (
     ("all", "全部冲突类型"),
     ("multiple", "同一源术语多个译名"),
@@ -5249,7 +5248,9 @@ class WorkbenchView(QWidget):
         self.review_panel.conflict.set_preview(preview, source, target)
 
     def _locate_segment(self, index: int) -> None:
-        self.show_page("translate")  # jump from any entry; clear hiding filters
+        if not locate_guard.guard(self, index):
+            return
+        self.show_page("translate")
         if not self.select_segment(index):
             self.search_edit.clear()
             self.set_status_filter("全部")
