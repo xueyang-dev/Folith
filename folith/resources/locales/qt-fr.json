@@ -2766,5 +2766,7 @@
   "当前没有可以按确定依据处理的问题": "Aucun constat à preuve déterministe pour l'instant",
 "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Désactivé ; les enregistrements restent dans le groupe Traitement automatique (audit) et peuvent être annulés.",
   "{v0}（沿用翻译）": "{v0} (hérité de la traduction)",
-  "计算中…": "Calcul en cours…"
+  "计算中…": "Calcul en cours…",
+  "双语文件（XLIFF 1.2 / SDLXLIFF / MQXLIFF） ({v0})": "Fichiers bilingues (XLIFF 1.2 / SDLXLIFF / MQXLIFF) ({v0})",
+  "此格式目前只支持原样导出": "Ce format ne prend en charge que l'export"
 }

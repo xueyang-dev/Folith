@@ -1190,8 +1190,7 @@ class MainWindow(QMainWindow):
             self, i18n.tr('导入文档'), str(Path.home()),
             # The picker advertises exactly the formats the shared application
             # contract (and therefore the core ingestion path) accepts.
-            i18n.tr('文档 ({v0})', v0=" ".join(
-                f"*{item}" for item in (*adapter.SOURCE_SUFFIXES, *sorted(xliff_io.BILINGUAL_SUFFIXES)))))
+            " ;; ".join(xliff_io.picker_filters(adapter.SOURCE_SUFFIXES)))
         if not paths:
             # Cancelling must not leave a half-created task behind.
             self._notice(i18n.tr('已取消导入，没有创建任何任务。'))
