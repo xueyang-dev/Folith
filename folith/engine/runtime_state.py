@@ -174,6 +174,7 @@ def _runtime_event_lines_reverse(path):
             yield pending.decode("utf-8")
 
 def read_runtime_events(job_id, limit=None, *, visibility=None, category=None):
+    core = _core()
     path = core.runtime_events_path(job_id)
     if not path.is_file():
         return []
@@ -259,6 +260,7 @@ def _submit_runtime_status(job_id, **changes):
     or the writer was closed), so the behaviour never depends on whether the
     writer exists.
     """
+    core = _core()
     writer = core._runtime_status_writer(job_id)
     if writer is None:
         return {}

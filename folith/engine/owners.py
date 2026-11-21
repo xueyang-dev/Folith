@@ -42,6 +42,7 @@ def register_engine_owner(job_id, *, pid, worker_id="", token=None):
     request can appear in.
     """
     core = _core()
+    core = _core()
     if not job_id or not pid:
         return ""
     launch = token is None
@@ -129,6 +130,7 @@ def _job_execution_alive(job_id):
     happens: the child this GUI spawned is proven by its token, never by
     ``os.kill(pid, 0)``.
     """
+    core = _core()
     core = _core()
     if not job_id:
         return False
