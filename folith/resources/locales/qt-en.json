@@ -1466,6 +1466,7 @@
   "{v0} 个 · {v1}": "{v0} · {v1}",
   "任务、术语、翻译记忆都保存在这台 Mac 上；API 密钥只在本机，不会上传。": "Tasks, terms and translation memory stay on this Mac; API keys never leave it.",
   "作者": "Author",
+  "X 主页": "X profile",
   "删除翻译缓存、知识缓存与扫描件画像缓存。不影响任何任务、译文、术语或翻译记忆；以后遇到相同内容时会重新调用模型。": "Deletes the translation, knowledge and scan-profile caches. Tasks, translations, terms and memory are untouched; identical content will call the model again.",
   "占用空间": "Disk usage",
   "卸载": "Uninstall",
@@ -2763,7 +2764,7 @@
   "只对本任务生效 · 每条可撤销 · 不改译文": "This task only · each record reversible · translations unchanged",
   "已自动处理 {v0} 条": "Auto-handled {v0} findings",
   "当前没有可以按确定依据处理的问题": "No findings with deterministic evidence right now",
-"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Off; earlier auto-handled records remain in the Auto-handled (audit) group and can be revoked individually.",
+  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Off; earlier auto-handled records remain in the Auto-handled (audit) group and can be revoked individually.",
   "{v0}（沿用翻译）": "{v0} (inherited from translation)",
   "计算中…": "Calculating…"
 }

@@ -266,6 +266,7 @@
   "低置信度分组建议，请先确认这些形式属于同一概念。": "Gruppierungsvorschlag mit geringer Konfidenz. Bitte bestätigen Sie zuerst, dass diese Formen dasselbe Konzept bezeichnen.",
   "何时识别": "Wann erkennen",
   "作者": "Autor",
+  "X 主页": "X-Profil",
   "作者检查关键页面与版式": "Autor prüft Schlüsselseiten und Layout",
   "作者补充证据": "Zusätzliche Belege des Autors",
   "作者视觉复核": "Visuelle Überprüfung durch den Autor",
@@ -2764,7 +2765,7 @@
   "只对本任务生效 · 每条可撤销 · 不改译文": "Nur für diese Aufgabe · jede Bewertung rückgängig machbar · Übersetzung unverändert",
   "已自动处理 {v0} 条": "{v0} Befunde automatisch bearbeitet",
   "当前没有可以按确定依据处理的问题": "Derzeit keine Befunde mit eindeutigen Belegen",
-"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Aus; frühere Einträge bleiben in der Gruppe „Automatisch bearbeitet (Audit)“ und können einzeln widerrufen werden.",
+  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Aus; frühere Einträge bleiben in der Gruppe „Automatisch bearbeitet (Audit)“ und können einzeln widerrufen werden.",
   "{v0}（沿用翻译）": "{v0} (von Übersetzung geerbt)",
   "计算中…": "Wird berechnet…"
 }

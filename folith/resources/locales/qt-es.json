@@ -1466,6 +1466,7 @@
   "{v0} 个 · {v1}": "{v0} · {v1}",
   "任务、术语、翻译记忆都保存在这台 Mac 上；API 密钥只在本机，不会上传。": "Tareas, términos y memoria de traducción se guardan en este Mac; las claves API nunca salen de él.",
   "作者": "Autor",
+  "X 主页": "Perfil en X",
   "删除翻译缓存、知识缓存与扫描件画像缓存。不影响任何任务、译文、术语或翻译记忆；以后遇到相同内容时会重新调用模型。": "Borra las cachés de traducción, conocimiento y perfil de escaneos. No afecta a tareas, traducciones, términos ni memoria; el contenido idéntico volverá a llamar al modelo.",
   "占用空间": "Espacio usado",
   "卸载": "Desinstalar",
@@ -2764,7 +2765,7 @@
   "只对本任务生效 · 每条可撤销 · 不改译文": "Solo esta tarea · cada registro reversible · sin cambiar la traducción",
   "已自动处理 {v0} 条": "Se manejaron automáticamente {v0} hallazgos",
   "当前没有可以按确定依据处理的问题": "No hay hallazgos con evidencia determinista en este momento",
-"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Desactivado; los registros automáticos anteriores siguen en el grupo Automático (auditoría) y se pueden revocar.",
+  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Desactivado; los registros automáticos anteriores siguen en el grupo Automático (auditoría) y se pueden revocar.",
   "{v0}（沿用翻译）": "{v0} (heredado de traducción)",
   "计算中…": "Calculando…"
 }
