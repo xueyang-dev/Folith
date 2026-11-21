@@ -3663,7 +3663,7 @@ class WorkbenchView(QWidget):
         self.followup_panel.repairRequested.connect(self.entityRepairRequested.emit)
         self.followup_panel.acceptRequested.connect(self.entityAcceptRequested.emit)
         self.followup_panel.rescanRequested.connect(self.rescanRequested.emit)
-        self.followup_panel.locateRequested.connect(self._locate_segment_from_followup)
+        self.followup_panel.locateRequested.connect(self._locate_segment)
         self.followup_panel.profileEditRequested.connect(self.profileEditRequested.emit)
         # 在下拉卡片里：「需要处理 · N」是重复信息（盾牌上已经有数字），不显示。
         self.followup_panel.set_show_overview(False)
@@ -5251,13 +5251,19 @@ class WorkbenchView(QWidget):
         self.followup_panel.set_preview(preview, source, target)
         self.review_panel.conflict.set_preview(preview, source, target)
 
-    def _locate_segment_from_followup(self, index: int) -> None:
-        """「检查与修复」里点一个失败批次：回到翻译页并选中那一段（清掉会挡住它的筛选）。"""
-        self.show_page("translate")
+    def _locate_segment(self, index: int) -> None:
+        self.show_page("translate")  # jump from any entry point; clear hiding filters
         if not self.select_segment(index):
             self.search_edit.clear()
             self.set_status_filter("全部")
+            for widget in (self.only_edited_box, self.only_issues_box, *self.filter_actions.values()):
+                widget.setChecked(False)
+            self._filters_changed()
             self.select_segment(index)
+            self.set_task_notice(i18n.tr("已清除筛选，以显示「{v0}」", v0=f"第 {index} 段"))
+        pos = self._position_of_loaded_segment()
+        self.segment_list.scrollTo(self.segment_list.model().index(max(0, pos or 0), 0))
+        self.focus_editor()
 
     def _render_details(self) -> None:
         """任务详情只在打开这一页、且状态对象换了时重算。
@@ -5607,9 +5613,7 @@ class WorkbenchView(QWidget):
 
     def show_segment_for_edit(self, index: int) -> None:
         """从审校页跳到翻译页的某一段（用户要自己改译文）。"""
-        self.tabs.setCurrentIndex(0)
-        self.select_segment(int(index))
-        self.focus_editor()
+        self._locate_segment(int(index))
 
     # ================= 过滤（复用核心语义） =================
     def set_status_filter(self, name: str) -> None:
@@ -6534,12 +6538,8 @@ class WorkbenchView(QWidget):
         if not items:
             return
         index = items[0].get("segment_index")
-        self.show_page("translate")
         if isinstance(index, int) and index >= 0:
-            # `segment_list` 是 QTableWidget，选择由工作台负责（它还要同步检查器、
-            # 浮层编辑框与行高）；以前写成了 `self.segment_list.select_segment(...)`
-            # 并套了 hasattr 兜底，于是这一跳从来没发生过（审查阻断项）。
-            self.select_segment(index)
+            self._locate_segment(index)
 
     def _fill_supplements(self, items: list[dict]) -> None:
         """按"还能补生成的文件"重建按钮（每秒刷新：清单没变就不动控件）。"""
