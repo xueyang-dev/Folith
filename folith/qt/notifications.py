@@ -111,11 +111,17 @@ class Toast(QFrame):
         self.label.setText(self._elided())
         self.label.setToolTip(self._message)
         self.adjustSize()
-        # U-5: the whole stack sits on the bottom of the *content area*
-        # (right of the sidebar), and is centred in that area, not the window.
-        sidebar = getattr(parent, "sidebar_clip", None)
-        left = sidebar.width() if sidebar is not None and sidebar.isVisibleTo(parent) else 0
-        content_width = max(1, parent.width() - left)
+        # U-5/A-61: centre on the *actual* content widget, never on
+        # `sidebar.width()` guessed as a left offset -- in RTL the sidebar is
+        # on the right.  Map the content widget's rect into toast coordinates;
+        # this works in both directions and when the sidebar is collapsed.
+        sheet = getattr(parent, "sheet", None)
+        if sheet is not None and sheet.isVisibleTo(parent):
+            origin = sheet.mapTo(parent, sheet.rect().topLeft())
+            left, content_width = origin.x(), sheet.width()
+        else:
+            left, content_width = 0, parent.width()
+        content_width = max(1, content_width)
         stack = getattr(parent, "toast", None)
         count = max(1, len(getattr(stack, '_toasts', ()))) if stack is not None else 1
         h = self.height()
