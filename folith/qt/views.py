@@ -5249,16 +5249,16 @@ class WorkbenchView(QWidget):
         self.review_panel.conflict.set_preview(preview, source, target)
 
     def _locate_segment(self, index: int) -> None:
-        self.show_page("translate")  # jump from any entry point; clear hiding filters
+        self.show_page("translate")  # jump from any entry; clear hiding filters
         if not self.select_segment(index):
             self.search_edit.clear()
             self.set_status_filter("全部")
             for widget in (self.only_edited_box, self.only_issues_box, *self.filter_actions.values()):
                 widget.setChecked(False)
             self._filters_changed()
-            if self.select_segment(index): self.set_task_notice(i18n.tr("已清除筛选，显示第 {v0} 段", v0=index + 1))
-        pos = self._position_of_loaded_segment()
-        self.segment_list.scrollTo(self.segment_list.model().index(max(0, pos or 0), 0))
+            if self.select_segment(index):
+                self.set_task_notice(i18n.tr("已清除筛选，显示第 {v0} 段", v0=index + 1))
+        self.segment_list.scrollTo(self.segment_list.model().index(max(0, self._position_of_loaded_segment() or 0), 0))
         self.focus_editor()
 
     def _render_details(self) -> None:
