@@ -2766,5 +2766,7 @@
   "当前没有可以按确定依据处理的问题": "No hay hallazgos con evidencia determinista en este momento",
 "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Desactivado; los registros automáticos anteriores siguen en el grupo Automático (auditoría) y se pueden revocar.",
   "{v0}（沿用翻译）": "{v0} (heredado de traducción)",
-  "计算中…": "Calculando…"
+  "计算中…": "Calculando…",
+  "双语文件（XLIFF 1.2 / SDLXLIFF / MQXLIFF） ({v0})": "Archivos bilingües (XLIFF 1.2 / SDLXLIFF / MQXLIFF) ({v0})",
+  "此格式目前只支持原样导出": "Este formato solo admite exportación"
 }
