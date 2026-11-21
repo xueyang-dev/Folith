@@ -423,7 +423,7 @@ def start_segment_worker(job_id, kind, indexes, *, base_url=None, **kwargs):
         raise ValueError("请选择仍然存在的翻译段落。")
     if kind == "review":
         kwargs["base_url"] = base_url or ""
-    return start_job_worker(
+    return core.start_job_worker(
         job_id, state.get("filename") or "", None, kwargs, base_url=base_url,
         segment_operation={"kind": kind, "indexes": indexes})
 
@@ -442,7 +442,7 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
         runtime = core.get_job_runtime_status(job_id)
         status = str(runtime.get("status") or "")
         if status in {"paused", "pausing"} and (
-                is_job_worker_alive(job_id) or core._job_execution_alive(job_id)):
+                core.is_job_worker_alive(job_id) or core._job_execution_alive(job_id)):
             # A paused worker is still alive: continue it.  Passing the freshly
             # resolved kwargs lets the core restart the worker transparently if
             # the connection changed while it was paused (issue #222).
@@ -464,7 +464,7 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
         if state.get("p2_done") and (academic.get("artifacts") or academic.get(
                 "current_stage") not in {None, "", "not_started"}):
             pipeline_kwargs["enable_report"] = True
-        return start_job_worker(
+        return core.start_job_worker(
             job_id, filename, None, pipeline_kwargs, base_url=base_url,
             resume_request_id=request_id, launch_prepared=launch_prepared)
 
@@ -474,7 +474,7 @@ def is_job_worker_alive(job_id):
 
     Deliberately narrow (E-0): it answers "is the worker mine?".  A GUI action
     gate must not use it alone once the pipeline can run in an engine child;
-    use ``is_job_worker_alive(...) or _job_execution_alive(...)`` instead, which
+    use ``core.is_job_worker_alive(...) or _job_execution_alive(...)`` instead, which
     is what :func:`request_job_cancel` / :func:`request_job_exit` already did.
     """
     core = _core()
@@ -502,7 +502,7 @@ def request_job_cancel(job_id, *, force=False):
     core = _core()
     if not job_id:
         return False
-    alive = is_job_worker_alive(job_id)
+    alive = core.is_job_worker_alive(job_id)
     if alive or core._job_execution_alive(job_id):
         core.update_runtime_state(job_id, on_timeout="raise", status="cancelling", cancel_requested=True,
                              phase="cancelling", phase_label="正在取消",
@@ -547,7 +547,7 @@ def request_job_exit(job_id):
     runtime = core.load_runtime_state(job_id) or {}
     if runtime.get("exit_requested") is True:
         return True
-    alive = is_job_worker_alive(job_id) or core._job_execution_alive(job_id)
+    alive = core.is_job_worker_alive(job_id) or core._job_execution_alive(job_id)
     if alive:
         # ``retry``, not ``raise``: a single 2 s acquire against a child that
         # holds the lock became "停止任务失败" and kept the app open (#453); the

@@ -10058,6 +10058,7 @@ def _runtime_caption_callback(job_id, text):
 # Behaviour must not change in this PR.
 from folith.engine.worker_runtime import (  # noqa: E402 - late by design
     _run_job_worker as _run_job_worker,
+    start_segment_worker as start_segment_worker,
     is_job_worker_alive as is_job_worker_alive,
     request_job_cancel as request_job_cancel,
     request_job_exit as request_job_exit,
