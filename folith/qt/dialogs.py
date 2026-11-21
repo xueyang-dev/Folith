@@ -106,6 +106,16 @@ def _scroll_page(inner: QWidget) -> QScrollArea:
     return area
 
 
+def connection_error_text(message: str) -> str:
+    """Full reason plus a generic actionable hint for 403 / permission errors."""
+    text = i18n.tr_dynamic(str(message or ""))
+    lowered = text.casefold()
+    if "403" in lowered or "permission_error" in lowered or "permission denied" in lowered:
+        hint = i18n.tr('服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。')
+        return f"{text}\n{hint}"
+    return text
+
+
 def _set_status(label: QLabel, text: str, tone: str = "muted") -> None:
     """内联状态文字：成功/失败要有颜色，不能都是同一撮灰字。
 
@@ -282,6 +292,21 @@ class EngineDialog(QDialog):
         self.stack.setCurrentWidget(self.pages[key])
         # 固定操作区只服务连接页；其他页的选项改了立即生效，没有「应用」。
         self._pinned_actions.setVisible(key == "models")
+        if key == "models":
+            # C-43: a saved connection counts even with an empty API key
+            # (env-var / local gateway providers need no key).
+            has_connections = bool(getattr(self.connection_library, "profiles", None))
+            self.models_apply_button.setText(
+                i18n.tr('测试并保存') if has_connections else i18n.tr('添加连接'))
+            try:
+                self.models_apply_button.clicked.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            if has_connections:
+                self.models_apply_button.clicked.connect(self.apply_connection)
+            else:
+                self.models_apply_button.clicked.connect(
+                    self.connection_library.open_editor)
         label = next(text for value, _icon, text in self.PAGES if value == key)
         self.setWindowTitle(i18n.tr(label))
         if key == "storage":
@@ -466,8 +491,11 @@ class EngineDialog(QDialog):
         config = self._collect()
         problem = i18n.tr_dynamic(config.connection_problem())
         if problem:
+            # C-42: missing required fields is NOT a failed test — never offer
+            # "apply anyway", and put the user where they can fix it.
             _set_status(self._status, i18n.tr('无法应用：{v0}', v0=problem), "danger")
-            self._show_force(True)
+            self._show_force(False)
+            self._focus_missing_field(problem)
             return
         for button in self._apply_buttons():
             button.setEnabled(False)
@@ -483,17 +511,31 @@ class EngineDialog(QDialog):
             if ok:
                 self._commit_connection(config, tested=True, message=message)
             else:
-                _set_status(self._status, i18n.tr('连接失败，未保存：{v0}', v0=message), "danger")
+                _set_status(self._status, i18n.tr('连接失败，未保存：{v0}', v0=connection_error_text(message)), "danger")
                 self._show_force(True)
 
         def failed(message: str, _detail: str) -> None:
             for button in self._apply_buttons():
                 button.setEnabled(True)
-            _set_status(self._status, i18n.tr('连接失败，未保存：{v0}', v0=message), "danger")
+            _set_status(self._status, i18n.tr('连接失败，未保存：{v0}', v0=connection_error_text(message)), "danger")
             self._show_force(True)
 
         self.runner.submit(adapter.test_connection, config, on_done=done, on_error=failed,
                            label="apply-connection")
+
+    def _focus_missing_field(self, problem: str) -> None:
+        """Put the cursor where the user can fix the missing required input."""
+        candidates = []
+        if "密钥" in problem or "key" in problem.lower():
+            candidates += getattr(self, "api_key_edits", [])
+        candidates += [getattr(self, "provider_box", None),
+                       getattr(self, "model_box", None)]
+        if getattr(self, "connection_library", None) is not None:
+            candidates.append(getattr(self.connection_library, "add_button", None))
+        for widget in candidates:
+            if widget is not None and widget.isVisible() and widget.isEnabled():
+                widget.setFocus()
+                return
 
     def _show_force(self, visible: bool) -> None:
         for button in self._force_buttons():
@@ -545,6 +587,8 @@ class EngineDialog(QDialog):
         self.test_button.clicked.connect(self._test_connection)
         self.test_label = QLabel("")
         self.test_label.setWordWrap(True)
+        from PySide6.QtWidgets import QSizePolicy as _QSP
+        self.test_label.setSizePolicy(_QSP.Policy.Expanding, _QSP.Policy.MinimumExpanding)
         self.provider_box.currentTextChanged.connect(self._provider_changed)
         self.model_box.currentTextChanged.connect(self._sync_reasoning)
         self.model_box.currentTextChanged.connect(self._sync_thinking)
@@ -1169,7 +1213,7 @@ class EngineDialog(QDialog):
 
         def failed(message: str, _detail: str) -> None:
             self.test_button.setEnabled(True)
-            _set_status(self.test_label, f"连接失败：{message}", "danger")
+            _set_status(self.test_label, i18n.tr("连接失败：{v0}", v0=connection_error_text(message)), "danger")
 
         if config.connection_problem():
             self.test_button.setEnabled(True)
