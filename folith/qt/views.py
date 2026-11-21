@@ -5259,8 +5259,7 @@ class WorkbenchView(QWidget):
             for widget in (self.only_edited_box, self.only_issues_box, *self.filter_actions.values()):
                 widget.setChecked(False)
             self._filters_changed()
-            self.select_segment(index)
-            self.set_task_notice(i18n.tr("已清除筛选，以显示「{v0}」", v0=f"第 {index} 段"))
+            if self.select_segment(index): self.set_task_notice(i18n.tr("已清除筛选，显示第 {v0} 段", v0=index + 1))
         pos = self._position_of_loaded_segment()
         self.segment_list.scrollTo(self.segment_list.model().index(max(0, pos or 0), 0))
         self.focus_editor()

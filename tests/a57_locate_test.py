@@ -63,7 +63,8 @@ def test_gate_jump_clears_filters_and_notifies(window, app, monkeypatch):  # noq
     assert wb._current_index == 5
     assert wb.search_edit.text() == ''
     notice = wb._task_notice
-    assert notice and '已清除筛选' in notice[1] and '5' in notice[1]
+    assert notice and '已清除筛选' in notice[1] and '6' in notice[1]
+    assert '5 段' not in notice[1]
 
 
 def test_jump_reveals_row(window, app):  # noqa: F811
@@ -80,3 +81,21 @@ def test_jump_reveals_row(window, app):  # noqa: F811
     assert pos is not None and pos >= 0
     rect = wb.segment_list.visualRect(wb.segment_list.model().index(pos, 0))
     assert rect.isValid()
+
+
+def test_notice_in_english_has_no_chinese(window, app, monkeypatch):  # noqa: F811
+    main = window['window']
+    import core
+    from folith.qt import i18n
+    _job(main, window['adapter'], core, window['tmp'])
+    i18n.set_language('en')
+    wb = main.workbench
+    wb.search_edit.setText('段0')
+    app.processEvents()
+    monkeypatch.setattr(wb, 'blocking_items', lambda: [{'segment_index': 5}])
+    wb._go_fix_blocking()
+    app.processEvents()
+    text = wb._task_notice[1]
+    assert 'Filters cleared' in text and '6' in text
+    assert not any('\u4e00' <= ch <= '\u9fff' for ch in text)
+    i18n.set_language('zh-CN')
