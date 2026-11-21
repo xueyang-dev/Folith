@@ -2766,5 +2766,6 @@
   "当前没有可以按确定依据处理的问题": "Derzeit keine Befunde mit eindeutigen Belegen",
 "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Aus; frühere Einträge bleiben in der Gruppe „Automatisch bearbeitet (Audit)“ und können einzeln widerrufen werden.",
   "{v0}（沿用翻译）": "{v0} (von Übersetzung geerbt)",
-  "计算中…": "Wird berechnet…"
+  "计算中…": "Wird berechnet…",
+  "没有匹配的段落": "Keine passenden Absätze"
 }
