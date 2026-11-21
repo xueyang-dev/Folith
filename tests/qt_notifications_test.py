@@ -220,3 +220,23 @@ def test_toast_stack_is_bottom_anchored_and_content_centered(window):  # noqa: F
         assert len(boxes) == count
         assert all(0 <= top < bottom <= main.height() for top, bottom in boxes)
         assert all(boxes[i + 1][0] >= boxes[i][1] for i in range(count - 1))
+
+
+# ---------------------------------------------------------------------------
+# A-50: hiding one toast must immediately reflow the rest to the bottom.
+# ---------------------------------------------------------------------------
+def test_hiding_bottom_toast_reflows_the_stack(window, app):  # noqa: F811  # noqa: F811
+    main = window['window']
+    main.toast.close_all()
+    for i in range(3):
+        main._notice(f'toast-{i}', task=False)
+    app.processEvents()
+    assert len(main.toast.visible()) == 3
+    bottom = max(main.toast.visible(), key=lambda t: t.y())
+    bottom.close_button.click()
+    app.processEvents()
+    app.processEvents()  # singleShot reflow
+    remaining = main.toast.visible()
+    assert len(remaining) == 2
+    lowest = max(remaining, key=lambda t: t.y())
+    assert abs(lowest.y() + lowest.height() - (main.height() - 24)) <= 1
