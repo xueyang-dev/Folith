@@ -91,11 +91,11 @@ class StoragePage(QWidget):
         where, where_body = _panel(
             i18n.tr('数据位置'),
             i18n.tr('任务、术语、翻译记忆都保存在这台{v0}上；API 密钥只在本机，不会上传。', v0=platform_ui.device_name()))
-        self.path_label = QLabel("")
+        from .style import ElideLabel
+        self.path_label = ElideLabel("", mode=Qt.TextElideMode.ElideMiddle)
         self.path_label.setObjectName("monoValue")
-        self.path_label.setWordWrap(True)
         self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.reveal_button = QPushButton(i18n.tr('在{v0}中显示', v0=platform_ui.file_manager_name()))
+        self.reveal_button = QPushButton(i18n.tr('在 {v0} 中显示', v0=platform_ui.file_manager_name()))
         self.reveal_button.setIcon(icons.icon("folder", 16))
         self.reveal_button.setIconSize(QSize(16, 16))
         self.reveal_button.clicked.connect(
@@ -124,7 +124,7 @@ class StoragePage(QWidget):
                 ("caches", i18n.tr('缓存（可清理）')), ("logs", i18n.tr('日志')),
                 ("total", i18n.tr('合计')))):
             name = QLabel(label)
-            value = QLabel("…")
+            value = QLabel(i18n.tr('计算中…'))
             value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             value.setObjectName("metricInline" if key == "total" else "")
             self.usage_grid.addWidget(name, row_index, 0)
@@ -170,14 +170,18 @@ class StoragePage(QWidget):
         steps = QLabel(cleanup)
         steps.setWordWrap(True)
         steps.setObjectName("hint")
+        uninstall_body.addWidget(steps)
         # Refilled from the folders actually in use (apply): the data folder may
         # have been moved, and fixed default paths would then point elsewhere.
-        paths = QLabel(cleanup_paths_text())
-        paths.setObjectName("monoValue")
-        paths.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        uninstall_body.addWidget(steps)
-        uninstall_body.addWidget(paths)
-        self.cleanup_paths = paths
+        # C-37：每条路径一个 ElideLabel——三行各自中间省略、各自tooltip是完整路径；
+        # 以前合成一个多行标签会被当成一行省略，日志/plist 两条直接消失。
+        self.cleanup_path_labels: list[ElideLabel] = []
+        for line in cleanup_paths_text().splitlines():
+            label = ElideLabel(line, mode=Qt.TextElideMode.ElideMiddle)
+            label.setObjectName("monoValue")
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            uninstall_body.addWidget(label)
+            self.cleanup_path_labels.append(label)
         layout.addWidget(uninstall)
         layout.addStretch(1)
 
@@ -193,15 +197,21 @@ class StoragePage(QWidget):
     def apply(self, view: dict) -> None:
         self._view = dict(view or {})
         self.path_label.setText(self._view.get("data_dir") or "")
-        self.cleanup_paths.setText(cleanup_paths_text(
-            self._view.get("data_dir"), self._view.get("log_dir")))
+        from .storage_location import saved_data_dir
+
         for key, label in self.usage_values.items():
             value = support.human_size(self._view.get(key, 0))
             if key == "jobs":
                 value = i18n.tr('{v0} 个 · {v1}', v0=self._view.get("job_count", 0), v1=value)
             label.setText(value)
         self.clear_button.setEnabled(bool(self._view.get("caches")))
-        from .storage_location import saved_data_dir
+
+        lines = cleanup_paths_text(
+            self._view.get("data_dir"), self._view.get("log_dir")).splitlines()
+        for index, label in enumerate(self.cleanup_path_labels):
+            if index < len(lines):
+                label.setText(lines[index])
+                label.setVisible(True)
 
         self.reset_button.setEnabled(bool(saved_data_dir()))
 

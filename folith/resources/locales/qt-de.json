@@ -568,6 +568,7 @@
   "在 GitHub 上查看 Folith": "Folith auf GitHub ansehen",
   "在 PDF 原页里定位并高亮这一段": "Dieses Segment auf der PDF-Originalseite lokalisieren und hervorheben",
   "在{v0}中显示": "In {v0} anzeigen",
+  "在 {v0} 中显示": "In {v0} anzeigen",
   "在{v0}中显示完整日志": "Vollständiges Protokoll in {v0} anzeigen",
   "在{v0}中显示数据目录": "Datenverzeichnis in {v0} anzeigen",
   "在「模型 › 用途」里选择视觉模型": "Visuelles Modell unter „Modelle › Verwendungszwecke“ auswählen",
@@ -2754,7 +2755,7 @@
   "这个模型无法关闭思考；可在这里调整推理强度。": "Dieses Modell kann das Denken nicht abschalten; hier die Stufe anpassen.",
   "只列这个模型已验证的思考档位。": "Nur die verifizierten Denkstufen dieses Modells sind gelistet.",
   "这个模型没有已验证的思考档位": "Für dieses Modell gibt es keine verifizierten Denkstufen",
-"思考：{v0}": "Denken: {v0}",
+  "思考：{v0}": "Denken: {v0}",
   "交付内容：{v0} · {v1}": "Lieferung: {v0} · {v1}",
   "标准交付": "Standardlieferung",
   "自动处理（实验）：{v0}": "Automatische Bearbeitung (Experiment): {v0}",
@@ -2763,6 +2764,7 @@
   "只对本任务生效 · 每条可撤销 · 不改译文": "Nur für diese Aufgabe · jede Bewertung rückgängig machbar · Übersetzung unverändert",
   "已自动处理 {v0} 条": "{v0} Befunde automatisch bearbeitet",
   "当前没有可以按确定依据处理的问题": "Derzeit keine Befunde mit eindeutigen Belegen",
-  "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Aus; frühere Einträge bleiben in der Gruppe „Automatisch bearbeitet (Audit)“ und können einzeln widerrufen werden.",
-  "{v0}（沿用翻译）": "{v0} (von Übersetzung geerbt)"
+"已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Aus; frühere Einträge bleiben in der Gruppe „Automatisch bearbeitet (Audit)“ und können einzeln widerrufen werden.",
+  "{v0}（沿用翻译）": "{v0} (von Übersetzung geerbt)",
+  "计算中…": "Wird berechnet…"
 }
