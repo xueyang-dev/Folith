@@ -293,20 +293,7 @@ class EngineDialog(QDialog):
         # 固定操作区只服务连接页；其他页的选项改了立即生效，没有「应用」。
         self._pinned_actions.setVisible(key == "models")
         if key == "models":
-            # C-43: a saved connection counts even with an empty API key
-            # (env-var / local gateway providers need no key).
-            has_connections = bool(getattr(self.connection_library, "profiles", None))
-            self.models_apply_button.setText(
-                i18n.tr('测试并保存') if has_connections else i18n.tr('添加连接'))
-            try:
-                self.models_apply_button.clicked.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-            if has_connections:
-                self.models_apply_button.clicked.connect(self.apply_connection)
-            else:
-                self.models_apply_button.clicked.connect(
-                    self.connection_library.open_editor)
+            self.sync_models_primary_button()
         label = next(text for value, _icon, text in self.PAGES if value == key)
         self.setWindowTitle(i18n.tr(label))
         if key == "storage":
@@ -523,19 +510,47 @@ class EngineDialog(QDialog):
         self.runner.submit(adapter.test_connection, config, on_done=done, on_error=failed,
                            label="apply-connection")
 
+    def sync_models_primary_button(self) -> None:
+        """C-45: one place owns the button's label AND its slot.
+
+        Called from show_page and from every connection-library mutation so the
+        footer never lags behind the connection list or stacks duplicate slots.
+        """
+        button = getattr(self, "models_apply_button", None)
+        if button is None:
+            return
+        has_connections = bool(getattr(self.connection_library, "profiles", None))
+        label = i18n.tr('测试并保存') if has_connections else i18n.tr('添加连接')
+        if button.text() != label:
+            button.setText(label)
+        try:
+            button.clicked.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        button.clicked.connect(self.apply_connection if has_connections
+                               else self.connection_library.open_editor)
+
     def _focus_missing_field(self, problem: str) -> None:
-        """Put the cursor where the user can fix the missing required input."""
-        candidates = []
-        if "密钥" in problem or "key" in problem.lower():
-            candidates += getattr(self, "api_key_edits", [])
-        candidates += [getattr(self, "provider_box", None),
-                       getattr(self, "model_box", None)]
-        if getattr(self, "connection_library", None) is not None:
-            candidates.append(getattr(self.connection_library, "add_button", None))
+        """Focus the first concrete field whose *value* is empty (never text matching)."""
+        from PySide6.QtWidgets import QComboBox, QLineEdit
+
+        library = getattr(self, "connection_library", None)
+        candidates = [getattr(self, "provider_box", None),
+                      getattr(self, "model_box", None),
+                      getattr(self, "key_edit", None),
+                      getattr(self, "base_edit", None)]
+        fallback = getattr(library, "add_button", None) if library is not None else None
         for widget in candidates:
-            if widget is not None and widget.isVisible() and widget.isEnabled():
-                widget.setFocus()
-                return
+            if widget is None or not widget.isVisible() or not widget.isEnabled():
+                continue
+            if isinstance(widget, QLineEdit) and widget.text().strip():
+                continue
+            if isinstance(widget, QComboBox) and widget.currentText().strip():
+                continue
+            widget.setFocus()
+            return
+        if fallback is not None and fallback.isVisible() and fallback.isEnabled():
+            fallback.setFocus()
 
     def _show_force(self, visible: bool) -> None:
         for button in self._force_buttons():
