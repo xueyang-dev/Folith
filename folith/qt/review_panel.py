@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QSizePolicy, QTextBrowser,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from . import adapter
 from . import components
 from . import i18n
+from . import platform_ui
 from . import icons
 from . import pdf_panel as pdf_panel_module
 from . import style as style_module
@@ -533,11 +534,22 @@ class ReviewPanel(QWidget):
         self.hint.setWordWrap(True)
         self.hint.setProperty("role", "muted")
         # 键位是没有写在按钮上的操作方式：给键盘用户一行看得见的清单。
-        self.shortcut_hint = QLabel(i18n.tr(
-            '快捷键：N 下一项 · A 暂存建议 · O 确认问题存在 · C 确认已解决 · '
-            'K 保留当前译文 · E 修改译文'))
-        self.shortcut_hint.setWordWrap(True)
-        self.shortcut_hint.setProperty("role", "muted")
+        # #524：键帽与绑定同源，来自 platform_ui；不再手抄一行字面键位说明。
+        self.shortcut_hint = QWidget()
+        self.shortcut_hint.setObjectName("transparent")
+        hint_row = QHBoxLayout(self.shortcut_hint)
+        hint_row.setContentsMargins(0, 0, 0, 0)
+        hint_row.setSpacing(6)
+        for action, label in (("review_next", i18n.tr('下一项')),
+                              ("review_apply", i18n.tr('暂存建议')),
+                              ("review_open", i18n.tr('确认问题存在')),
+                              ("review_confirm", i18n.tr('确认已解决')),
+                              ("review_keep", i18n.tr('保留当前译文')),
+                              ("review_edit", i18n.tr('修改译文'))):
+            cap = components.KeyHint(action)
+            cap.setToolTip(label)
+            hint_row.addWidget(cap)
+        hint_row.addStretch(1)
         self.shortcut_hint.setAccessibleName(i18n.tr('键盘快捷键'))
 
         # 动作按钮会折行：俄语/西语/阿拉伯语的按钮文字比中文长得多，固定一行会把
@@ -680,9 +692,10 @@ class ReviewPanel(QWidget):
             "edit": _guarded(self._emit_edit),
         }
         self._shortcuts = []
-        for key, sequence in (("next", "N"), ("apply", "A"), ("open", "O"),
-                              ("confirm", "C"), ("keep", "K"), ("edit", "E")):
-            shortcut = QShortcut(QKeySequence(sequence), self)
+        for key, action in (("next", "review_next"), ("apply", "review_apply"),
+                            ("open", "review_open"), ("confirm", "review_confirm"),
+                            ("keep", "review_keep"), ("edit", "review_edit")):
+            shortcut = QShortcut(platform_ui.shortcut(action), self)
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
             shortcut.activated.connect(self._shortcut_handlers[key])
             self._shortcuts.append(shortcut)
@@ -701,13 +714,15 @@ class ReviewPanel(QWidget):
         处理说明按 Tab 会跳回上方的勾选框。这里按界面从上到下的阅读顺序重排；
         隐藏的控件由 Qt 自动跳过。
         """
-        for widget, key in ((self.apply_button, "A"), (self.open_button, "O"),
-                            (self.confirm_button, "C"),
-                            (self.preserve_button, "K"),
-                            (self.edit_button, "E")):
+        for widget, action in ((self.apply_button, "review_apply"),
+                               (self.open_button, "review_open"),
+                               (self.confirm_button, "review_confirm"),
+                               (self.preserve_button, "review_keep"),
+                               (self.edit_button, "review_edit")):
             detail = widget.toolTip() or widget.text()
-            widget.setAccessibleDescription(f"{detail} ({key})")
-        self.list.setAccessibleDescription(self.shortcut_hint.text())
+            widget.setAccessibleDescription(
+                f"{detail} ({platform_ui.shortcut_text(action)})")
+        self.list.setAccessibleDescription(self.shortcut_hint.accessibleName())
         self.setAccessibleName(i18n.tr('审校工作台'))
         chain = (self.list, self.source_confirm_box, self.source_note_edit,
                  self.note_edit, self.apply_button, self.open_button,
