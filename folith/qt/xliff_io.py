@@ -7,6 +7,20 @@ from . import adapter
 BILINGUAL_SUFFIXES = frozenset({".xlf", ".xliff", ".sdlxliff", ".mqxliff"})
 
 
+def picker_filters(source_suffixes):
+    """Two named filters instead of one mixed 'documents' list (#526).
+
+    Kept here (next to the suffix contract) so both the dialog and tests read
+    the same definition; every suffix in ``BILINGUAL_SUFFIXES`` is advertised.
+    """
+    from . import i18n
+
+    documents = " ".join(f"*{item}" for item in sorted(source_suffixes))
+    bilingual = " ".join(f"*{item}" for item in sorted(BILINGUAL_SUFFIXES))
+    return (i18n.tr("文档 ({v0})", v0=documents),
+            i18n.tr("双语文件（XLIFF 1.2 / SDLXLIFF / MQXLIFF） ({v0})", v0=bilingual))
+
+
 def import_file(path: str, *, project_id: str | None = None) -> dict:
     source = Path(path).expanduser()
     if source.stat().st_size > adapter.MAX_SOURCE_BYTES:

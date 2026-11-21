@@ -2766,7 +2766,7 @@
   "当前没有可以按确定依据处理的问题": "No hay hallazgos con evidencia determinista en este momento",
   "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Desactivado; los registros automáticos anteriores siguen en el grupo Automático (auditoría) y se pueden revocar.",
   "{v0}（沿用翻译）": "{v0} (heredado de traducción)",
-"计算中…": "Calculando…",
+  "计算中…": "Calculando…",
   "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "El proveedor rechazó esta clave para ese modelo: comprueba en su consola que el modelo esté habilitado para esta clave.",
   "已清除筛选，显示第 {v0} 段": "Filtros borrados; se muestra el segmento {v0}",
   "没有匹配的段落": "No hay segmentos coincidentes",
@@ -2776,5 +2776,7 @@
   "找不到任务状态，无法解读。": "No se encontró el estado de la tarea.",
   "没有可用的模型连接，无法解读。": "Sin conexión de modelo configurada.",
   "解读失败：{v0}": "Falló la explicación: {v0}",
-  "（已缓存）": "(en caché)"
+  "（已缓存）": "(en caché)",
+  "双语文件（XLIFF 1.2 / SDLXLIFF / MQXLIFF） ({v0})": "Archivos bilingües (XLIFF 1.2 / SDLXLIFF / MQXLIFF) ({v0})",
+  "此格式目前只支持原样导出": "Este formato solo admite exportación"
 }

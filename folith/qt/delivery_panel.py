@@ -861,6 +861,10 @@ class DeliveryWorkspace(QWidget):
         self.bilingual_targets.clicked.connect(lambda: self.bilingualExportRequested.emit(True))
         bilingual_layout.addWidget(self.bilingual_original)
         bilingual_layout.addWidget(self.bilingual_targets)
+        self.bilingual_reason = QLabel("")
+        self.bilingual_reason.setProperty("role", "muted")
+        self.bilingual_reason.setWordWrap(True)
+        bilingual_layout.addWidget(self.bilingual_reason)
         bilingual_layout.addStretch(1)
         self.bilingual_actions.setVisible(False)
         layout.addWidget(self.bilingual_actions)
@@ -907,6 +911,9 @@ class DeliveryWorkspace(QWidget):
         """Only generic XLIFF may offer writing the current targets back."""
         self.bilingual_actions.setVisible(dialect in {"xliff12", "sdlxliff", "mqxliff"})
         self.bilingual_targets.setVisible(dialect == "xliff12")
+        # #526: never silently hide write-back — say why the action is absent.
+        self.bilingual_reason.setText(
+            "" if dialect == "xliff12" else i18n.tr('此格式目前只支持原样导出'))
 
     # ---- 对外只读入口（窗口层、测试共用） ----
     def model(self) -> DeliveryModel:
