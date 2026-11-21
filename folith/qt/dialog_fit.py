@@ -60,8 +60,16 @@ def fit_to_screen(widget: QWidget, *, recenter: bool = False) -> None:
         x, y = center.x() - frame.width() // 2, center.y() - frame.height() // 2
     else:
         x, y = frame.left(), frame.top()
-    x = max(area.left() + MARGIN, min(x, area.right() - frame.width() - MARGIN + 1))
-    y = max(area.top() + MARGIN, min(y, area.bottom() - frame.height() - MARGIN + 1))
+    # C-46: when the available area barely fits the minimum size, discard the
+    # cosmetic margin instead of pushing the frame off-screen.
+    slack_x = max(0, area.width() - 2 * MARGIN - frame.width())
+    slack_y = max(0, area.height() - 2 * MARGIN - frame.height())
+    margin_x = MARGIN if slack_x > 0 else 0
+    margin_y = MARGIN if slack_y > 0 else 0
+    x = max(area.left() + margin_x,
+            min(x, area.right() - frame.width() - margin_x + 1))
+    y = max(area.top() + margin_y,
+            min(y, area.bottom() - frame.height() - margin_y + 1))
     widget.move(x, y)
     actual = widget.frameGeometry().topLeft()
     if actual.x() != x or actual.y() != y:

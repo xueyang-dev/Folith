@@ -101,6 +101,11 @@ class TriageModeRow(QFrame):
         self.feedback.setText(text)
         self.feedback.setVisible(True)
 
+    def clear_feedback(self) -> None:
+        """A feedback line belongs to the task that produced it (C-46)."""
+        self.feedback.clear()
+        self.feedback.setVisible(False)
+
     def show_disabled_notice(self) -> None:
         self.feedback.setText(i18n.tr('已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。'))
         self.feedback.setVisible(True)
