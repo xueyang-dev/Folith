@@ -298,6 +298,7 @@ class ReviewPanel(QWidget):
     #: 窗口层经适配器调用既有核心函数；面板自己不写状态。
     triageRevokeRequested = Signal(str)             # triage record key
     triageToggleRequested = Signal(bool)            # 本任务的自动处理开关
+    explainRequested = Signal(dict)                 # #525: 当前条目的只读解读请求
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -631,6 +632,12 @@ class ReviewPanel(QWidget):
         evidence_header_layout = QHBoxLayout(evidence_header)
         evidence_header_layout.setContentsMargins(16, 10, 16, 10)
         evidence_header_layout.addWidget(self.evidence_title)
+        # #525：只在用户点击时才跑，绝不自动、绝不批量；结果只读展示。
+        self.ai_explain_button = button(i18n.tr('AI 解读'), "sparkles")
+        self.ai_explain_button.clicked.connect(self._explain_selected)
+        evidence_header_layout.addStretch(1)
+        evidence_header_layout.addWidget(self.ai_explain_button)
+        self._ai_explain_cache = None
         evidence_layout.addWidget(evidence_header)
         evidence_layout.addWidget(self.evidence_body, 1)
         evidence_layout.addWidget(self.audit_hint)
@@ -1251,6 +1258,12 @@ class ReviewPanel(QWidget):
             # 会误导的 0。其余分组始终显示。
             chip.setVisible(not (key == "auto" and not self._triage_on))
             chip.setChecked(bool(self._expanded.get(key)))
+
+    def _explain_selected(self) -> None:
+        """#525：只在点击时请求只读解读；面板不调用模型、不写状态。"""
+        item = self.selected_item()
+        if item:
+            self.explainRequested.emit(dict(item))
 
     def _toggle_evidence(self) -> None:
         if self.width() >= 1000:

@@ -2766,9 +2766,15 @@
   "当前没有可以按确定依据处理的问题": "Derzeit keine Befunde mit eindeutigen Belegen",
   "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Aus; frühere Einträge bleiben in der Gruppe „Automatisch bearbeitet (Audit)“ und können einzeln widerrufen werden.",
   "{v0}（沿用翻译）": "{v0} (von Übersetzung geerbt)",
-  "计算中…": "Wird berechnet…",
+"计算中…": "Wird berechnet…",
   "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "Der Anbieter hat diesen Schlüssel für das Modell abgelehnt: prüfen Sie in der Konsole, ob das Modell für diesen Schlüssel freigeschaltet ist.",
   "已清除筛选，显示第 {v0} 段": "Filter gelöscht, Absatz {v0} wird angezeigt",
   "没有匹配的段落": "Keine passenden Absätze",
-  "找不到第 {v0} 段，未更改筛选。": "Segment {v0} nicht gefunden; Filter unverändert."
+  "找不到第 {v0} 段，未更改筛选。": "Segment {v0} nicht gefunden; Filter unverändert.",
+  "AI 解读": "KI-Erklärung",
+  "请先选择一条问题。": "Bitte zuerst einen Eintrag wählen.",
+  "找不到任务状态，无法解读。": "Auftragsstatus nicht gefunden.",
+  "没有可用的模型连接，无法解读。": "Keine Modellverbindung vorhanden.",
+  "解读失败：{v0}": "Erklärung fehlgeschlagen: {v0}",
+  "（已缓存）": "(zwischengespeichert)"
 }

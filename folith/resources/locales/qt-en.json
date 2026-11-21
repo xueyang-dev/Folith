@@ -2765,9 +2765,15 @@
   "当前没有可以按确定依据处理的问题": "No findings with deterministic evidence right now",
   "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Off; earlier auto-handled records remain in the Auto-handled (audit) group and can be revoked individually.",
   "{v0}（沿用翻译）": "{v0} (inherited from translation)",
-  "计算中…": "Calculating…",
+"计算中…": "Calculating…",
   "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "The provider rejected this key for that model: check your provider console that the model is enabled for this key.",
   "已清除筛选，显示第 {v0} 段": "Filters cleared, showing segment {v0}",
   "没有匹配的段落": "No matching segments",
-  "找不到第 {v0} 段，未更改筛选。": "Segment {v0} not found; filters unchanged."
+  "找不到第 {v0} 段，未更改筛选。": "Segment {v0} not found; filters unchanged.",
+  "AI 解读": "AI explain",
+  "请先选择一条问题。": "Select an item first.",
+  "找不到任务状态，无法解读。": "Job state not found; cannot explain.",
+  "没有可用的模型连接，无法解读。": "No model connection configured; cannot explain.",
+  "解读失败：{v0}": "Explanation failed: {v0}",
+  "（已缓存）": "(cached)"
 }
