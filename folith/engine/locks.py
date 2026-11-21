@@ -11,6 +11,7 @@ from folith import project as _project
 from folith import store_lock as _store_lock
 from functools import wraps
 import threading
+import time
 from folith.engine._link import core as _c
 
 
@@ -28,6 +29,35 @@ def _direct_execution_active(job_id):
         return job_id in _DIRECT_EXECUTIONS
 
 
+def acquire_worker_lock_or_settle(job_id, *, status, timeout=None):
+    """Take ``.worker.lock``, waiting out a teardown when the run is already over.
+
+    Two paths need this rule and used to disagree: an external save waited up to
+    ``WORKER_LOCK_SETTLE_SECONDS`` (2 s) once the runtime said the run was terminal,
+    while a direct stage call failed at once -- so in the one-to-two seconds where
+    the worker thread is still winding down, saving worked and a manual review was
+    refused with "任务正在后台处理" (seen on a Windows CI run).
+
+    ``status`` is the runtime status the caller already read; an active run is
+    refused immediately (a real worker owns the lock), a terminal one gets the
+    settle window.  Returns the lock stream, or ``None`` when the job is busy.
+    """
+    path = _c.job_dir(job_id) / ".worker.lock"
+    lock = _job_lock.acquire(path, blocking=False)
+    if lock is not None:
+        return lock
+    if str(status or "") in _c.RUNTIME_ACTIVE_STATUSES:
+        return None
+    budget = _c.WORKER_LOCK_SETTLE_SECONDS if timeout is None else float(timeout)
+    deadline = time.monotonic() + max(0.0, budget)
+    while time.monotonic() < deadline:
+        time.sleep(0.02)
+        lock = _job_lock.acquire(path, blocking=False)
+        if lock is not None:
+            return lock
+    return None
+
+
 def _exclusive_job_execution(job_id_position):
     """CLI and direct stage calls own the same lifetime lock as GUI workers."""
     def decorate(function):
@@ -37,7 +67,9 @@ def _exclusive_job_execution(job_id_position):
             previous = _c._runtime_job_id()
             if previous == job_id:
                 return function(*args, **kwargs)
-            execution_lock = _job_lock.acquire(_c.job_dir(job_id) / ".worker.lock", blocking=False)
+            runtime = _c.load_runtime_state(job_id) or {}
+            execution_lock = acquire_worker_lock_or_settle(
+                job_id, status=runtime.get("status"))
             if execution_lock is None:
                 raise RuntimeError("任务正在后台处理，请等待完成后重试。")
             _c._RUNTIME_CTX.job_id = job_id
