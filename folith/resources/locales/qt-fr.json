@@ -2767,6 +2767,10 @@
 "已关闭；此前自动处理的记录仍在「自动处理（审计）」组，可逐条撤销。": "Désactivé ; les enregistrements restent dans le groupe Traitement automatique (audit) et peuvent être annulés.",
   "{v0}（沿用翻译）": "{v0} (hérité de la traduction)",
   "计算中…": "Calcul en cours…",
+<<<<<<< HEAD
   "服务商拒绝了这把密钥对该模型的访问：请到服务商控制台确认该模型已对这把密钥开启。": "Le fournisseur a refusé cette clé pour ce modèle : vérifiez dans sa console que le modèle est activé pour cette clé.",
   "已清除筛选，显示第 {v0} 段": "Filtres effacés, affichage du segment {v0}"
+=======
+  "没有匹配的段落": "Aucun segment correspondant"
+>>>>>>> 1165eca0 (fix(0.8.3/A-57): search superscripts as text and show a clear zero-result state)
 }

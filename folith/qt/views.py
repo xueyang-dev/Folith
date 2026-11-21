@@ -5761,8 +5761,6 @@ class WorkbenchView(QWidget):
         * 已开始且有段落 → 网格 + 检查器；
         * 已开始但没有段落（筛选为空、全被排除）→ 一段说明。
 
-        判据用 `_all_rows`（总段数）而不是过滤后的 `_rows`：筛选结果为空时
-        表格空着是**正确**的，不能把它说成"这份文档没有段落"。
         """
         started = self._task_started()
         has_rows = bool(self._all_rows)
@@ -5772,10 +5770,12 @@ class WorkbenchView(QWidget):
         self.setup_page.setVisible(show_setup)
         self.toolbar_bar.setVisible(started and has_rows)
         self.translation_split.setVisible(started and has_rows)
-        self.no_segments_card.setVisible(started and not has_rows)
+        self.no_segments_card.setVisible(started and (not has_rows or not self._visible_rows()))
         if was_setup and started and has_rows:
             self._motion.reveal("translation-body", self.translation_split, kind="body")
-        if show_setup or has_rows:
+        if not self._visible_rows():
+            self.selection_title.setText("")
+        if show_setup or (has_rows and self._visible_rows()):
             return
         state = self._state or {}
         recognising = self._recognition_progress()
@@ -5792,7 +5792,7 @@ class WorkbenchView(QWidget):
             hint = i18n.tr('被排除的段落不进入译文与交付。可以在「交付」页的已排除清单里恢复，'
                            '原文与当前译文都完整保留。')
         elif state.get("paras") or state.get("pairs"):
-            title = i18n.tr('当前筛选下没有段落')
+            title = i18n.tr('没有匹配的段落')
             hint = i18n.tr('清空搜索词或把状态筛选切回「全部」，就能看到剩下的段落。')
         else:
             title = i18n.tr('还没有可编辑的段落')
