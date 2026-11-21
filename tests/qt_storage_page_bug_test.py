@@ -65,3 +65,20 @@ def test_all_three_cleanup_paths_survive_apply(app):
     for label, full in zip(page.cleanup_path_labels, expected):
         assert label.isVisible() or not label.isHidden()
         assert label.toolTip() == full
+
+
+def test_long_paths_use_middle_elision(app):
+    from PySide6.QtCore import Qt
+
+    page = settings_pages.StoragePage(None)
+    long_path = "/Volumes/" + "very-long-folder-" * 20 + "/Folith/data"
+    assert page.path_label._mode == Qt.TextElideMode.ElideMiddle
+    assert all(label._mode == Qt.TextElideMode.ElideMiddle
+               for label in page.cleanup_path_labels)
+    page.path_label.setText(long_path)
+    page.path_label.resize(400, 20)
+    app.processEvents()
+    shown = page.path_label.text()
+    assert "…" in shown, shown
+    assert shown.endswith("Folith/data"), shown
+    assert shown.startswith("/Volumes/"), shown

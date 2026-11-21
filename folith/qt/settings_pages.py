@@ -92,7 +92,7 @@ class StoragePage(QWidget):
             i18n.tr('数据位置'),
             i18n.tr('任务、术语、翻译记忆都保存在这台{v0}上；API 密钥只在本机，不会上传。', v0=platform_ui.device_name()))
         from .style import ElideLabel
-        self.path_label = ElideLabel("")
+        self.path_label = ElideLabel("", mode=Qt.TextElideMode.ElideMiddle)
         self.path_label.setObjectName("monoValue")
         self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.reveal_button = QPushButton(i18n.tr('在 {v0} 中显示', v0=platform_ui.file_manager_name()))
@@ -177,7 +177,7 @@ class StoragePage(QWidget):
         # 以前合成一个多行标签会被当成一行省略，日志/plist 两条直接消失。
         self.cleanup_path_labels: list[ElideLabel] = []
         for line in cleanup_paths_text().splitlines():
-            label = ElideLabel(line)
+            label = ElideLabel(line, mode=Qt.TextElideMode.ElideMiddle)
             label.setObjectName("monoValue")
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             uninstall_body.addWidget(label)
