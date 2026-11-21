@@ -55,6 +55,8 @@ class _TermsEditorCard(Card):
 class TermsPanel(QWidget):
     """术语表编辑器。"""
 
+    ROOT_OBJECT_NAME = "termsPanelRoot"
+
     workspaceRequested = Signal()
     locateRequested = Signal(dict)
     segmentRequested = Signal(int)
@@ -73,6 +75,11 @@ class TermsPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName(TermsPanel.ROOT_OBJECT_NAME)
+        # U-8: WA_StyledBackground makes the QSS background actually paint;
+        # without it the root falls back to palette(window) which is dark on
+        # macOS light theme, and everything laid directly on it looks black.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._view: dict = {}
         self._job_id = ""
         self._rows: list[dict] = []
@@ -157,7 +164,6 @@ class TermsPanel(QWidget):
         # 复选框的实际宽度比 sizeHint 宽，按整框排，否则折行算错、末字被裁掉。
         self.conflict_box.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect, True)
         editor_card = _TermsEditorCard()
-        editor_card.setObjectName("termsEditorCard")
         editor_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         editor_layout = QVBoxLayout(editor_card)
         editor_layout.setContentsMargins(16, 14, 16, 14)
@@ -261,7 +267,6 @@ class TermsPanel(QWidget):
         self.empty_state.actionTriggered.connect(self._start_adding)
         self.editor_card = editor_card
         self.filter_bar = QWidget()
-        self.filter_bar.setObjectName("termsFilterBar")
         filter_layout = QVBoxLayout(self.filter_bar)
         filter_layout.setContentsMargins(0, 0, 0, 0)
         filter_layout.setSpacing(6)
