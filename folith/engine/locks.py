@@ -67,9 +67,14 @@ def _exclusive_job_execution(job_id_position):
             previous = _c._runtime_job_id()
             if previous == job_id:
                 return function(*args, **kwargs)
-            runtime = _c.load_runtime_state(job_id) or {}
-            execution_lock = acquire_worker_lock_or_settle(
-                job_id, status=runtime.get("status"))
+            # Direct calls keep the *immediate* refusal: within one process the
+            # POSIX lock is not a duplicate detector (fcntl locks are per-process),
+            # so a settle wait here would silently change which error a second
+            # worker sees (manual_review_execution_test pins that).  The shared
+            # settle rule is used by the save path, where "terminal but the worker
+            # is still tearing down" is the case it fixes.
+            execution_lock = _job_lock.acquire(
+                _c.job_dir(job_id) / ".worker.lock", blocking=False)
             if execution_lock is None:
                 raise RuntimeError("任务正在后台处理，请等待完成后重试。")
             _c._RUNTIME_CTX.job_id = job_id
