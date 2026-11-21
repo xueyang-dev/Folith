@@ -102,7 +102,7 @@ def _engine_owner_alive(job_id):
     behind by an older run cannot answer for a newer one.
     """
     core = _core()
-    entry = engine_owner(job_id)
+    entry = core.engine_owner(job_id)
     if not entry:
         return False
     if not core._runtime_pid_alive(entry.get("pid")):
@@ -134,7 +134,7 @@ def _job_execution_alive(job_id):
         return False
     if core.is_job_worker_alive(job_id):
         return True
-    if _engine_owner_alive(job_id):
+    if core._engine_owner_alive(job_id):
         return True
     owner = (core.load_runtime_state(job_id).get("worker") or {}).get("owner_pid")
     return owner != os.getpid() and core._runtime_pid_alive(owner)
