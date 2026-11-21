@@ -157,6 +157,7 @@ class TermsPanel(QWidget):
         # 复选框的实际宽度比 sizeHint 宽，按整框排，否则折行算错、末字被裁掉。
         self.conflict_box.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect, True)
         editor_card = _TermsEditorCard()
+        editor_card.setObjectName("termsEditorCard")
         editor_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         editor_layout = QVBoxLayout(editor_card)
         editor_layout.setContentsMargins(16, 14, 16, 14)
@@ -260,6 +261,7 @@ class TermsPanel(QWidget):
         self.empty_state.actionTriggered.connect(self._start_adding)
         self.editor_card = editor_card
         self.filter_bar = QWidget()
+        self.filter_bar.setObjectName("termsFilterBar")
         filter_layout = QVBoxLayout(self.filter_bar)
         filter_layout.setContentsMargins(0, 0, 0, 0)
         filter_layout.setSpacing(6)
@@ -716,6 +718,18 @@ class TermsPanel(QWidget):
             for column, value in enumerate(values):
                 item = (components.status_cell(str(value or ""), tone) if column == 2
                         else QTableWidgetItem(str(value or "")))
+                if column == 2:
+                    # U-8: Qt derives a different QIcon variant for selected
+                    # rows (brown instead of the status orange).  Pin every
+                    # mode to the same pixmap so the dot colour depends only
+                    # on the status.
+                    from PySide6.QtGui import QIcon
+                    dot = item.icon()
+                    same = dot.pixmap(QSize(8, 8), QIcon.Mode.Normal)
+                    for mode in (QIcon.Mode.Selected, QIcon.Mode.Active,
+                                 QIcon.Mode.Disabled):
+                        dot.addPixmap(same, mode)
+                    item.setIcon(dot)
                 item.setData(Qt.ItemDataRole.UserRole, index)
                 if column == 3:
                     item.setData(Qt.ItemDataRole.DisplayRole, int(row.get('occurrences') or 0))
