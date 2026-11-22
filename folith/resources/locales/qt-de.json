@@ -2789,5 +2789,6 @@
   "审校：确认已解决": "Prüfung: Lösung bestätigen",
   "审校：保留当前译文": "Prüfung: Aktuelle Übersetzung behalten",
   "审校：修改译文": "Prüfung: Übersetzung bearbeiten",
-  "键盘快捷键：{v0}": "Tastenkürzel: {v0}"
+  "键盘快捷键：{v0}": "Tastenkürzel: {v0}",
+  "有歧义、需人工确认": "Mehrdeutig — bitte manuell bestätigen"
 }

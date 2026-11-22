@@ -2788,5 +2788,6 @@
   "审校：确认已解决": "Review: Confirm resolved",
   "审校：保留当前译文": "Review: Keep current translation",
   "审校：修改译文": "Review: Edit translation",
-  "键盘快捷键：{v0}": "Keyboard shortcuts: {v0}"
+  "键盘快捷键：{v0}": "Keyboard shortcuts: {v0}",
+  "有歧义、需人工确认": "Ambiguous — confirm manually"
 }

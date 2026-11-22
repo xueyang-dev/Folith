@@ -433,13 +433,30 @@ def preview(record, pairs, target, known_forms=(), records=()):
     # Base protected set: target always protected + caller-supplied extras that
     # contain at least one variant as a proper substring.
     changes = []
+    compounds = valid_compounds(record, pairs, spelling(target), records)
+    observed_forms = {spelling(o.get('target')).casefold()
+                      for o in record.get('observations') or [] if o.get('target')}
+    bare = min((spelling(o.get('target')).casefold()
+                for o in record.get('observations') or [] if o.get('target')),
+               key=len, default='')
     for row in current_occurrences(record, pairs, records):
+        if all(v.casefold() == target.casefold() for v in row['variants']):
+            continue
+        ambiguous = [v for v in row['variants']
+                     if bare and bare != v.casefold() and bare in v.casefold()
+                     and v.casefold() in observed_forms
+                     and v.casefold() not in compounds]
         variants_to_replace = [v for v in row['variants']
-                                if spelling(v).casefold() != target.casefold()]
+                               if spelling(v).casefold() != target.casefold()
+                               and v not in ambiguous]
         if not variants_to_replace:
+            if ambiguous:
+                changes.append({'index': row['index'], 'source': row['source'],
+                                'before': row['target'], 'after': row['target'],
+                                'ambiguous': True})
             continue
         variants_cf = {v.casefold() for v in variants_to_replace}
-        protected = {target}
+        protected = {target} | set(ambiguous)
         for form in (known_forms or ()):
             form_sp = spelling(form)
             if (form_sp

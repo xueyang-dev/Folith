@@ -1,0 +1,211 @@
+{
+  "correct-independent-evidence": {
+    "pairs": [
+      {
+        "source": "Crown colophon",
+        "target": "皇冠标识上写着出版年份。"
+      },
+      {
+        "source": "Crown.",
+        "target": "皇冠。"
+      }
+    ],
+    "independent": [
+      {
+        "source_form": "Crown colophon",
+        "observations": [
+          {
+            "target": "皇冠标识",
+            "segment_id": 0,
+            "provenance": "generated_observation"
+          },
+          {
+            "target": "皇冠标识",
+            "segment_id": null,
+            "provenance": "human_locked"
+          }
+        ],
+        "status": "locked"
+      }
+    ],
+    "accepted_compounds": [
+      "皇冠标识"
+    ],
+    "card_segments": [
+      [
+        1
+      ]
+    ],
+    "preview": [
+      {
+        "index": 1,
+        "source": "Crown.",
+        "before": "皇冠。",
+        "after": "皇冠出版社。"
+      }
+    ],
+    "persisted_changed_indexes": [
+      1
+    ],
+    "persisted_targets": [
+      "皇冠标识上写着出版年份。",
+      "皇冠出版社。"
+    ]
+  },
+  "only-original-entity": {
+    "pairs": [
+      {
+        "source": "Crown colophon",
+        "target": "皇冠标识上写着出版年份。"
+      },
+      {
+        "source": "Crown.",
+        "target": "皇冠。"
+      }
+    ],
+    "independent": [],
+    "accepted_compounds": [],
+    "card_segments": [
+      [
+        0,
+        1
+      ]
+    ],
+    "preview": [
+      {
+        "index": 0,
+        "source": "Crown colophon",
+        "before": "皇冠标识上写着出版年份。",
+        "after": "皇冠标识上写着出版年份。",
+        "ambiguous": true
+      },
+      {
+        "index": 1,
+        "source": "Crown.",
+        "before": "皇冠。",
+        "after": "皇冠出版社。"
+      }
+    ],
+    "persisted_changed_indexes": [
+      0,
+      1
+    ],
+    "persisted_targets": [
+      "皇冠标识上写着出版年份。",
+      "皇冠出版社。"
+    ]
+  },
+  "published-in-isolation": {
+    "pairs": [
+      {
+        "source": "Crown published the first edition.",
+        "target": "皇冠社出版了第一版。"
+      }
+    ],
+    "independent": [],
+    "accepted_compounds": [],
+    "card_segments": [
+      [
+        0
+      ]
+    ],
+    "preview": [
+      {
+        "index": 0,
+        "source": "Crown published the first edition.",
+        "before": "皇冠社出版了第一版。",
+        "after": "皇冠社出版了第一版。",
+        "ambiguous": true
+      }
+    ]
+  },
+  "unrelated-record-same-row": {
+    "pairs": [
+      {
+        "source": "Crown published the first edition with Ada.",
+        "target": "皇冠社与艾达合作出版了第一版。"
+      }
+    ],
+    "independent": [
+      {
+        "source_form": "Ada",
+        "observations": [
+          {
+            "target": "艾达",
+            "segment_id": 0,
+            "provenance": "generated_observation"
+          },
+          {
+            "target": "艾达",
+            "segment_id": null,
+            "provenance": "human_locked"
+          }
+        ],
+        "status": "locked"
+      }
+    ],
+    "accepted_compounds": [
+      "皇冠社"
+    ],
+    "card_segments": [],
+    "preview": []
+  },
+  "good-term-in-one-row-wrong-same-target-in-another": {
+    "pairs": [
+      {
+        "source": "Crown colophon",
+        "target": "皇冠标识上写着出版年份。"
+      },
+      {
+        "source": "Crown published the first edition.",
+        "target": "皇冠标识出版了第一版。"
+      },
+      {
+        "source": "Crown.",
+        "target": "皇冠。"
+      }
+    ],
+    "independent": [
+      {
+        "source_form": "Crown colophon",
+        "observations": [
+          {
+            "target": "皇冠标识",
+            "segment_id": 0,
+            "provenance": "generated_observation"
+          },
+          {
+            "target": "皇冠标识",
+            "segment_id": null,
+            "provenance": "human_locked"
+          }
+        ],
+        "status": "locked"
+      }
+    ],
+    "accepted_compounds": [
+      "皇冠标识"
+    ],
+    "card_segments": [
+      [
+        2
+      ]
+    ],
+    "preview": [
+      {
+        "index": 2,
+        "source": "Crown.",
+        "before": "皇冠。",
+        "after": "皇冠出版社。"
+      }
+    ],
+    "persisted_changed_indexes": [
+      2
+    ],
+    "persisted_targets": [
+      "皇冠标识上写着出版年份。",
+      "皇冠标识出版了第一版。",
+      "皇冠出版社。"
+    ]
+  }
+}

@@ -182,3 +182,26 @@ def test_verb_phrase_mistranslation_is_reported_without_verb_stopwords():
     pairs = [{"source": "Crown published the first edition.",
               "target": "皇冠社出版了第一版。"}]
     assert consistency.findings([record], pairs)
+
+
+def test_ambiguous_occurrence_is_shown_but_not_auto_applied():
+    """C-63: one-click repair must skip an ambiguous longer rendering."""
+    from folith.engine import glossary_ops
+
+    import core
+
+    state = core.new_job_state("c63.docx")
+    state["pairs"] = [
+        {"source": "Crown colophon", "target": "皇冠标识上写着出版年份。"},
+        {"source": "Crown.", "target": "皇冠。"},
+    ]
+    state["entity_registry"] = [{
+        "source_form": "Crown", "preferred_target": "皇冠出版社", "status": "locked",
+        "observations": [{"target": "皇冠", "segment_id": 1},
+                         {"target": "皇冠标识", "segment_id": 0}]}]
+    preview = glossary_ops.preview_entity_repair(state, "Crown", "皇冠出版社")
+    ambiguous = [c for c in preview if c.get("ambiguous")]
+    assert ambiguous and ambiguous[0]["index"] == 0
+    assert ambiguous[0]["after"] == ambiguous[0]["before"]
+    applicable = [c for c in preview if not c.get("ambiguous") and c["after"] != c["before"]]
+    assert [c["index"] for c in applicable] == [1]
