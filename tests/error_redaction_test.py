@@ -250,3 +250,50 @@ def test_trace_error_records_are_redacted_before_the_summary(tmp_path, monkeypat
                      message=f"relay echoed {FAKE_SK_KEY}")
     message = run.errors[-1]["message"]
     assert FAKE_SK_KEY not in message and "<redacted>" in message
+
+
+# ---------------------------------------------------------------------------
+# 4. CX-11 §1: provider failures persist a structured diagnostic, never raw text
+# ---------------------------------------------------------------------------
+
+class _RelayRefusal(RuntimeError):
+    """The probe's exception shape: SDK-style status/body with an echoed reply."""
+
+    status_code = 400
+    body = {"error": {"message": "Relay refused value " + FAKE_KEY + ".",
+                      "code": "invalid_request", "request_id": "cx11-req-1"}}
+
+    def __init__(self):
+        super().__init__("Error code: 400 - " + json.dumps(self.body))
+
+
+def test_provider_error_detail_is_structured_and_carries_no_raw_text():
+    from folith.engine.llm_provider import provider_error_detail
+
+    detail = provider_error_detail(_RelayRefusal(), stage="translation")
+    assert "class=" in detail and "http=400" in detail
+    assert "code=invalid_request" in detail
+    assert "request_id=cx11-req-1" in detail
+    assert "error=_RelayRefusal" in detail and "stage=translation" in detail
+    assert FAKE_KEY not in detail
+    assert "Relay refused" not in detail, "回包自由文本一律不进诊断"
+
+
+def test_translate_batch_raises_the_structured_diagnostic_not_the_raw_body(
+        monkeypatch):
+    """批失败的 RuntimeError 带结构化诊断；回显的密钥不再随它进入任务文件。"""
+    monkeypatch.setattr(core, "_runtime_job_id", lambda: "redact_diag_test")
+    monkeypatch.setattr(core, "_llm_cancel_check", lambda: None)
+
+    def refuse(*_args, **_kwargs):
+        raise _RelayRefusal()
+
+    monkeypatch.setattr(core, "call_llm", refuse)
+    with pytest.raises(RuntimeError) as caught:
+        core.translate_batch(["one"], [], [], "", "", "zh",
+                             "DeepSeek", FAKE_KEY, "deepseek-v4-flash")
+    text = str(caught.value)
+    assert "批次翻译失败（1 段）" in text
+    assert "class=" in text and "http=400" in text and "code=invalid_request" in text
+    assert "request_id=cx11-req-1" in text
+    assert FAKE_KEY not in text and "Relay refused" not in text

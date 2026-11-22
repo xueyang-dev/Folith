@@ -32,7 +32,7 @@ TESSERACT_INSTALL_URL = "https://tesseract-ocr.github.io/tessdoc/Installation.ht
 
 #: 派生缓存：删掉只会让下次多花调用，不改变任何译文、术语、记忆或交付。
 CACHE_ENTRIES = ("ocr_profile_cache", "translation_cache.json", "knowledge_cache.json")
-#: 备份包里不放的东西（CX-06 第 1、3 项）：
+#: 备份里不放的东西（CX-06 第 1、3 项）：
 #: * 密钥本体：`provider_config.json`（翻译/审校/视觉连接）、`ocr_online_config.json`
 #:   （专用视觉连接，明文 key）。恢复后按 README 重新填写。
 #: * 可能回显密钥的原始取证：`failures.jsonl` 与 `*-failure.json`（保存服务商
@@ -47,6 +47,11 @@ EXPORT_EXCLUDED_NAMES = frozenset({
 })
 EXPORT_EXCLUDED_PARTS = frozenset({".performance"})
 EXPORT_EXCLUDED_PATTERNS = ("*-failure.json",)
+#: CX-11 §3：操作者常把凭据文件留成 ``.bak``/``.old`` 等副本。匹配锚定在两个
+#: 正式凭据文件名上（不匹配其它文件的任何副本后缀）。
+EXPORT_EXCLUDED_CREDENTIAL_PATTERNS = (
+    "provider_config.json.*", "ocr_online_config.json.*",
+)
 EXPORT_EXCLUDED_SUFFIXES = (".lock", ".tmp")
 _JOB_DIR = re.compile(r"^[0-9a-f]{16}$")
 
@@ -140,8 +145,68 @@ def _exported(name: str) -> bool:
         return False
     if name.endswith(EXPORT_EXCLUDED_SUFFIXES):
         return False
-    return not any(fnmatch.fnmatch(name, pattern)
-                   for pattern in EXPORT_EXCLUDED_PATTERNS)
+    patterns = EXPORT_EXCLUDED_PATTERNS + EXPORT_EXCLUDED_CREDENTIAL_PATTERNS
+    return not any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
+
+
+#: CX-11 §2：升级前的构建把提供商原始异常（可能回显密钥、正文和路径）写进了
+#: 任务错误字段。导出时无法事后识别旧回包里带过什么，所以这些**指定字段**在打包
+#: 时一律替换为占位符；批号、偏移、状态、事件标识等恢复任务所需的全部保留。
+EXPORT_CLEANED_ERROR_TEXT = "（升级前记录的错误文本，导出时已脱敏）"
+#: 会被清理错误字段的成员（其余文件按原字节打包）。
+_EXPORT_CLEANED_BASENAMES = frozenset({
+    "state.json", "runtime_state.json", "events.jsonl", "runtime_events.jsonl",
+})
+
+
+def _clean_export_member(name: str, payload: bytes) -> bytes:
+    """The export copy of a task file carries no legacy error free text.
+
+    Cleaning is field-anchored, never a content guess: the job state's
+    ``translation_failures[].reason``, the segment event log's ``reason``,
+    the runtime state's ``error.message`` / ``last_event`` (failed runs) and
+    every ``category == "error"`` runtime event message become the marker.
+    A member that cannot be parsed is carried byte-for-byte (the backup must
+    never lose data it cannot understand).
+    """
+    if name not in _EXPORT_CLEANED_BASENAMES:
+        return payload
+    if name.endswith(".jsonl"):
+        lines = []
+        for line in payload.decode("utf-8", "replace").splitlines():
+            if line.strip():
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    lines.append(line)
+                    continue
+                if name == "events.jsonl" and record.get("reason"):
+                    record["reason"] = EXPORT_CLEANED_ERROR_TEXT
+                if (name == "runtime_events.jsonl"
+                        and record.get("category") == "error"
+                        and record.get("message")):
+                    record["message"] = EXPORT_CLEANED_ERROR_TEXT
+                line = json.dumps(record, ensure_ascii=False)
+            lines.append(line)
+        return ("\n".join(lines) + "\n").encode("utf-8")
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return payload
+    if name == "state.json":
+        for failure in data.get("translation_failures") or ():
+            if isinstance(failure, dict) and failure.get("reason"):
+                failure["reason"] = EXPORT_CLEANED_ERROR_TEXT
+    elif name == "runtime_state.json" and isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            error["message"] = EXPORT_CLEANED_ERROR_TEXT
+            data["last_event"] = EXPORT_CLEANED_ERROR_TEXT
+        for event in data.get("events") or ():
+            if (isinstance(event, dict) and event.get("category") == "error"
+                    and event.get("message")):
+                event["message"] = EXPORT_CLEANED_ERROR_TEXT
+    return (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
 
 def export_all_data(destination: str | os.PathLike[str]) -> dict:
@@ -162,7 +227,10 @@ def export_all_data(destination: str | os.PathLike[str]) -> dict:
         for path in sorted(root.rglob("*")):
             if not path.is_file() or not all(map(_exported, path.relative_to(root).parts)):
                 continue
-            archive.write(path, Path("Folith-data") / path.relative_to(root))
+            member = Path("Folith-data") / path.relative_to(root)
+            # CX-11 §2：任务错误字段在导出副本里替换为占位符（原文件不动）。
+            archive.writestr(member.as_posix(), _clean_export_member(
+                path.name, path.read_bytes()))
             files += 1
         archive.writestr("Folith-data/README.txt", (
             "Folith 数据备份（私有备份：包含文档、译文、术语与记忆等数据）。\n"

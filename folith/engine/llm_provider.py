@@ -413,9 +413,10 @@ def _provider_error_payload(error):
     code = ""
     message = ""
     period = ""
+    request_id = ""
 
     def visit(payload):
-        nonlocal code, message, period
+        nonlocal code, message, period, request_id
         if isinstance(payload, str):
             stripped = payload.strip()
             if stripped.startswith(("{", "[")):
@@ -426,6 +427,10 @@ def _provider_error_payload(error):
             return
         if not isinstance(payload, dict):
             return
+        if not request_id:
+            value = payload.get("request_id") or payload.get("id")
+            if isinstance(value, (str, int)) and str(value).strip():
+                request_id = str(value).strip()
         if not code:
             for key in ("code", "error_code", "type"):
                 value = payload.get(key)
@@ -461,6 +466,7 @@ def _provider_error_payload(error):
         "code": code,
         "message": message,
         "period": period,
+        "request_id": request_id,
         "text": error_text,
     }
 
@@ -578,6 +584,34 @@ def provider_error_message(error, action="请求失败"):
     status = provider_error_status(error)
     message = status["message"]
     return f"{action}：{message}" if action else message
+
+
+def provider_error_detail(error, *, stage=""):
+    """A structured, persistable diagnostic for a provider failure (CX-11 §1).
+
+    The raw SDK/relay exception text can echo the very credential that was
+    sent, stretches of the user's text and local paths, so it never goes into
+    task state, events, logs or trace summaries.  Every place that used to
+    stringify the exception now persists this summary instead: the error
+    class, the HTTP status, the provider's own error code, the request id
+    and the stage — the fields support actually needs.  The exception object
+    itself stays in memory only.
+    """
+    info = _provider_error_payload(error)
+    status = provider_error_status(error)
+    parts = [f"class={status['status']}"]
+    if info["http_status"]:
+        parts.append(f"http={info['http_status']}")
+    if info["code"]:
+        parts.append(f"code={info['code']}")
+    if info["request_id"]:
+        parts.append(f"request_id={info['request_id']}")
+    if info["period"]:
+        parts.append(f"period={info['period']}")
+    parts.append(f"error={type(error).__name__}")
+    if stage:
+        parts.append(f"stage={stage}")
+    return "; ".join(parts)
 
 
 def _fetch_gemini_models(api_key):

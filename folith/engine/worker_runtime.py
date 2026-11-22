@@ -209,8 +209,14 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         user_error_message = (
             core.provider_error_message(exc, "任务执行失败")
             if provider_status["status"] != "unknown"
-            # CX-06 §3：模型异常可能带着服务商回包（含回显的密钥），先脱敏再给用户。
-            else redact_error_text(str(exc))[:500] or "任务执行失败")
+            # CX-11 §1：非提供商异常的兜底文案按本次连接的已知凭据脱敏——普通
+            # 自定义凭据没有 sk- 形状，模式匹配兜不住，字面替换才兜得住。
+            else redact_error_text(
+                str(exc),
+                known_secrets=tuple(
+                    str(value or "") for value in (
+                        kwargs.get("api_key"), kwargs.get("reviewer_api_key"),
+                        kwargs.get("auxiliary_api_key"))))[:500] or "任务执行失败")
         error = None if (cancelled or exit_requested) else {
             "type": type(exc).__name__,
             "message": user_error_message,

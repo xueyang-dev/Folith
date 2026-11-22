@@ -1014,6 +1014,7 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     normalize_openai_base_url,
     parse_json_array,
     parse_translation_array,
+    provider_error_detail,
     provider_error_message,
     provider_error_status,
     reasoning_effort_options,
@@ -2670,9 +2671,10 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             )
             run.record_error(
                 stage="model_request", operation=model,
-                # CX-06 §3：模型异常可能原样带服务商回包（含回显的密钥），落盘前脱敏。
+                # CX-11 §1：trace 摘要会落盘并随备份讨论，模型异常只留结构化
+                # 诊断（状态码/错误类/请求 ID），原始回包文本一律不进任何字段。
                 error_type=type(exc).__name__,
-                message=redact_error_text(str(exc)),
+                message=provider_error_detail(exc, stage="model_request"),
             )
         if runtime_job_id:
             # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
@@ -4382,7 +4384,9 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             render_stats=render_stats, attempt=3, output_chars=0, failed=True))
     raise RuntimeError(
         f"批次翻译失败（{len(segments)} 段）："
-        f"{last_err or '模型返回格式异常或数量不匹配'}"
+        # CX-11 §1：这里以前直接把 SDK 异常字符串化，回显的密钥、正文和路径随之
+        # 进入任务状态/事件/日志/trace。结构化诊断取而代之；异常对象只留在内存。
+        f"{provider_error_detail(last_err) if last_err is not None else '模型返回格式异常或数量不匹配'}"
     )
 
 

@@ -378,3 +378,86 @@ def test_cleanup_list_names_the_data_folder_in_use(isolated, tmp_path):
         str(desktop_paths.default_data_dir()), str(logs))[0]
     expected = desktop_paths.default_data_dir()
     assert default == str(expected if sys.platform == "win32" else expected.parent)
+
+
+def test_export_replaces_legacy_error_text_with_a_marker(isolated, tmp_path):
+    """CX-11 §2：升级前任务里的指定错误字段在导出副本里替换为占位符。
+
+    旧构建把提供商原始异常写进任务错误字段（可能回显密钥、正文和路径），
+    事后无法识别，所以这些字段打包时不带原文；批号、偏移、事件标识等恢复
+    任务所需的结构原样保留。
+    """
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    (job / "state.json").write_text(json.dumps({
+        "p1_done": False,
+        "translation_failures": [
+            {"batch": 0, "offset": 0, "segment_count": 1, "recovered": False,
+             "reason": "批次翻译失败（1 段）：Error code: 400 - relay said secret-key"}],
+    }, ensure_ascii=False), encoding="utf-8")
+    (job / "events.jsonl").write_text(json.dumps({
+        "batch": 0, "offset": 0, "phase": "translation_protocol_failed",
+        "reason": "raw relay body with secret-key and /srv/relay/fixture/scan.png",
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    (job / "runtime_state.json").write_text(json.dumps({
+        "status": "failed",
+        "error": {"type": "RuntimeError",
+                  "message": "步骤失败：批次翻译失败（1 段）：… secret-key …"},
+        "last_event": "步骤失败：批次翻译失败（1 段）：… secret-key …",
+        "events": [{"event": "job_failed", "category": "error",
+                    "message": "步骤失败：… secret-key …"},
+                   {"event": "translation", "category": "progress",
+                    "message": "正在翻译第 1-4 段（无敏感内容）"}],
+    }, ensure_ascii=False), encoding="utf-8")
+    (job / "runtime_events.jsonl").write_text(json.dumps({
+        "event": "job_failed", "category": "error",
+        "message": "步骤失败：… secret-key …"}, ensure_ascii=False) + "\n",
+        encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup3")
+    with zipfile.ZipFile(result["path"]) as archive:
+        names = archive.namelist()
+        blob = b"".join(archive.read(name) for name in names)
+        state = json.loads(archive.read("Folith-data/0123456789abcdef/state.json"))
+        segment_events = [json.loads(line) for line in
+                          archive.read("Folith-data/0123456789abcdef/events.jsonl")
+                          .decode("utf-8").splitlines() if line.strip()]
+        runtime = json.loads(archive.read("Folith-data/0123456789abcdef/runtime_state.json"))
+        runtime_events = [json.loads(line) for line in
+                          archive.read("Folith-data/0123456789abcdef/runtime_events.jsonl")
+                          .decode("utf-8").splitlines() if line.strip()]
+    # 任何成员里都搜不到旧错误文本。
+    assert b"secret-key" not in blob
+    # 指定字段替换为占位符，恢复所需结构保留。
+    failure = state["translation_failures"][0]
+    assert failure["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert failure["batch"] == 0 and failure["offset"] == 0
+    assert segment_events[0]["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert segment_events[0]["phase"] == "translation_protocol_failed"
+    assert runtime["error"]["message"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert runtime["last_event"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert runtime["events"][0]["message"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert runtime["events"][1]["message"] == "正在翻译第 1-4 段（无敏感内容）", \
+        "进度类事件不受影响"
+    assert runtime_events[0]["message"] == support.EXPORT_CLEANED_ERROR_TEXT
+    # 原文件不动（导出的只是副本）。
+    assert "secret-key" in (job / "state.json").read_text(encoding="utf-8")
+
+
+def test_export_excludes_retained_copies_of_credential_files(isolated, tmp_path):
+    """CX-11 §3：凭据文件的 .bak/.old 副本不进备份；其它文件的副本照带。"""
+    data, _store = isolated
+    _seed(data)
+    for name in ("provider_config.json.bak", "provider_config.json.old",
+                 "ocr_online_config.json.bak", "ocr_online_config.json.old"):
+        (data / name).write_text('{"api_key": "secret-key"}', encoding="utf-8")
+    (data / "notes.txt.bak").write_text("an ordinary operator backup", encoding="utf-8")
+    result = support.export_all_data(tmp_path / "backup4")
+    with zipfile.ZipFile(result["path"]) as archive:
+        names = archive.namelist()
+        blob = b"".join(archive.read(name) for name in names)
+    assert not any("provider_config.json" in name for name in names)
+    assert not any("ocr_online_config.json" in name for name in names)
+    assert "Folith-data/notes.txt.bak" in names, "凭据文件名之外的 .bak 不受影响"
+    assert b"secret-key" not in blob
