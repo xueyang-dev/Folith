@@ -633,8 +633,11 @@ class ReviewPanel(QWidget):
         evidence_header_layout.setContentsMargins(16, 10, 16, 10)
         evidence_header_layout.addWidget(self.evidence_title)
         # #525：只在用户点击时才跑，绝不自动、绝不批量；结果只读展示。
+        # #594/CX-09: the full click->provider->result chain is not wired yet.
+        # Keep the core module and tests, but hide the入口 until it is complete.
         self.ai_explain_button = button(i18n.tr('AI 解读'), "sparkles")
         self.ai_explain_button.clicked.connect(self._explain_selected)
+        self.ai_explain_button.setVisible(False)
         evidence_header_layout.addStretch(1)
         evidence_header_layout.addWidget(self.ai_explain_button)
         self._ai_explain_cache = None

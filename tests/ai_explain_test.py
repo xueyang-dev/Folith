@@ -86,3 +86,13 @@ def test_review_panel_button_emits_once_and_never_automatically():
     assert seen == []  # nothing selected -> no request
     panel.ai_explain_button.click()
     assert seen == []
+
+
+def test_ai_explain_button_is_hidden_until_chain_is_wired():
+    from PySide6.QtWidgets import QApplication
+    from folith.qt.review_panel import ReviewPanel
+
+    QApplication.instance() or QApplication([])
+    panel = ReviewPanel()
+    assert panel.ai_explain_button.isHidden()
+    panel.close()
