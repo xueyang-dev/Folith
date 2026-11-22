@@ -453,6 +453,7 @@ LOCAL_SHORTCUTS = (
     ("escape", "编辑框：把焦点还给段落网格；检查与修复：收起面板"),
     ("previous_segment", "段落网格：上一段"),
     ("next_segment", "段落网格：下一段"),
+    *((action, f"审校：{label}") for action, label in platform_ui.REVIEW_ACTIONS)
 )
 
 
