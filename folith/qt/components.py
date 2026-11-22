@@ -529,12 +529,17 @@ class KeyHint(QLabel):
     Windows 显示 Ctrl/Alt；绑定与提示来自同一条定义（AGENTS.md）。
     """
 
-    def __init__(self, action: str, parent: QWidget | None = None) -> None:
+    def __init__(self, action: str, label: str = "", parent: QWidget | None = None) -> None:
         super().__init__(platform_ui.shortcut_text(action), parent)
         self.setObjectName("keyHint")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setAccessibleName(platform_ui.shortcut_text(action))
+        self._action = action
+        self._label = label
+        # CX-09: the keycap is a real mouse/AT target, not an invisible pawn.
+        # Both the key and its action are discoverable.
+        self.setAccessibleName(f"{label or action} ({self.text()})")
+        self.setAccessibleDescription(label or action)
+        self.setToolTip(self.accessibleName())
         self.adjustSize()
 
 

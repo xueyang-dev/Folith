@@ -541,17 +541,24 @@ class ReviewPanel(QWidget):
         hint_row = QHBoxLayout(self.shortcut_hint)
         hint_row.setContentsMargins(0, 0, 0, 0)
         hint_row.setSpacing(6)
-        for action, label in (("review_next", i18n.tr('下一项')),
-                              ("review_apply", i18n.tr('暂存建议')),
-                              ("review_open", i18n.tr('确认问题存在')),
-                              ("review_confirm", i18n.tr('确认已解决')),
-                              ("review_keep", i18n.tr('保留当前译文')),
-                              ("review_edit", i18n.tr('修改译文'))):
-            cap = components.KeyHint(action)
-            cap.setToolTip(label)
-            hint_row.addWidget(cap)
+        for action, label in platform_ui.REVIEW_ACTIONS:
+            # keycap above its action label: discoverable without hover/AT,
+            # but compact enough for long translations in a 1180px window.
+            cell = QWidget()
+            column = QVBoxLayout(cell)
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(2)
+            column.addWidget(components.KeyHint(action, i18n.tr(label)))
+            text = QLabel(i18n.tr(label))
+            text.setProperty("role", "muted")
+            text.setMaximumWidth(72)
+            text.setWordWrap(True)
+            column.addWidget(text)
+            hint_row.addWidget(cell)
         hint_row.addStretch(1)
-        self.shortcut_hint.setAccessibleName(i18n.tr('键盘快捷键'))
+        self.shortcut_hint.setAccessibleName(i18n.tr('键盘快捷键：{v0}', v0=' · '.join(
+            f"{i18n.tr(label)} ({platform_ui.shortcut_text(action)})"
+            for action, label in platform_ui.REVIEW_ACTIONS)))
 
         # 动作按钮会折行：俄语/西语/阿拉伯语的按钮文字比中文长得多，固定一行会把
         # 整页撑到 2600px 宽（默认窗口只有 1180px），右半列被裁掉。
@@ -702,9 +709,8 @@ class ReviewPanel(QWidget):
             "edit": _guarded(self._emit_edit),
         }
         self._shortcuts = []
-        for key, action in (("next", "review_next"), ("apply", "review_apply"),
-                            ("open", "review_open"), ("confirm", "review_confirm"),
-                            ("keep", "review_keep"), ("edit", "review_edit")):
+        for key, action in zip(("next", "apply", "open", "confirm", "keep", "edit"),
+                               (a for a, _ in platform_ui.REVIEW_ACTIONS)):
             shortcut = QShortcut(platform_ui.shortcut(action), self)
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
             shortcut.activated.connect(self._shortcut_handlers[key])
