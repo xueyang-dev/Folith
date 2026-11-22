@@ -15,7 +15,6 @@ B023	benchmark/run_ocr_vision_pilot.py	if mode in {"vision_text_control", "image
 B023	benchmark/run_ocr_vision_pilot.py	raw_responses.append(text)
 B023	benchmark/run_ocr_vision_pilot.py	requests.append(attempt)
 B023	benchmark/run_ocr_vision_pilot.py	{"role": "user", "content": request_content(prompt, image)}],
-B023	core.py	on_status=lambda label: _runtime_status_callback(job_id, state, label),
 B023	docs/performance/phase3-independent-evidence/batch_compare.py	prompts.append([system,user])
 B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p10_typography.py	assert style.current_theme() == theme, (name, theme, style.current_theme())
 B023	docs/qt-beta/acceptance-feedback-2026-10-14-tools/p10_typography.py	assert style.current_theme() == theme, (name, theme, style.current_theme())
@@ -41,6 +40,7 @@ B023	folith/academic_writer.py	kind, value = "SOURCE", (focus.get("source_span")
 B023	folith/academic_writer.py	kind, value = "TARGET", (focus.get("target_span") or {}).get("text")
 B023	folith/academic_writer.py	return f"> [{kind} {case_id}]: {value}" if value else item.group(0)
 B023	folith/desktop/exit_flow.py	lambda: {item.segment_id for item in read_pending_drafts(data_dir, job_id)} != before,
+B023	folith/engine/worker_runtime.py	on_status=lambda label: core._runtime_status_callback(job_id, state, label),
 B023	folith/pdfrender/__init__.py	background = sampler.sample(page_index, slot.source_box)
 B023	folith/qt/selftest.py	self.pump(self.timeout, lambda: self._job_settled(adapter, core, pdf_id))
 B023	folith/streaming_ingest.py	or self.pages_done != seen, _WAIT_SLICE_S)
@@ -266,7 +266,6 @@ F401	scripts/knowledge_feedback_lost_items.py	from typing import Any, Dict, List
 F401	scripts/knowledge_feedback_lost_items.py	from typing import Any, Dict, List, Optional, Sequence, Tuple
 F401	scripts/knowledge_feedback_lost_items.py	import collections
 F401	scripts/knowledge_feedback_yield.py	from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
-F401	scripts/make_synthetic_data_dir.py	import shutil
 F401	scripts/make_synthetic_data_dir.py	import tempfile
 F401	scripts/phase8_terminology_differential_gate.py	from typing import Any, Dict, List, Sequence, Tuple
 F401	scripts/phase8_terminology_differential_gate.py	import re
