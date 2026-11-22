@@ -14565,13 +14565,21 @@ def _xliff_parse_projection(filename, payload):
         config = interop.SDLXLIFF if dialect == "sdlxliff" else interop.MQXLIFF
         document = interop.parse_xliff12(payload, policy=config.policy)
     ledger = interop.SegmentLedger()
-    # CX-03: match by external id; positional zip shifts after excluded segments.
+    # One row per <trans-unit>: the kernel's subsegment rows reuse the whole unit
+    # source for every subsegment, which would show a source/target pair that the
+    # file does not contain. Partial subsegment locks are kept by making the whole
+    # unit read-only instead of silently dropping the lock.
+    # CX-03: match units to pairs by external id, never by position -- excluded
+    # segments are filtered out of pairs, so positional zip mislabels later units.
     projection = interop.build_import(document, subsegments=False, ledger=ledger)
     pairs = [copy.deepcopy(row) for row in projection.pairs]
     partial_locked = []
     units_by_id = {unit.external_id: unit for unit in document.units}
     for pair in pairs:
         if (unit := units_by_id.get((pair.get("external_segment") or {}).get("external_id"))) is None:
+            # A missing mapping is unsafe: lock the row rather than allowing edits.
+            pair["readonly"] = True
+            pair["readonly_reason"] = "unmapped_unit_lock"
             continue
         locks = [segment.locked for segment in unit.subsegments]
         if any(locks) and not all(locks):

@@ -30,3 +30,19 @@ def test_partial_lock_follows_external_id():
     ordinary_id = next(i for i in ids if i and 'ordinary' in i)
     assert by_id[partial_id].get('readonly_reason') == 'partial_subsegment_lock'
     assert by_id[ordinary_id].get('readonly_reason') != 'partial_subsegment_lock'
+
+
+def test_unmapped_unit_is_locked_strictly(monkeypatch):
+    from folith import interop
+
+    original = interop.build_import
+
+    def patched(document, **kwargs):
+        projection = original(document, **kwargs)
+        projection.pairs[0]['external_segment'] = {'external_id': 'no-such-unit'}
+        return projection
+
+    monkeypatch.setattr(interop, 'build_import', patched)
+    _, _, _, _, pairs = core._xliff_parse_projection('cx03.xlf', _fixture())
+    assert pairs[0].get('readonly') is True
+    assert pairs[0].get('readonly_reason') == 'unmapped_unit_lock'
