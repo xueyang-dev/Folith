@@ -45,3 +45,41 @@ def test_sidebar_has_update_pill_above_settings():
     view.update_pill.click()
     assert not view._update_notes.isHidden()
     view.close()
+
+
+def test_installed_newer_version_suppresses_cached_notice(tmp_path):
+    calls = []
+    def checker(current):
+        calls.append(current)
+        return {"state": "newer", "latest": "9.0.0", "url": "u", "notes": ""}
+    now = [1000.0]
+    a = UpdateNotice(tmp_path, now=lambda: now[0], checker=checker)
+    assert a.check("0.8.3")
+    now[0] += 100
+    b = UpdateNotice(tmp_path, now=lambda: now[0], checker=checker)
+    assert b.cached("9.1.0") is False
+    assert not b.cached("9.0.0")
+
+
+def test_failed_check_is_retried_only_after_backoff(tmp_path):
+    calls = []
+    def checker(_current):
+        calls.append(1)
+        return {"state": "failed", "latest": "", "url": "", "notes": ""}
+    now = [1000.0]
+    UpdateNotice(tmp_path, now=lambda: now[0], checker=checker).check("0.8.3")
+    UpdateNotice(tmp_path, now=lambda: now[0], checker=checker).check("0.8.3")
+    assert len(calls) == 2   # failed state is not cached for 6h
+
+
+def test_manual_check_updates_pill():
+    from PySide6.QtWidgets import QApplication
+    from folith.qt import update_check, views
+
+    QApplication.instance() or QApplication([])
+    view = views.HomeView()
+    update_check.show_manual_result(view, {"state": "newer", "latest": "9.2.0",
+                                           "url": "u", "notes": "n"})
+    assert "9.2.0" in view.update_pill.text()
+    assert not view.update_pill.isHidden()
+    view.close()
