@@ -324,10 +324,10 @@ def test_cleanup_list_names_the_data_folder_in_use(isolated, tmp_path):
 
     moved = tmp_path / "elsewhere" / "Folith data"
     logs = tmp_path / "logs"
-    lines = settings_pages.cleanup_paths_text(str(moved), str(logs))
+    lines = settings_pages.cleanup_paths(str(moved), str(logs))
     assert lines[:2] == [str(moved), str(logs)]
     assert len(lines) == 3
-    default = settings_pages.cleanup_paths_text(
+    default = settings_pages.cleanup_paths(
         str(desktop_paths.default_data_dir()), str(logs))[0]
     expected = desktop_paths.default_data_dir()
     assert default == str(expected if sys.platform == "win32" else expected.parent)

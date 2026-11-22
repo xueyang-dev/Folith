@@ -51,11 +51,14 @@ def _link(text: str, icon: str = "external-link") -> QPushButton:
 
 
 # =============================================================================
-def cleanup_paths_text(data_dir: str | None = None, log_dir: str | None = None) -> list[str]:
+def cleanup_paths(data_dir: str | None = None, log_dir: str | None = None) -> list[str]:
     """The places to delete for a complete removal, as separate path values.
 
-    Never newline-join here (#590 / C-46): a directory name may itself contain
-    a newline, and callers must not lose the plist line when splitting.
+    The default data folder is listed by its application folder on macOS
+    (``Application Support/Folith``, as before). A data folder the user moved
+    elsewhere is listed as it is, so the list never names a folder that does
+    not hold the user's data. Never newline-join (#590 / C-46): a directory
+    name may contain a newline, and callers must not lose the plist line.
     """
     from folith.desktop import paths as desktop_paths
 
@@ -176,7 +179,7 @@ class StoragePage(QWidget):
         # C-37：每条路径一个 ElideLabel——三行各自中间省略、各自tooltip是完整路径；
         # 以前合成一个多行标签会被当成一行省略，日志/plist 两条直接消失。
         self.cleanup_path_labels: list[ElideLabel] = []
-        for line in cleanup_paths_text():
+        for line in cleanup_paths():
             label = ElideLabel(line, mode=Qt.TextElideMode.ElideMiddle)
             label.setObjectName("monoValue")
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -206,7 +209,7 @@ class StoragePage(QWidget):
             label.setText(value)
         self.clear_button.setEnabled(bool(self._view.get("caches")))
 
-        lines = cleanup_paths_text(
+        lines = cleanup_paths(
             self._view.get("data_dir"), self._view.get("log_dir"))
         for index, label in enumerate(self.cleanup_path_labels):
             if index < len(lines):

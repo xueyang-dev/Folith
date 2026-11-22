@@ -46,7 +46,7 @@ def test_fit_discards_margin_when_just_barely_fits(monkeypatch):
 def test_cleanup_paths_keeps_plist_line_with_newline_in_dir(tmp_path):
     data = str(tmp_path / "line1\nline2")
     logs = str(tmp_path / "logs")
-    values = settings_pages.cleanup_paths_text(data, logs)
+    values = settings_pages.cleanup_paths(data, logs)
     assert len(values) == 3
     assert values[0] == data and values[1] == logs
     assert "plist" in values[2] or "HKEY" in values[2]
