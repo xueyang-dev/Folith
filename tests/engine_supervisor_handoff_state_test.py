@@ -878,6 +878,11 @@ def test_a_takeover_between_the_check_and_the_write_does_not_land(
     launch_before = (_runtime(job_id).get("launch") or {}).get("token")
     assert launch_before, "the launch must stamp its token before the child runs"
 
+    # The dying run's worker block lingers until the old monitor's write clears
+    # it — and that write is about to be held — so the replacement's identity
+    # must be told apart from it explicitly.
+    old_worker_id = (_runtime(job_id).get("worker") or {}).get("worker_id")
+
     allow_write = threading.Event()
     held = threading.Event()
     real_write = core._write_terminal_runtime_state
@@ -904,7 +909,9 @@ def test_a_takeover_between_the_check_and_the_write_does_not_land(
             lambda: (exit_flow.worker_lock_held(data_dir, job_id)
                      and (_runtime(job_id).get("worker") or {}).get("worker_id")
                      and (_runtime(job_id).get("launch") or {}).get("token")
-                     != launch_before),
+                     != launch_before
+                     and (_runtime(job_id).get("worker") or {}).get("worker_id")
+                     != old_worker_id),
             timeout=180), _runtime(job_id)
         state_held = _runtime(job_id)
         worker_before = (state_held.get("worker") or {}).get("worker_id")
