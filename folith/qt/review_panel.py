@@ -709,11 +709,15 @@ class ReviewPanel(QWidget):
             "edit": _guarded(self._emit_edit),
         }
         self._shortcuts = []
-        for key, action in zip(("next", "apply", "open", "confirm", "keep", "edit"),
-                               (a for a, _ in platform_ui.REVIEW_ACTIONS)):
+        # C-59: bind by action ID, never by tuple order.
+        handler_by_action = {
+            "review_next": "next", "review_apply": "apply", "review_open": "open",
+            "review_confirm": "confirm", "review_keep": "keep", "review_edit": "edit",
+        }
+        for action in (a for a, _ in platform_ui.REVIEW_ACTIONS):
             shortcut = QShortcut(platform_ui.shortcut(action), self)
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-            shortcut.activated.connect(self._shortcut_handlers[key])
+            shortcut.activated.connect(self._shortcut_handlers[handler_by_action[action]])
             self._shortcuts.append(shortcut)
         app = QApplication.instance()
         if app is not None:

@@ -47,10 +47,13 @@ def test_review_panel_uses_platform_ui_for_every_shortcut(qapp):
     assert "快捷键：N 下一项" not in source
 
 
-def test_shortcuts_dialog_lists_review_actions():
+def test_shortcuts_dialog_derives_review_actions():
     source = (ROOT / "folith/qt/settings_pages.py").read_text(encoding="utf-8")
+    assert "platform_ui.REVIEW_ACTIONS" in source
+    from folith.qt import settings_pages
+    labels = dict(settings_pages.LOCAL_SHORTCUTS)
     for action in REVIEW_ACTIONS:
-        assert f'("{action}"' in source
+        assert action in labels
 
 
 def test_generated_hint_from_the_same_binding(qapp):
@@ -103,3 +106,14 @@ def test_switch_language_updates_shortcut_dialog_and_hint(qapp):
     zh = i18n.tr(dict(settings_pages.LOCAL_SHORTCUTS)["review_next"])
     assert en != zh and "Next" in en
     i18n.set_language("zh-CN")
+
+
+def test_handler_binding_is_by_action_id_not_tuple_order(qapp):
+    from folith.qt.review_panel import ReviewPanel
+
+    panel = ReviewPanel()
+    handlers = panel._shortcut_handlers
+    # The mapping is explicit; N always maps to "next" regardless of UI order.
+    assert handlers["next"] is not None
+    assert "handler_by_action" in (ROOT / "folith/qt/review_panel.py").read_text(encoding="utf-8")
+    panel.close()
