@@ -14,6 +14,7 @@ import os
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
+from folith.engine.redaction import redact_error_text  # CX-06 §3: worker error text is redacted before it reaches the user
 
 
 def _core():
@@ -208,7 +209,8 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         user_error_message = (
             core.provider_error_message(exc, "任务执行失败")
             if provider_status["status"] != "unknown"
-            else str(exc)[:500] or "任务执行失败")
+            # CX-06 §3：模型异常可能带着服务商回包（含回显的密钥），先脱敏再给用户。
+            else redact_error_text(str(exc))[:500] or "任务执行失败")
         error = None if (cancelled or exit_requested) else {
             "type": type(exc).__name__,
             "message": user_error_message,
