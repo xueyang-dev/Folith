@@ -109,15 +109,26 @@ def clear_caches() -> int:
         raise adapter.AdapterError("有任务正在运行；等它结束或暂停后再清理缓存。")
     root = data_dir()
     freed = 0
-    for name in CACHE_ENTRIES:
-        path = root / name
-        if not path.exists():
-            continue
-        freed += _size(path)
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
+    # A-65/A-68: project caches live under root/<PROJECTS_DIR>/<id>, never as
+    # direct children of the data root.  Use the product's own path helpers;
+    # only the fixed CACHE_ENTRIES names are touched, project TM and task
+    # bodies are deliberately retained.
+    from folith import project
+    projects_root = project.projects_root(root)
+    scopes = [root]
+    if projects_root.is_dir():
+        scopes += [project.project_dir(root, item.name)
+                   for item in projects_root.iterdir() if item.is_dir()]
+    for scope in scopes:
+        for name in CACHE_ENTRIES:
+            path = scope / name
+            if not path.exists():
+                continue
+            freed += _size(path)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
     return freed
 
 

@@ -2778,5 +2778,6 @@
   "解读失败：{v0}": "Erklärung fehlgeschlagen: {v0}",
   "（已缓存）": "(zwischengespeichert)",
   "双语文件（XLIFF 1.2 / SDLXLIFF / MQXLIFF） ({v0})": "Zweisprachige Dateien (XLIFF 1.2 / SDLXLIFF / MQXLIFF) ({v0})",
-  "此格式目前只支持原样导出": "Dieses Format unterstützt nur den Export"
+  "此格式目前只支持原样导出": "Dieses Format unterstützt nur den Export",
+  "也会清理各项目内的派生缓存；项目翻译记忆与任务正文保留。": "Zwischenspeicher in jedem Projekt wird ebenfalls gelöscht; Projekt-TM und Aufgabentexte bleiben erhalten."
 }
