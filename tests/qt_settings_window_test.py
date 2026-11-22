@@ -218,6 +218,53 @@ def test_export_leaves_out_keys_and_locks(isolated, tmp_path):
         support.export_all_data(data / "inside.zip")
 
 
+def test_export_excludes_vision_credentials_and_raw_forensics(isolated, tmp_path):
+    """CX-06 §1/§3：视觉密钥与可能回显密钥的原始取证都不进备份。
+
+    对应证据 ``backup_members_with_model_keys_by_role`` 逐项：
+    ``ocr_online_config.json``、``document_understanding/*-failure.json``、
+    ``failures.jsonl``、``.performance/*/summary.json``、
+    ``runtime_technical.log``（外加一直排除的 ``provider_config.json``）。
+    任务数据本身照带；README 提示恢复后重填密钥，且不再写本机绝对路径。
+    """
+    data, _store = isolated
+    _seed(data)
+    job = data / "0123456789abcdef"
+    forensics = job / "document_understanding"
+    forensics.mkdir()
+    (forensics / "0-failure.json").write_text('{"error": "api_key secret-key echoed"}')
+    (forensics / "failures.jsonl").write_text('{"at": 1, "error": "secret-key"}\n')
+    (job / "runtime_technical.log").write_text("RuntimeError: relay said secret-key\n")
+    perf = job / ".performance" / "runs" / "run_1"
+    perf.mkdir(parents=True)
+    (perf / "summary.json").write_text('{"errors": [{"message": "secret-key"}]}')
+    (data / "ocr_online_config.json").write_text('{"api_key": "secret-key"}')
+    (job / "source.txt").write_text("document bytes")
+
+    result = support.export_all_data(tmp_path / "backup2")
+    with zipfile.ZipFile(result["path"]) as archive:
+        names = archive.namelist()
+        blob = b"".join(archive.read(name) for name in names
+                        if not name.endswith("README.txt"))
+        readme = archive.read("Folith-data/README.txt").decode("utf-8")
+
+    # 任务数据照带：备份的用途不变。
+    assert "Folith-data/0123456789abcdef/state.json" in names
+    assert "Folith-data/0123456789abcdef/source.txt" in names
+    # 凭据文件与原始取证全部排除。
+    assert not any("ocr_online_config" in name for name in names)
+    assert not any("provider_config" in name for name in names)
+    assert not any(name.endswith("-failure.json") for name in names)
+    assert not any(name.endswith("failures.jsonl") for name in names)
+    assert not any("runtime_technical.log" in name for name in names)
+    assert not any("/.performance/" in name for name in names)
+    # 任何成员里都搜不到密钥。
+    assert b"secret-key" not in blob
+    # README：恢复后要重填密钥，且没有本机绝对路径。
+    assert "重新填写" in readme
+    assert str(data) not in readme and str(tmp_path) not in readme
+
+
 # ----------------------------------------------------------------- 关于 -------
 
 def test_issue_link_carries_only_version_and_system():

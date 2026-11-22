@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -31,9 +32,21 @@ TESSERACT_INSTALL_URL = "https://tesseract-ocr.github.io/tessdoc/Installation.ht
 
 #: 派生缓存：删掉只会让下次多花调用，不改变任何译文、术语、记忆或交付。
 CACHE_ENTRIES = ("ocr_profile_cache", "translation_cache.json", "knowledge_cache.json")
-#: 备份包里不放的东西：密钥（provider_config.json 里有翻译 / 审校 / 视觉三条连接的
-#: API Key）、锁文件、写到一半的临时文件。
-EXPORT_EXCLUDED_NAMES = frozenset({"provider_config.json"})
+#: 备份包里不放的东西（CX-06 第 1、3 项）：
+#: * 密钥本体：`provider_config.json`（翻译/审校/视觉连接）、`ocr_online_config.json`
+#:   （专用视觉连接，明文 key）。恢复后按 README 重新填写。
+#: * 可能回显密钥的原始取证：`failures.jsonl` 与 `*-failure.json`（保存服务商
+#:   原始回包）、`runtime_technical.log`（保留完整异常字符串）、`.performance/`
+#:   采样目录（summary.json 实测回显过密钥）。
+#: 锁文件与写到一半的临时文件照旧排除。
+EXPORT_EXCLUDED_NAMES = frozenset({
+    "provider_config.json",
+    "ocr_online_config.json",
+    "failures.jsonl",
+    "runtime_technical.log",
+})
+EXPORT_EXCLUDED_PARTS = frozenset({".performance"})
+EXPORT_EXCLUDED_PATTERNS = ("*-failure.json",)
 EXPORT_EXCLUDED_SUFFIXES = (".lock", ".tmp")
 _JOB_DIR = re.compile(r"^[0-9a-f]{16}$")
 
@@ -122,7 +135,13 @@ def clear_caches() -> int:
 
 
 def _exported(name: str) -> bool:
-    return name not in EXPORT_EXCLUDED_NAMES and not name.endswith(EXPORT_EXCLUDED_SUFFIXES)
+    """One path component's verdict: credentials and raw forensics stay out."""
+    if name in EXPORT_EXCLUDED_NAMES or name in EXPORT_EXCLUDED_PARTS:
+        return False
+    if name.endswith(EXPORT_EXCLUDED_SUFFIXES):
+        return False
+    return not any(fnmatch.fnmatch(name, pattern)
+                   for pattern in EXPORT_EXCLUDED_PATTERNS)
 
 
 def export_all_data(destination: str | os.PathLike[str]) -> dict:
@@ -146,9 +165,11 @@ def export_all_data(destination: str | os.PathLike[str]) -> dict:
             archive.write(path, Path("Folith-data") / path.relative_to(root))
             files += 1
         archive.writestr("Folith-data/README.txt", (
-            "Folith 数据备份。\n"
-            "不包含 API 密钥（provider_config.json）；在新机器上恢复后，需要在设置里重新填写模型连接。\n"
-            f"恢复：退出 Folith，把 Folith-data 里的内容放回 {data_dir()}。\n"))
+            "Folith 数据备份（私有备份：包含文档、译文、术语与记忆等数据）。\n"
+            "不含 API 密钥：模型与视觉连接的配置文件、以及可能记录了服务商原始回包的\n"
+            "取证文件都不会打包；在新机器上恢复后，需要在设置里重新填写模型连接与视觉连接。\n"
+            "恢复：退出 Folith，把 Folith-data 里的内容放回新机器的数据目录\n"
+            "（设置的「存储」页会显示当前数据目录的位置）。\n"))
     partial.replace(target)
     return {"path": str(target), "files": files, "bytes": target.stat().st_size}
 

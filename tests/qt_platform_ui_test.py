@@ -134,7 +134,11 @@ def test_report_system_facts_and_backup_path(app, monkeypatch, tmp_path):
     support.export_all_data(target)
     import zipfile
     with zipfile.ZipFile(target) as archive:
-        assert str(root) in archive.read("Folith-data/README.txt").decode()
+        readme = archive.read("Folith-data/README.txt").decode()
+    # CX-06 §1：包内 README 不再内嵌本机的绝对恢复路径（含空格目录也一样），
+    # 改为通用说明；恢复后重填密钥的提示必须在。
+    assert str(root) not in readme
+    assert "重新填写" in readme and "数据目录" in readme
 
 
 def test_windows_bundled_ocr_and_process_metrics():

@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
 from folith import request_control
 from folith.engine import reasoning_watch as _reasoning_watch
+from folith.engine.redaction import redact_error_text
 from folith.performance import ActiveTimeTracker, DEFAULT_HEARTBEAT_INTERVAL_S
 
 
@@ -1150,7 +1151,8 @@ class RunContext:
             "stage": str(stage),
             "operation": str(operation),
             "error_type": str(error_type),
-            "message": str(message)[:250],
+            # CX-06 §3：错误消息会进 summary.json（并随备份带出），落盘前脱敏。
+            "message": redact_error_text(str(message))[:250],
             "retry_count": int(retry_count),
             "recovered": bool(recovered),
         }

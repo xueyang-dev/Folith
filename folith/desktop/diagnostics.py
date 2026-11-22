@@ -42,19 +42,14 @@ _ERROR_MARKERS = ("error", "warning", "traceback", "错误", "失败", "异常")
 
 # Paths that must never be read while building diagnostics.
 _FORBIDDEN_SOURCES = ("provider_config.json", ".onboarded")
-_SECRET_KEYS = ("api_key", "apikey", "token", "authorization", "secret", "password")
 
 # High-confidence credential shapes.  Log lines can carry a key *without* the
 # `api_key=` prefix (an upstream error echoing the header value, a provider SDK
 # message), and §3.5 requires API keys to be excluded from the export.  These
 # patterns deliberately do not match plain hashes, so diagnostics stay useful.
-_SECRET_PATTERNS = (
-    re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),           # OpenAI-style
-    re.compile(r"AIza[0-9A-Za-z_\-]{20,}"),          # Google
-    re.compile(r"ghp_[A-Za-z0-9]{20,}"),             # GitHub
-    re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}"),     # Slack
-    re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]{12,}"),  # Authorization: Bearer …
-)
+# One source of truth with the error-forensics writers: folith.engine.redaction.
+from folith.engine.redaction import SECRET_KEY_NAMES as _SECRET_KEYS  # noqa: E402
+from folith.engine.redaction import SECRET_PATTERNS as _SECRET_PATTERNS  # noqa: E402
 
 
 @dataclass

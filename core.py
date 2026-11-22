@@ -998,6 +998,7 @@ from folith.engine.document_export import (  # noqa: F401  (re-export: core keep
     translations_to_word,
 )
 from folith.engine import reasoning_catalog as _reasoning_catalog  # noqa: F401  (#540: dispatch + unified level field)
+from folith.engine.redaction import redact_error_text  # CX-06 §3: model errors are redacted before they persist
 from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps its public surface)
     _fetch_gemini_models,
     _llm_request_controller,
@@ -2669,7 +2670,9 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             )
             run.record_error(
                 stage="model_request", operation=model,
-                error_type=type(exc).__name__, message=str(exc),
+                # CX-06 §3：模型异常可能原样带服务商回包（含回显的密钥），落盘前脱敏。
+                error_type=type(exc).__name__,
+                message=redact_error_text(str(exc)),
             )
         if runtime_job_id:
             # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
@@ -9439,8 +9442,11 @@ def _write_runtime_technical_log(job_id, exc):
     path = runtime_technical_log_path(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as stream:
-        stream.write(f"[{_utc_now_iso()}] {type(exc).__name__}: {exc}\n")
-        stream.write(traceback.format_exc())
+        # CX-06 §3：异常字符串与 traceback 末行都带原始消息（可能含回显的
+        # 密钥与本机路径），整段先脱敏；源码位置的相对信息保留给排障。
+        stream.write(f"[{_utc_now_iso()}] {type(exc).__name__}: "
+                     f"{redact_error_text(str(exc))}\n")
+        stream.write(redact_error_text(traceback.format_exc()))
         stream.write("\n")
         stream.flush()
 
