@@ -723,9 +723,19 @@ class ReviewPanel(QWidget):
         """最近一次 `apply` 收到的视图（阶段步骤条与它共用同一份审校投影）。"""
         return self._view
 
+    def bind_job(self, job_id: str) -> None:
+        """Clear the one-shot triage feedback when the task changes (C-46)."""
+        current = getattr(self, "_feedback_job", "")
+        if current and job_id != current:
+            self.triage_toggle.clear_feedback()
+            self._triage_feedback_state = None
+        self._feedback_job = job_id
+
     def apply(self, view: dict, *, busy: bool = False) -> None:
         """用新的视图模型重画队列；保持当前选中项（按稳定标识）。"""
         self._view = view or {}
+        if self._view.get("job_id"):
+            self.bind_job(str(self._view["job_id"]))
         self._busy = busy
         self.concept_button.setEnabled(not busy)
         # 批量统一按钮：有 ≥2 条符合默认勾选条件的未处理 entity_conflict 才显示。
