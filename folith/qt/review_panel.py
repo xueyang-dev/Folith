@@ -734,6 +734,8 @@ class ReviewPanel(QWidget):
     def apply(self, view: dict, *, busy: bool = False) -> None:
         """用新的视图模型重画队列；保持当前选中项（按稳定标识）。"""
         self._view = view or {}
+        if self._view.get("job_id"):
+            self.bind_job(str(self._view["job_id"]))
         self._busy = busy
         self.concept_button.setEnabled(not busy)
         # 批量统一按钮：有 ≥2 条符合默认勾选条件的未处理 entity_conflict 才显示。

@@ -5553,7 +5553,6 @@ class WorkbenchView(QWidget):
         # 原文可能刚被改过（补读 / 重新扫描）：定位要按新的状态来。
         self.review_panel.set_source_state(self._state or {})
         self.terms_panel.set_review_items(self._review_items)
-        self.review_panel.bind_job(self.job_id)
         self.review_panel.apply(view)
 
     def _load_pdf(self, job_id: str) -> None:
