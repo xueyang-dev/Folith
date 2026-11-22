@@ -358,6 +358,10 @@ class AboutPage(QWidget):
         self.project_link.clicked.connect(lambda: _open_url(support.PROJECT_URL))
         self.author_link = _link("xueyang-dev")
         self.author_link.clicked.connect(lambda: _open_url(support.AUTHOR_URL))
+        # #519: X 主页要有独立的、可识别的入口（用户明确要求）。
+        self.x_link = _link(i18n.tr('X 主页'), icon="external-link")
+        self.x_link.setToolTip(support.X_URL)
+        self.x_link.clicked.connect(lambda: _open_url(support.X_URL))
         # 邮箱是信封图标（打开本机邮件客户端），不是外链。
         self.email_link = _link("xydev@outlook.sa", icon="mail")
         self.email_link.clicked.connect(lambda: _open_url("mailto:xydev@outlook.sa"))
@@ -394,6 +398,7 @@ class AboutPage(QWidget):
         group = components.FormGroup()
         group.add_row(_setting_row(i18n.tr('项目主页'), self.project_link))
         group.add_row(_setting_row(i18n.tr('作者'), self.author_link))
+        group.add_row(_setting_row(i18n.tr('X 主页'), self.x_link))
         group.add_row(_setting_row(i18n.tr('邮箱'), self.email_link))
         group.add_row(_setting_row(i18n.tr('报告问题'), self.issue_link))
         group.add_row(_setting_row(i18n.tr('更新'), self.update_button, self.update_status,
