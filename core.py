@@ -8850,8 +8850,11 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
         if expect_launch_token is not None:
             # CX-10 §1：比对发生在写锁内——调用方"已检查"与"字节落盘"之间不再有
             # 窗口。新启动端先盖了自己的 launch token 时，这里什么都不写。
+            # 只有**非空且不同**的 token 才是接管：新启动总会盖 token；当前值
+            # 为空意味着从未盖过（旧格式任务）或被绕过 update_runtime_state 的
+            # 裸写覆盖——那不是接管，终态照写。
             current_launch = str((current.get("launch") or {}).get("token") or "")
-            if current_launch != str(expect_launch_token):
+            if current_launch and current_launch != str(expect_launch_token):
                 return None
         # ``None`` is normally omitted so optional status fields do not erase
         # an existing value accidentally.  ``error`` is different: callers
