@@ -182,13 +182,43 @@ def test_retry_records_attempt_and_does_not_retry_protocol_error():
     assert metadata["retry_count"] == 1
 
 
-def test_request_gate_spaces_rate_limit_retries_without_losing_source_text():
-    started = []
-    lock = threading.Lock()
+def test_request_gate_spaces_rate_limit_retries_without_losing_source_text(monkeypatch):
+    """A-71: measure when the gate *releases* a request, not when the worker
+    happens to start its model call. Under CI load a released worker can be
+    suspended before it records a timestamp, which made global call timestamps
+    appear closer than the interval even though the gate spaced them out."""
+    from folith import request_control, source_cleanup
+
+    gate_releases: list[float] = []
+    release_lock = threading.Lock()
+    local = threading.local()
+    original_init = source_cleanup._RequestGate.__init__
+    original_acquire = request_control.ProviderRequestController.acquire
+
+    def recording_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        gate_clock = self._clock
+
+        def clock():
+            value = gate_clock()
+            local.last_clock = value
+            return value
+
+        self._clock = clock
+
+    def recording_acquire(self, cancel_check=None):
+        waited = original_acquire(self, cancel_check)
+        # Last clock read in this thread happened inside the gate's lock, at
+        # the moment it decided to release this request.
+        with release_lock:
+            gate_releases.append(local.last_clock)
+        return waited
+
+    monkeypatch.setattr(source_cleanup._RequestGate, '__init__', recording_init)
+    monkeypatch.setattr(request_control.ProviderRequestController, 'acquire',
+                        recording_acquire)
 
     def rate_limited_llm(_provider, _api_key, _model, _system, _user, **_kwargs):
-        with lock:
-            started.append(time.monotonic())
         raise RuntimeError("HTTP 429")
 
     paragraphs = [f"rate limited item {index}." for index in range(5)]
@@ -201,10 +231,11 @@ def test_request_gate_spaces_rate_limit_retries_without_losing_source_text():
 
     assert cleaned == paragraphs
     assert len(warnings) == 5
-    assert len(started) == 10
     assert metadata["retry_count"] == 5
-    intervals = [right - left for left, right in zip(started, started[1:])]
-    assert min(intervals) >= 0.006
+    assert len(gate_releases) == 10
+    ordered = sorted(gate_releases)
+    intervals = [right - left for left, right in zip(ordered, ordered[1:])]
+    assert min(intervals) >= 0.009
 
 
 def test_cleanup_workers_inherit_llm_relay_context(monkeypatch):
