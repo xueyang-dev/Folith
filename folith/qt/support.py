@@ -24,7 +24,7 @@ from . import adapter, platform_ui
 
 PROJECT_URL = "https://github.com/xueyang-dev/Folith"
 AUTHOR_URL = "https://github.com/xueyang-dev"
-X_URL = PROJECT_URL.split("//")[0] + "//" + "x.com/" + "xueyang2216"
+X_URL = "https://x.com/xueyang2216"
 ISSUES_URL = "https://github.com/xueyang-dev/Folith/issues/new"
 RELEASES_API = "https://api.github.com/repos/xueyang-dev/Folith/releases/latest"
 #: 本机 OCR 是可选附加，不随应用打包；未安装时设置里给出这份官方安装说明。
