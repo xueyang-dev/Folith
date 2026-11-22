@@ -65,6 +65,17 @@ them says "someone is still executing this";
 :meth:`EngineSupervisor._publish_terminal_state` is reached only when none of
 them does.
 
+"No owner" is a photograph, not a lease (CX-07 §1).  Between that answer and
+the terminal write the user can resume the task -- the UI already shows the
+synthesized ``interrupted`` -- and the replacement engine then holds
+``.worker.lock`` and has published its own ``worker_id``.  Every write attempt
+therefore re-checks ownership at the moment of the write and abandons when a
+new engine owns the run; and the answer itself is not accepted while the run
+we were following may still be publishing its first words
+(:data:`COLD_START_GRACE_SECONDS`).  The retry between attempts waits on
+``request_stop``'s halt event instead of sleeping, so the app's exit never pays
+for a background retry of a failed terminal write (CX-07 §7).
+
 Both production launch shapes re-execute the application itself (see
 :func:`launch_command`), so there a handle and a run are the same process and an
 exit is the end, with no added delay.  A launcher remains possible --
@@ -165,6 +176,17 @@ EXIT_STOP_BUDGET = 0.6
 TERMINAL_EVIDENCE_BUDGET_SECONDS = 15.0
 TERMINAL_PUBLISH_RETRY_SECONDS = 0.2
 POLL_SECONDS = 0.15
+
+#: Bridge for the handed-off cold start (CX-07 §1).  The stdio trace is the
+#: only ownership evidence that exists while the executor is still importing
+#: ``core`` — but the executor can drop the inherited pipe *before* its first
+#: write lands, and a dropped pipe is then indistinguishable from a dead run.
+#: While this window is open the monitor keeps polling for the run's *own*
+#: traces (``.worker.lock``, ``worker.owner_pid``) instead of accepting
+#: "no owner" from the pipe alone.  Only a run that was being followed by
+#: stdio pays this wait, and only until its traces appear (or the window
+#: closes and a genuinely silent death gets its verdict).
+COLD_START_GRACE_SECONDS = 5.0
 
 #: How long the output drain thread gets to report the EOF the kernel has
 #: already queued, before "the child's stdio is still held" is believed.
@@ -410,6 +432,19 @@ class EngineSupervisor:
         #: Why the monitor believes the run ended (support/diagnostics only).
         self._end_evidence = ""
         self._end_settle_seconds = 0.0
+        #: The ``worker_id`` the dying run left on disk (CX-07 §1).  The
+        #: "no owner" answer is a photograph, not a lease: the publish step
+        #: compares against this snapshot to tell the dying run's leftover
+        #: block from a replacement run's live one.
+        self._end_worker_id = ""
+        #: Set by :meth:`_publish_terminal_state` when a fresh owner appeared:
+        #: the replacement's own monitor owns the terminal truth, so this one
+        #: abandons the write instead of overwriting it (CX-07 §1).
+        self._taken_over = ""
+        #: Set by ``request_stop`` (CX-07 §7): the publish retry waits on it
+        #: instead of sleeping, so the app's exit never funds a background
+        #: retry of a failed terminal write.
+        self._halt = threading.Event()
         self._drain = threading.Thread(target=self._drain_output,
                                        name=f"folith-engine-output-{job_id}",
                                        daemon=True)
@@ -445,6 +480,9 @@ class EngineSupervisor:
             # its own handle was gone, and how long the run outlived it (E-6s).
             "end_evidence": self._end_evidence,
             "end_settle_seconds": self._end_settle_seconds,
+            # Support only: why a monitor that published nothing gave up
+            # (CX-07 §1 -- empty means it never detected a takeover).
+            "taken_over": self._taken_over,
         }
 
     def output_tail(self) -> str:
@@ -472,6 +510,7 @@ class EngineSupervisor:
         is the graceful path — nothing here waits for it.
         """
         self._stopping = True
+        self._halt.set()
         with self._write_lock:
             if self._stdin_closed:
                 return
@@ -626,7 +665,12 @@ class EngineSupervisor:
                         waited = time.monotonic() - publish_started
                         self._record_watch_failure(
                             f"publish_terminal_state after {waited:.1f}s", exc)
-                        time.sleep(TERMINAL_PUBLISH_RETRY_SECONDS)
+                        # CX-07 §7: the GUI's exit must not fund a background
+                        # retry.  ``request_stop`` sets ``_halt``; the failure
+                        # is already in the technical log, and the next launch
+                        # heals whatever this write could not land.
+                        if self._halt.wait(TERMINAL_PUBLISH_RETRY_SECONDS):
+                            break
             else:
                 self._record_watch_failure(
                     f"evidence not established within "
@@ -647,7 +691,16 @@ class EngineSupervisor:
             # whether it wrote the truth.  A caller that needs the truth can tell
             # them apart instead of reading a stale "running" as final.
             self.terminal_published = self._terminal_published
-            if not self._terminal_published:
+            if not self._terminal_published and self._taken_over:
+                # Deliberate, and correct: a new engine owns the task and its
+                # own monitor owns the terminal truth.  Recorded so support
+                # can tell "abandoned because taken over" from "lost".
+                self._record_watch_failure(
+                    "terminal publish abandoned",
+                    RuntimeError(
+                        f"the run was taken over ({self._taken_over}); its new "
+                        "owner publishes its own terminal state"))
+            elif not self._terminal_published:
                 self._record_watch_failure(
                     "finished_without_terminal_state",
                     RuntimeError("terminal state could not be established; "
@@ -689,14 +742,34 @@ class EngineSupervisor:
         ``_watch``'s handler then publishes nothing at all.
         """
         started = time.monotonic()
+        stdio_alive_at = 0.0
         try:
             while True:
                 runtime = _core().load_runtime_state(self.job_id) or {}
+                worker_id = str((runtime.get("worker") or {}).get("worker_id") or "")
                 if str(runtime.get("status") or "") in TERMINAL_STATUSES:
+                    self._end_worker_id = worker_id
                     return
                 evidence = self._live_ownership_evidence(runtime)
                 if not evidence:
+                    # CX-07 §1 (cold-start bridge): a run we were following by
+                    # its stdio may still be importing; its pipe can drop
+                    # before its first write.  "No owner" only becomes final
+                    # once the run has had the window to publish its own
+                    # traces — a dropped pipe alone is not a death
+                    # certificate for a run that never said anything.
+                    if (self._end_evidence == "engine_stdio_open"
+                            and time.monotonic() - stdio_alive_at
+                            < COLD_START_GRACE_SECONDS):
+                        time.sleep(POLL_SECONDS)
+                        continue
+                    # CX-07 §1: keep what the dying run looked like, so the
+                    # publish step can tell its leftover block from a
+                    # replacement run's live one.
+                    self._end_worker_id = worker_id
                     return
+                if evidence == "engine_stdio_open":
+                    stdio_alive_at = time.monotonic()
                 self._end_evidence = evidence
                 self._end_settle_seconds = round(time.monotonic() - started, 3)
                 time.sleep(POLL_SECONDS)
@@ -756,6 +829,28 @@ class EngineSupervisor:
         self._drain.join(timeout=STDIO_SETTLE_SECONDS)
         return not self._output_closed.is_set()
 
+    def _takeover_evidence(self, runtime: Dict[str, Any]) -> str:
+        """Why this monitor must not write: the run is somebody's again.
+
+        :meth:`_await_run_end` once proved the run had no owner, but that
+        answer is a photograph, not a lease.  While this monitor retries a
+        failed terminal write the user can resume the task -- the UI already
+        shows the synthesized ``interrupted`` -- and the replacement engine
+        holds ``.worker.lock`` and publishes its own ``worker_id`` (CX-07 §1).
+        Re-checking at the moment of the write turns the reused photograph
+        back into current evidence: any fresh trace -- a held lock, a live
+        owner pid, or a ``worker_id`` that is not the one the dying run left
+        -- means a new run owns the task, and its own monitor owns the
+        terminal truth.
+        """
+        live = self._live_ownership_evidence(runtime)
+        if live:
+            return live
+        worker_id = str((runtime.get("worker") or {}).get("worker_id") or "")
+        if worker_id and worker_id != self._end_worker_id:
+            return "worker_id_replaced"
+        return ""
+
     def _publish_terminal_state(self) -> bool:
         """Never trust the exit code: only ``runtime_state.json`` says success.
 
@@ -777,6 +872,14 @@ class EngineSupervisor:
         if status in TERMINAL_STATUSES:
             self._clear_recorded_owner(runtime)
             return True
+        taken_over = self._takeover_evidence(runtime)
+        if taken_over:
+            # CX-07 §1: write nothing over a run that is live again.  The
+            # replacement's own monitor owns the terminal truth; this one
+            # abandons the write (and the retry loop) instead of reusing the
+            # "no owner" photograph from before the failure.
+            self._taken_over = taken_over
+            return False
         code = self._exit_code
         # The user's request outlives this handle.  The child may have stopped at
         # a batch boundary and written "cancelling" (or "interrupted") with the
