@@ -20,12 +20,14 @@ import time
 from contextlib import contextmanager
 
 from PySide6.QtCore import QEvent, QMargins, QRect, QRectF, QSize, QTimer, Qt, Signal
-from PySide6.QtGui import (QAction, QColor, QFontMetrics, QKeySequence, QPainter, QTextLayout)
+from PySide6.QtGui import (QAction, QColor, QFontMetrics, QKeySequence, QPainter,
+                           QTextLayout)
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDialog, QFrame,
     QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMenu, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QMenu, QPlainTextEdit,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem,
     QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
