@@ -394,7 +394,7 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
                 event="已排入后台 worker", event_name="job_queued",
                 event_visibility="technical", event_category="orchestration")
             worker = threading.Thread(
-                target=_run_job_worker,
+                target=core._run_job_worker,
                 args=(job_id, filename, file_bytes, dict(pipeline_kwargs or {}), base_url,
                       segment_operation),
                 name=f"folith-{job_id}", daemon=True)
