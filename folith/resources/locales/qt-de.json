@@ -2776,5 +2776,6 @@
   "找不到任务状态，无法解读。": "Auftragsstatus nicht gefunden.",
   "没有可用的模型连接，无法解读。": "Keine Modellverbindung vorhanden.",
   "解读失败：{v0}": "Erklärung fehlgeschlagen: {v0}",
-  "（已缓存）": "(zwischengespeichert)"
+  "（已缓存）": "(zwischengespeichert)",
+  "发现新版本 {v0}": "Neue Version {v0} verfügbar"
 }

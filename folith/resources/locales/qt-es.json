@@ -2776,5 +2776,6 @@
   "找不到任务状态，无法解读。": "No se encontró el estado de la tarea.",
   "没有可用的模型连接，无法解读。": "Sin conexión de modelo configurada.",
   "解读失败：{v0}": "Falló la explicación: {v0}",
-  "（已缓存）": "(en caché)"
+  "（已缓存）": "(en caché)",
+  "发现新版本 {v0}": "Nueva versión {v0} disponible"
 }
