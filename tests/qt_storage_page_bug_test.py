@@ -52,7 +52,7 @@ def test_reveal_label_comes_from_platform_ui(app):
 
 
 def test_all_three_cleanup_paths_survive_apply(app):
-    from folith.qt.settings_pages import cleanup_paths_text
+    from folith.qt.settings_pages import cleanup_paths
 
     page = settings_pages.StoragePage(None)
     data = "/long/" + "path/" * 30
@@ -60,7 +60,7 @@ def test_all_three_cleanup_paths_survive_apply(app):
     view = {"data_dir": data, "log_dir": log, "jobs": 0, "projects": 0,
             "caches": 0, "logs": 0, "total": 0, "job_count": 0}
     page.apply(view)
-    expected = cleanup_paths_text(data, log)
+    expected = cleanup_paths(data, log)
     assert len(page.cleanup_path_labels) == len(expected) == 3
     for label, full in zip(page.cleanup_path_labels, expected):
         assert label.isVisible() or not label.isHidden()
