@@ -525,6 +525,10 @@ class ConnectionLibrary(QWidget):
             self.fill_selector(self.dialog.vision_connection_box, "vision")
         for role in ("translation", "reviewer", "vision"):
             self.update_level_selector(role)
+        # C-45: keep the pinned footer button in sync after save/delete/refresh,
+        # without waiting for a page switch.
+        if hasattr(self.dialog, "sync_models_primary_button"):
+            self.dialog.sync_models_primary_button()
 
     def _show_all_connections(self):
         self._show_all = True
