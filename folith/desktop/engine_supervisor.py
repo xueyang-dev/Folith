@@ -410,7 +410,8 @@ class EngineSupervisor:
 
     def __init__(self, job_id: str, proc: "subprocess.Popen", *, token: str,
                  command: List[str], data_dir: Path, log_dir: Path,
-                 secrets: Tuple[str, ...] = ()) -> None:
+                 secrets: Tuple[str, ...] = (),
+                 launch_token: str = "") -> None:
         self.job_id = job_id
         self.proc = proc
         self.token = token
@@ -438,11 +439,15 @@ class EngineSupervisor:
         #: compares against this snapshot to tell the dying run's leftover
         #: block from a replacement run's live one.
         self._end_worker_id = ""
-        #: The launch token the run had when "no owner" was established
-        #: (CX-10 §1).  A new launch stamps its own token *before* its child
-        #: can take the lock or publish a worker block, so this comparison
-        #: recognises a replacement even inside the cold-start window.
-        self._end_launch_token = ""
+        #: The launch token **this** supervisor stamped for its own run
+        #: (CX-12 §3): bound at construction, never sampled at exit.  A
+        #: replacement engine that registers before this monitor's first
+        #: state read would otherwise be mistaken for "my launch" if the
+        #: monitor picked up whatever token was current when it happened
+        #: to look.  Empty means "this run stamped no token" (direct
+        #: constructions in tests, pre-format tasks) — a newer stamped
+        #: token then differs and is still recognised.
+        self._end_launch_token = str(launch_token or "")
         #: Set by :meth:`_publish_terminal_state` when a fresh owner appeared:
         #: the replacement's own monitor owns the terminal truth, so this one
         #: abandons the write instead of overwriting it (CX-07 §1).
@@ -759,10 +764,8 @@ class EngineSupervisor:
             while True:
                 runtime = _core().load_runtime_state(self.job_id) or {}
                 worker_id = str((runtime.get("worker") or {}).get("worker_id") or "")
-                launch_token = str((runtime.get("launch") or {}).get("token") or "")
                 if str(runtime.get("status") or "") in TERMINAL_STATUSES:
                     self._end_worker_id = worker_id
-                    self._end_launch_token = launch_token
                     return
                 evidence = self._live_ownership_evidence(runtime)
                 if not evidence:
@@ -781,7 +784,6 @@ class EngineSupervisor:
                     # publish step can tell its leftover block from a
                     # replacement run's live one.
                     self._end_worker_id = worker_id
-                    self._end_launch_token = launch_token
                     return
                 if evidence == "engine_stdio_open":
                     stdio_alive_at = time.monotonic()
@@ -1218,9 +1220,14 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
         token = core.register_engine_owner(job_id, pid=proc.pid)
     except Exception:  # noqa: BLE001 - liveness falls back to the lease on disk
         token = ""
+    # CX-12 §3: the launch token is bound to the supervisor at construction —
+    # the monitor may never claim a token stamped by a *newer* launch that
+    # registered before its own first state read.
+    launch_token = uuid.uuid4().hex
     sup = EngineSupervisor(
         job_id, proc, token=token, command=command, data_dir=data_dir,
-        log_dir=log_dir, secrets=_secrets_in(connection))
+        log_dir=log_dir, secrets=_secrets_in(connection),
+        launch_token=launch_token)
     line = engine_protocol.encode_start_request(
         job_id, connection, mode=mode, filename=filename)
     # The child owns every later status; this one is Ours so Start has feedback
@@ -1233,7 +1240,7 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
     # again (E-6a).  This launch stamp is the durable ownership of the new
     # run (CX-10 §1): it lands before the start line, so the moment the UI
     # can show the new run, an older monitor can already tell it apart.
-    publish_starting_status(job_id, launch_token=uuid.uuid4().hex,
+    publish_starting_status(job_id, launch_token=launch_token,
                             launch_pid=proc.pid)
     if not sup.send_line(line):
         sup.abandon()
