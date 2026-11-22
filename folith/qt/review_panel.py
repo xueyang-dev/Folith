@@ -28,6 +28,7 @@ from . import adapter
 from . import components
 from . import i18n
 from . import platform_ui
+from . import theme as theme_module
 from . import icons
 from . import pdf_panel as pdf_panel_module
 from . import style as style_module
@@ -541,21 +542,26 @@ class ReviewPanel(QWidget):
         hint_row = QHBoxLayout(self.shortcut_hint)
         hint_row.setContentsMargins(0, 0, 0, 0)
         hint_row.setSpacing(6)
-        for action, label in platform_ui.REVIEW_ACTIONS:
-            # keycap above its action label: discoverable without hover/AT,
-            # but compact enough for long translations in a 1180px window.
-            cell = QWidget()
-            column = QVBoxLayout(cell)
-            column.setContentsMargins(0, 0, 0, 0)
-            column.setSpacing(2)
-            column.addWidget(components.KeyHint(action, i18n.tr(label)))
-            text = QLabel(i18n.tr(label))
+        # C-60: uniform keycaps + one-line labels in a tidy 2-column grid.
+        from .style import ElideLabel
+        from PySide6.QtWidgets import QGridLayout
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(theme_module.SPACE["sm"])
+        grid.setVerticalSpacing(2)
+        hint_row.addLayout(grid)   # attach before filling (qt-layout-order)
+        for cell_index, (action, label) in enumerate(platform_ui.REVIEW_ACTIONS):
+            cap = components.KeyHint(action, i18n.tr(label))
+            cap.setFixedWidth(26)
+            text = ElideLabel(i18n.tr(label))
             text.setProperty("role", "muted")
-            text.setMaximumWidth(72)
-            text.setWordWrap(True)
-            column.addWidget(text)
-            hint_row.addWidget(cell)
-        hint_row.addStretch(1)
+            cell = QWidget()
+            row = QHBoxLayout(cell)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            row.addWidget(cap)
+            row.addWidget(text, 1)
+            grid.addWidget(cell, cell_index // 2, cell_index % 2)
         self.shortcut_hint.setAccessibleName(i18n.tr('键盘快捷键：{v0}', v0=' · '.join(
             f"{i18n.tr(label)} ({platform_ui.shortcut_text(action)})"
             for action, label in platform_ui.REVIEW_ACTIONS)))
