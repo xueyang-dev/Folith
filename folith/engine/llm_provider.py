@@ -433,6 +433,9 @@ def _provider_error_payload(error):
     code = ""
     message = ""
     period = ""
+    # 内部协议错误自带稳定的 code（wrong_item_count 等，翻译协议的契约）——
+    # 优先于回包读取，同样要过形状校验。
+    code = _plain_identifier(getattr(error, "code", None), 64)
     # CX-12 应修：请求 ID 优先读 SDK 与 ``x-request-id`` 响应头——回包里的
     # ``request_id``/``id`` 只是兜底，且同样要过形状校验。
     sdk_request_id = getattr(error, "request_id", None)
@@ -616,6 +619,20 @@ def provider_error_message(error, action="请求失败"):
     status = provider_error_status(error)
     message = status["message"]
     return f"{action}：{message}" if action else message
+
+
+def provider_error_is_remote(error):
+    """True when the error carries a remote reply's shape (CX-12 §1).
+
+    SDK/http exceptions expose ``response``/``body``/``status_code``; internal
+    errors (our own protocol codes, simulated faults, plain RuntimeErrors)
+    carry none of these — their text never saw a relay, so callers may keep
+    it (redacted against the connection's own credentials) instead of
+    replacing it with the structured summary.
+    """
+    return (getattr(error, "response", None) is not None
+            or getattr(error, "body", None) is not None
+            or getattr(error, "status_code", None) is not None)
 
 
 def provider_error_detail(error, *, stage=""):

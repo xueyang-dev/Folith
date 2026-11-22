@@ -1002,6 +1002,7 @@ from folith.engine.redaction import redact_error_text  # CX-06 §3: model errors
 from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps its public surface)
     _fetch_gemini_models,
     _llm_request_controller,
+    _plain_identifier,
     _provider_error_payload,
     _record_llm_thread_stats,
     _trace_http_request,
@@ -1015,6 +1016,7 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     parse_json_array,
     parse_translation_array,
     provider_error_detail,
+    provider_error_is_remote,
     provider_error_message,
     provider_error_status,
     reasoning_effort_options,
@@ -4382,12 +4384,21 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
         prompt_stats.append(_translation_prompt_cost(
             segments=segments, system_prompt=sys_prompt, user_prompt=user_prompt,
             render_stats=render_stats, attempt=3, output_chars=0, failed=True))
-    raise RuntimeError(
-        f"批次翻译失败（{len(segments)} 段）："
-        # CX-11 §1：这里以前直接把 SDK 异常字符串化，回显的密钥、正文和路径随之
-        # 进入任务状态/事件/日志/trace。结构化诊断取而代之；异常对象只留在内存。
-        f"{provider_error_detail(last_err) if last_err is not None else '模型返回格式异常或数量不匹配'}"
-    )
+    if last_err is None:
+        summary = "模型返回格式异常或数量不匹配"
+    elif (provider_error_is_remote(last_err)
+            # 内部协议错误自带稳定的 code：走结构化（excerpt 里是回包预览，
+            # 绝不落盘）。
+            or _plain_identifier(getattr(last_err, "code", None), 64)):
+        # CX-11 §1：远端回包绝不字符串化——回显的密钥、正文和路径随之会进入
+        # 任务状态/事件/日志/trace。结构化诊断取而代之；异常对象只留在内存。
+        summary = provider_error_detail(last_err)
+    else:
+        # 纯内部异常（模拟故障、我们自己的断言文本）没见过任何回包：保留
+        # 原文，按本次连接的已知凭据脱敏（CX-12：普通自定义凭据没有形状）。
+        summary = redact_error_text(
+            str(last_err), known_secrets=(str(api_key or ""),))[:500]
+    raise RuntimeError(f"批次翻译失败（{len(segments)} 段）：{summary}")
 
 
 DYNAMIC_CONTEXT_RECORD_LIMIT = 600

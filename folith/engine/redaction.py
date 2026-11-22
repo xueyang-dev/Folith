@@ -83,7 +83,11 @@ def redact_error_text(text: object, *,
         redacted = redacted.replace(user_name, USER_PLACEHOLDER)
     for secret in known_secrets:
         text_secret = str(secret or "").strip()
-        if text_secret:
+        # A real credential is never a single character; a tiny literal would
+        # mangle ordinary words ("k" eats half of "unknown").  Only literal-
+        # replace credential-length values — anything shorter rides on the
+        # pattern and key-value rules instead.
+        if len(text_secret) >= 8:
             redacted = redacted.replace(text_secret, PLACEHOLDER)
     for pattern in SECRET_PATTERNS:
         redacted = pattern.sub(PLACEHOLDER, redacted)
