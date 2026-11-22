@@ -1,6 +1,6 @@
 # Folith 0.8.3 发布说明
 
-状态：**候选，等用户签字。** 候选是 Release Validation run [45001192999](https://github.com/xueyang-dev/Folith/actions/runs/45001192999)（main `935f2a0e`，版本号 0.8.3）。标签与公开发布在用户点头后进行，标签打在 `935f2a0e` 上。
+状态：**正式发布，2026-11-22。** 用户 2026-11-22 在七条门槛全部通过后批准发布。发布提交是 main `935f2a0e`（Release Validation run [45001192999](https://github.com/xueyang-dev/Folith/actions/runs/45001192999)，版本号 0.8.3），标签 `v0.8.3` 打在这个提交上，Release 附件就是验收用的那份构建。
 
 第一个候选 `eba19231` 经用户 2026-11-21 亲测发现一批界面问题（见第 6 节），用户裁定「修好再发」；修复合入后从 main 重新出候选，旧候选作废。因为从 main 出，新候选也带上了这期间已合入 main 的几项改动（见第 7 节）。
 
