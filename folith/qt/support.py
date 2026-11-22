@@ -159,15 +159,30 @@ _EXPORT_CLEANED_BASENAMES = frozenset({
 })
 
 
+#: CX-12 §2：旧事件日志是追加式，末行可能写了一半（JSON 不完整）。解析失败
+#: 的行**不照抄原文**（它可能带着升级前写进的回显），换成可读占位记录；README
+#: 对此有一句说明，原始文件留在本机不删。
+EXPORT_OMITTED_LINE_EVENT = "legacy_unparsed_line_omitted"
+EXPORT_OMITTED_LINE_TEXT = "无法解析的旧记录已省略（可能为写到一半的末行）"
+
+#: CX-12 应修：events.jsonl 里只有失败类事件可能带着模型回包原文，快照与进度
+#: 类事件的 reason 是正常诊断文案，导出时照带。
+_EXPORT_FAILURE_PHASE_MARK = "failed"
+
+
 def _clean_export_member(name: str, payload: bytes) -> bytes:
     """The export copy of a task file carries no legacy error free text.
 
     Cleaning is field-anchored, never a content guess: the job state's
-    ``translation_failures[].reason``, the segment event log's ``reason``,
-    the runtime state's ``error.message`` / ``last_event`` (failed runs) and
-    every ``category == "error"`` runtime event message become the marker.
-    A member that cannot be parsed is carried byte-for-byte (the backup must
-    never lose data it cannot understand).
+    ``translation_failures[].reason``, the segment event log's failure-event
+    ``reason``, the runtime state's ``error.message`` / ``last_event``
+    (failed runs) and every ``category == "error"`` runtime event message
+    become the marker; normal snapshot/progress reasons ride untouched
+    (CX-12).  An events line that cannot be parsed (a torn append tail) is
+    never copied verbatim — it becomes an explicit omission record, because
+    it may carry a legacy echo nobody can sanitise after the fact.  A state
+    member that cannot be parsed is carried byte-for-byte (atomic writes
+    mean a torn state.json cannot exist on disk).
     """
     if name not in _EXPORT_CLEANED_BASENAMES:
         return payload
@@ -178,9 +193,14 @@ def _clean_export_member(name: str, payload: bytes) -> bytes:
                 try:
                     record = json.loads(line)
                 except ValueError:
-                    lines.append(line)
+                    lines.append(json.dumps({
+                        "event": EXPORT_OMITTED_LINE_EVENT,
+                        "message": EXPORT_OMITTED_LINE_TEXT,
+                    }, ensure_ascii=False))
                     continue
-                if name == "events.jsonl" and record.get("reason"):
+                if (name == "events.jsonl" and record.get("reason")
+                        and _EXPORT_FAILURE_PHASE_MARK
+                        in str(record.get("phase") or "").lower()):
                     record["reason"] = EXPORT_CLEANED_ERROR_TEXT
                 if (name == "runtime_events.jsonl"
                         and record.get("category") == "error"
@@ -236,6 +256,7 @@ def export_all_data(destination: str | os.PathLike[str]) -> dict:
             "Folith 数据备份（私有备份：包含文档、译文、术语与记忆等数据）。\n"
             "不含 API 密钥：模型与视觉连接的配置文件、以及可能记录了服务商原始回包的\n"
             "取证文件都不会打包；在新机器上恢复后，需要在设置里重新填写模型连接与视觉连接。\n"
+            "旧任务里升级前写下的错误文本与无法解析的末行记录，在包内以脱敏占位替代。\n"
             "恢复：退出 Folith，把 Folith-data 里的内容放回新机器的数据目录\n"
             "（设置的「存储」页会显示当前数据目录的位置）。\n"))
     partial.replace(target)

@@ -461,3 +461,63 @@ def test_export_excludes_retained_copies_of_credential_files(isolated, tmp_path)
     assert not any("ocr_online_config.json" in name for name in names)
     assert "Folith-data/notes.txt.bak" in names, "凭据文件名之外的 .bak 不受影响"
     assert b"secret-key" not in blob
+
+
+def test_export_replaces_torn_legacy_lines_with_an_omission_record(
+        isolated, tmp_path):
+    """CX-12 §2：追加式事件日志的末行可能写了一半——解析失败的行不照抄。
+
+    截断的旧失败行可能带着升级前写进的回显，事后无法脱敏；导出副本换成
+    可读的省略记录，原文件留在本机。
+    """
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    good = json.dumps({"phase": "translation_protocol_failed",
+                       "reason": "升级前的原始错误文本带 secret-key"})
+    torn = ('{"phase": "translation_protocol_failed", "reason": "raw relay '
+            'secret-key')  # 写到一半的末行
+    (job / "events.jsonl").write_text(good + "\n" + torn, encoding="utf-8")
+    (job / "state.json").write_text("{}", encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup5")
+    with zipfile.ZipFile(result["path"]) as archive:
+        blob = b"".join(archive.read(name) for name in archive.namelist())
+        rows = [json.loads(line) for line in
+                archive.read("Folith-data/0123456789abcdef/events.jsonl")
+                .decode("utf-8").splitlines() if line.strip()]
+    assert b"secret-key" not in blob
+    assert rows[0]["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert rows[1]["event"] == support.EXPORT_OMITTED_LINE_EVENT
+    assert rows[1]["message"] == support.EXPORT_OMITTED_LINE_TEXT
+    # 原文件不动：截断行仍在本机，供操作者自己决定。
+    assert torn in (job / "events.jsonl").read_text(encoding="utf-8")
+
+
+def test_export_keeps_normal_event_reasons(isolated, tmp_path):
+    """CX-12 应修：只有失败类事件可能带模型回包，正常诊断文案照带。"""
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    lines = [
+        {"phase": "journal_baseline", "reason": "快照基线 40 段"},
+        {"phase": "clean_deterministic", "reason": "确定性清理完成"},
+        {"phase": "first_batch", "reason": "首批 4 段已提交"},
+        {"phase": "loop_exit", "reason": "批次循环退出"},
+        {"phase": "translation_protocol_failed", "reason": "原始回包 secret-key"},
+    ]
+    (job / "events.jsonl").write_text(
+        "\n".join(json.dumps(line, ensure_ascii=False) for line in lines) + "\n",
+        encoding="utf-8")
+    (job / "state.json").write_text("{}", encoding="utf-8")
+    result = support.export_all_data(tmp_path / "backup6")
+    with zipfile.ZipFile(result["path"]) as archive:
+        rows = [json.loads(line) for line in
+                archive.read("Folith-data/0123456789abcdef/events.jsonl")
+                .decode("utf-8").splitlines() if line.strip()]
+    reasons = {row["phase"]: row["reason"] for row in rows}
+    assert reasons["journal_baseline"] == "快照基线 40 段"
+    assert reasons["clean_deterministic"] == "确定性清理完成"
+    assert reasons["first_batch"] == "首批 4 段已提交"
+    assert reasons["loop_exit"] == "批次循环退出"
+    assert reasons["translation_protocol_failed"] == support.EXPORT_CLEANED_ERROR_TEXT

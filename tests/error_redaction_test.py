@@ -297,3 +297,63 @@ def test_translate_batch_raises_the_structured_diagnostic_not_the_raw_body(
     assert "class=" in text and "http=400" in text and "code=invalid_request" in text
     assert "request_id=cx11-req-1" in text
     assert FAKE_KEY not in text and "Relay refused" not in text
+
+
+# ---------------------------------------------------------------------------
+# 5. CX-12 §1: diagnostic identifiers are shape-validated, never relay prose
+# ---------------------------------------------------------------------------
+
+def test_diagnostic_identifiers_reject_relay_prose_and_keep_real_ones():
+    """code/request_id 只保留短机器标识；藏进字段里的回显整体丢弃。"""
+    from folith.engine.llm_provider import provider_error_detail
+
+    class HidingRelay(RuntimeError):
+        status_code = 400
+        body = {"error": {
+            "code": FAKE_KEY + " CX12 prose /srv/relay/fixture/notes.docx",
+            "message": "irrelevant",
+            "request_id": FAKE_KEY + " and prose",
+        }}
+
+        def __init__(self):
+            super().__init__("Error code: 400 - " + json.dumps(self.body))
+
+    detail = provider_error_detail(HidingRelay())
+    assert "class=" in detail and "http=400" in detail
+    assert "code=" not in detail.split("class=")[0] and "code=" not in detail, \
+        "非标识形状的 code 一律不进诊断"
+    assert FAKE_KEY not in detail
+    assert "request_id=" not in detail, "非标识形状的请求 ID 一律丢弃"
+
+    class HonestRelay(RuntimeError):
+        status_code = 400
+        body = {"error": {"code": "invalid_request",
+                          "message": "irrelevant",
+                          "request_id": "req-honest-8471"}}
+
+        def __init__(self):
+            super().__init__("Error code: 400 - " + json.dumps(self.body))
+
+    honest = provider_error_detail(HonestRelay())
+    assert "code=invalid_request" in honest
+    assert "request_id=req-honest-8471" in honest
+
+
+def test_the_request_id_is_read_from_the_response_header_first():
+    """x-request-id 响应头是可靠来源；回包里的 id 只是兜底（CX-12 应修）。"""
+    import httpx
+
+    class HeaderRelay(RuntimeError):
+        status_code = 400
+        response = httpx.Response(
+            400, headers={"x-request-id": "req-header-8471"},
+            json={"error": {"code": "invalid_request", "message": "irrelevant"}})
+
+        def __init__(self):
+            super().__init__("Error code: 400 - relay refused")
+
+    from folith.engine.llm_provider import provider_error_detail
+
+    detail = provider_error_detail(HeaderRelay())
+    assert "request_id=req-header-8471" in detail
+    assert "code=invalid_request" in detail
