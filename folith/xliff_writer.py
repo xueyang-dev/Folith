@@ -1,78 +1,115 @@
-"""Generate XLIFF 1.2 from an ordinary task (issue #527).
+"""Generate XLIFF 1.2 from any task (issue #527).
 
-Only adds an output; it never rewrites the job state or Folith's own files.
-One ``trans-unit`` per segment, with the stable segment uid as ``id`` so
-re-export produces identical ids.  Excluded segments are emitted with
-``translate="no"`` and a note — never silently dropped.
+Only adds an output; it never rewrites job state or Folith's own files.
+Uses ElementTree for XML serialisation so text is always escaped correctly.
 """
 from __future__ import annotations
 
-from xml.sax.saxutils import escape
+from pathlib import Path
+from xml.etree import ElementTree as ET
 from typing import Any, Iterable, Mapping
 
-# Documented state mapping (release notes mirror this table):
-#   untranslated          -> state="new"
-#   machine translated    -> state="translated"
-#   human confirmed       -> state="signed-off", approved="yes"
-#   open review finding   -> state="needs-review-translation"
+NS = "urn:oasis:names:tc:xliff:document:1.2"
+ET.register_namespace("", NS)
+
 STATE_NEW = "new"
 STATE_TRANSLATED = "translated"
 STATE_SIGNED_OFF = "signed-off"
 STATE_NEEDS_REVIEW = "needs-review-translation"
 
+_LANG_MAP = {"zh-CN": "zh-CN", "zh": "zh-CN", "en": "en-US", "english": "en-US",
+             "简体中文": "zh-CN"}
+_DATATYPE_MAP = {"docx": "docx", "pdf": "pdf", "epub": "x-html", "txt": "plaintext",
+                 "md": "plaintext", "markdown": "plaintext"}
+
+
+def _lang(value: Any, fallback: str) -> str:
+    raw = str(value or "").strip()
+    return _LANG_MAP.get(raw.lower(), raw or fallback)
+
+
+def _datatype(value: Any) -> str:
+    raw = str(value or "").strip().lower().lstrip(".")
+    return _DATATYPE_MAP.get(raw, raw or "plaintext")
+
 
 def segment_state(pair: Mapping[str, Any], open_findings: Iterable[int] = (),
                   index: int | None = None) -> str:
-    findings = set(open_findings)
     at = index if index is not None else pair.get("index")
-    if at is not None and at in findings:
+    if at is not None and at in set(open_findings):
         return STATE_NEEDS_REVIEW
-    if pair.get("human_edited") or pair.get("reviewed") or pair.get("human_accepted"):
+    # Only an explicit human-confirmed/reviewed decision counts as sign-off;
+    # a bare human edit is still "translated".
+    if pair.get("human_accepted") or pair.get("accepted_by_human") or \
+            (pair.get("review_status") == "approved"):
         return STATE_SIGNED_OFF
-    if pair.get("target") and str(pair.get("target")).strip():
+    if str(pair.get("target") or "").strip():
         return STATE_TRANSLATED
     return STATE_NEW
 
 
-def _approved(state: str) -> str:
-    return ' approved="yes"' if state == STATE_SIGNED_OFF else ""
-
-
 def segment_uid(pair: Mapping[str, Any], index: int) -> str:
-    """Stable id: the segment uid, falling back to the index for old jobs."""
-    return str(pair.get("uid") or pair.get("segment_uid") or f"seg-{index:04d}")
+    """Unique id: persistent uid first, then a deterministic fallback."""
+    for key in ("uid", "segment_uid", "external_id", "id"):
+        value = pair.get(key)
+        if value:
+            return f"seg-{value}"
+    return f"seg-{index:06d}"
 
 
-def build_xliff(job: Mapping[str, Any], *,
-                open_findings: Iterable[int] = ()) -> str:
-    """Return a complete XLIFF 1.2 document for *job* (no filesystem writes)."""
+def _check_xml10(text: str) -> None:
+    for char in text:
+        code = ord(char)
+        if code in (0x9, 0xA, 0xD):
+            continue
+        if 0x20 <= code <= 0xD7FF or 0xE000 <= code <= 0xFFFD or \
+                0x10000 <= code <= 0x10FFFF:
+            continue
+        raise ValueError(f"字符 U+{code:04X} 无法在 XML 1.0 中表示")
+
+
+def build_xliff(job: Mapping[str, Any], *, open_findings: Iterable[int] = ()) -> str:
+    """Return a complete XLIFF 1.2 document for *job*."""
     pairs = list(job.get("pairs") or [])
     findings = set(open_findings)
-    source_lang = str(job.get("source_lang") or job.get("source_language") or "en")
-    target_lang = str(job.get("target_lang") or "zh-CN")
-    original = escape(str(job.get("source_filename") or job.get("name") or ""))
-    datatype = str(job.get("source_type") or "plaintext")
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">',
-        f'  <file original="{original}" source-language="{escape(source_lang)}" '
-        f'target-language="{escape(target_lang)}" datatype="{escape(datatype)}">',
-        "    <body>",
-    ]
+    source_lang = _lang(job.get("source_lang") or job.get("source_language"), "en-US")
+    target_lang = _lang(job.get("target_lang"), "zh-CN")
+    original = str(job.get("source_filename") or job.get("name") or job.get("source_path") or "")
+    if not original:
+        raise ValueError("任务缺少源文件名，无法生成 XLIFF original")
+    datatype = _datatype(job.get("source_type") or Path(original).suffix.lstrip("."))
+
+    root = ET.Element(f"{{{NS}}}xliff", {"version": "1.2"})
+    file_el = ET.SubElement(root, f"{{{NS}}}file", {
+        "original": original, "source-language": source_lang,
+        "target-language": target_lang, "datatype": datatype})
+    body = ET.SubElement(file_el, f"{{{NS}}}body")
+    seen: set[str] = set()
     for index, pair in enumerate(pairs):
-        uid = escape(segment_uid(pair, index))
+        uid = segment_uid(pair, index)
+        if uid in seen:
+            uid = f"{uid}-{index}"
+        seen.add(uid)
         excluded = bool(pair.get("excluded") or pair.get("translate") is False)
-        attrs = f'id="{uid}"'
+        attrs = {"id": uid}
         if excluded:
-            attrs += ' translate="no"'
-        state = segment_state(pair, findings, index)
-        lines.append(f"      <trans-unit {attrs} state=\"{state}\"{_approved(state)}>")
-        lines.append(f"        <source>{escape(str(pair.get('source') or ''))}</source>")
-        target = str(pair.get("target") or "")
-        if target:
-            lines.append(f"        <target>{escape(target)}</target>")
+            attrs["translate"] = "no"
+        unit = ET.SubElement(body, f"{{{NS}}}trans-unit", attrs)
+        # CX-09 #596: locked/inline-tag payloads are rejected in the first
+        # version rather than silently losing the <> structure.
+        if pair.get("locked") or pair.get("inline_tags") or pair.get("placeholders"):
+            raise ValueError("含锁定标记或内联标签的段落暂不支持 XLIFF 1.2 导出")
+        source_text = str(pair.get("source") or "")
+        target_text = str(pair.get("target") or "")
+        _check_xml10(source_text); _check_xml10(target_text)
+        ET.SubElement(unit, f"{{{NS}}}source").text = source_text
+        target_el = ET.SubElement(unit, f"{{{NS}}}target")
+        target_el.text = target_text
+        state = "new" if excluded else segment_state(pair, findings, index)
+        target_el.set("state", state)
+        if state == STATE_SIGNED_OFF:
+            target_el.set("approved", "yes")
         if excluded:
-            lines.append("        <note>excluded: not translated</note>")
-        lines.append("      </trans-unit>")
-    lines.extend(("    </body>", "  </file>", "</xliff>", ""))
-    return "\n".join(lines)
+            ET.SubElement(unit, f"{{{NS}}}note").text = "excluded: not translated"
+    return ET.tostring(root, encoding="unicode", xml_declaration=False) \
+        .replace("<xliff", '<?xml version="1.0" encoding="UTF-8"?>\n<xliff', 1)
