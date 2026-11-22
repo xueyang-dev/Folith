@@ -8766,7 +8766,8 @@ def _runtime_write_timeout_policy(writer):
     return write_with_policy
 
 
-def _write_terminal_runtime_state(job_id, *, what, **changes):
+def _write_terminal_runtime_state(job_id, *, what, expect_launch_token=None,
+                                 **changes):
     """Publish a terminal state with bounded retries; report the loss if it fails.
 
     This is for the two places that cannot let a ``JobLockTimeout`` travel:
@@ -8776,9 +8777,17 @@ def _write_terminal_runtime_state(job_id, *, what, **changes):
     silently: a final failure is counted in ``runtime_write_timeout_stats()``
     and written to the durable ``runtime_technical.log``, and the caller gets
     ``None`` so it can re-raise its own exception instead of masking it.
+
+    ``expect_launch_token`` (CX-10 §1) makes the write conditional on the
+    run's ownership, compared inside the runtime-write lock: a newer launch
+    that stamped its own token means nothing is written, and the skip is
+    recorded in the technical log so support can tell "abandoned because a
+    new run launched" from "could not be published".
     """
     try:
-        return update_runtime_state(job_id, on_timeout="retry", **changes)
+        published = update_runtime_state(
+            job_id, on_timeout="retry", expect_launch_token=expect_launch_token,
+            **changes)
     except _job_lock.JobLockTimeout:
         _append_runtime_technical_log(
             job_id,
@@ -8786,19 +8795,33 @@ def _write_terminal_runtime_state(job_id, *, what, **changes):
             "keeps its last published state and will be reported as interrupted "
             "by the next launch/observer")
         return None
+    if published is None and expect_launch_token is not None:
+        _append_runtime_technical_log(
+            job_id,
+            f"terminal runtime state ({what}) was skipped: a newer run has "
+            "launched and owns the task")
+    return published
 
 
 @_runtime_write_timeout_policy
 def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
                          event_visibility=None, event_category=None,
-                         event_logged=False, **changes):
+                         event_logged=False, expect_launch_token=None, **changes):
     """Atomically merge a worker status update into runtime_state.json.
 
     ``event_logged=True`` says the event has already been appended to
     ``runtime_events.jsonl`` by the caller (the merged status writer does
     that, so the activity log keeps every event while the state file is
     written once per window).
+
+    ``expect_launch_token`` (CX-10 §1) makes the write conditional on the
+    run's ownership: it is compared **inside** the runtime-write lock, right
+    before the merge, so no window remains between "the caller checked" and
+    "the bytes land".  When the current state's ``launch.token`` differs — a
+    newer launch stamped its own token — nothing is written and ``None`` is
+    returned; the caller re-reads and decides.  A caller that passes no
+    token keeps the unconditional behaviour.
 
     ``on_timeout`` (E-6u) declares how a ``JobLockTimeout`` from the bounded
     ``.runtime-write.lock`` acquire is treated: ``"raise"`` (default) lets it
@@ -8824,6 +8847,12 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             job_dir(job_id) / ".runtime-write.lock",
             timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
         current = load_runtime_state(job_id)
+        if expect_launch_token is not None:
+            # CX-10 §1：比对发生在写锁内——调用方"已检查"与"字节落盘"之间不再有
+            # 窗口。新启动端先盖了自己的 launch token 时，这里什么都不写。
+            current_launch = str((current.get("launch") or {}).get("token") or "")
+            if current_launch != str(expect_launch_token):
+                return None
         # ``None`` is normally omitted so optional status fields do not erase
         # an existing value accidentally.  ``error`` is different: callers
         # pass ``error=None`` when a retry or a successful checkpoint clears a

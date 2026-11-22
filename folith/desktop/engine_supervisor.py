@@ -111,6 +111,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -437,6 +438,11 @@ class EngineSupervisor:
         #: compares against this snapshot to tell the dying run's leftover
         #: block from a replacement run's live one.
         self._end_worker_id = ""
+        #: The launch token the run had when "no owner" was established
+        #: (CX-10 §1).  A new launch stamps its own token *before* its child
+        #: can take the lock or publish a worker block, so this comparison
+        #: recognises a replacement even inside the cold-start window.
+        self._end_launch_token = ""
         #: Set by :meth:`_publish_terminal_state` when a fresh owner appeared:
         #: the replacement's own monitor owns the terminal truth, so this one
         #: abandons the write instead of overwriting it (CX-07 §1).
@@ -691,14 +697,20 @@ class EngineSupervisor:
             # whether it wrote the truth.  A caller that needs the truth can tell
             # them apart instead of reading a stale "running" as final.
             self.terminal_published = self._terminal_published
-            if not self._terminal_published and self._taken_over:
+            # CX-10 §1: a takeover can also be caught inside the write lock
+            # (core compares the launch token there), after this monitor's
+            # own pre-write check already passed — re-read to name the reason.
+            reason = self._taken_over
+            if not reason and self._launch_replaced():
+                reason = "launch_replaced"
+            if not self._terminal_published and reason:
                 # Deliberate, and correct: a new engine owns the task and its
                 # own monitor owns the terminal truth.  Recorded so support
                 # can tell "abandoned because taken over" from "lost".
                 self._record_watch_failure(
                     "terminal publish abandoned",
                     RuntimeError(
-                        f"the run was taken over ({self._taken_over}); its new "
+                        f"the run was taken over ({reason}); its new "
                         "owner publishes its own terminal state"))
             elif not self._terminal_published:
                 self._record_watch_failure(
@@ -747,8 +759,10 @@ class EngineSupervisor:
             while True:
                 runtime = _core().load_runtime_state(self.job_id) or {}
                 worker_id = str((runtime.get("worker") or {}).get("worker_id") or "")
+                launch_token = str((runtime.get("launch") or {}).get("token") or "")
                 if str(runtime.get("status") or "") in TERMINAL_STATUSES:
                     self._end_worker_id = worker_id
+                    self._end_launch_token = launch_token
                     return
                 evidence = self._live_ownership_evidence(runtime)
                 if not evidence:
@@ -767,6 +781,7 @@ class EngineSupervisor:
                     # publish step can tell its leftover block from a
                     # replacement run's live one.
                     self._end_worker_id = worker_id
+                    self._end_launch_token = launch_token
                     return
                 if evidence == "engine_stdio_open":
                     stdio_alive_at = time.monotonic()
@@ -842,7 +857,15 @@ class EngineSupervisor:
         owner pid, or a ``worker_id`` that is not the one the dying run left
         -- means a new run owns the task, and its own monitor owns the
         terminal truth.
+
+        CX-10 §1 adds the earliest trace of all: a new launch stamps its own
+        ``launch`` token *before* its child takes the lock or publishes
+        anything, so a replacement is recognisable even while it is still in
+        its cold start (the retry-during-cold-start interleaving).
         """
+        launch_token = str((runtime.get("launch") or {}).get("token") or "")
+        if launch_token and launch_token != self._end_launch_token:
+            return "launch_replaced"
         live = self._live_ownership_evidence(runtime)
         if live:
             return live
@@ -914,6 +937,10 @@ class EngineSupervisor:
         # ``_write_terminal_runtime_state`` rather than swallowed.
         written = core._write_terminal_runtime_state(
             self.job_id, what="engine_process_exited",
+            # CX-10 §1: the ownership comparison also happens inside the
+            # runtime-write lock (core.update_runtime_state), so a takeover
+            # that lands between this check and the write still wins.
+            expect_launch_token=self._end_launch_token,
             status="interrupted", phase="interrupted",
             phase_label=message, cancel_requested=cancel_requested,
             exit_requested=exit_requested,
@@ -924,6 +951,17 @@ class EngineSupervisor:
         # ``_write_terminal_runtime_state`` retries internally and reports whether
         # the truth landed; the monitor's flag must follow that, not the call.
         return bool(written)
+
+    def _launch_replaced(self) -> bool:
+        """True when a newer launch owns the task (best-effort re-read)."""
+        if self._taken_over:
+            return True
+        try:
+            current = _core().load_runtime_state(self.job_id) or {}
+        except Exception:  # noqa: BLE001 - the log message may stay generic
+            return False
+        token = str((current.get("launch") or {}).get("token") or "")
+        return bool(token) and token != self._end_launch_token
 
     def _clear_recorded_owner(self, runtime: Dict[str, Any]) -> None:
         """Drop a worker block left behind by a run that already is terminal.
@@ -944,8 +982,11 @@ class EngineSupervisor:
             # Progress/cleanup write (E-6u): a contended lock drops this
             # attempt only.  The owner block is a convenience for the delete
             # guards; status and error are authoritative and already written.
+            # CX-10 §1: guarded by the same in-lock ownership comparison —
+            # a taken-over run keeps even this cleanup to its own monitor.
             _core().update_runtime_state(
                 self.job_id, on_timeout="skip",
+                expect_launch_token=self._end_launch_token,
                 worker={"owner_pid": None, "worker_id": None,
                         "lease_expires_at": None})
         except Exception:  # noqa: BLE001 - cleanup must never break the monitor
@@ -1100,7 +1141,8 @@ def _preflight(job_id: str) -> str:
     return ""
 
 
-def publish_starting_status(job_id: str) -> bool:
+def publish_starting_status(job_id: str, *, launch_token: str = "",
+                            launch_pid: int = 0) -> bool:
     """Say "starting" from *this* process, before the child can say anything.
 
     The child cannot write a status until it has imported `core` (~0.65-1.0 s,
@@ -1109,15 +1151,23 @@ def publish_starting_status(job_id: str) -> bool:
     *previous* status for that whole second, so pressing Start looks like
     nothing happened -- which is exactly what G-E item 4 forbids.
 
+    With ``launch_token`` the same single write also publishes the new run's
+    ownership (CX-10 §1): the moment the UI can show ``queued``, the durable
+    state already names *this* launch, so an older monitor still holding
+    terminal evidence can tell the replacement from itself even while the
+    child is still in its cold start and owns neither lock nor worker block.
+
     Best effort on purpose: a contended runtime-write lock must delay a status
     line, never Start itself.  The phase label matches the in-process one so the
     workbench renders the same "准备中" and the handover to the child's own write
     is invisible.
     """
+    launch = ({"token": launch_token, "pid": int(launch_pid or 0)}
+              if launch_token else None)
     try:
         _core().update_runtime_state(
             job_id, on_timeout="skip", status="queued", phase="starting",
-            phase_label="准备中",
+            phase_label="准备中", launch=launch,
             event="正在启动后台引擎进程", event_name="engine_starting",
             event_visibility="technical", event_category="orchestration")
     except Exception:  # noqa: BLE001 - a status write must never block Start
@@ -1178,7 +1228,13 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
     # must land *before* the start line: a child that fails instantly publishes
     # its own terminal state, and writing "starting" afterwards would overwrite
     # the truth with a status that never happened.
-    publish_starting_status(job_id)
+    # The core clears the request flags *there*, before ``start_engine``
+    # returns; the child reaches its own lines ~1 s later and never clears
+    # again (E-6a).  This launch stamp is the durable ownership of the new
+    # run (CX-10 §1): it lands before the start line, so the moment the UI
+    # can show the new run, an older monitor can already tell it apart.
+    publish_starting_status(job_id, launch_token=uuid.uuid4().hex,
+                            launch_pid=proc.pid)
     if not sup.send_line(line):
         sup.abandon()
         try:
