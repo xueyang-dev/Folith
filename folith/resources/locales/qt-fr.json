@@ -2778,5 +2778,6 @@
   "解读失败：{v0}": "Échec de l'explication : {v0}",
   "（已缓存）": "(en cache)",
   "双语文件（XLIFF 1.2 / SDLXLIFF / MQXLIFF） ({v0})": "Fichiers bilingues (XLIFF 1.2 / SDLXLIFF / MQXLIFF) ({v0})",
-  "此格式目前只支持原样导出": "Ce format ne prend en charge que l'export"
+  "此格式目前只支持原样导出": "Ce format ne prend en charge que l'export",
+  "也会清理各项目内的派生缓存；项目翻译记忆与任务正文保留。": "Les caches dérivés de chaque projet sont également supprimés ; la mémoire de traduction du projet et les textes des tâches sont conservés."
 }

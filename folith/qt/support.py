@@ -109,15 +109,20 @@ def clear_caches() -> int:
         raise adapter.AdapterError("有任务正在运行；等它结束或暂停后再清理缓存。")
     root = data_dir()
     freed = 0
-    for name in CACHE_ENTRIES:
-        path = root / name
-        if not path.exists():
-            continue
-        freed += _size(path)
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
+    # A-65: derived caches live both at the data root and inside projects.
+    # Only the fixed CACHE_ENTRIES names are touched; project TM and task
+    # bodies are deliberately retained.
+    scopes = [root] + [path for path in root.iterdir() if path.is_dir()]
+    for scope in scopes:
+        for name in CACHE_ENTRIES:
+            path = scope / name
+            if not path.exists():
+                continue
+            freed += _size(path)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
     return freed
 
 

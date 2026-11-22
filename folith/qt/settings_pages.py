@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
 
 from . import connection_status
 from . import i18n, platform_ui
+
+A65_SCOPE_NOTE = "也会清理各项目内的派生缓存；项目翻译记忆与任务正文保留。"
 from . import icons
 from . import prompts
 from . import style as style_module
@@ -133,7 +135,7 @@ class StoragePage(QWidget):
         self.clear_button = QPushButton(i18n.tr('清理缓存…'))
         self.clear_button.setToolTip(i18n.tr(
             '删除翻译缓存、知识缓存与扫描件画像缓存。不影响任何任务、译文、术语或翻译记忆；'
-            '以后遇到相同内容时会重新调用模型。'))
+            '以后遇到相同内容时会重新调用模型。') + ' ' + i18n.tr(A65_SCOPE_NOTE))
         self.clear_button.clicked.connect(self._clear)
         self.export_button = QPushButton(i18n.tr('导出全部数据…'))
         self.export_button.setToolTip(i18n.tr('打成一个 zip 备份包；不包含 API 密钥。'))
@@ -257,7 +259,7 @@ class StoragePage(QWidget):
         if not prompts.ConfirmDialog.ask(
                 self, i18n.tr('清理缓存'),
                 i18n.tr('将删除约 {v0} 的派生缓存。任务、译文、术语与翻译记忆都不受影响；'
-                        '以后遇到相同内容时会重新调用模型。', v0=size),
+                        '以后遇到相同内容时会重新调用模型。', v0=size) + ' ' + i18n.tr(A65_SCOPE_NOTE),
                 yes=i18n.tr('清理'), no=i18n.tr('取消'), tone="warn"):
             return
 

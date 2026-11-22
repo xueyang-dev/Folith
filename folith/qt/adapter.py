@@ -61,7 +61,7 @@ from folith.application.settings import (
 )
 
 import core
-
+from . import review_role
 # Kept as an alias so the window can ask "is this job still working?" without
 # importing a second copy of the product's status vocabulary.
 ACTIVE_STATUSES = exit_flow.ACTIVE_STATUSES
@@ -1662,13 +1662,13 @@ def review_segments(job_id: str, indexes: Sequence[int], config: EngineConfig,
     valid = [int(i) for i in indexes if 0 <= int(i) < len(pairs)]
     if not valid:
         raise AdapterError("请先选择至少一个段落。")
+    provider, key, model, base = review_role.manual_review_runtime(config, core)
     state, result = core.review_translation_segments(
-        job_id, valid, config.provider, config.api_key, config.model,
+        job_id, valid, provider, key, model,
         str((core.load_job_state(job_id) or {}).get("target_lang")
             or config.target_lang),
         style_rules=config.style_rules or DEFAULT_STYLE_RULES,
-        base_url=config.translator_base_url(), review_focus=focus,
-        on_progress=on_progress)
+        base_url=base, review_focus=focus, on_progress=on_progress)
     return {"state": state, "result": result}
 
 
