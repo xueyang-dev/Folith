@@ -28,8 +28,9 @@ def test_manual_review_uses_reviewer_connection(monkeypatch):
 
 def test_clear_caches_includes_projects(tmp_path, monkeypatch):
     monkeypatch.setattr(adapter.core, 'OUTPUT_DIR', tmp_path)
-    project = tmp_path / 'proj-alpha'
-    project.mkdir()
+    from folith import project as project_paths
+    project = project_paths.project_dir(tmp_path, 'alpha')
+    project.mkdir(parents=True)
     (tmp_path / 'translation_cache.json').write_text('{}')
     (project / 'translation_cache.json').write_text('{}')
     (project / 'knowledge_cache.json').write_text('{}')
@@ -41,3 +42,26 @@ def test_clear_caches_includes_projects(tmp_path, monkeypatch):
     assert not (project / 'knowledge_cache.json').exists()
     assert (project / 'tm.json').read_text() == '{}'
     assert (project / 'body.txt').read_text() == 'keep'
+
+
+def test_local_gateway_reviewer_keeps_explicit_url(monkeypatch):
+    cfg = adapter.EngineConfig(provider='TranslateCo', model='t', api_key='K',
+                               base_url='http://translate.local/v1')
+    cfg.reviewer_mode = 'separate'
+    cfg.reviewer_provider = 'Local Gateway'
+    cfg.reviewer_model = 'local-r'
+    cfg.reviewer_api_key = 'LOCAL-KEY'
+    cfg.reviewer_base_url = 'http://gateway.local/v1'
+    seen = {}
+
+    def fake_review(job_id, indexes, provider, api_key, model, target_lang, **kw):
+        seen.update(provider=provider, api_key=api_key, base_url=kw.get('base_url'))
+        return ({}, {})
+
+    monkeypatch.setattr(adapter.core, 'review_translation_segments', fake_review)
+    monkeypatch.setattr(adapter.core, 'load_job_state', lambda _j: {
+        'pairs': [{'source': 's', 'target': 't'}]})
+    adapter.review_segments('job', [0], cfg)
+    assert seen['provider'] == 'Local Gateway'
+    assert seen['api_key'] == 'LOCAL-KEY'
+    assert seen['base_url'] == 'http://gateway.local/v1'

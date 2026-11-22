@@ -23,13 +23,13 @@ from PySide6.QtWidgets import (
 
 from . import connection_status
 from . import i18n, platform_ui
-
-A65_SCOPE_NOTE = "也会清理各项目内的派生缓存；项目翻译记忆与任务正文保留。"
 from . import icons
 from . import prompts
 from . import style as style_module
 from . import support
 from . import theme as theme_module
+
+A65_SCOPE_NOTE = "也会清理各项目内的派生缓存；项目翻译记忆与任务正文保留。"
 
 
 def _open_url(url: str) -> bool:
