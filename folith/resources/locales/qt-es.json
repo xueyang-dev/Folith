@@ -2789,5 +2789,6 @@
   "审校：确认已解决": "Revisión: Confirmar resuelto",
   "审校：保留当前译文": "Revisión: Mantener traducción actual",
   "审校：修改译文": "Revisión: Editar traducción",
-  "键盘快捷键：{v0}": "Atajos de teclado: {v0}"
+  "键盘快捷键：{v0}": "Atajos de teclado: {v0}",
+  "有歧义、需人工确认": "Ambiguo: confirmar manualmente"
 }

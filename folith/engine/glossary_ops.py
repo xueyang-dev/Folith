@@ -716,7 +716,8 @@ def preview_entity_repair(state, source_form, target):
         raise ValueError("找不到该实体")
     known_forms = consistency.collect_known_forms(state)
     return consistency.preview(record, state.get("pairs") or [], target,
-                               known_forms=known_forms)
+                               known_forms=known_forms,
+                               records=state.get("entity_registry") or [])
 
 
 @_serialized_job_mutation

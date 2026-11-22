@@ -201,9 +201,55 @@ def _safe_replace_with_spans(text, variants_to_replace, replacement, protected_f
     return result, spans
 
 
-def current_occurrences(record, pairs):
+def valid_compounds(record, pairs, preferred, records=()):
+    """Observed longer forms whose source really has a longer source phrase.
+
+    #583: 皇冠标识 / "Crown colophon" is a term; 皇冠社 / "Crown reprinted"
+    is not.  Both ``current_occurrences`` and ``findings`` use this one rule.
+    """
+    observed = [spelling(o.get('target')).casefold()
+                for o in record.get('observations') or [] if o.get('target')]
+    bare = min((x for x in observed if x), key=len) if observed else ''
+    if not bare:
+        return set()
+    # A term needs independent evidence: either another entity record names
+    # it, or the same record's observation has a segment where the source is
+    # exactly that longer phrase (e.g. "Crown colophon").
+    known = {spelling(o.get('target')).casefold()
+             for r in records if r is not record
+             for o in (r.get('observations') or []) if o.get('target')}
+    known |= {spelling(r.get('preferred_target')).casefold()
+              for r in records if r is not record and r.get('preferred_target')}
+    out = set()
+    for value in observed:
+        if not value or value == bare or value == preferred.casefold() or bare not in value:
+            continue
+        # A compound is a term only when another record independently names
+        # that exact longer source phrase (e.g. source_form "Crown colophon").
+        # Without such evidence a longer rendering is a mistranslation.
+        for other in records:
+            if other is record:
+                continue
+            other_source = spelling(other.get('source_form')).casefold()
+            if not other_source or other_source == spelling(record.get('source_form')).casefold():
+                continue
+            if any(other_source in (pair.get('source') or '').casefold()
+                   and value in (pair.get('target') or '').casefold()
+                   for pair in pairs):
+                out.add(value)
+    return out
+
+
+def current_occurrences(record, pairs, records=()):
     variants = {spelling(item.get('target')) for item in record.get('observations') or []}
-    variants.add(spelling(record.get('preferred_target')))
+    preferred = spelling(record.get('preferred_target'))
+    if preferred:
+        variants.add(preferred)
+    # #583: a locked entity's bare source spelling is a candidate variant even
+    # if it was never recorded — that is how a second real variant in one
+    # segment is detected.
+    if record.get('status') == 'locked' and spelling(record.get('source_form')):
+        variants.add(spelling(record.get('source_form')))
     pattern = _pattern(variants)
     if pattern is None:
         return []
@@ -212,18 +258,79 @@ def current_occurrences(record, pairs):
     recorded_indexes = set(record.get('occurrences') or []) | {
         item.get('segment_id') for item in record.get('observations') or []}
     recorded_indexes.add(record.get('first_seen_segment'))
-    indexes = sorted(index for index in recorded_indexes
-                     if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(pairs))
-    for index in indexes or range(len(pairs)):
+    recorded = sorted(index for index in recorded_indexes
+                      if isinstance(index, int) and not isinstance(index, bool)
+                      and 0 <= index < len(pairs))
+    # #522: after a decision the entity is locked; new bare occurrences in other
+    # segments must still surface, so a locked record scans every segment.
+    locked = record.get('status') == 'locked'
+    indexes = range(len(pairs)) if locked else (recorded or range(len(pairs)))
+    for index in indexes:
         pair = pairs[index]
         if pair.get('excluded') or not any(term_matches(source, pair.get('source') or '') for source in sources if source):
             continue
         target = pair.get('target') or ''
-        matched = list(dict.fromkeys(match.group() for match in pattern.finditer(target)))
+        # #583: skip a match only when it lies inside an occurrence of the
+        # full preferred name (or a reviewed longer compound), NOT whenever
+        # the preferred name appears anywhere in the segment.  Two mentions of
+        # the same entity in one segment can then keep a real second variant.
+        preferred_spans = [m.span() for m in re.finditer(
+            re.escape(preferred), target, re.IGNORECASE)] if preferred else []
+        matched = []
+        for match in pattern.finditer(target):
+            value = match.group()
+            inside_preferred = any(start <= match.start() and match.end() <= end
+                                   for start, end in preferred_spans)
+            if (locked and value != preferred and not inside_preferred
+                    and _is_longer_valid_phrase(match, target, pair.get('source') or '',
+                                               sources, variants)):
+                continue
+            if value not in matched:
+                matched.append(value)
+        if matched:
+            compounds = valid_compounds(record, pairs,
+                                        spelling(record.get('preferred_target')), records)
+            matched = [v for v in matched if v.casefold() not in compounds]
         if matched:
             rows.append({'index': index, 'source': pair.get('source') or '',
                          'target': target, 'variants': matched})
     return rows
+
+
+def _is_longer_valid_phrase(match, target, source, sources, variants):
+    """A locked name inside a longer legitimate phrase is not a mismatch (#522).
+
+    "Crown colophon" -> "皇冠标识" is correct even though 皇冠 begins with the
+    locked name 皇冠出版社's bare form 皇冠.  Only applies when the match is a
+    proper prefix of a longer target compound AND the source segment contains a
+    longer source phrase built from a known source form (e.g. "Crown colophon").
+    """
+    end = match.end()
+    if end >= len(target):
+        return False
+    following = target[end:]
+    # A boundary punctuation / whitespace ends the name; continuing CJK/alnum
+    # characters mean it is part of a longer compound.
+    if not following[:1].isalnum():
+        return False
+    # #583: only a *known* longer term is protected. A verb phrase like
+    # "Crown signed" is not a term; "Crown colophon" -> 皇冠标识 is, and that
+    # longer rendering must appear among the observed/known forms.
+    compound = match.group() + re.match(r"[^\s，。；、！？]+", following).group()
+    if compound not in variants:
+        return False
+    for source_form in sources:
+        if not source_form:
+            continue
+        for later in re.finditer(re.escape(source_form), source, re.IGNORECASE):
+            if later.end() >= len(source):
+                continue
+            # allow a space between "Crown" and "colophon" in the source
+            rest = source[later.end():].lstrip()
+            if not rest or not rest[:1].isalnum():
+                continue
+            return True
+    return False
 
 
 def findings(records, pairs, concept_decisions=None):
@@ -250,11 +357,27 @@ def findings(records, pairs, concept_decisions=None):
             continue
         if record.get('status') != 'locked' and is_common_noun(record.get('source_form')):
             continue
-        rows = current_occurrences(record, pairs)
+        rows = current_occurrences(record, pairs, records)
         variants = _distinct_variants(
             {spelling(value).casefold() for row in rows for value in row['variants']})
         preferred = spelling(record.get('preferred_target')).casefold()
         accepted = {spelling(value).casefold() for value in record.get('accepted_variants') or []}
+        # #583: longer observed compounds (e.g. 皇冠标识) are legitimate
+        # terms, not mismatches of the locked bare name.  The shortest
+        # observed form is the bare variant; anything longer is a compound.
+        accepted |= valid_compounds(record, pairs, preferred, records)
+        if record.get('status') == 'locked':
+            # #522: only segments whose rendering actually differs from the
+            # locked choice belong on the card; a segment that uses the full
+            # preferred name must not be listed just because another segment
+            # has a bare variant.
+            rows = [row for row in rows
+                    if {spelling(v).casefold() for v in row['variants']}
+                    - {preferred} - accepted]
+            if not rows:
+                continue
+            variants = _distinct_variants(
+                {spelling(v).casefold() for row in rows for v in row['variants']})
         locked_mismatch = record.get('status') == 'locked' and variants - {preferred}
         decision = concept_of(record) if concept_of else None
         if decision and decision.get('keep_variants'):
@@ -289,7 +412,7 @@ def findings(records, pairs, concept_decisions=None):
     return output
 
 
-def preview(record, pairs, target, known_forms=()):
+def preview(record, pairs, target, known_forms=(), records=()):
     """Preview entity-name repairs for *record* across *pairs*.
 
     *target* is the confirmed translation; *known_forms* is an optional sequence
@@ -310,13 +433,30 @@ def preview(record, pairs, target, known_forms=()):
     # Base protected set: target always protected + caller-supplied extras that
     # contain at least one variant as a proper substring.
     changes = []
-    for row in current_occurrences(record, pairs):
+    compounds = valid_compounds(record, pairs, spelling(target), records)
+    observed_forms = {spelling(o.get('target')).casefold()
+                      for o in record.get('observations') or [] if o.get('target')}
+    bare = min((spelling(o.get('target')).casefold()
+                for o in record.get('observations') or [] if o.get('target')),
+               key=len, default='')
+    for row in current_occurrences(record, pairs, records):
+        if all(v.casefold() == target.casefold() for v in row['variants']):
+            continue
+        ambiguous = [v for v in row['variants']
+                     if bare and bare != v.casefold() and bare in v.casefold()
+                     and v.casefold() in observed_forms
+                     and v.casefold() not in compounds]
         variants_to_replace = [v for v in row['variants']
-                                if spelling(v).casefold() != target.casefold()]
+                               if spelling(v).casefold() != target.casefold()
+                               and v not in ambiguous]
         if not variants_to_replace:
+            if ambiguous:
+                changes.append({'index': row['index'], 'source': row['source'],
+                                'before': row['target'], 'after': row['target'],
+                                'ambiguous': True})
             continue
         variants_cf = {v.casefold() for v in variants_to_replace}
-        protected = {target}
+        protected = {target} | set(ambiguous)
         for form in (known_forms or ()):
             form_sp = spelling(form)
             if (form_sp
@@ -331,7 +471,7 @@ def preview(record, pairs, target, known_forms=()):
     return changes
 
 
-def change_snippets(record, pairs, target, known_forms=()):
+def change_snippets(record, pairs, target, known_forms=(), records=()):
     """Return per-occurrence change details with surrounding context.
 
     Pure function; no UI changes in this commit.
@@ -351,7 +491,7 @@ def change_snippets(record, pairs, target, known_forms=()):
     if not target_sp:
         return []
     result = []
-    for row in current_occurrences(record, pairs):
+    for row in current_occurrences(record, pairs, records):
         variants_to_replace = [v for v in row['variants']
                                 if spelling(v).casefold() != target_sp.casefold()]
         if not variants_to_replace:
