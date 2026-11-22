@@ -40,8 +40,9 @@ def segment_state(pair: Mapping[str, Any], open_findings: Iterable[int] = (),
         return STATE_NEEDS_REVIEW
     # Only an explicit human-confirmed/reviewed decision counts as sign-off;
     # a bare human edit is still "translated".
-    if pair.get("human_accepted") or pair.get("accepted_by_human") or \
-            (pair.get("review_status") == "approved"):
+    if (pair.get("human_accepted") or pair.get("accepted_by_human")
+            or pair.get("review_status") == "approved") and \
+            str(pair.get("target") or "").strip():
         return STATE_SIGNED_OFF
     if str(pair.get("target") or "").strip():
         return STATE_TRANSLATED
@@ -98,7 +99,9 @@ def build_xliff(job: Mapping[str, Any], *, open_findings: Iterable[int] = ()) ->
         # CX-09 #596: locked/inline-tag payloads are rejected in the first
         # version rather than silently losing the <> structure.
         if pair.get("locked") or pair.get("inline_tags") or pair.get("placeholders"):
-            raise ValueError("含锁定标记或内联标签的段落暂不支持 XLIFF 1.2 导出")
+            raise ValueError(
+                f"段 {index}（id={uid}）：含锁定标记或内联标签，XLIFF 1.2 首版暂不支持；"
+                "请先在 Folith 中清除该段的锁/标签后再导出")
         source_text = str(pair.get("source") or "")
         target_text = str(pair.get("target") or "")
         _check_xml10(source_text); _check_xml10(target_text)
