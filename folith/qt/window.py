@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 from folith.desktop import paths as desktop_paths
 from folith.desktop import single_instance
 
-from . import i18n, platform_ui, preferences
+from . import i18n, platform_ui, preferences, update_check
 from . import import_wizard
 from . import xliff_io, reveal_path
 from . import adapter
@@ -67,7 +67,6 @@ EDIT_SAVE_IDLE_MS = 400
 #: keep their own slower cadence on the incremental path: they are O(document),
 #: the per-batch delta is O(batch).  Delivery already has its own 5 s floor.
 DELTA_PROJECTION_SECONDS = 5.0
-
 
 class _PhaseLog:
     """Per-phase wall-clock timings written to the app log (cheap, always on).
@@ -216,12 +215,12 @@ class MainWindow(QMainWindow):
                  instance_lock: single_instance.AppInstanceLock | None = None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.config = config
-        self.paths = paths
+        self.config, self.paths = config, paths
         from folith import usage as usage_module
         usage_module.set_daily_log(Path(paths.data_dir) / "usage-daily.json")
         self.instance_lock = instance_lock
         self.runner = TaskRunner(self)
+        update_check.start(self, self.runner)
         from PySide6.QtCore import QStandardPaths
         from .updater import UpdateController
         self.updates = UpdateController(self.runner, cache_dir=Path(

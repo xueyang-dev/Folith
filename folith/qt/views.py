@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
 )
 
-from . import i18n, platform_ui
+from . import i18n, platform_ui, update_pill
 from . import adapter, xliff_io, locate_guard
 from folith.workbench_rows import DOMAINS as _DOMAIN_NAMES
 from . import components
@@ -786,7 +786,7 @@ class HomeView(QWidget):
         footer_row.setSpacing(theme_module.SPACE["sm"])
         footer_row.addWidget(engine_card, 1)
         footer_row.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignVCenter)
-
+        update_pill.install(self, footer_layout)
         sidebar = QWidget()
         self.sidebar = sidebar
         sidebar.setObjectName("sidebar")
