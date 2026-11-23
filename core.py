@@ -8766,6 +8766,17 @@ def _runtime_write_timeout_policy(writer):
     return write_with_policy
 
 
+def _after_launch_token_read(job_id, token):
+    """Inside the runtime-write lock, after the launch token was read.
+
+    Production does nothing.  A test parks the owning monitor here — the token
+    is already snapshotted, the state file is not yet replaced, and the lock is
+    still held — to prove a replacement launch cannot publish a newer token
+    until this write finishes or its own acquire times out.
+    """
+    return None
+
+
 def _write_terminal_runtime_state(job_id, *, what, expect_launch_token=None,
                                  **changes):
     """Publish a terminal state with bounded retries; report the loss if it fails.
@@ -8847,15 +8858,15 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             job_dir(job_id) / ".runtime-write.lock",
             timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
         current = load_runtime_state(job_id)
-        if expect_launch_token is not None:
-            # CX-10 §1：比对发生在写锁内——调用方"已检查"与"字节落盘"之间不再有
-            # 窗口。新启动端先盖了自己的 launch token 时，这里什么都不写。
-            # 只有**非空且不同**的 token 才是接管：新启动总会盖 token；当前值
-            # 为空意味着从未盖过（旧格式任务）或被绕过 update_runtime_state 的
-            # 裸写覆盖——那不是接管，终态照写。
-            current_launch = str((current.get("launch") or {}).get("token") or "")
-            if current_launch and current_launch != str(expect_launch_token):
-                return None
+        # CX-10 §1 / CX-15 §3：比对与即将发生的替换在同一把 runtime 写锁里。
+        # 启动所有权也由这次加锁写入发布，所以读到的 token 和即将落盘的字节
+        # 之间没有锁外窗口。只有**非空且不同**的 token 才是接管：当前值为空
+        # 意味着从未盖过（旧格式任务）或被裸写覆盖——那不是接管，终态照写。
+        current_launch = str((current.get("launch") or {}).get("token") or "")
+        if (expect_launch_token is not None and current_launch
+                and current_launch != str(expect_launch_token)):
+            return None
+        _after_launch_token_read(job_id, current_launch)
         # ``None`` is normally omitted so optional status fields do not erase
         # an existing value accidentally.  ``error`` is different: callers
         # pass ``error=None`` when a retry or a successful checkpoint clears a

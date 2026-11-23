@@ -863,7 +863,10 @@ class EngineSupervisor:
         CX-10 §1 adds the earliest trace of all: a new launch stamps its own
         ``launch`` token *before* its child takes the lock or publishes
         anything, so a replacement is recognisable even while it is still in
-        its cold start (the retry-during-cold-start interleaving).
+        its cold start (the retry-during-cold-start interleaving).  That stamp
+        is the same runtime-write lock this monitor is about to take, so a
+        token read here and the later in-lock compare cannot disagree by a
+        lock-free publish landing in between.
         """
         launch_token = str((runtime.get("launch") or {}).get("token") or "")
         if launch_token and launch_token != self._end_launch_token:
@@ -1154,27 +1157,27 @@ def publish_starting_status(job_id: str, *, launch_token: str = "",
     nothing happened -- which is exactly what G-E item 4 forbids.
 
     With ``launch_token`` the same single write also publishes the new run's
-    ownership (CX-10 §1): the moment the UI can show ``queued``, the durable
-    state already names *this* launch, so an older monitor still holding
-    terminal evidence can tell the replacement from itself even while the
-    child is still in its cold start and owns neither lock nor worker block.
+    ownership (CX-10 §1 / CX-15 §3).  That write is the serialization boundary
+    shared with the old monitor's terminal compare-and-replace: it uses the
+    runtime-write lock and ``on_timeout="raise"``, and this function returns
+    False unless the state actually landed.  A contended lock therefore fails
+    the launch (the caller reaps the child and does not send the start line)
+    instead of starting a run whose token was never recorded.
 
-    Best effort on purpose: a contended runtime-write lock must delay a status
-    line, never Start itself.  The phase label matches the in-process one so the
-    workbench renders the same "准备中" and the handover to the child's own write
-    is invisible.
+    The phase label matches the in-process one so the workbench renders the
+    same "准备中" and the handover to the child's own write is invisible.
     """
     launch = ({"token": launch_token, "pid": int(launch_pid or 0)}
               if launch_token else None)
     try:
-        _core().update_runtime_state(
-            job_id, on_timeout="skip", status="queued", phase="starting",
+        written = _core().update_runtime_state(
+            job_id, on_timeout="raise", status="queued", phase="starting",
             phase_label="准备中", launch=launch,
             event="正在启动后台引擎进程", event_name="engine_starting",
             event_visibility="technical", event_category="orchestration")
-    except Exception:  # noqa: BLE001 - a status write must never block Start
+    except Exception:  # noqa: BLE001 - the caller treats this as a failed launch
         return False
-    return True
+    return isinstance(written, dict)
 
 
 def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
@@ -1220,10 +1223,25 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
         token = core.register_engine_owner(job_id, pid=proc.pid)
     except Exception:  # noqa: BLE001 - liveness falls back to the lease on disk
         token = ""
-    # CX-12 §3: the launch token is bound to the supervisor at construction —
-    # the monitor may never claim a token stamped by a *newer* launch that
-    # registered before its own first state read.
+    # CX-12 §3 / CX-15 §3: publish ownership through the runtime-write lock and
+    # check the result BEFORE the supervisor's monitor exists and BEFORE the
+    # child is handed its start line.  A timeout is a failed launch: the child
+    # is reaped and nothing is sent, so an older monitor still inside that lock
+    # cannot later observe a live replacement it did not see at token-read time.
     launch_token = uuid.uuid4().hex
+    if not publish_starting_status(job_id, launch_token=launch_token,
+                                   launch_pid=proc.pid):
+        try:
+            proc.kill()
+            proc.wait(timeout=2)
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+        try:
+            core.release_engine_owner(job_id, token)
+        except Exception:  # noqa: BLE001
+            pass
+        return EngineOutcome(
+            False, "无法登记本次运行的启动所有权，任务没有开始；请重试。")
     sup = EngineSupervisor(
         job_id, proc, token=token, command=command, data_dir=data_dir,
         log_dir=log_dir, secrets=_secrets_in(connection),
@@ -1240,8 +1258,6 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
     # again (E-6a).  This launch stamp is the durable ownership of the new
     # run (CX-10 §1): it lands before the start line, so the moment the UI
     # can show the new run, an older monitor can already tell it apart.
-    publish_starting_status(job_id, launch_token=launch_token,
-                            launch_pid=proc.pid)
     if not sup.send_line(line):
         sup.abandon()
         try:
