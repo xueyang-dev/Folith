@@ -8170,14 +8170,8 @@ def save_provider_config(provider, model, api_key, base_url=None, reviewer=None,
     cfg["connection_levels"] = (connection_levels if connection_levels is not None
                                 else previous.get("connection_levels", {}))
     path = provider_config_path()
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    temp_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2),
-                         encoding="utf-8")
-    try:
-        temp_path.chmod(0o600)
-    except OSError:
-        pass
-    temp_path.replace(path)
+    from folith.engine.credential_file import write_credential_json
+    write_credential_json(path, cfg)
     return path
 
 
