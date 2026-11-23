@@ -81,10 +81,11 @@ def _object_records(element) -> list[dict]:
 def _html_paragraphs(markup: str | bytes, headings: list | None = None,
                      anchors: dict | None = None,
                      images: list | None = None,
-                     decorations=None):
+                     decorations=None, *, text_owners: list[set] | None = None):
     """返回 ``(段落, 未纳入内容)``；传入 ``headings`` 列表时，把每个标题块
     ``{"index": 标题段落在结果里的下标, "level": 1–6}`` 追加进去（结构解析用）。
     传入 ``anchors`` 字典时，把元素 id/name 映射到其段落在结果里的下标。
+    ``text_owners`` 按段落记录非空文本所属的元素，供导出检查可见性和链接。
 
     传入 ``images`` 列表时不再丢弃 ``img``/``svg``/``object``：每处引用追加一条
     ``{"tag": "img"|"svg-image"|"vector-svg"|"object", "href": 原始地址, "at": 段落边界}``。
@@ -118,6 +119,7 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
     paragraphs = []
     # Flush around block boundaries; nested lists/divs never duplicate text.
     pending = []
+    owners = set()
     # Each open block remembers the images that belong *after that block*.
     # ``has_child_blocks`` decides what "after the block" means: a leaf block
     # (p/li/h1 that only contains inline content) resolves its images after its
@@ -132,10 +134,19 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
         text = re.sub(r"\s+", " ", "".join(pending)).strip()
         if text:
             paragraphs.append(text)
+            if text_owners is not None:
+                text_owners.append(owners.copy())
         pending.clear()
+        owners.clear()
         for record in deferred:
             record["at"] = len(paragraphs)
         deferred.clear()
+
+    def add_text(text, owner):
+        if text:
+            pending.append(text)
+            if text_owners is not None and text.strip():
+                owners.add(owner)
 
     def add_image(record: dict) -> None:
         if not keep_images:
@@ -170,8 +181,7 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
             node_id = node.get("id") or node.get("name")
             if node_id and str(node_id) not in anchors:
                 anchors[str(node_id)] = len(paragraphs)
-        if node.text:
-            pending.append(node.text)
+        add_text(node.text, node)
         for child in node:
             if isinstance(child.tag, str):
                 child_tag = _tag_name(child)
@@ -194,8 +204,7 @@ def _html_paragraphs(markup: str | bytes, headings: list | None = None,
                     walk(child)
                 if child_tag in {"td", "th"}:
                     pending.append(" | ")
-            if child.tail:
-                pending.append(child.tail)
+            add_text(child.tail, node)
         if block:
             before = len(paragraphs)
             flush()

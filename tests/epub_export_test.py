@@ -1269,6 +1269,45 @@ def test_epub_export_keeps_source_spine_and_heading_structure():
             assert page.find(".//h:h1", XHTML) is not None
 
 
+def test_epub_contents_keeps_hidden_entries_and_duplicate_targets_distinct():
+    source = synthetic_epub([
+        {"href": "toc/contents.xhtml", "stylesheet": "../book.css",
+         "body": '<nav role="doc-toc"><h1>CONTENTS</h1><ol>'
+                 '<li class="front"><a href="../cover.xhtml">Cover</a></li>'
+                 '<li hidden="hidden"><a href="#top">Title Page</a></li>'
+                 '<li style="display: none"><a href="#top">Dedication</a></li>'
+                 '<li class="front"><a href="#top">Contents</a></li>'
+                 '<li class="front visible"><a href="../story/ch%201.xhtml">The Gazette</a>'
+                 '<ol><li><a href="../story/ch2.xhtml#gazette%2Dtwo">The Gazette</a></li></ol></li>'
+                 '</ol></nav>'},
+        {"href": "story/ch 1.xhtml", "body": '<h2>The Gazette</h2><p>First issue.</p>'},
+        {"href": "story/ch2.xhtml", "body": '<p>Edition two.</p><h2 id="gazette-two">The Gazette</h2>'},
+    ], stylesheets={"book.css": ".front { display: none } .front.visible { display: list-item }"})
+    state = translated_state("contents.epub", source)
+    assert state["source_paras"][:7] == [
+        "CONTENTS", "Cover", "Title Page", "Dedication", "Contents", "The Gazette", "The Gazette",
+    ]
+    labels = ["目录", "封面", "扉页", "题献", "目录", "《公报》", "《公报》", "公报一", "第一期。",
+              "第二版。", "公报二"]
+    assert len(state["pairs"]) == len(labels)
+    for pair, label in zip(state["pairs"], labels):
+        pair["target"] = label
+
+    data, report = build_translation_epub(state, source)
+
+    validate_package(data)
+    assert report["linked_toc_count"] == 2
+    with ZipFile(io.BytesIO(data)) as archive:
+        page = ET.fromstring(archive.read("EPUB/chapter-0001.xhtml"))
+        assert list(page.find("h:body", XHTML).itertext()) == ["目录", "《公报》", "《公报》"]
+        targets = []
+        for link in page.findall(".//h:a", XHTML):
+            chapter, fragment = link.get("href").split("#")
+            target_page = ET.fromstring(archive.read("EPUB/" + chapter))
+            targets.append(target_page.find(f".//*[@id='{fragment}']").text)
+        assert targets == ["公报一", "公报二"]
+
+
 def test_epub_css_background_image_reaches_the_delivery():
     """S2-02: a picture that only exists as a CSS background is not dropped."""
     backdrop = colored_png((0.25, 0.45, 0.8))
