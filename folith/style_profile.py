@@ -173,6 +173,55 @@ def profile_to_rules(profile: Dict[str, Any]) -> str:
     return "；".join(rules) + "。" if rules else "保持原文风格。"
 
 
+# ---------------- 文学作品沿用产品默认风格时的自动切换 ----------------
+
+#: 文本类型里出现这些词，说明是虚构/文学创作，不是“关于文学的学术文本”。
+_FICTION_GENRE_MARKERS = (
+    "小说", "诗", "散文", "戏剧", "剧本", "童话", "故事", "回忆录",
+    "fiction", "novel", "poem", "poetry", "short story", "memoir", "drama",
+)
+_NONFICTION_GENRE_MARKERS = (
+    "学术", "论文", "专著", "教材", "研究", "评论", "综述",
+    "academic", "thesis", "paper", "monograph", "textbook", "review",
+)
+
+#: 任务状态里记录自动切换的键：{"from": 原规则, "to": 文学规则}。
+AUTO_STYLE_STATE_KEY = "style_rules_auto_literary"
+
+
+def is_fiction_profile(document_profile: Any) -> bool:
+    """文档画像是否指向文学创作（长篇小说、诗歌等）。
+
+    以 genre 为准：domain「文学」也可能是文学理论专著。genre 为空时，只有
+    domain 恰好是「文学」才算。
+    """
+    if not isinstance(document_profile, dict):
+        return False
+    genre = str(document_profile.get("genre") or "").strip().casefold()
+    domain = str(document_profile.get("domain") or "").strip().casefold()
+    if genre:
+        if any(marker in genre for marker in _NONFICTION_GENRE_MARKERS):
+            return False
+        return any(marker in genre for marker in _FICTION_GENRE_MARKERS)
+    return domain in {"文学", "literature", "fiction"}
+
+
+def literary_rules_replacing_default(style_rules: str, default_rules: str,
+                                     document_profile: Any) -> Optional[str]:
+    """把未经修改的产品默认风格（学术书面语、专名保留原文）换成文学风格。
+
+    只有规则里仍含完整的默认文本时才替换；用户或项目写过的规则原样保留。
+    返回 ``None`` 表示不切换。
+    """
+    rules = str(style_rules or "")
+    default_rules = str(default_rules or "")
+    if not default_rules or default_rules not in rules:
+        return None
+    if not is_fiction_profile(document_profile):
+        return None
+    return rules.replace(default_rules, profile_to_rules({"selected": "literary"}))
+
+
 # ---------------- 结构化推荐 ----------------
 
 def _parse_json_object(text: Any) -> Optional[Dict[str, Any]]:

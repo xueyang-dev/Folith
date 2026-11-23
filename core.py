@@ -13443,6 +13443,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 "injected_at": _project_now_iso(),
             }
 
+    # 文学作品沿用了产品默认（学术）风格时，恢复运行沿用此前的自动切换。
+    style_rules = _resolve_auto_literary_style(state, style_rules)
     previous_target_lang = str(state.get("target_lang") or "")
     previous_style_rules = str(state.get("style_rules") or "")
     review_required = bool(state.get("translation_core_review_required")) \
@@ -14077,6 +14079,17 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             on_caption("文档画像失败，已跳过（可在 UI 中人工填写）。")
         save_job_state(job_id, state)
 
+    # 画像确认是文学作品、而风格仍是产品默认的学术规则时，在翻译开始前换成
+    # 「文学表达」：默认规则要求专名保留原文、保持学术书面语，用在小说上会
+    # 让品牌名/线索词留英文、反复括注原文。
+    resolved_style_rules = _resolve_auto_literary_style(
+        state, style_rules, warnings=warnings, on_caption=on_caption)
+    if resolved_style_rules != style_rules:
+        style_rules = resolved_style_rules
+        state["style_rules"] = style_rules
+        state.setdefault("pipeline_config", {})["style_rules"] = style_rules
+        save_job_state(job_id, state)
+
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
 
@@ -14326,6 +14339,43 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
 
 #: 本次 run_job_pipeline 调用启动的后台识别；无论任务怎样结束都要停掉它们。
 _SCAN_STREAMS = contextvars.ContextVar("folith_scan_streams", default=None)
+
+
+def _resolve_auto_literary_style(state, style_rules, *, warnings=None,
+                                 on_caption=None):
+    """Style rules to use, switching the untouched default to literary for fiction.
+
+    The switch is recorded in the task state so a resume (whose caller passes
+    the default again) keeps the literary rules, and it never happens once any
+    segment has a translation: a book must not change style half way through.
+    """
+    from folith import style_profile as _style_profile
+    from folith.application.settings import DEFAULT_STYLE_RULES as _default_rules
+
+    current = str(style_rules or "")
+    record = state.get(_style_profile.AUTO_STYLE_STATE_KEY)
+    if isinstance(record, dict) and record.get("to") and record.get("from") == current:
+        return str(record["to"])
+    if any(str((pair or {}).get("target") or "").strip()
+           for pair in state.get("pairs") or [] if isinstance(pair, dict)):
+        return style_rules
+    profile = state.get("document_profile")
+    switched = _style_profile.literary_rules_replacing_default(
+        current, _default_rules, profile)
+    if not switched:
+        return style_rules
+    genre = str((profile or {}).get("genre") or (profile or {}).get("domain") or "")
+    state[_style_profile.AUTO_STYLE_STATE_KEY] = {
+        "from": current, "to": switched, "genre": genre,
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    message = (f"文档画像判断为文学作品（{genre}），产品默认的学术风格已换成"
+               "「文学表达」。如需其他风格，请在任务设置里写明风格规则。")
+    if warnings is not None and message not in warnings:
+        warnings.append(message)
+    if on_caption:
+        on_caption(message)
+    return switched
 
 
 @_exclusive_job_execution(0)
