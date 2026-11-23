@@ -55,6 +55,9 @@ jobs:
           # old data silently).
           python scripts/check_workbench_domain_cache.py
 
+          # P15: locale catalogs stay key-sorted and in sync.
+          python scripts/check_locale_order.py
+
           # Bug-class static checks (#460). The pinned ruff, the rule set and the
           # frozen baseline live in pyproject.toml / docs/ruff-baseline.txt;
           # a new finding fails, fixing an old one only shrinks the baseline.

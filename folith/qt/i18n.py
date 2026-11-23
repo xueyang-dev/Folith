@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import json
-import os
 from functools import lru_cache
 from itertools import chain
 from pathlib import Path
@@ -146,6 +145,22 @@ _RUNTIME_PURPOSE_LABEL_TEMPLATES = (
 )
 
 
+_PLACEHOLDER_ORDER_CACHE: dict = {}
+
+
+def _sorted_placeholder_templates(code: str, catalog: dict) -> tuple:
+    """Cached, most-specific-first order of the catalog's placeholder templates."""
+    cached = _PLACEHOLDER_ORDER_CACHE.get(code)
+    if cached is None:
+        import re as _re
+        templates = [key for key in catalog if "{v" in key]
+        cached = tuple(sorted(templates,
+                              key=lambda key: len(_re.sub(r"\{v\d\}", "", key)),
+                              reverse=True))
+        _PLACEHOLDER_ORDER_CACHE[code] = cached
+    return ((key, catalog[key]) for key in cached)
+
+
 def tr_dynamic(value: str) -> str:
     """翻译**运行时**才出现的标签（核心产出的状态、语言名、段落状态）。
 
@@ -164,8 +179,11 @@ def tr_dynamic(value: str) -> str:
     catalog = _catalog("qt", code)
     # 用途模板先于“{v0} 段”等宽泛模板匹配，防止只翻译到句尾。
     runtime_templates = (*_RUNTIME_PURPOSE_TEMPLATES, *_RUNTIME_PURPOSE_LABEL_TEMPLATES)
+    # P15/A-80: only placeholder templates can match; compute their
+    # most-specific-first order once per language catalog and reuse it.
+    fallback = _sorted_placeholder_templates(code, catalog)
     candidates = chain(((template, catalog[template]) for template in runtime_templates
-                        if template in catalog), catalog.items())
+                        if template in catalog), fallback)
     for template, translated in candidates:
         if "{v" not in template:
             continue
