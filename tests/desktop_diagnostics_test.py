@@ -162,11 +162,13 @@ def test_error_summary_is_filtered_and_redacted(tmp_paths):
         "Traceback (most recent call last):\nnormal line\n", encoding="utf-8")
     lines = diagnostics.collect_error_summary(tmp_paths)
     joined = "\n".join(lines)
-    assert "boom" in joined and "Traceback" in joined
+    # A-82: only controlled categories/counts, never raw line text.
+    assert "error" in joined and "traceback" in joined
+    assert "boom" not in joined
     assert "started fine" not in joined
     assert str(Path.home()) not in joined
-    assert "~/" in joined, "the home directory must collapse to ~ inside log lines"
     assert "sk-live-123" not in joined
+    assert "secret-project" not in joined
 
 
 def test_export_bundle_never_includes_secrets_or_document_content(tmp_paths):
@@ -332,3 +334,37 @@ def test_bare_credentials_in_log_lines_are_redacted():
     # Plain hashes must survive: diagnostics stay useful.
     digest = "3ddb8e87b05f072e0d427e68ae383555b0dcdc8ae85a574c4ebcab81be69daea"
     assert digest in diagnostics._redact_text(f"ERROR hash mismatch: {digest}")
+
+
+def _plant_leaky_logs(paths):
+    """A-82: put document text, a synthetic credential and a volume path in logs."""
+    paths.log_dir.mkdir(parents=True, exist_ok=True)
+    leak = ('/Volumes/SecretVolume/projects/机密项目 ERROR 译文正文不得外泄 '
+            'synthetic-token-NOT-A-REAL-KEY 第3507段')
+    paths.launcher_log.write_text(leak + '\n', encoding='utf-8')
+    paths.service_log.write_text(leak + '\n', encoding='utf-8')
+    return leak
+
+
+def test_write_diagnostics_keeps_categories_but_not_raw_log_text(tmp_paths):
+    _plant_leaky_logs(tmp_paths)
+    out = diagnostics.write_diagnostics(tmp_paths)
+    payload = json.loads(out.read_text(encoding='utf-8'))
+    joined = json.dumps(payload, ensure_ascii=False)
+    assert 'error' in joined
+    for token in ('机密项目', '译文正文不得外泄', 'synthetic-token-NOT-A-REAL-KEY',
+                  '/Volumes/SecretVolume', '第3507段'):
+        assert token not in joined, f'{token} leaked via startup diagnostics'
+    diag = payload['diagnostics']
+    assert 'locations' in diag and 'app' in diag  # build/path contracts kept
+
+
+def test_export_bundle_keeps_categories_but_not_raw_log_text(tmp_paths):
+    _plant_leaky_logs(tmp_paths)
+    target = tmp_paths.log_dir / 'diag.json'
+    out = diagnostics.export_bundle(target, paths=tmp_paths)
+    joined = out.read_text(encoding='utf-8')
+    assert 'error' in joined
+    for token in ('机密项目', '译文正文不得外泄', 'synthetic-token-NOT-A-REAL-KEY',
+                  '/Volumes/SecretVolume', '第3507段'):
+        assert token not in joined, f'{token} leaked via exported bundle'
