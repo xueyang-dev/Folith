@@ -521,3 +521,64 @@ def test_export_keeps_normal_event_reasons(isolated, tmp_path):
     assert reasons["first_batch"] == "首批 4 段已提交"
     assert reasons["loop_exit"] == "批次循环退出"
     assert reasons["translation_protocol_failed"] == support.EXPORT_CLEANED_ERROR_TEXT
+
+
+def test_export_cleans_legacy_profile_and_knowledge_failures(isolated, tmp_path):
+    """旧任务里画像失败的两份副本和知识提取失败要脱敏，正常提示与计数保留。"""
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    secret = "secret-key"
+    raw_profile = (
+        "文档画像失败（Error code: 400 - {\"api_key\": \"" + secret
+        + "\"}），已跳过；可在 UI 中人工填写。")
+    quota = (
+        "文档画像失败（该连接的本月用量额度已用尽，等一会儿不会恢复；"
+        "请更换连接或提升额度。），已跳过；可在 UI 中人工填写。")
+    hint = "文档画像提示：样本较短，分节可能不完整"
+    structured = (
+        "文档画像失败（class=unknown; http=400; error=Remote; "
+        "stage=document_profile），已跳过；可在 UI 中人工填写。")
+    raw_knowledge = "知识反馈调用失败：Error code: 400 - body " + secret
+    local_knowledge = "知识反馈返回不是 JSON 数组"
+    state = {
+        "profile_warnings": [raw_profile, quota, hint, structured],
+        "warnings": [raw_profile, quota, hint, "术语表已更新"],
+        "knowledge_feedback_failures": 2,
+        "knowledge_events": [
+            {"type": "extract_failed", "batch": 3, "offset": 12,
+             "reason": raw_knowledge},
+            {"type": "extract_failed", "batch": 4, "offset": 16,
+             "reason": local_knowledge},
+            {"type": "entity_observation", "batch": 3, "offset": 12,
+             "source": "术语", "observed_target": "term",
+             "reason": "观察到的译法"},
+        ],
+    }
+    (job / "state.json").write_text(
+        json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    original = (job / "state.json").read_text(encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup7")
+    with zipfile.ZipFile(result["path"]) as archive:
+        blob = b"".join(archive.read(name) for name in archive.namelist())
+        exported = json.loads(archive.read(
+            "Folith-data/0123456789abcdef/state.json"))
+    assert secret.encode() not in blob
+    assert exported["profile_warnings"] == [
+        support.EXPORT_CLEANED_ERROR_TEXT, quota, hint, structured]
+    assert exported["warnings"] == [
+        support.EXPORT_CLEANED_ERROR_TEXT, quota, hint, "术语表已更新"]
+    failed = exported["knowledge_events"]
+    assert failed[0]["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert failed[0]["batch"] == 3 and failed[0]["offset"] == 12
+    assert failed[1]["reason"] == local_knowledge
+    assert failed[1]["batch"] == 4 and failed[1]["offset"] == 16
+    assert failed[2]["type"] == "entity_observation"
+    assert failed[2]["reason"] == "观察到的译法"
+    assert failed[2]["source"] == "术语"
+    assert exported["knowledge_feedback_failures"] == 2
+    assert len(exported["profile_warnings"]) == 4
+    assert len(exported["warnings"]) == 4
+    assert original == (job / "state.json").read_text(encoding="utf-8")
+    assert secret in original

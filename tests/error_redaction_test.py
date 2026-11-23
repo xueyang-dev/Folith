@@ -407,3 +407,70 @@ def test_short_known_secrets_are_redacted_at_token_boundaries_only():
     assert eight not in redact_error_text(
         f"xx{eight}yy", known_secrets=(eight,))
     assert redact_error_text("clean diagnostic text") == "clean diagnostic text"
+
+
+def test_knowledge_feedback_remote_failure_keeps_observations_and_quota_copy():
+    """未分类远端失败走结构化诊断；额度文案和正常观察不受影响。"""
+    from folith.knowledge import extract_observations
+
+    secret = "Ab3kQ9z"
+
+    class Remote(Exception):
+        status_code = 400
+        code = secret
+
+        def __init__(self):
+            super().__init__("Error code: 400 - body " + secret)
+
+    class Quota(Exception):
+        status_code = 429
+        body = {
+            "error": {"type": "GoUsageLimitError",
+                      "message": "Go usage limit exceeded"},
+            "metadata": {"limitName": "monthly"},
+        }
+
+        def __init__(self):
+            super().__init__("quota body " + secret)
+
+    def boom(exc):
+        def fail(*_args, **_kwargs):
+            raise exc
+        return fail
+
+    _observations, warning = extract_observations(
+        ["术语"], ["term"], "relay", secret, "model",
+        call_llm=boom(Remote()), segment_ids=[0])
+    assert warning.startswith("知识反馈调用失败：")
+    assert secret not in warning
+    assert "Error code" not in warning
+    assert "class=unknown" in warning
+    assert "http=400" in warning
+    assert "code=" not in warning
+
+    _observations, warning = extract_observations(
+        ["术语"], ["term"], "relay", secret, "model",
+        call_llm=boom(Quota()), segment_ids=[0])
+    assert "额度" in warning
+    assert secret not in warning
+    assert "Error code" not in warning
+    assert "class=" not in warning
+
+    def ok(*_args, **_kwargs):
+        return json.dumps([{
+            "segment_id": 0,
+            "source_expression": "术语",
+            "observed_target": "term",
+            "kind": "term",
+        }])
+
+    observations, warning = extract_observations(
+        ["一个术语"], ["a term"], "relay", secret, "model",
+        call_llm=ok, segment_ids=[0])
+    assert warning is None
+    assert observations == [{
+        "source_expression": "术语",
+        "observed_target": "term",
+        "kind": "term",
+        "segment_id": 0,
+    }]

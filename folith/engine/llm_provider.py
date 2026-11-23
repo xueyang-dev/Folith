@@ -644,6 +644,26 @@ def provider_error_is_remote(error):
             or getattr(error, "status_code", None) is not None)
 
 
+def persisted_auxiliary_failure(error, *, api_key="", stage=""):
+    """Text safe to store after an auxiliary-model call fails.
+
+    Quota, rate-limit and the other classified statuses keep their user-facing
+    message.  An unclassified remote reply — or one whose ``code`` is only an
+    identifier — becomes :func:`provider_error_detail`, with this connection's
+    credential excluded, instead of the raw exception text.  A purely local
+    fault keeps its own text, redacted against that same credential.
+    """
+    status = provider_error_status(error)
+    secrets = (str(api_key or ""),)
+    if status["status"] != "unknown":
+        return status["message"]
+    if (provider_error_is_remote(error)
+            or _plain_identifier(getattr(error, "code", None), 64, secrets)):
+        return provider_error_detail(error, stage=stage, known_secrets=secrets)
+    from folith.engine.redaction import redact_error_text
+    return redact_error_text(str(error), known_secrets=secrets)
+
+
 def provider_error_detail(error, *, stage="", known_secrets=()):
     """A structured, persistable diagnostic for a provider failure (CX-11 §1).
 

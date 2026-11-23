@@ -169,17 +169,77 @@ EXPORT_OMITTED_LINE_TEXT = "无法解析的旧记录已省略（可能为写到�
 #: 类事件的 reason 是正常诊断文案，导出时照带。
 _EXPORT_FAILURE_PHASE_MARK = "failed"
 
+#: 画像失败和知识反馈失败会把同一次辅助调用的文本写进 state.json。分类后的
+#: 额度/限流文案、本地校验提示，以及本程序自己的结构化诊断，都不含回包原文。
+#: 对不上这些稳定文案的失败字段，按翻译失败同样替换；「文档画像提示」和知识
+#: 观察事件不在此列。
+_AUXILIARY_STABLE_FAILURE_MARKERS = (
+    "无文本样本",
+    "合法 JSON",
+    "关键字段",
+    "模型未返回内容",
+    "用量额度已用尽",
+    "余额不足",
+    "API Key 无效",
+    "请求过于频繁",
+    "服务商拒绝了请求",
+    "无法连接服务商",
+    "服务商暂时不可用",
+    "API 请求失败",
+    "不是 JSON 数组",
+)
+
+
+def _legacy_auxiliary_echo(text) -> bool:
+    """True when a persisted auxiliary failure may still carry a raw reply."""
+    if not isinstance(text, str) or not text:
+        return False
+    if text.startswith("文档画像提示"):
+        return False
+    if not (text.startswith("文档画像失败") or text.startswith("知识反馈调用失败")):
+        return False
+    if "class=" in text and "error=" in text:
+        return False
+    return not any(marker in text for marker in _AUXILIARY_STABLE_FAILURE_MARKERS)
+
+
+def _redact_auxiliary_failure_copies(data: dict) -> None:
+    """Replace legacy profile/knowledge failure text in the export copy.
+
+    Profile warnings are stored twice: ``profile_warnings`` and the general
+    ``warnings`` list.  Both copies are cleaned.  Knowledge observation events
+    and the failure counters stay untouched.
+    """
+    for key in ("profile_warnings", "warnings"):
+        items = data.get(key)
+        if not isinstance(items, list):
+            continue
+        for index, item in enumerate(items):
+            if _legacy_auxiliary_echo(item):
+                items[index] = EXPORT_CLEANED_ERROR_TEXT
+    events = data.get("knowledge_events")
+    if not isinstance(events, list):
+        return
+    for event in events:
+        if (isinstance(event, dict) and event.get("type") == "extract_failed"
+                and _legacy_auxiliary_echo(event.get("reason"))):
+            event["reason"] = EXPORT_CLEANED_ERROR_TEXT
+
 
 def _clean_export_member(name: str, payload: bytes) -> bytes:
     """The export copy of a task file carries no legacy error free text.
 
     Cleaning is field-anchored, never a content guess: the job state's
-    ``translation_failures[].reason``, the segment event log's failure-event
+    ``translation_failures[].reason``, legacy document-profile failure text
+    in both ``profile_warnings`` and ``warnings``, ``knowledge_events``
+    whose type is ``extract_failed``, the segment event log's failure-event
     ``reason``, the runtime state's ``error.message`` / ``last_event``
     (failed runs) and every ``category == "error"`` runtime event message
-    become the marker; normal snapshot/progress reasons ride untouched
-    (CX-12).  An events line that cannot be parsed (a torn append tail) is
-    never copied verbatim — it becomes an explicit omission record, because
+    become the marker.  Classified quota/rate-limit copy, ordinary profile
+    hints and knowledge observation events ride untouched, as do normal
+    snapshot/progress reasons (CX-12).  An events line that cannot be parsed
+    (a torn append tail) is never copied verbatim — it becomes an explicit
+    omission record, because
     it may carry a legacy echo nobody can sanitise after the fact.  A state
     member that cannot be parsed is carried byte-for-byte (atomic writes
     mean a torn state.json cannot exist on disk).
@@ -217,6 +277,8 @@ def _clean_export_member(name: str, payload: bytes) -> bytes:
         for failure in data.get("translation_failures") or ():
             if isinstance(failure, dict) and failure.get("reason"):
                 failure["reason"] = EXPORT_CLEANED_ERROR_TEXT
+        if isinstance(data, dict):
+            _redact_auxiliary_failure_copies(data)
     elif name == "runtime_state.json" and isinstance(data, dict):
         error = data.get("error")
         if isinstance(error, dict) and error.get("message"):
