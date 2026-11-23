@@ -88,6 +88,7 @@ def extract_observations(
     system_prompt = (
         "你是翻译流知识抽取器。只从给出的原文—译文对照中发现后续批次需要保持一致的"
         "人名、称谓、固定表达、口癖或专业术语。不要抽取普通词、整句、URL、邮箱或引用。"
+        "不要抽取代词（he/him/his/she/they 等），它们的译法随每句指代对象而变。"
         "只输出 JSON 数组，每项为 {\"segment_id\": 0,"
         "\"source_expression\": \"原文短语\", \"observed_target\": \"当前实际译法\","
         "\"kind\": \"term|expression|person|place|organization|artwork|book|article|film|project|named_concept|named_object\"}。"
@@ -147,6 +148,8 @@ def extract_observations(
             continue
         key = (segment_id, source.casefold())
         if key in seen or re.search(r"https?://|@", source):
+            continue
+        if terminology.is_function_word_expression(source):
             continue
         seen.add(key)
         observations.append({"source_expression": source,
@@ -384,6 +387,9 @@ def merge_extraction(
     for observation in observations:
         source = observation["source_expression"]
         segment_id = observation["segment_id"]
+        if terminology.is_function_word_expression(source):
+            # Cached extractions made before the extractor filtered pronouns.
+            continue
         kind = str(observation.get("kind") or "term").strip().lower()
         if kind in {
             "name", "person", "place", "organization", "artwork", "book",
@@ -508,6 +514,8 @@ def provisional_hints(
         source = str(candidate.get("source") or "").strip()
         target = str(candidate.get("observed_target") or "").strip()
         if not source or not target:
+            continue
+        if terminology.is_function_word_expression(source):
             continue
         if sources is not None and not any(
                 terminology.term_matches(source, text) for text in sources):

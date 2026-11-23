@@ -93,6 +93,34 @@ def term_matches(term: str, text: str) -> bool:
     return bool(_term_pattern(term).search(text))
 
 
+#: 英文代词、限定词与助动词。它们的译法取决于每一句的指代对象（例如 He 指上帝时译
+#: 「祂」，指普通男性时译「他」），绝不能作为跨批次一致性的“术语”或“实体”传播：
+#: term_matches 不区分大小写，一个 He→祂 的观察会命中全书每个 he。
+_FUNCTION_WORDS = frozenset("""
+i me my mine myself we us our ours ourselves you your yours yourself yourselves
+he him his himself she her hers herself it its itself they them their theirs
+themselves one oneself thee thou thy thine ye who whom whose which what that
+this these those a an the s d ll m re ve t am is are was were be been being
+have has had do does did will would shall should can could may might must
+""".split())
+
+_FUNCTION_WORD_SPLIT_RE = re.compile(r"[\s'’‘`\-]+")
+
+
+def is_function_word_expression(text: str) -> bool:
+    """True when ``text`` consists only of pronouns/determiners/auxiliaries.
+
+    Covers contractions such as ``He’d`` or ``she's``.  Phrases containing any
+    content word (``His seed``, ``the Lord``) are not function-word expressions.
+    """
+    value = str(text or "").strip().strip("\"“”‘’'.,;:!?()[]")
+    if not value or _CJK_RE.search(value):
+        return False
+    tokens = [token for token in _FUNCTION_WORD_SPLIT_RE.split(value.casefold())
+              if token]
+    return bool(tokens) and all(token in _FUNCTION_WORDS for token in tokens)
+
+
 def term_spans(term: str, text: str) -> List[Tuple[int, int]]:
     """Return display spans using exactly the same boundaries as term_matches."""
     term = (term or '').strip()
