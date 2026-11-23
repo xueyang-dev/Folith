@@ -8766,6 +8766,17 @@ def _runtime_write_timeout_policy(writer):
     return write_with_policy
 
 
+def _runtime_replace_sharing_violation(exc):
+    """True when Windows refused the replace because a reader still holds the file.
+
+    A heartbeat or progress checkpoint may keep the in-memory state and try
+    again next tick (winerror 5, 32 or 33).  A launch-ownership write must not:
+    that in-memory dict already contains the new token while the file on disk
+    is unchanged, and reporting it as success sends the start line anyway.
+    """
+    return os.name == "nt" and getattr(exc, "winerror", None) in {5, 32, 33}
+
+
 def _after_launch_token_read(job_id, token):
     """Inside the runtime-write lock, after the launch token was read.
 
@@ -8818,7 +8829,8 @@ def _write_terminal_runtime_state(job_id, *, what, expect_launch_token=None,
 def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
                          event_visibility=None, event_category=None,
-                         event_logged=False, expect_launch_token=None, **changes):
+                         event_logged=False, expect_launch_token=None,
+                         require_replace=False, **changes):
     """Atomically merge a worker status update into runtime_state.json.
 
     ``event_logged=True`` says the event has already been appended to
@@ -8842,6 +8854,13 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     number of attempts and then raises, recording the loss first — the terminal
     states.  Every call site states its intent explicitly; see
     ``RUNTIME_WRITE_TIMEOUT_POLICIES``.
+
+    ``require_replace`` (CX-15 / B-94) is for the launch-ownership write only.
+    After the Windows replace retries are exhausted, a sharing violation
+    normally returns the in-memory state so a heartbeat is not fatal.  That
+    dict already includes changes that never reached disk.  With
+    ``require_replace`` the same error is raised instead, and the caller must
+    not treat the update as published.
     """
     if not job_id:
         return _runtime_defaults()
@@ -8941,11 +8960,12 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             _atomic_file.replace_file(tmp, runtime_state_path(job_id))
         except OSError as exc:
             _workflow_errors.raise_if_fatal(exc, job_id)
-            if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32, 33}:
+            if require_replace or not _runtime_replace_sharing_violation(exc):
                 raise
             # A status checkpoint must not abort an already-paid translation.
             # The event stream is appended separately, and the next heartbeat
-            # or progress update rewrites the full state.
+            # or progress update rewrites the full state.  Launch ownership
+            # does not use this path: ``require_replace`` raises instead.
             try:
                 _append_runtime_technical_log(
                     job_id,

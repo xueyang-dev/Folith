@@ -1162,7 +1162,10 @@ def publish_starting_status(job_id: str, *, launch_token: str = "",
     runtime-write lock and ``on_timeout="raise"``, and this function returns
     False unless the state actually landed.  A contended lock therefore fails
     the launch (the caller reaps the child and does not send the start line)
-    instead of starting a run whose token was never recorded.
+    instead of starting a run whose token was never recorded.  A Windows
+    sharing violation is the same failure: ``require_replace`` refuses the
+    in-memory dict that ``update_runtime_state`` would otherwise return after
+    the replace retries are exhausted, because that dict's token is not on disk.
 
     The phase label matches the in-process one so the workbench renders the
     same "准备中" and the handover to the child's own write is invisible.
@@ -1171,7 +1174,8 @@ def publish_starting_status(job_id: str, *, launch_token: str = "",
               if launch_token else None)
     try:
         written = _core().update_runtime_state(
-            job_id, on_timeout="raise", status="queued", phase="starting",
+            job_id, on_timeout="raise", require_replace=True,
+            status="queued", phase="starting",
             phase_label="准备中", launch=launch,
             event="正在启动后台引擎进程", event_name="engine_starting",
             event_visibility="technical", event_category="orchestration")

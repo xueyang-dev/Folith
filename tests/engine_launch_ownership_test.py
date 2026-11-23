@@ -15,15 +15,19 @@
 owner，并且**不发启动行**。终态比较发生在同一把锁里、读 token 之后、替换
 文件之前；测试可以把监控停在这个缝上。
 
-钉四件事：
+钉五件事：
 1. 启动行发出前，状态里已经是这次 supervisor 绑定的 token；
-2. 真实锁竞争下登记超时 → 启动失败、子进程被回收、启动行没送出；
+2. 真实锁竞争下登记超时 → 启动失败、子进程被回收、启动行没送出，放开锁后可重试；
 3. 旧监控停在「锁内已读 token、尚未写状态」时，替换启动不能越过登记；
-4. 对照：没有替换的强杀仍写 ``interrupted``；正常完成不会被改成 ``interrupted``。
+4. 对照：没有替换的强杀仍写 ``interrupted``；正常完成不会被改成 ``interrupted``；
+5. Windows 替换因共享冲突失败时，内存里的新 token 不算发布成功：启动行不发、
+   子进程回收、磁盘 token 保持旧值，放开替换后可重试。普通心跳仍降级，不中止。
 """
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -222,20 +226,37 @@ def test_a_contended_runtime_lock_fails_the_launch_and_reaps_the_child(
     holder = threading.Thread(target=hold_the_lock, daemon=True)
     holder.start()
     assert held.wait(10), "fixture never acquired the runtime-write lock"
+    spawned = []
+    real_popen = subprocess.Popen
+
+    def track(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        spawned.append(proc)
+        return proc
+
+    supervisor_module.subprocess.Popen = track
     started_at = time.monotonic()
     try:
         outcome = supervisor_module.start_engine(
             job_id, mode="resume", connection=_connection())
     finally:
+        supervisor_module.subprocess.Popen = real_popen
         release.set()
         holder.join(timeout=10)
     elapsed = time.monotonic() - started_at
     assert outcome.started is False, outcome.reason
     assert "启动所有权" in outcome.reason
     assert supervisor_module.supervisor(job_id) is None
+    assert spawned and spawned[0].poll() is not None, "超时后子进程必须被回收"
     assert _start_lines(data_dir, job_id) == [], "超时后不得发出启动行"
     assert _token(job_id) == ""
     assert elapsed >= 1.5, elapsed
+    # 锁放开之后同一次启动可以重试，不是把任务卡死。
+    retried = _start(job_id)
+    assert retried is not None
+    assert _token(job_id)
+    assert _wait_until(lambda: len(_start_lines(data_dir, job_id)) == 1), (
+        "重试成功后应发出且只发出一行启动行")
 
 
 # ---------------------------------------------------------------------------
@@ -343,3 +364,119 @@ def test_a_normal_completion_is_not_rewritten_as_interrupted(isolated, stub_chil
     state = supervisor_module.terminal_state(job_id)
     assert state["status"] == "completed", state
     assert state["succeeded"] is True
+
+
+def _sharing_violation():
+    error = PermissionError(13, "sharing violation")
+    error.winerror = 32
+    return error
+
+
+def _force_sharing_classification(monkeypatch):
+    """POSIX has no winerror replace path.  Windows keeps the real classifier."""
+    probe = _sharing_violation()
+    if os.name == "nt":
+        assert core._runtime_replace_sharing_violation(probe)
+        return
+    monkeypatch.setattr(
+        core, "_runtime_replace_sharing_violation",
+        lambda exc: getattr(exc, "winerror", None) in {5, 32, 33})
+
+
+# ---------------------------------------------------------------------------
+# 5. Windows replace failure is not a published launch
+# ---------------------------------------------------------------------------
+
+def test_a_heartbeat_survives_a_windows_replace_failure(isolated, monkeypatch):
+    """普通心跳仍走降级：替换失败不抛出，磁盘保持原样。"""
+    _data, _logs = isolated
+    job_id = "launch-ownership-heartbeat"
+    _create_job(job_id)
+    core.update_runtime_state(job_id, status="running", phase="running")
+    before = _state(job_id)
+    _force_sharing_classification(monkeypatch)
+
+    def locked(source, _destination):
+        Path(source).unlink(missing_ok=True)
+        raise _sharing_violation()
+
+    monkeypatch.setattr(core._atomic_file, "replace_file", locked)
+    written = core.update_runtime_state(
+        job_id, heartbeat=True, progress=True, event="心跳")
+    assert isinstance(written, dict)
+    assert _state(job_id) == before
+    log = (core.job_dir(job_id) / "runtime_technical.log").read_text(encoding="utf-8")
+    assert "runtime_state write skipped" in log
+
+
+def test_a_windows_replace_failure_does_not_publish_the_launch(
+        isolated, stub_child, monkeypatch):
+    """替换没成功时，内存里的新 token 不得当成启动所有权。
+
+    测试在 ``replace_file`` 里同步把旧终态替换上磁盘，再以 winerror 32 拒绝
+    这次启动的替换。启动行不发、子进程回收、磁盘 token 保持旧值；放开替换后
+    同一次启动可以重试。
+    """
+    data_dir, _logs = isolated
+    job_id = "launch-ownership-replace"
+    _create_job(job_id)
+    old_token = "old-launch-token-b94"
+    core.update_runtime_state(
+        job_id, status="interrupted", phase="interrupted",
+        launch={"token": old_token, "pid": 1})
+    assert _token(job_id) == old_token
+    _force_sharing_classification(monkeypatch)
+    real_replace = core._atomic_file.replace_file
+    refused = {"done": False}
+
+    def refuse_launch_replace(source, destination):
+        # ``register_engine_owner`` 先做一次普通状态写入（清掉上一轮请求）。
+        # 只有带新 launch token 的那次替换才是启动所有权；在它的
+        # ``replace_file`` 里同步落旧终态，再以共享冲突拒绝这次替换。
+        try:
+            payload = json.loads(Path(source).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        launch = payload.get("launch") if isinstance(payload, dict) else None
+        token = str((launch or {}).get("token") or "") if isinstance(launch, dict) else ""
+        if token and token != old_token and not refused["done"]:
+            refused["done"] = True
+            old_tmp = Path(str(destination) + ".old-terminal.tmp")
+            old_tmp.write_text(json.dumps({
+                "status": "interrupted",
+                "phase": "interrupted",
+                "launch": {"token": old_token, "pid": 1},
+            }, ensure_ascii=False), encoding="utf-8")
+            try:
+                real_replace(old_tmp, Path(destination))
+            finally:
+                old_tmp.unlink(missing_ok=True)
+            raise _sharing_violation()
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(core._atomic_file, "replace_file", refuse_launch_replace)
+    spawned = []
+    real_popen = subprocess.Popen
+
+    def track(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(supervisor_module.subprocess, "Popen", track)
+    outcome = supervisor_module.start_engine(
+        job_id, mode="resume", connection=_connection())
+    assert outcome.started is False, outcome.reason
+    assert "启动所有权" in outcome.reason
+    assert supervisor_module.supervisor(job_id) is None
+    assert spawned and spawned[0].poll() is not None, "替换失败后子进程必须被回收"
+    assert _start_lines(data_dir, job_id) == []
+    assert _token(job_id) == old_token, _state(job_id)
+    assert _status(job_id) == "interrupted"
+
+    retried = _start(job_id)
+    assert retried is not None
+    assert _token(job_id) not in {"", old_token}
+    assert _token(job_id) == retried._end_launch_token
+    assert _wait_until(lambda: len(_start_lines(data_dir, job_id)) == 1), (
+        "重试成功后应发出且只发出一行启动行")
