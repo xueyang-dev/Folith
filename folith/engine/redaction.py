@@ -83,12 +83,20 @@ def redact_error_text(text: object, *,
         redacted = redacted.replace(user_name, USER_PLACEHOLDER)
     for secret in known_secrets:
         text_secret = str(secret or "").strip()
-        # A real credential is never a single character; a tiny literal would
-        # mangle ordinary words ("k" eats half of "unknown").  Only literal-
-        # replace credential-length values — anything shorter rides on the
-        # pattern and key-value rules instead.
+        if not text_secret:
+            continue
+        # Long values are replaced wherever they occur: a relay can glue a
+        # credential into a longer token.  Shorter values are whole tokens
+        # only.  Skipping them left a 7-character key in the internal-error
+        # text (CX-15); an unbounded one-character replace would eat ordinary
+        # words ("k" inside "unknown").  A token boundary does neither.
         if len(text_secret) >= 8:
             redacted = redacted.replace(text_secret, PLACEHOLDER)
+        else:
+            redacted = re.sub(
+                r"(?<![A-Za-z0-9_\-])" + re.escape(text_secret)
+                + r"(?![A-Za-z0-9_\-])",
+                PLACEHOLDER, redacted)
     for pattern in SECRET_PATTERNS:
         redacted = pattern.sub(PLACEHOLDER, redacted)
     redacted = _KEY_VALUE.sub(

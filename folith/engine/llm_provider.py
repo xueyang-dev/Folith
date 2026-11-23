@@ -382,7 +382,7 @@ def _trace_http_response(response):
         run.record_http_response(response)
 
 
-def _plain_identifier(value, limit):
+def _plain_identifier(value, limit, known_secrets=()):
     """A short machine identifier, or ``""`` — never arbitrary relay text.
 
     CX-12 §1: ``code``/``request_id``/``period`` are persisted as structured
@@ -390,14 +390,23 @@ def _plain_identifier(value, limit):
     inside any of them.  Only a plain, short identifier survives; anything
     with spaces, prose, punctuation or excessive length is dropped before it
     can reach task state, events, logs or trace summaries.
+
+    CX-15: shape is not enough.  A 7- or 12-character credential is itself a
+    plain identifier, and so is a longer identifier that merely contains it.
+    When the caller passes this connection's credentials, a value equal to
+    one of them — or containing one — is dropped.
     """
     text = str(value or "").strip()
-    if text and len(text) <= limit and re.fullmatch(r"[A-Za-z0-9_.\-]+", text):
-        return text
-    return ""
+    if not text or len(text) > limit or not re.fullmatch(r"[A-Za-z0-9_.\-]+", text):
+        return ""
+    for secret in known_secrets or ():
+        needle = str(secret or "").strip()
+        if needle and needle in text:
+            return ""
+    return text
 
 
-def _provider_error_payload(error):
+def _provider_error_payload(error, known_secrets=()):
     """Extract safe, non-secret fields from SDK/http responses.
 
     OpenAI-compatible relays do not all use the same exception shape: the
@@ -435,7 +444,7 @@ def _provider_error_payload(error):
     period = ""
     # 内部协议错误自带稳定的 code（wrong_item_count 等，翻译协议的契约）——
     # 优先于回包读取，同样要过形状校验。
-    code = _plain_identifier(getattr(error, "code", None), 64)
+    code = _plain_identifier(getattr(error, "code", None), 64, known_secrets)
     # CX-12 应修：请求 ID 优先读 SDK 与 ``x-request-id`` 响应头——回包里的
     # ``request_id``/``id`` 只是兜底，且同样要过形状校验。
     sdk_request_id = getattr(error, "request_id", None)
@@ -444,7 +453,7 @@ def _provider_error_payload(error):
             sdk_request_id = response.headers.get("x-request-id")
         except Exception:  # noqa: BLE001 - a header read must never raise
             sdk_request_id = None
-    request_id = _plain_identifier(sdk_request_id, 128)
+    request_id = _plain_identifier(sdk_request_id, 128, known_secrets)
 
     def visit(payload):
         nonlocal code, message, period, request_id
@@ -463,12 +472,12 @@ def _provider_error_payload(error):
             if isinstance(value, (str, int)):
                 # CX-12 §1：回包里的 id 只是兜底，且必须过形状校验——回显可以
                 # 藏在任何一个"结构化"字段里。
-                request_id = _plain_identifier(value, 128)
+                request_id = _plain_identifier(value, 128, known_secrets)
         if not code:
             for key in ("code", "error_code", "type"):
                 value = payload.get(key)
                 if isinstance(value, (str, int)):
-                    code = _plain_identifier(value, 64)
+                    code = _plain_identifier(value, 64, known_secrets)
                     if code:
                         break
         if not message:
@@ -481,7 +490,7 @@ def _provider_error_payload(error):
                 for key in ("limitName", "limit_name", "period", "resetPeriod"):
                     value = metadata.get(key)
                     if isinstance(value, (str, int)):
-                        period = _plain_identifier(value, 32).lower()
+                        period = _plain_identifier(value, 32, known_secrets).lower()
                         if period:
                             break
         for key in ("error", "detail"):
@@ -635,7 +644,7 @@ def provider_error_is_remote(error):
             or getattr(error, "status_code", None) is not None)
 
 
-def provider_error_detail(error, *, stage=""):
+def provider_error_detail(error, *, stage="", known_secrets=()):
     """A structured, persistable diagnostic for a provider failure (CX-11 §1).
 
     The raw SDK/relay exception text can echo the very credential that was
@@ -644,9 +653,12 @@ def provider_error_detail(error, *, stage=""):
     stringify the exception now persists this summary instead: the error
     class, the HTTP status, the provider's own error code, the request id
     and the stage — the fields support actually needs.  The exception object
-    itself stays in memory only.
+    itself stays in memory only.  ``known_secrets`` drops a diagnostic value
+    that equals or contains this connection's credential (CX-15): a 7- or
+    12-character key is a legal identifier and would otherwise be persisted
+    as ``code=`` or ``request_id=``.
     """
-    info = _provider_error_payload(error)
+    info = _provider_error_payload(error, known_secrets)
     status = provider_error_status(error)
     parts = [f"class={status['status']}"]
     if info["http_status"]:

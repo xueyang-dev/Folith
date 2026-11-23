@@ -357,3 +357,53 @@ def test_the_request_id_is_read_from_the_response_header_first():
     detail = provider_error_detail(HeaderRelay())
     assert "request_id=req-header-8471" in detail
     assert "code=invalid_request" in detail
+
+
+def test_identifier_shaped_credentials_are_dropped_from_the_diagnostic():
+    """7 与 12 字符的凭据本身就是合法标识符，不得作为 code/request_id 落盘。"""
+    from folith.engine.llm_provider import provider_error_detail
+
+    short = "Ab3kQ9z"
+    longer = "Ab3kQ9zT4mN1"
+
+    class Echo(RuntimeError):
+        def __init__(self, code, request_id=""):
+            self.status_code = 400
+            self.code = code
+            self.request_id = request_id
+            super().__init__("Error code: 400 - identifier")
+
+    detail7 = provider_error_detail(Echo(short), known_secrets=(short,))
+    detail12 = provider_error_detail(Echo(longer), known_secrets=(longer,))
+    assert short not in detail7 and "code=" not in detail7
+    assert longer not in detail12 and "code=" not in detail12
+    embedded = provider_error_detail(
+        Echo("err-" + short), known_secrets=(short,))
+    assert short not in embedded and "code=" not in embedded
+    echoed_id = provider_error_detail(
+        Echo("invalid_request", request_id=longer), known_secrets=(longer,))
+    assert longer not in echoed_id and "request_id=" not in echoed_id
+    assert "code=invalid_request" in echoed_id
+    # 形状合法、但不是本次凭据的短 code 仍然保留。
+    kept = provider_error_detail(Echo(short), known_secrets=("other99",))
+    assert f"code={short}" in kept
+    ordinary = provider_error_detail(
+        Echo("invalid_request"), known_secrets=(short,))
+    assert "code=invalid_request" in ordinary
+    assert short not in ordinary
+
+
+def test_short_known_secrets_are_redacted_at_token_boundaries_only():
+    """短于 8 字符的已知凭据按词边界替换，不得跳过，也不得吃掉普通单词。"""
+    secret = "Ab3kQ9z"
+    redacted = redact_error_text(f"boom {secret} failed", known_secrets=(secret,))
+    assert secret not in redacted and "<redacted>" in redacted
+    glued = redact_error_text(f"xx{secret}yy", known_secrets=(secret,))
+    assert secret in glued and "<redacted>" not in glued
+    assert "unknown" in redact_error_text("unknown", known_secrets=("k",))
+    assert redact_error_text("token k end", known_secrets=("k",)) == (
+        "token <redacted> end")
+    eight = "Ab3kQ9zT"
+    assert eight not in redact_error_text(
+        f"xx{eight}yy", known_secrets=(eight,))
+    assert redact_error_text("clean diagnostic text") == "clean diagnostic text"
