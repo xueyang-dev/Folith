@@ -385,7 +385,7 @@ class AboutPage(QWidget):
         self.release_notes.setAccessibleName(i18n.tr('更新说明'))
         self.diagnostics_button = QPushButton(i18n.tr('诊断信息…'))
         style_module.set_button(self.diagnostics_button, "secondary", small=True)
-        self.diagnostics_button.setToolTip(i18n.tr('版本、系统与运行事实，不含 API 密钥与文档正文。'))
+        self.diagnostics_button.setToolTip(i18n.tr('版本、系统与运行事实，不含 API 密钥与文档正文。') + ' ' + i18n.tr('诊断信息只含结构化故障摘要，已清除密钥与路径并截断自由文本，不含文档正文。'))
         self.diagnostics_button.clicked.connect(self.diagnosticsRequested.emit)
 
         group = components.FormGroup()

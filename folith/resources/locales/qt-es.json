@@ -2779,5 +2779,6 @@
   "解读失败：{v0}": "Falló la explicación: {v0}",
   "（已缓存）": "(en caché)",
   "双语文件（XLIFF 1.2 / SDLXLIFF / MQXLIFF） ({v0})": "Archivos bilingües (XLIFF 1.2 / SDLXLIFF / MQXLIFF) ({v0})",
-  "此格式目前只支持原样导出": "Este formato solo admite exportación"
+  "此格式目前只支持原样导出": "Este formato solo admite exportación",
+  "诊断信息只含结构化故障摘要，已清除密钥与路径并截断自由文本，不含文档正文。": "Los diagnósticos contienen solo resúmenes estructurados de fallos; claves y rutas eliminadas, texto libre recortado, sin contenido de documentos."
 }

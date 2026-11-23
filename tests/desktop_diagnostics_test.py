@@ -332,3 +332,16 @@ def test_bare_credentials_in_log_lines_are_redacted():
     # Plain hashes must survive: diagnostics stay useful.
     digest = "3ddb8e87b05f072e0d427e68ae383555b0dcdc8ae85a574c4ebcab81be69daea"
     assert digest in diagnostics._redact_text(f"ERROR hash mismatch: {digest}")
+
+
+def test_error_summary_caps_free_text_and_hides_synthetic_secret():
+    """P11 §4: free text cannot be reliably redacted; cap it and hide odd keys."""
+    from folith.desktop import diagnostics
+
+    line = ('ERROR ' + '用户原文段落内容' * 40
+            + ' login-token=my-synthetic-secret /Volumes/Backup/secret.docx')
+    redacted = diagnostics._redact_text(line)
+    assert len(redacted) <= 121
+    assert 'my-synthetic-secret' not in redacted
+    assert '/Volumes/Backup/secret.docx' not in redacted
+    assert '用户原文段落内容' * 16 not in redacted

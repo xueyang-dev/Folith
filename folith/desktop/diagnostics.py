@@ -49,7 +49,6 @@ _FORBIDDEN_SOURCES = ("provider_config.json", ".onboarded")
 # patterns deliberately do not match plain hashes, so diagnostics stay useful.
 # One source of truth with the error-forensics writers: folith.engine.redaction.
 from folith.engine.redaction import SECRET_KEY_NAMES as _SECRET_KEYS  # noqa: E402
-from folith.engine.redaction import SECRET_PATTERNS as _SECRET_PATTERNS  # noqa: E402
 
 
 @dataclass
@@ -161,23 +160,24 @@ def redact_path(value: str | Path | None, home: Path | None = None) -> str:
 
 
 def _redact_text(text: str, home: Path | None = None) -> str:
-    """Redact the home directory anywhere in the text, plus secret-looking values.
+    """P11 §4: reuse the shared redactor, then cap free text to a short digest.
 
-    Log lines carry the home path in the middle (after a timestamp), so a prefix
-    replacement is not enough.  A log line is *not* a path, so it is never turned
-    into an ``<external>`` placeholder: only the home prefix and the user name
-    are rewritten here.
+    Full log lines can carry a complete paragraph, a synthetic credential that
+    matches no built-in pattern, or a volume absolute path.  Clean credentials
+    and paths are handled by :func:`redact_error_text`; the length cap prevents
+    arbitrary free text (document content, echoed paragraphs) from leaking into
+    the diagnostics summary.
     """
-    home = home or Path.home()
-    home_text = str(home)
-    redacted = _redact_user_name(text.replace(home_text, "~"), home)
-    # Specific credential shapes first: the generic `key: value` rule would
-    # otherwise consume only the word "Bearer" and leave the token behind.
-    for pattern in _SECRET_PATTERNS:
-        redacted = pattern.sub("<redacted>", redacted)
+    from folith.engine.redaction import redact_error_text
+
+    redacted = redact_error_text(text, home=home or Path.home())
+    # A compound key such as ``startup_token`` still ends in a secret key name;
+    # the shared redactor anchors on word boundaries, so cover that shape too.
     for key in _SECRET_KEYS:
-        redacted = re.sub(rf"(?i)({key}\s*[:=]\s*)\S+", r"\1<redacted>", redacted)
-    return redacted
+        redacted = re.sub(rf"(?i)([\w.]*{key}\s*[:=]\s*)\S+",
+                          r"\1<redacted>", redacted)
+    limit = 120
+    return redacted if len(redacted) <= limit else redacted[:limit] + "…"
 
 
 # --- collection ------------------------------------------------------------
