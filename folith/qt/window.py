@@ -39,7 +39,7 @@ from folith.desktop import single_instance
 
 from . import i18n, platform_ui, preferences
 from . import import_wizard
-from . import xliff_io
+from . import xliff_io, reveal_path
 from . import adapter
 from . import bootstrap
 from . import dialogs
@@ -4613,7 +4613,7 @@ class MainWindow(QMainWindow):
         self._notice(i18n.tr('已复制文件路径：{v0}', v0=text), task=False)
 
     def reveal_path(self, path: str) -> None:
-        from .reveal_path import reveal_path_or_directory as _rp; result = _rp(path)
+        result = reveal_path.reveal_path_or_directory(path)
         self._notice(result.get("detail") or i18n.tr('已在{v0}中显示。', v0=platform_ui.file_manager_name()), task=False)
 
     def open_path(self, path: str) -> None:

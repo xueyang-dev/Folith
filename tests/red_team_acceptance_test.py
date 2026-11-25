@@ -893,6 +893,12 @@ def test_external_evidence_attack_and_prompt_scan():
         if any(host in line for host in (
                 "http://127.0.0.1", "http://localhost", "http://0.0.0.0")):
             continue
+        # C-48/#597: reviewed, user-click-only navigation target in About.
+        # Narrow exception: this literal is a fixed link opened by a human click,
+        # never a URL placed into a model prompt or a generated citation.
+        if path == "folith/qt/support.py" and \
+                'X_URL = "https://x.com/xueyang2216"' in line:
+            continue
         # 界面静态多语言资源不包含任何模型 prompt
         if "folith/resources/locales/" in path:
             continue

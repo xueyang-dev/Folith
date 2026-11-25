@@ -6,7 +6,6 @@ name defined here.  Anything still owned by ``core`` is read late-bound through
 """
 
 import hashlib
-import json
 import os
 import re
 from folith import ocr_backends as _ocr_backends
@@ -470,14 +469,8 @@ def save_ocr_online_config(*, provider="", model="", api_key="", base_url=None,
         "max_retries": normalized.max_retries,
     }
     path = ocr_online_config_path()
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
-                         encoding="utf-8")
-    try:
-        temporary.chmod(0o600)
-    except OSError:
-        pass
-    temporary.replace(path)
+    from .credential_file import write_credential_json
+    write_credential_json(path, payload)
     return path
 
 

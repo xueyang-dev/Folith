@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPlainTextEdit, QPushButton, QSizePolicy, QTextBrowser,
@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
 from . import adapter
 from . import components
 from . import i18n
+from . import platform_ui
+from . import theme as theme_module
 from . import icons
 from . import pdf_panel as pdf_panel_module
 from . import style as style_module
@@ -534,12 +536,35 @@ class ReviewPanel(QWidget):
         self.hint.setWordWrap(True)
         self.hint.setProperty("role", "muted")
         # 键位是没有写在按钮上的操作方式：给键盘用户一行看得见的清单。
-        self.shortcut_hint = QLabel(i18n.tr(
-            '快捷键：N 下一项 · A 暂存建议 · O 确认问题存在 · C 确认已解决 · '
-            'K 保留当前译文 · E 修改译文'))
-        self.shortcut_hint.setWordWrap(True)
-        self.shortcut_hint.setProperty("role", "muted")
-        self.shortcut_hint.setAccessibleName(i18n.tr('键盘快捷键'))
+        # #524：键帽与绑定同源，来自 platform_ui；不再手抄一行字面键位说明。
+        self.shortcut_hint = QWidget()
+        self.shortcut_hint.setObjectName("transparent")
+        hint_row = QHBoxLayout(self.shortcut_hint)
+        hint_row.setContentsMargins(0, 0, 0, 0)
+        hint_row.setSpacing(6)
+        # C-60: uniform keycaps + one-line labels in a tidy 2-column grid.
+        from .style import ElideLabel
+        from PySide6.QtWidgets import QGridLayout
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(theme_module.SPACE["sm"])
+        grid.setVerticalSpacing(2)
+        hint_row.addLayout(grid)   # attach before filling (qt-layout-order)
+        for cell_index, (action, label) in enumerate(platform_ui.REVIEW_ACTIONS):
+            cap = components.KeyHint(action, i18n.tr(label))
+            cap.setFixedWidth(26)
+            text = ElideLabel(i18n.tr(label))
+            text.setProperty("role", "muted")
+            cell = QWidget()
+            row = QHBoxLayout(cell)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            row.addWidget(cap)
+            row.addWidget(text, 1)
+            grid.addWidget(cell, cell_index // 2, cell_index % 2)
+        self.shortcut_hint.setAccessibleName(i18n.tr('键盘快捷键：{v0}', v0=' · '.join(
+            f"{i18n.tr(label)} ({platform_ui.shortcut_text(action)})"
+            for action, label in platform_ui.REVIEW_ACTIONS)))
 
         # 动作按钮会折行：俄语/西语/阿拉伯语的按钮文字比中文长得多，固定一行会把
         # 整页撑到 2600px 宽（默认窗口只有 1180px），右半列被裁掉。
@@ -690,11 +715,15 @@ class ReviewPanel(QWidget):
             "edit": _guarded(self._emit_edit),
         }
         self._shortcuts = []
-        for key, sequence in (("next", "N"), ("apply", "A"), ("open", "O"),
-                              ("confirm", "C"), ("keep", "K"), ("edit", "E")):
-            shortcut = QShortcut(QKeySequence(sequence), self)
+        # C-59: bind by action ID, never by tuple order.
+        handler_by_action = {
+            "review_next": "next", "review_apply": "apply", "review_open": "open",
+            "review_confirm": "confirm", "review_keep": "keep", "review_edit": "edit",
+        }
+        for action in (a for a, _ in platform_ui.REVIEW_ACTIONS):
+            shortcut = QShortcut(platform_ui.shortcut(action), self)
             shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-            shortcut.activated.connect(self._shortcut_handlers[key])
+            shortcut.activated.connect(self._shortcut_handlers[handler_by_action[action]])
             self._shortcuts.append(shortcut)
         app = QApplication.instance()
         if app is not None:
@@ -711,13 +740,15 @@ class ReviewPanel(QWidget):
         处理说明按 Tab 会跳回上方的勾选框。这里按界面从上到下的阅读顺序重排；
         隐藏的控件由 Qt 自动跳过。
         """
-        for widget, key in ((self.apply_button, "A"), (self.open_button, "O"),
-                            (self.confirm_button, "C"),
-                            (self.preserve_button, "K"),
-                            (self.edit_button, "E")):
+        for widget, action in ((self.apply_button, "review_apply"),
+                               (self.open_button, "review_open"),
+                               (self.confirm_button, "review_confirm"),
+                               (self.preserve_button, "review_keep"),
+                               (self.edit_button, "review_edit")):
             detail = widget.toolTip() or widget.text()
-            widget.setAccessibleDescription(f"{detail} ({key})")
-        self.list.setAccessibleDescription(self.shortcut_hint.text())
+            widget.setAccessibleDescription(
+                f"{detail} ({platform_ui.shortcut_text(action)})")
+        self.list.setAccessibleDescription(self.shortcut_hint.accessibleName())
         self.setAccessibleName(i18n.tr('审校工作台'))
         chain = (self.list, self.source_confirm_box, self.source_note_edit,
                  self.note_edit, self.apply_button, self.open_button,

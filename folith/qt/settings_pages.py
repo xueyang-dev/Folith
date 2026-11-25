@@ -29,6 +29,8 @@ from . import style as style_module
 from . import support
 from . import theme as theme_module
 
+A65_SCOPE_NOTE = "也会清理各项目内的派生缓存；项目翻译记忆与任务正文保留。"
+
 
 def _open_url(url: str) -> bool:
     """系统浏览器打开；脚本化运行与测试里不打开任何东西。"""
@@ -49,11 +51,14 @@ def _link(text: str, icon: str = "external-link") -> QPushButton:
 
 
 # =============================================================================
-def cleanup_paths_text(data_dir: str | None = None, log_dir: str | None = None) -> list[str]:
+def cleanup_paths(data_dir: str | None = None, log_dir: str | None = None) -> list[str]:
     """The places to delete for a complete removal, as separate path values.
 
-    Never newline-join here (#590 / C-46): a directory name may itself contain
-    a newline, and callers must not lose the plist line when splitting.
+    The default data folder is listed by its application folder on macOS
+    (``Application Support/Folith``, as before). A data folder the user moved
+    elsewhere is listed as it is, so the list never names a folder that does
+    not hold the user's data. Never newline-join (#590 / C-46): a directory
+    name may contain a newline, and callers must not lose the plist line.
     """
     from folith.desktop import paths as desktop_paths
 
@@ -133,7 +138,7 @@ class StoragePage(QWidget):
         self.clear_button = QPushButton(i18n.tr('清理缓存…'))
         self.clear_button.setToolTip(i18n.tr(
             '删除翻译缓存、知识缓存与扫描件画像缓存。不影响任何任务、译文、术语或翻译记忆；'
-            '以后遇到相同内容时会重新调用模型。'))
+            '以后遇到相同内容时会重新调用模型。') + ' ' + i18n.tr(A65_SCOPE_NOTE))
         self.clear_button.clicked.connect(self._clear)
         self.export_button = QPushButton(i18n.tr('导出全部数据…'))
         self.export_button.setToolTip(i18n.tr(
@@ -176,7 +181,7 @@ class StoragePage(QWidget):
         # C-37：每条路径一个 ElideLabel——三行各自中间省略、各自tooltip是完整路径；
         # 以前合成一个多行标签会被当成一行省略，日志/plist 两条直接消失。
         self.cleanup_path_labels: list[ElideLabel] = []
-        for line in cleanup_paths_text():
+        for line in cleanup_paths():
             label = ElideLabel(line, mode=Qt.TextElideMode.ElideMiddle)
             label.setObjectName("monoValue")
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -206,7 +211,7 @@ class StoragePage(QWidget):
             label.setText(value)
         self.clear_button.setEnabled(bool(self._view.get("caches")))
 
-        lines = cleanup_paths_text(
+        lines = cleanup_paths(
             self._view.get("data_dir"), self._view.get("log_dir"))
         for index, label in enumerate(self.cleanup_path_labels):
             if index < len(lines):
@@ -259,7 +264,7 @@ class StoragePage(QWidget):
         if not prompts.ConfirmDialog.ask(
                 self, i18n.tr('清理缓存'),
                 i18n.tr('将删除约 {v0} 的派生缓存。任务、译文、术语与翻译记忆都不受影响；'
-                        '以后遇到相同内容时会重新调用模型。', v0=size),
+                        '以后遇到相同内容时会重新调用模型。', v0=size) + ' ' + i18n.tr(A65_SCOPE_NOTE),
                 yes=i18n.tr('清理'), no=i18n.tr('取消'), tone="warn"):
             return
 
@@ -355,6 +360,10 @@ class AboutPage(QWidget):
         self.project_link.clicked.connect(lambda: _open_url(support.PROJECT_URL))
         self.author_link = _link("xueyang-dev")
         self.author_link.clicked.connect(lambda: _open_url(support.AUTHOR_URL))
+        # #519: X 主页要有独立的、可识别的入口（用户明确要求）。
+        self.x_link = _link(i18n.tr('X 主页'), icon="external-link")
+        self.x_link.setToolTip(support.X_URL)
+        self.x_link.clicked.connect(lambda: _open_url(support.X_URL))
         # 邮箱是信封图标（打开本机邮件客户端），不是外链。
         self.email_link = _link("xydev@outlook.sa", icon="mail")
         self.email_link.clicked.connect(lambda: _open_url("mailto:xydev@outlook.sa"))
@@ -391,6 +400,7 @@ class AboutPage(QWidget):
         group = components.FormGroup()
         group.add_row(_setting_row(i18n.tr('项目主页'), self.project_link))
         group.add_row(_setting_row(i18n.tr('作者'), self.author_link))
+        group.add_row(_setting_row(i18n.tr('X 主页'), self.x_link))
         group.add_row(_setting_row(i18n.tr('邮箱'), self.email_link))
         group.add_row(_setting_row(i18n.tr('报告问题'), self.issue_link))
         group.add_row(_setting_row(i18n.tr('更新'), self.update_button, self.update_status,
@@ -445,6 +455,7 @@ LOCAL_SHORTCUTS = (
     ("escape", "编辑框：把焦点还给段落网格；检查与修复：收起面板"),
     ("previous_segment", "段落网格：上一段"),
     ("next_segment", "段落网格：下一段"),
+    *((action, f"审校：{label}") for action, label in platform_ui.REVIEW_ACTIONS)
 )
 
 
