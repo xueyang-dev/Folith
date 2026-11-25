@@ -342,21 +342,28 @@ def collect(*, paths: desktop_paths.DesktopPaths | None = None,
 def collect_error_summary(paths: desktop_paths.DesktopPaths,
                           home: Path | None = None,
                           limit: int = ERROR_LINE_LIMIT) -> list[str]:
-    """Filtered tail of the app's own logs; never includes document content."""
-    lines: list[str] = []
+    """A-82: controlled error categories/counts, never raw log-line text.
+
+    Raw lines can carry document text, synthetic credentials that match no
+    pattern, or volume-absolute paths. Export only which log produced which
+    category and how often; the existing build/path facts stay untouched.
+    """
+    counts: dict[tuple[str, str], int] = {}
     for log_path in (paths.launcher_log, paths.service_log):
         try:
             content = log_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for line in content.splitlines()[-ERROR_SCAN_LIMIT:]:
-            stripped = line.strip()
-            if not stripped:
+            lowered = line.lower()
+            category = next((marker for marker in _ERROR_MARKERS
+                             if marker in lowered), None)
+            if category is None:
                 continue
-            lowered = stripped.lower()
-            if any(marker in lowered for marker in _ERROR_MARKERS):
-                lines.append(f"{log_path.name}: {_redact_text(stripped, home)}")
-    return lines[-limit:]
+            key = (log_path.name, category)
+            counts[key] = counts.get(key, 0) + 1
+    return [f"{name}: {category} x{count}"
+            for (name, category), count in list(counts.items())[-limit:]]
 
 
 # --- reporting -------------------------------------------------------------
@@ -408,7 +415,8 @@ def collect_tools() -> dict[str, Any]:
             "render_qa": "available" if soffice else "NOT_RUN",
         }
     except Exception as exc:  # pragma: no cover - diagnostics must never fail
-        tools["error"] = f"{type(exc).__name__}: {exc}"
+        # A-82: controlled category only, never the exception's free text.
+        tools["error"] = type(exc).__name__
     return tools
 
 
