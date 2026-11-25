@@ -262,8 +262,8 @@ def test_parameter_error_is_not_retried():
     assert len(client.requests) == 1
 
 
-def test_plain_400_keeps_truncated_body_and_never_retries():
-    """#220 C2：普通 400 不重试，但被拒的响应体（截断）要进该页的失败记录。"""
+def test_plain_400_records_structured_body_digest_not_raw_text():
+    """#220 C2 / CX-06 §3：普通 400 不重试；失败记录只留结构化摘要，绝不存回包原文。"""
     body = "x" * (RESPONSE_EXCERPT_CHARS + 500)
     backend, client = backend_with([FakeStatusError(400, "bad model", body=body),
                                     segments_response(["一 行"])])
@@ -274,8 +274,21 @@ def test_plain_400_keeps_truncated_body_and_never_retries():
     attempt = backend._last_request["attempts"][-1]
     assert attempt["http_status"] == 400
     assert attempt["response_chars"] == len(body), "记录里要留完整长度"
-    assert attempt["response_body"] == body[:RESPONSE_EXCERPT_CHARS], "只存截断后的开头"
-    assert len(attempt["response_body"]) == RESPONSE_EXCERPT_CHARS
+    assert attempt["response_body"].startswith("<body:"), "只留结构化摘要"
+    assert "xxxx" not in attempt["response_body"], "绝不存回包原文"
+
+
+def test_400_body_digest_strips_secrets_and_paths():
+    """回包摘要里的 error 字段若带密钥/路径/家目录，必须被脱敏后才写入。"""
+    leak = ('{"error": "bad key sk-abcdefghijklmnop qrst '
+            'at /Users/alice/secret-project/page.png"}')
+    backend, client = backend_with([FakeStatusError(400, "bad model", body=leak),
+                                    segments_response(["一 行"])])
+    backend.ocr_page(PNG, page_index=0, page_number=1, language="ara", dpi=350)
+    digest = backend._last_request["attempts"][-1]["response_body"]
+    assert "sk-abcdefghijklmnop" not in digest
+    assert "/Users/alice/secret-project" not in digest
+    assert digest.startswith("<body:")
 
 
 def test_400_immediately_after_5xx_gets_exactly_one_extra_attempt():

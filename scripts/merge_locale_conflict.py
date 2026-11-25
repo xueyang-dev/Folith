@@ -3,6 +3,11 @@
 - Both sides add different keys -> merge both, keep sorted.
 - Both sides change the same key to different values -> refuse (needs a human).
 - Anything that is not a clean 3-way conflict marker block -> refuse.
+Known limitation (#220): when one side *deletes* a key and the other keeps it,
+the key survives in the merged output (the side that still has it wins). That
+is usually the safe default for locale catalogs, but it is not a true delete;
+inspect the merged file if a key was meant to be removed.
+
 Product code untouched; run with --write to replace the file, otherwise dry-run.
 """
 from __future__ import annotations

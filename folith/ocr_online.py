@@ -406,12 +406,14 @@ def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
 
 def response_body_excerpt(error: BaseException,
                           limit: int = RESPONSE_EXCERPT_CHARS) -> Tuple[str, int]:
-    """Head of a rejected request's HTTP body (a 400, say), for the failure record.
+    """Structured *summary* of a rejected request's HTTP body (a 400, say).
 
-    Returns ``(excerpt, full_chars)``: the excerpt is capped at ``limit`` — the
-    whole body is never kept — and ``full_chars`` is the untruncated length, the
-    same pairing the content-failure records use.  Best effort: a transport that
-    exposes no body simply yields ``("", 0)``.
+    CX-06 §3 (#220 C2): the raw body can echo the API key, the user's text or a
+    local path, so it is never kept verbatim.  This returns a shape-only digest
+    — ``<body: N chars[, json][, error=...]>`` — plus the untruncated length.
+    Only a short, sanitised ``error``/``message``/``code`` field is echoed when
+    the body is JSON, and that value is itself redacted of secrets and paths.
+    Best effort: a transport that exposes no body yields ``("", 0)``.
     """
     text = ""
     response = getattr(error, "response", None)
@@ -429,7 +431,51 @@ def response_body_excerpt(error: BaseException,
                 text = json.dumps(body, ensure_ascii=False)
             except (TypeError, ValueError):
                 text = ""
-    return (text if len(text) <= limit else text[:limit]), len(text)
+    if not text:
+        return "", 0
+    parts = [f"{len(text)} chars"]
+    label = ""
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict):
+        parts.append("json")
+        for key in ("error", "message", "code", "type"):
+            value = parsed.get(key)
+            if isinstance(value, (str, int)):
+                label = _redact_body_text(str(value))[:80]
+                break
+    digest = "<body: " + ", ".join(parts)
+    if label:
+        digest += f", {label}"
+    digest += ">"
+    return digest, len(text)
+
+
+def _redact_body_text(value: str) -> str:
+    """Strip credentials, the home path and local absolute paths from a label.
+
+    Mirrors the intent of ``folith.engine.redaction.redact_error_text`` (#615);
+    when that module lands this should delegate to it.  Until then keep the
+    body digest itself free of raw text and the echoed label free of secrets.
+    """
+    import os
+    import re as _re
+    out = value
+    home = os.path.expanduser("~")
+    if home and home != "~":
+        out = out.replace(home, "~")
+    # Credential shapes (OpenAI/Google/GitHub/Slack/Bearer) and key: value.
+    for pattern in (r"sk-[A-Za-z0-9_\-]{12,}", r"AIza[0-9A-Za-z_\-]{20,}",
+                    r"ghp_[A-Za-z0-9]{20,}", r"xox[baprs]-[A-Za-z0-9\-]{10,}",
+                    r"(?i)bearer\s+[A-Za-z0-9._\-]{12,}"):
+        out = _re.sub(pattern, "<redacted>", out)
+    out = _re.sub(r"(?i)([\w.]*(?:api_key|apikey|token|authorization|secret|password)\s*[:=]\s*)\S+",
+                  r"\1<redacted>", out)
+    out = _re.sub(r'(?<![\w:/~])(/[\w.\-]+(?:/[\w.\-]+)+)|([A-Za-z]:\\[^\s"\']+)',
+                  "<path>", out)
+    return out
 
 
 def decode_segments(raw: str) -> List[Dict[str, Any]]:

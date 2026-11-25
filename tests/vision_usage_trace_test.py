@@ -300,7 +300,10 @@ def test_final_failure_keeps_300_fields_and_rejected_body(tmp_path):
     assert rows, "a final failure must still reach the existing failure log"
     row = rows[-1]
     assert row["page"] == 1 and row["page_index"] == 0
-    assert row["request"]["attempts"][-1]["response_body"] == body
+    # #220 C2 / CX-06 §3: only a structured digest is kept, never the raw body.
+    digest = row["request"]["attempts"][-1]["response_body"]
+    assert digest.startswith("<body:") and "invalid parameter" not in digest
+    assert body not in digest
     assert row["request"]["attempts"][-1]["response_chars"] == len(body)
 
 

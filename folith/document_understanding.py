@@ -643,10 +643,10 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
             if cancel_check and cancel_check():
                 raise RuntimeError('任务已请求取消') from exc   # not a page failure
             # 页码双记（#220 C3）：`page` 从 1 计，与界面、页面事件、报告一致；
-            # `page_index` 从 0 计，也是 <index>-failure.json 文件名里的那个数。
-            # 文件名保持 0 基不再改：同目录的逐页成功缓存 <index>.json 也是 0 基，
-            # 只改失败文件会撞号（22.json 是第 23 页的缓存、22-failure.json 却是
-            # 第 22 页），一起改则旧缓存全部失配，恢复任务会整本真实重读。
+            # `page_index` 从 0 计，是成功缓存 <index>.json 的文件名里的那个数。
+            # 失败文件改用 1 基、带 `page-` 前缀（page-<n>-failure.json），与 0 基的
+            # 成功缓存 <index>.json 不撞号；读取/删除时同时认旧的 <index>-failure.json，
+            # 旧文件照常可读，续跑不会把旧编号认成另一页。
             failure ={'page': i + 1, 'page_index': i,
                       'page_id':envelope.page_id, 'provider':'vlm', 'semantic_result':'failed',
                       'regions':len(index.regions), 'spatial_available':bool(index.regions),
@@ -659,7 +659,7 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                 failure['attempts'] = _diag.get('attempts')
             LOG.error('document_page %s', json.dumps(failure, ensure_ascii=False))
             if checkpoint_dir:
-                path = Path(checkpoint_dir)/'document_understanding'/f'{i}-failure.json'
+                path = Path(checkpoint_dir)/'document_understanding'/f'page-{i + 1}-failure.json'
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(failure, ensure_ascii=False), encoding='utf-8')
                 # The per-page file is deleted once the page is later read; this log is
@@ -702,7 +702,9 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
                                             ensure_ascii=False),encoding='utf-8')
             os.replace(temporary,cache_path)
             # 之前失败过、这次读成了：旧的失败记录不再有效。
-            (cache_path.parent/f'{i}-failure.json').unlink(missing_ok=True)
+            # Remove this page's failure file, whichever naming it was written with.
+            for _name in (f'page-{i + 1}-failure.json', f'{i}-failure.json'):
+                (cache_path.parent/_name).unlink(missing_ok=True)
     anchors = align_blocks(envelope, semantic.blocks, index)
     return semantic, anchors, index, started
 
