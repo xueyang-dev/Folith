@@ -34,8 +34,38 @@ def main_pid(runner, app: str) -> tuple[int | None, str]:
     return runner.frozen_app_main_pid(app)
 
 
-def sample(runner, app: str, started: float) -> dict:
+def _descendants(root_pid: int) -> set[int]:
+    """PIDs of this launch's process tree, from ps -o pid=,ppid=."""
+    import subprocess
+    try:
+        result = subprocess.run(["ps", "-o", "pid=,ppid="], capture_output=True,
+                                text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return {root_pid}
+    children: dict[int, list[int]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        try:
+            child, parent = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        children.setdefault(parent, []).append(child)
+    tree = {root_pid}
+    pending = [root_pid]
+    while pending:
+        for child in children.get(pending.pop(), []):
+            if child not in tree:
+                tree.add(child)
+                pending.append(child)
+    return tree
+
+
+def sample(runner, app: str, started: float, launch_pids: set[int]) -> dict:
     pid, command = main_pid(runner, app)
+    if pid not in launch_pids:
+        pid = None
     rss = None
     if pid is not None:
         try:
@@ -120,11 +150,7 @@ def main(argv=None) -> int:
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
                                    encoding="utf-8")
     if args.selftest_only:
-        smoke = native_smoke(args, out, data)
-        meta["engine_mode_observed"] = (engine_env(args.engine_mode)
-                                        if smoke["returncode"] == 0 else None)
-        (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
-                                       encoding="utf-8")
+        native_smoke(args, out, data)
         return 0
 
     if not args.runner:
@@ -136,6 +162,7 @@ def main(argv=None) -> int:
     process = subprocess.Popen([args.app, "--data-dir", str(data), "--log-dir", str(out / "logs")],
                                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                                text=True)
+    launch_pids = _descendants(process.pid)
     started = time.monotonic()
     deadline = started + args.hours * 3600.0
     samples: list[dict] = []
@@ -145,7 +172,7 @@ def main(argv=None) -> int:
             if process.poll() is not None:
                 early_exit = True
                 break
-            samples.append(sample(runner, args.app, started))
+            samples.append(sample(runner, args.app, started, launch_pids))
             time.sleep(args.sample_seconds)
         tail_start = time.monotonic()
         tail_end = tail_start + args.idle_tail_seconds
@@ -154,7 +181,7 @@ def main(argv=None) -> int:
             if process.poll() is not None:
                 early_exit = True
                 break
-            item = sample(runner, args.app, started)
+            item = sample(runner, args.app, started, launch_pids)
             samples.append(item)
             tail_samples.append(item)
             time.sleep(args.sample_seconds)
@@ -174,12 +201,13 @@ def main(argv=None) -> int:
     third = max(1, len(values) // 3)
     missing = len(samples) - len(with_pid)
     verdict = {"candidate_sha": args.candidate_sha, "app": args.app,
-               "engine_mode_observed": meta["engine_mode_requested"],
+               "engine_mode_observed": None,
                "process_hours": round((time.monotonic() - started) / 3600.0, 3),
                "observation_window_s": round(time.monotonic() - started, 1),
                "samples_total": len(samples), "samples_with_pid": len(with_pid),
                "samples_missing_pid": missing,
                "early_exit": early_exit, "exit_code": process.returncode,
+               "launch_pids": sorted(launch_pids),
                "main_pids_seen": sorted({s["pid"] for s in with_pid}),
                "idle_tail_samples": len(tail_samples),
                "idle_tail_rss_mb": [s["rss_mb"] for s in tail_samples],
