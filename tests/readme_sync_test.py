@@ -18,7 +18,8 @@ def _read(name: str) -> str:
 
 
 def _h2(text: str) -> list[str]:
-    return re.findall(r"^## ", text, flags=re.M)
+    # Section icons are shared across translations and identify their order.
+    return re.findall(r"^## (\S+)", text, flags=re.M)
 
 
 def _images(text: str) -> list[str]:
@@ -49,11 +50,26 @@ def test_translations_match_the_chinese_structure():
     main = _read(MAIN)
     for name in TRANSLATIONS:
         text = _read(name)
-        assert len(_h2(text)) == len(_h2(main)), f"{name}: section count differs from {MAIN}"
+        assert _h2(text) == _h2(main), f"{name}: section order differs from {MAIN}"
         assert len(_images(text)) == len(_images(main)), f"{name}: local image count differs"
         assert {_strip_suffix(p) for p in _screenshots(text)} == \
             _screenshots(main), f"{name}: screenshots differ"
         assert _local_links(text) == _local_links(main), f"{name}: doc links differ"
+
+
+def test_readmes_describe_smart_qa_and_original_format_boundaries():
+    # These are user-visible limitations, not just matching section counts.
+    markers = {
+        "README.md": ("Smart QA triage is experimental and off by default", "off by default"),
+        "README.zh-CN.md": ("智能 QA 分诊为实验功能，默认关闭", "默认关闭"),
+        "README.ru.md": ("триаж QA — экспериментальная функция, по умолчанию выключена", "по умолчанию выключен"),
+        "README.es.md": ("triaje inteligente de QA es experimental y está desactivado por defecto", "desactivado por defecto"),
+    }
+    for name, (qa, default) in markers.items():
+        text = _read(name)
+        assert qa in text, f"{name}: missing Smart QA limitation"
+        delivery_rows = [line for line in text.splitlines() if line.startswith("|") and "`original_format.docx`" in line]
+        assert len(delivery_rows) == 1 and default in delivery_rows[0], f"{name}: missing optional DOCX delivery"
 
 
 def test_every_readme_has_the_language_switcher():
