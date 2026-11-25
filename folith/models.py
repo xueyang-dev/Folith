@@ -164,9 +164,11 @@ def validate_document_profile(profile: Optional[DocumentProfile]) -> List[str]:
         errors.append("文档画像缺少 domain（领域）")
     if (profile.get("confidence") or 0) < 0.2:
         errors.append("文档画像置信度过低，结论仅供参考")
-    for sec in profile.get("sections") or []:
+    for index, sec in enumerate(profile.get("sections") or [], start=1):
         if not sec.get("topic") and not sec.get("domain"):
-            errors.append(f"章节 {sec.get('section_id', '?')} 缺少 topic/domain")
+            # 序号是这份列表里的位置，不是模型返回的 section_id。模型可以把
+            # 凭据写进那个字段，持久化的警告不能把它带出去。
+            errors.append(f"章节 {index} 缺少 topic/domain")
     return errors
 
 

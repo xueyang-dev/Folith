@@ -190,9 +190,9 @@ _AUXILIARY_GENERATED_INNERS = (
     re.compile(
         r"^画像缺少关键字段："
         r"(?:文档画像缺失|文档画像缺少 domain（领域）|文档画像置信度过低，结论仅供参考|"
-        r"章节 [A-Za-z0-9_.\-?]{1,64} 缺少 topic/domain)"
+        r"章节（序号已省略） 缺少 topic/domain)"
         r"(?:；(?:文档画像缺失|文档画像缺少 domain（领域）|文档画像置信度过低，结论仅供参考|"
-        r"章节 [A-Za-z0-9_.\-?]{1,64} 缺少 topic/domain))*$"
+        r"章节（序号已省略） 缺少 topic/domain))*$"
     ),
     re.compile(r"^余额不足，请充值或更换 API Key。$"),
     re.compile(rf"^API Key 无效或已过期{_HTTP_SUFFIX}，请检查密钥和服务商。$"),
@@ -213,6 +213,10 @@ _AUXILIARY_GENERATED_INNERS = (
         r"(?:; stage=[A-Za-z0-9_]+)?$"
     ),
 )
+#: 历史警告把模型的 section_id 拼进了「章节 … 缺少 topic/domain」。导出时
+#: 不论外壳是失败原因还是普通提示，这段 ID 都换成固定占位，警告本身保留。
+_CHAPTER_TOPIC_PLACEHOLDER = "章节（序号已省略） 缺少 topic/domain"
+_CHAPTER_TOPIC_GAP = re.compile(r"章节 .+? 缺少 topic/domain", re.DOTALL)
 _PROFILE_FAILURE_LINE = re.compile(
     r"^文档画像失败（(.*)），已跳过；可在 UI 中人工填写。$", re.DOTALL)
 _KNOWLEDGE_FAILURE_LINE = re.compile(r"^知识反馈调用失败：(.*)$", re.DOTALL)
@@ -242,6 +246,11 @@ def _legacy_auxiliary_echo(text) -> bool:
     return False
 
 
+def _omit_model_chapter_ids(text: str) -> str:
+    """Replace a model-supplied chapter id inside a topic/domain warning."""
+    return _CHAPTER_TOPIC_GAP.sub(_CHAPTER_TOPIC_PLACEHOLDER, text)
+
+
 def _redact_auxiliary_failure_copies(data: dict) -> None:
     """Replace legacy profile/knowledge failure text in the export copy.
 
@@ -254,6 +263,9 @@ def _redact_auxiliary_failure_copies(data: dict) -> None:
         if not isinstance(items, list):
             continue
         for index, item in enumerate(items):
+            if isinstance(item, str):
+                item = _omit_model_chapter_ids(item)
+                items[index] = item
             if _legacy_auxiliary_echo(item):
                 items[index] = EXPORT_CLEANED_ERROR_TEXT
     events = data.get("knowledge_events")

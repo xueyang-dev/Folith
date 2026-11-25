@@ -592,3 +592,56 @@ def test_export_cleans_legacy_profile_and_knowledge_failures(isolated, tmp_path)
     assert len(exported["warnings"]) == 5
     assert original == (job / "state.json").read_text(encoding="utf-8")
     assert secret in original
+
+
+def test_profile_warnings_do_not_keep_the_model_section_id(isolated, tmp_path):
+    """章节警告只用本地序号；历史警告里的模型 ID 在两份列表和 ZIP 中都换成占位。"""
+    from folith import models
+
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    secret = "sk-synthetic-chapter-credential"
+    profile = models.normalize_document_profile({
+        "domain": "law",
+        "confidence": 0.9,
+        "sections": [
+            {"section_id": secret, "start_segment": 0, "end_segment": 2},
+            {"section_id": "also-" + secret, "start_segment": 3, "end_segment": 4,
+             "topic": "kept"},
+        ],
+    })
+    problems = models.validate_document_profile(profile)
+    assert problems == ["章节 1 缺少 topic/domain"]
+    assert secret not in "\n".join(problems)
+    fresh = f"文档画像提示：{problems[0]}"
+    historical_hint = f"文档画像提示：章节 {secret} 缺少 topic/domain"
+    historical_failure = (
+        "文档画像失败（画像缺少关键字段：章节 " + secret
+        + " 缺少 topic/domain），已跳过；可在 UI 中人工填写。")
+    profile_warnings = [fresh, historical_hint, historical_failure]
+    warnings = [fresh, historical_hint, historical_failure, "术语表已更新"]
+    (job / "state.json").write_text(json.dumps({
+        "profile_warnings": profile_warnings,
+        "warnings": warnings,
+    }, ensure_ascii=False), encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup-chapter-id")
+    with zipfile.ZipFile(result["path"]) as archive:
+        blob = b"".join(archive.read(name) for name in archive.namelist())
+        exported = json.loads(archive.read(
+            "Folith-data/0123456789abcdef/state.json"))
+    placeholder = "章节（序号已省略） 缺少 topic/domain"
+    assert secret.encode() not in blob
+    assert len(exported["profile_warnings"]) == len(profile_warnings)
+    assert len(exported["warnings"]) == len(warnings)
+    assert placeholder in exported["profile_warnings"][1]
+    assert exported["profile_warnings"][1].startswith("文档画像提示：")
+    assert exported["profile_warnings"][2].startswith("文档画像失败（")
+    assert placeholder in exported["profile_warnings"][2]
+    assert exported["profile_warnings"][2] != support.EXPORT_CLEANED_ERROR_TEXT
+    assert placeholder in exported["warnings"][1]
+    assert placeholder in exported["warnings"][2]
+    assert exported["warnings"][3] == "术语表已更新"
+    joined = "\n".join(exported["profile_warnings"] + exported["warnings"])
+    assert secret not in joined
