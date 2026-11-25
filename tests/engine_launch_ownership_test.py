@@ -17,11 +17,15 @@ owner，并且**不发启动行**。终态比较发生在同一把锁里、读 t
 
 钉五件事：
 1. 启动行发出前，状态里已经是这次 supervisor 绑定的 token；
-2. 真实锁竞争下登记超时 → 启动失败、子进程被回收、启动行没送出，放开锁后可重试；
+2. 真实锁竞争下登记超时 → 启动失败、子进程被回收、进程内 owner 为空、
+   父进程 ``send_line`` 次数为 0，放开锁后可重试；
 3. 旧监控停在「锁内已读 token、尚未写状态」时，替换启动不能越过登记；
 4. 对照：没有替换的强杀仍写 ``interrupted``；正常完成不会被改成 ``interrupted``；
 5. Windows 替换因共享冲突失败时，内存里的新 token 不算发布成功：启动行不发、
-   子进程回收、磁盘 token 保持旧值，放开替换后可重试。普通心跳仍降级，不中止。
+   子进程回收、磁盘 token 保持旧值、上一轮取消请求不被清掉，放开替换后可重试。
+   普通心跳仍降级，不中止；
+6. 读失败或无效 JSON 不是「没有 token」。旧监控的终态写入和清 worker 块
+   都不落盘；文件可读但没有 launch 的旧格式任务仍允许终态写入。
 """
 from __future__ import annotations
 
@@ -178,6 +182,19 @@ def _start(job_id: str):
     return supervisor_module.supervisor(job_id)
 
 
+def _count_send_line(monkeypatch) -> dict:
+    """Count calls at the parent ``send_line`` boundary, not the child's file."""
+    sent = {"n": 0}
+    real = supervisor_module.EngineSupervisor.send_line
+
+    def counting(self, payload):
+        sent["n"] += 1
+        return real(self, payload)
+
+    monkeypatch.setattr(supervisor_module.EngineSupervisor, "send_line", counting)
+    return sent
+
+
 # ---------------------------------------------------------------------------
 # 1. the token is durable before the start line
 # ---------------------------------------------------------------------------
@@ -193,13 +210,28 @@ def test_the_launch_token_is_stored_before_the_start_line(isolated, stub_child,
     def snapshot(self, payload):
         seen["token"] = _token(job_id)
         seen["bound"] = self._end_launch_token
+        seen["flags"] = {
+            name: _state(job_id).get(name)
+            for name in ("pause_requested", "cancel_requested",
+                         "exit_requested", "restart_requested")
+        }
+        log = core.runtime_events_path(job_id)
+        seen["events"] = log.read_text(encoding="utf-8") if log.exists() else ""
         return real_send(self, payload)
 
     monkeypatch.setattr(supervisor_module.EngineSupervisor, "send_line", snapshot)
+    core.update_runtime_state(
+        job_id, pause_requested=True, cancel_requested=True,
+        exit_requested=True, restart_requested=True, status="interrupted")
     sup = _start(job_id)
     assert sup is not None
     assert seen.get("token"), "启动行发出前，状态里必须已有本次 launch token"
     assert seen["token"] == seen["bound"] == sup._end_launch_token
+    assert seen["flags"] == {
+        "pause_requested": False, "cancel_requested": False,
+        "exit_requested": False, "restart_requested": False,
+    }, seen["flags"]
+    assert "run_launched" in seen["events"]
     assert _wait_until(lambda: _status(job_id) == "running"), _state(job_id)
     assert len(_start_lines(data_dir, job_id)) == 1
 
@@ -209,7 +241,7 @@ def test_the_launch_token_is_stored_before_the_start_line(isolated, stub_child,
 # ---------------------------------------------------------------------------
 
 def test_a_contended_runtime_lock_fails_the_launch_and_reaps_the_child(
-        isolated, stub_child):
+        isolated, stub_child, monkeypatch):
     """另一个持有者占着 ``.runtime-write.lock`` 时，启动必须失败而不是跳过。"""
     data_dir, _logs = isolated
     job_id = "launch-ownership-2"
@@ -235,6 +267,7 @@ def test_a_contended_runtime_lock_fails_the_launch_and_reaps_the_child(
         return proc
 
     supervisor_module.subprocess.Popen = track
+    sent = _count_send_line(monkeypatch)
     started_at = time.monotonic()
     try:
         outcome = supervisor_module.start_engine(
@@ -247,6 +280,8 @@ def test_a_contended_runtime_lock_fails_the_launch_and_reaps_the_child(
     assert outcome.started is False, outcome.reason
     assert "启动所有权" in outcome.reason
     assert supervisor_module.supervisor(job_id) is None
+    assert core.engine_owner(job_id) == {}, "超时后进程内 owner 必须回滚为空"
+    assert sent["n"] == 0, "超时必须在父进程 send_line 之前失败"
     assert spawned and spawned[0].poll() is not None, "超时后子进程必须被回收"
     assert _start_lines(data_dir, job_id) == [], "超时后不得发出启动行"
     assert _token(job_id) == ""
@@ -414,8 +449,8 @@ def test_a_windows_replace_failure_does_not_publish_the_launch(
     """替换没成功时，内存里的新 token 不得当成启动所有权。
 
     测试在 ``replace_file`` 里同步把旧终态替换上磁盘，再以 winerror 32 拒绝
-    这次启动的替换。启动行不发、子进程回收、磁盘 token 保持旧值；放开替换后
-    同一次启动可以重试。
+    这次启动的替换。这次替换同时清四个请求旗标；它没落盘，旧取消就还在。
+    启动行不发、子进程回收、磁盘 token 保持旧值；放开替换后同一次启动可以重试。
     """
     data_dir, _logs = isolated
     job_id = "launch-ownership-replace"
@@ -423,6 +458,7 @@ def test_a_windows_replace_failure_does_not_publish_the_launch(
     old_token = "old-launch-token-b94"
     core.update_runtime_state(
         job_id, status="interrupted", phase="interrupted",
+        cancel_requested=True,
         launch={"token": old_token, "pid": 1})
     assert _token(job_id) == old_token
     _force_sharing_classification(monkeypatch)
@@ -430,9 +466,8 @@ def test_a_windows_replace_failure_does_not_publish_the_launch(
     refused = {"done": False}
 
     def refuse_launch_replace(source, destination):
-        # ``register_engine_owner`` 先做一次普通状态写入（清掉上一轮请求）。
-        # 只有带新 launch token 的那次替换才是启动所有权；在它的
-        # ``replace_file`` 里同步落旧终态，再以共享冲突拒绝这次替换。
+        # 清旗标和 launch token 是同一次 require_replace。带新 token 的替换
+        # 被拒绝时，同步把旧终态（含上一轮取消）落回磁盘。
         try:
             payload = json.loads(Path(source).read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -445,6 +480,7 @@ def test_a_windows_replace_failure_does_not_publish_the_launch(
             old_tmp.write_text(json.dumps({
                 "status": "interrupted",
                 "phase": "interrupted",
+                "cancel_requested": True,
                 "launch": {"token": old_token, "pid": 1},
             }, ensure_ascii=False), encoding="utf-8")
             try:
@@ -464,15 +500,19 @@ def test_a_windows_replace_failure_does_not_publish_the_launch(
         return proc
 
     monkeypatch.setattr(supervisor_module.subprocess, "Popen", track)
+    sent = _count_send_line(monkeypatch)
     outcome = supervisor_module.start_engine(
         job_id, mode="resume", connection=_connection())
     assert outcome.started is False, outcome.reason
     assert "启动所有权" in outcome.reason
     assert supervisor_module.supervisor(job_id) is None
+    assert core.engine_owner(job_id) == {}
+    assert sent["n"] == 0, "替换失败必须在父进程 send_line 之前返回"
     assert spawned and spawned[0].poll() is not None, "替换失败后子进程必须被回收"
     assert _start_lines(data_dir, job_id) == []
     assert _token(job_id) == old_token, _state(job_id)
     assert _status(job_id) == "interrupted"
+    assert _state(job_id).get("cancel_requested") is True, _state(job_id)
 
     retried = _start(job_id)
     assert retried is not None
@@ -480,3 +520,85 @@ def test_a_windows_replace_failure_does_not_publish_the_launch(
     assert _token(job_id) == retried._end_launch_token
     assert _wait_until(lambda: len(_start_lines(data_dir, job_id)) == 1), (
         "重试成功后应发出且只发出一行启动行")
+    assert _state(job_id).get("cancel_requested") is False, (
+        "重试成功后旧取消必须被同一次严格写入清掉")
+
+
+def test_a_failed_direct_registration_rolls_the_owner_back(isolated):
+    """``token is None`` 的清旗标写入超时，登记表不能留下无法释放的条目。"""
+    _data, _logs = isolated
+    job_id = "launch-ownership-rollback"
+    _create_job(job_id)
+    lock_path = core.job_dir(job_id) / ".runtime-write.lock"
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_the_lock():
+        with core._job_lock.exclusive(lock_path):
+            held.set()
+            release.wait(30)
+
+    holder = threading.Thread(target=hold_the_lock, daemon=True)
+    holder.start()
+    assert held.wait(10), "fixture never acquired the runtime-write lock"
+    try:
+        with pytest.raises(core._job_lock.JobLockTimeout):
+            core.register_engine_owner(job_id, pid=os.getpid())
+    finally:
+        release.set()
+        holder.join(timeout=10)
+    assert core.engine_owner(job_id) == {}
+
+
+def test_an_unreadable_state_does_not_let_the_old_monitor_write(
+        isolated, stub_child, monkeypatch):
+    """读失败不是「没有 token」。旧监控不得据此改终态或清掉 worker 块。"""
+    _data, _logs = isolated
+    job_id = "launch-ownership-unreadable"
+    _create_job(job_id)
+    sup = _start(job_id)
+    assert sup is not None
+    assert _wait_until(lambda: _status(job_id) == "running"), _state(job_id)
+    token = sup._end_launch_token
+    path = core.runtime_state_path(job_id)
+    before = path.read_bytes()
+
+    def fail_read(_path):
+        raise OSError("unreadable")
+
+    real_read = core._atomic_file.read_shared_text
+    monkeypatch.setattr(core._atomic_file, "read_shared_text", fail_read)
+    assert sup._publish_terminal_state() is False
+    assert core.update_runtime_state(
+        job_id, on_timeout="raise", expect_launch_token=token,
+        worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None},
+    ) is None
+    assert path.read_bytes() == before
+
+    monkeypatch.setattr(core._atomic_file, "read_shared_text", real_read)
+    path.write_bytes(b"{not-json")
+    assert core._write_terminal_runtime_state(
+        job_id, what="engine_process_exited", expect_launch_token=token,
+        status="interrupted", phase="interrupted",
+        worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None},
+    ) is None
+    assert path.read_bytes() == b"{not-json"
+
+
+def test_a_readable_state_without_a_launch_token_still_accepts_terminal(
+        isolated):
+    """文件可读、只是没有 launch 的旧格式任务，终态写入仍放行。"""
+    _data, _logs = isolated
+    job_id = "launch-ownership-old-format"
+    _create_job(job_id)
+    core.update_runtime_state(
+        job_id, status="running", phase="running",
+        worker={"owner_pid": 4242, "worker_id": "old-format",
+                "lease_expires_at": None})
+    published = core._write_terminal_runtime_state(
+        job_id, what="engine_process_exited", expect_launch_token="monitor-token",
+        status="interrupted", phase="interrupted", phase_label="旧格式可收束",
+        worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+    assert isinstance(published, dict)
+    assert _status(job_id) == "interrupted"
+    assert not (_state(job_id).get("worker") or {}).get("worker_id")

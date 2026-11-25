@@ -8294,6 +8294,7 @@ from folith.engine.runtime_state import (  # noqa: E402 - late by design
     runtime_technical_log_path as runtime_technical_log_path,
     _runtime_defaults as _runtime_defaults,
     load_runtime_state as load_runtime_state,
+    RuntimeStateUnreadable as RuntimeStateUnreadable,
     _runtime_event_code as _runtime_event_code,
     _runtime_event_meta as _runtime_event_meta,
     _append_runtime_event as _append_runtime_event,
@@ -8830,7 +8831,7 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
                          event_visibility=None, event_category=None,
                          event_logged=False, expect_launch_token=None,
-                         require_replace=False, **changes):
+                         require_replace=False, companion_event=None, **changes):
     """Atomically merge a worker status update into runtime_state.json.
 
     ``event_logged=True`` says the event has already been appended to
@@ -8877,6 +8878,13 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             job_dir(job_id) / ".runtime-write.lock",
             timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
         current = load_runtime_state(job_id)
+        # 读失败和无效 JSON 也是一份「没有 token」的默认值。终态比较和清
+        # worker 块不能把「读不到」当成「确实没有登记」放行，否则一次读失败
+        # 随后又能写盘时会盖掉真正的状态。文件可读、只是没有 launch（旧格式）
+        # 仍是普通 dict，下面的空 token 规则照旧放行。
+        if (expect_launch_token is not None
+                and isinstance(current, RuntimeStateUnreadable)):
+            return None
         # CX-10 §1 / CX-15 §3：比对与即将发生的替换在同一把 runtime 写锁里。
         # 启动所有权也由这次加锁写入发布，所以读到的 token 和即将落盘的字节
         # 之间没有锁外窗口。只有**非空且不同**的 token 才是接管：当前值为空
@@ -8950,6 +8958,19 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                         stage=current.get("stage_id") or current.get("stage"),
                         operation=current.get("operation_id") or current.get("operation"),
                         metadata=event_metadata, visibility=visibility, category=category)
+        if companion_event:
+            # Same lock, before the replace.  The engine launch uses this for
+            # ``run_launched`` so the cold-start ordering stays one write:
+            # the boundary event is durable before the owner is visible, and
+            # a failed replace leaves the state file untouched.
+            extra_message, extra_name = companion_event
+            _append_runtime_event(
+                job_id,
+                {"event": extra_name, "message": extra_message,
+                 "pipeline": current.get("pipeline")},
+                stage=current.get("stage_id") or current.get("stage"),
+                operation=current.get("operation_id") or current.get("operation"),
+                visibility="technical", category="lifecycle")
         directory = job_dir(job_id)
         directory.mkdir(parents=True, exist_ok=True)
         tmp = directory / f"{RUNTIME_STATE_FILE}.{uuid.uuid4().hex}.tmp"
