@@ -357,8 +357,9 @@ def test_delivery_blocking_line_is_fully_translated_in_every_catalog():
         i18n.set_language(code)
         keys = list(json.loads(i18n.catalog_path("qt", code).read_text(encoding="utf-8")))
         assert _DELIVERY_BLOCKING_TEMPLATE in keys, f"{code}: 缺整句模板"
-        assert keys.index(_DELIVERY_BLOCKING_TEMPLATE) < keys.index("第 {v0} 段：{v1}"), \
-            f"{code}: 整句模板被泛化模板抢先命中"
+        # P15: catalogs are key-sorted; tr_dynamic picks the most specific
+        # template by literal length, not by insertion order. Assert the
+        # rendered result rather than key positions.
         rendered = i18n.tr_dynamic(_DELIVERY_BLOCKING_LINE)
         # 段号与每个数字都原样保留
         for number in ("3507", "58", "3", "19", "1"):
