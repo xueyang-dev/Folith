@@ -117,7 +117,7 @@ def extract_observations(
             detail = persisted_auxiliary_failure(
                 exc, api_key=api_key, stage="knowledge_feedback")[:160]
         except Exception:  # pragma: no cover - defensive import fallback
-            detail = str(exc)[:160]
+            detail = f"诊断未能生成（{type(exc).__name__}）"
         return [], f"知识反馈调用失败：{detail}"
     if parsed is None:
         return [], "知识反馈返回不是 JSON 数组"

@@ -181,38 +181,65 @@ EXPORT_OMITTED_LINE_TEXT = "无法解析的旧记录已省略（可能为写到�
 #: 类事件的 reason 是正常诊断文案，导出时照带。
 _EXPORT_FAILURE_PHASE_MARK = "failed"
 
-#: 画像失败和知识反馈失败会把同一次辅助调用的文本写进 state.json。分类后的
-#: 额度/限流文案、本地校验提示，以及本程序自己的结构化诊断，都不含回包原文。
-#: 对不上这些稳定文案的失败字段，按翻译失败同样替换；「文档画像提示」和知识
-#: 观察事件不在此列。
-_AUXILIARY_STABLE_FAILURE_MARKERS = (
-    "无文本样本",
-    "合法 JSON",
-    "关键字段",
-    "模型未返回内容",
-    "用量额度已用尽",
-    "余额不足",
-    "API Key 无效",
-    "请求过于频繁",
-    "服务商拒绝了请求",
-    "无法连接服务商",
-    "服务商暂时不可用",
-    "API 请求失败",
-    "不是 JSON 数组",
+#: 画像失败和知识反馈失败的备份只保留本程序自己写过的整条。子串不够：旧回显
+#: 里夹着「API 请求失败」或同时出现 ``class=`` / ``error=``，照样可能带着凭据。
+_HTTP_SUFFIX = r"(?:（HTTP \d+）)?"
+_AUXILIARY_GENERATED_INNERS = (
+    re.compile(r"^模型未返回内容$"),
+    re.compile(r"^返回内容不是合法 JSON 对象$"),
+    re.compile(
+        r"^画像缺少关键字段："
+        r"(?:文档画像缺失|文档画像缺少 domain（领域）|文档画像置信度过低，结论仅供参考|"
+        r"章节 [A-Za-z0-9_.\-?]{1,64} 缺少 topic/domain)"
+        r"(?:；(?:文档画像缺失|文档画像缺少 domain（领域）|文档画像置信度过低，结论仅供参考|"
+        r"章节 [A-Za-z0-9_.\-?]{1,64} 缺少 topic/domain))*$"
+    ),
+    re.compile(r"^余额不足，请充值或更换 API Key。$"),
+    re.compile(rf"^API Key 无效或已过期{_HTTP_SUFFIX}，请检查密钥和服务商。$"),
+    re.compile(r"^该连接的(?:本月)?用量额度已用尽，等一会儿不会恢复；请更换连接或提升额度。$"),
+    re.compile(rf"^请求过于频繁或已达到服务商限额{_HTTP_SUFFIX}，请稍后重试。$"),
+    re.compile(r"^服务商拒绝了请求（HTTP 403），请检查 API 权限、余额或接口地址。$"),
+    re.compile(r"^无法连接服务商，请检查 API 地址和网络。$"),
+    re.compile(rf"^服务商暂时不可用{_HTTP_SUFFIX}，请稍后重试。$"),
+    re.compile(rf"^API 请求失败{_HTTP_SUFFIX}，请检查服务商配置后重试。$"),
+    re.compile(r"^诊断未能生成（[A-Za-z_][A-Za-z0-9_]*）$"),
+    re.compile(
+        r"^class=[a-z_]+"
+        r"(?:; http=\d+)?"
+        r"(?:; code=[A-Za-z0-9_.\-]+)?"
+        r"(?:; request_id=[A-Za-z0-9_.\-]+)?"
+        r"(?:; period=[A-Za-z0-9_.\-]+)?"
+        r"; error=[A-Za-z_][A-Za-z0-9_]*"
+        r"(?:; stage=[A-Za-z0-9_]+)?$"
+    ),
 )
+_PROFILE_FAILURE_LINE = re.compile(
+    r"^文档画像失败（(.*)），已跳过；可在 UI 中人工填写。$", re.DOTALL)
+_KNOWLEDGE_FAILURE_LINE = re.compile(r"^知识反馈调用失败：(.*)$", re.DOTALL)
+
+
+def _generated_auxiliary_inner(text: str) -> bool:
+    return any(pattern.fullmatch(text) for pattern in _AUXILIARY_GENERATED_INNERS)
 
 
 def _legacy_auxiliary_echo(text) -> bool:
-    """True when a persisted auxiliary failure may still carry a raw reply."""
+    """True when a persisted auxiliary failure is not one of our whole lines.
+
+    Only a fixed prefix plus the complete shape this program writes is kept.
+    A reply that merely contains a stable phrase, or both ``class=`` and
+    ``error=``, is still a legacy echo.
+    """
     if not isinstance(text, str) or not text:
         return False
-    if text.startswith("文档画像提示"):
+    if text == "文档画像失败：无文本样本":
         return False
-    if not (text.startswith("文档画像失败") or text.startswith("知识反馈调用失败")):
-        return False
-    if "class=" in text and "error=" in text:
-        return False
-    return not any(marker in text for marker in _AUXILIARY_STABLE_FAILURE_MARKERS)
+    profile = _PROFILE_FAILURE_LINE.fullmatch(text)
+    if profile:
+        return not _generated_auxiliary_inner(profile.group(1))
+    knowledge = _KNOWLEDGE_FAILURE_LINE.fullmatch(text)
+    if knowledge:
+        return not _generated_auxiliary_inner(knowledge.group(1))
+    return False
 
 
 def _redact_auxiliary_failure_copies(data: dict) -> None:

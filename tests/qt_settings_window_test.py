@@ -541,15 +541,21 @@ def test_export_cleans_legacy_profile_and_knowledge_failures(isolated, tmp_path)
         "stage=document_profile），已跳过；可在 UI 中人工填写。")
     raw_knowledge = "知识反馈调用失败：Error code: 400 - body " + secret
     local_knowledge = "知识反馈返回不是 JSON 数组"
+    echoed = (
+        "文档画像失败（上游返回 API 请求失败，api_key=" + secret
+        + "），已跳过；可在 UI 中人工填写。")
+    echoed_knowledge = "知识反馈调用失败：API 请求失败 " + secret
     state = {
-        "profile_warnings": [raw_profile, quota, hint, structured],
-        "warnings": [raw_profile, quota, hint, "术语表已更新"],
+        "profile_warnings": [raw_profile, quota, hint, structured, echoed],
+        "warnings": [raw_profile, quota, hint, "术语表已更新", echoed],
         "knowledge_feedback_failures": 2,
         "knowledge_events": [
             {"type": "extract_failed", "batch": 3, "offset": 12,
              "reason": raw_knowledge},
             {"type": "extract_failed", "batch": 4, "offset": 16,
              "reason": local_knowledge},
+            {"type": "extract_failed", "batch": 5, "offset": 20,
+             "reason": echoed_knowledge},
             {"type": "entity_observation", "batch": 3, "offset": 12,
              "source": "术语", "observed_target": "term",
              "reason": "观察到的译法"},
@@ -566,19 +572,23 @@ def test_export_cleans_legacy_profile_and_knowledge_failures(isolated, tmp_path)
             "Folith-data/0123456789abcdef/state.json"))
     assert secret.encode() not in blob
     assert exported["profile_warnings"] == [
-        support.EXPORT_CLEANED_ERROR_TEXT, quota, hint, structured]
+        support.EXPORT_CLEANED_ERROR_TEXT, quota, hint, structured,
+        support.EXPORT_CLEANED_ERROR_TEXT]
     assert exported["warnings"] == [
-        support.EXPORT_CLEANED_ERROR_TEXT, quota, hint, "术语表已更新"]
+        support.EXPORT_CLEANED_ERROR_TEXT, quota, hint, "术语表已更新",
+        support.EXPORT_CLEANED_ERROR_TEXT]
     failed = exported["knowledge_events"]
     assert failed[0]["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
     assert failed[0]["batch"] == 3 and failed[0]["offset"] == 12
     assert failed[1]["reason"] == local_knowledge
     assert failed[1]["batch"] == 4 and failed[1]["offset"] == 16
-    assert failed[2]["type"] == "entity_observation"
-    assert failed[2]["reason"] == "观察到的译法"
-    assert failed[2]["source"] == "术语"
+    assert failed[2]["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert failed[2]["batch"] == 5 and failed[2]["offset"] == 20
+    assert failed[3]["type"] == "entity_observation"
+    assert failed[3]["reason"] == "观察到的译法"
+    assert failed[3]["source"] == "术语"
     assert exported["knowledge_feedback_failures"] == 2
-    assert len(exported["profile_warnings"]) == 4
-    assert len(exported["warnings"]) == 4
+    assert len(exported["profile_warnings"]) == 5
+    assert len(exported["warnings"]) == 5
     assert original == (job / "state.json").read_text(encoding="utf-8")
     assert secret in original

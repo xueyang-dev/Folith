@@ -180,7 +180,7 @@ def profile_document(
                 last_err = persisted_auxiliary_failure(
                     e, api_key=api_key, stage="document_profile")
             except Exception:  # pragma: no cover - defensive import fallback
-                last_err = raw_error
+                last_err = f"诊断未能生成（{type(e).__name__}）"
             if provider_status.get("status") == "quota_exhausted":
                 # 额度用尽不是限流：等多久都不会恢复，再试只会把同一份额度再撞一次，
                 # 还把失败推迟到更晚（#49 的真实原因就是这个）。直接如实降级。
