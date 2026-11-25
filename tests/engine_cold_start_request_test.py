@@ -631,6 +631,7 @@ def test_stale_requests_do_not_leak_into_the_next_engine_launch(isolated, gatewa
     assert launched.get("pause_requested") is False, launched
     assert launched.get("cancel_requested") is False, launched
     assert launched.get("exit_requested") is False, launched
+    assert launched.get("restart_requested") is False, launched
 
     # The launch clear also removed the seeded status's request labels, so wait
     # for the child's own run before judging the outcome.

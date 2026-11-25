@@ -70,6 +70,15 @@ def _runtime_defaults():
         },
     }
 
+class RuntimeStateUnreadable(dict):
+    """Default-shaped state meaning the file could not be read.
+
+    A readable file with no ``launch`` token is an old-format task and is a
+    normal dict.  This marker is only for a read error or invalid JSON, so an
+    ownership-conditional write can refuse to treat "unreadable" as "no token".
+    """
+
+
 def load_runtime_state(job_id):
     """Read the durable worker status without changing the workflow state."""
     core = _core()
@@ -78,9 +87,9 @@ def load_runtime_state(job_id):
     try:
         raw = json.loads(core._atomic_file.read_shared_text(core.runtime_state_path(job_id)))
     except (OSError, TypeError, ValueError):
-        return core._runtime_defaults()
+        return RuntimeStateUnreadable(core._runtime_defaults())
     if not isinstance(raw, dict):
-        return core._runtime_defaults()
+        return RuntimeStateUnreadable(core._runtime_defaults())
     result = core._runtime_defaults()
     result.update(raw)
     result["schema_version"] = core.RUNTIME_SCHEMA_VERSION

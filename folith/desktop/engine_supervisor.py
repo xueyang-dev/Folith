@@ -1157,15 +1157,17 @@ def publish_starting_status(job_id: str, *, launch_token: str = "",
     nothing happened -- which is exactly what G-E item 4 forbids.
 
     With ``launch_token`` the same single write also publishes the new run's
-    ownership (CX-10 §1 / CX-15 §3).  That write is the serialization boundary
+    ownership (CX-10 §1 / CX-15 §3) and clears the previous run's
+    pause/cancel/exit/restart flags.  That write is the serialization boundary
     shared with the old monitor's terminal compare-and-replace: it uses the
-    runtime-write lock and ``on_timeout="raise"``, and this function returns
-    False unless the state actually landed.  A contended lock therefore fails
-    the launch (the caller reaps the child and does not send the start line)
-    instead of starting a run whose token was never recorded.  A Windows
-    sharing violation is the same failure: ``require_replace`` refuses the
-    in-memory dict that ``update_runtime_state`` would otherwise return after
-    the replace retries are exhausted, because that dict's token is not on disk.
+    runtime-write lock, ``on_timeout="raise"`` and ``require_replace=True``,
+    and this function returns False unless the state actually landed.  A
+    contended lock or a Windows sharing violation therefore fails the whole
+    launch — flags included — instead of leaving a new token on disk while an
+    old cancel rides along, or starting a run whose token was never recorded.
+    The in-memory owner is registered only after this returns, so a user
+    request cannot be accepted and then erased by the clear: until the entry
+    exists the pause/cancel gates refuse, and nothing after it clears again.
 
     The phase label matches the in-process one so the workbench renders the
     same "准备中" and the handover to the child's own write is invisible.
@@ -1177,8 +1179,11 @@ def publish_starting_status(job_id: str, *, launch_token: str = "",
             job_id, on_timeout="raise", require_replace=True,
             status="queued", phase="starting",
             phase_label="准备中", launch=launch,
+            pause_requested=False, cancel_requested=False,
+            exit_requested=False, restart_requested=False,
             event="正在启动后台引擎进程", event_name="engine_starting",
-            event_visibility="technical", event_category="orchestration")
+            event_visibility="technical", event_category="orchestration",
+            companion_event=("已启动新的运行", "run_launched"))
     except Exception:  # noqa: BLE001 - the caller treats this as a failed launch
         return False
     return isinstance(written, dict)
@@ -1222,19 +1227,29 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
         return EngineOutcome(False, f"无法启动后台引擎进程（{type(exc).__name__}）")
 
     core = _core()
-    token = ""
-    try:
-        token = core.register_engine_owner(job_id, pid=proc.pid)
-    except Exception:  # noqa: BLE001 - liveness falls back to the lease on disk
-        token = ""
-    # CX-12 §3 / CX-15 §3: publish ownership through the runtime-write lock and
-    # check the result BEFORE the supervisor's monitor exists and BEFORE the
-    # child is handed its start line.  A timeout is a failed launch: the child
-    # is reaped and nothing is sent, so an older monitor still inside that lock
-    # cannot later observe a live replacement it did not see at token-read time.
+    # Minted here and passed in.  ``register_engine_owner`` treats a given
+    # token as a rebind and does not write, so a lock timeout cannot swallow
+    # the token and leave the registry behind.  ``_bind_worker_id`` passes a
+    # token for the same reason and still does not clear flags.
+    token = uuid.uuid4().hex
+    # The flag clear is this require_replace write, and it lands before the
+    # owner is visible.  Pause/cancel refuse until the registry entry exists,
+    # so no user request can sit between the clear and the registration.
     launch_token = uuid.uuid4().hex
     if not publish_starting_status(job_id, launch_token=launch_token,
                                    launch_pid=proc.pid):
+        try:
+            proc.kill()
+            proc.wait(timeout=2)
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+        return EngineOutcome(
+            False, "无法登记本次运行的启动所有权，任务没有开始；请重试。")
+    try:
+        registered = core.register_engine_owner(job_id, pid=proc.pid, token=token)
+    except Exception:  # noqa: BLE001 - liveness falls back to the lease on disk
+        registered = ""
+    if registered != token:
         try:
             proc.kill()
             proc.wait(timeout=2)
@@ -1246,6 +1261,11 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
             pass
         return EngineOutcome(
             False, "无法登记本次运行的启动所有权，任务没有开始；请重试。")
+    # CX-12 §3 / CX-15 §3: ownership is published through the runtime-write
+    # lock BEFORE the supervisor's monitor exists and BEFORE the child is
+    # handed its start line.  A timeout is a failed launch: the child is
+    # reaped and nothing is sent, so an older monitor still inside that lock
+    # cannot later observe a live replacement it did not see at token-read time.
     sup = EngineSupervisor(
         job_id, proc, token=token, command=command, data_dir=data_dir,
         log_dir=log_dir, secrets=_secrets_in(connection),
@@ -1258,10 +1278,10 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
     # must land *before* the start line: a child that fails instantly publishes
     # its own terminal state, and writing "starting" afterwards would overwrite
     # the truth with a status that never happened.
-    # The core clears the request flags *there*, before ``start_engine``
-    # returns; the child reaches its own lines ~1 s later and never clears
-    # again (E-6a).  This launch stamp is the durable ownership of the new
-    # run (CX-10 §1): it lands before the start line, so the moment the UI
+    # The four request flags were cleared in that same replace, before this
+    # function returns; the child reaches its own lines ~1 s later and never
+    # clears again (E-6a).  This launch stamp is the durable ownership of the
+    # new run (CX-10 §1): it lands before the start line, so the moment the UI
     # can show the new run, an older monitor can already tell it apart.
     if not sup.send_line(line):
         sup.abandon()
