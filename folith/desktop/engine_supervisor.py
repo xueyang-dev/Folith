@@ -1251,7 +1251,8 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
         log_dir=log_dir, secrets=_secrets_in(connection),
         launch_token=launch_token)
     line = engine_protocol.encode_start_request(
-        job_id, connection, mode=mode, filename=filename)
+        job_id, connection, mode=mode, filename=filename,
+        launch_token=launch_token)
     # The child owns every later status; this one is Ours so Start has feedback
     # within a second instead of after the child's cold start (G-E item 4).  It
     # must land *before* the start line: a child that fails instantly publishes

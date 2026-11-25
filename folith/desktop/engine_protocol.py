@@ -68,7 +68,8 @@ MODE_RESUME = "resume"
 _JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 _START_KEYS = frozenset({"v", "cmd", "job_id", "mode", "filename",
-                         "connection", "reviewer", "reasoning_effort"})
+                         "connection", "reviewer", "reasoning_effort",
+                         "launch_token"})
 _RESTART_KEYS = frozenset({"v", "cmd", "connection", "reviewer",
                            "reasoning_effort"})
 _CONNECTION_KEYS = frozenset({"provider", "model", "base_url", "api_key"})
@@ -129,6 +130,7 @@ class StartRequest:
     connection: ConnectionSpec
     mode: str = MODE_RESUME
     filename: str = ""
+    launch_token: str = ""
     protocol_version: int = PROTOCOL_VERSION
 
     def redacted(self) -> Dict[str, Any]:
@@ -138,6 +140,7 @@ class StartRequest:
             "job_id": self.job_id,
             "mode": self.mode,
             "filename": self.filename,
+            "launch_token": self.launch_token,
             "connection": self.connection.redacted(),
         }
 
@@ -234,11 +237,16 @@ def _decode_start(message: Mapping[str, Any]) -> StartRequest:
     filename = _optional_text(message, "filename", "")
     if "\x00" in filename or "\n" in filename or "\r" in filename:
         raise EngineProtocolError("'filename' must be a single-line string")
+    launch_token = _optional_text(message, "launch_token", "")
+    if launch_token and not _JOB_ID.fullmatch(launch_token):
+        raise EngineProtocolError(
+            "'launch_token' must match [A-Za-z0-9_-]{1,128}")
     return StartRequest(
         job_id=job_id,
         connection=_decode_connection(message),
         mode=mode,
         filename=filename,
+        launch_token=launch_token,
     )
 
 
@@ -339,7 +347,8 @@ def _path(where: str, key: str) -> str:
 
 def encode_start_request(job_id: str, connection: ConnectionSpec, *,
                          mode: str = MODE_RESUME,
-                         filename: str = "") -> bytes:
+                         filename: str = "",
+                         launch_token: str = "") -> bytes:
     """One start line, newline-terminated.  The caller writes it to stdin."""
     message: Dict[str, Any] = {
         "v": PROTOCOL_VERSION,
@@ -350,6 +359,8 @@ def encode_start_request(job_id: str, connection: ConnectionSpec, *,
     }
     if filename:
         message["filename"] = filename
+    if launch_token:
+        message["launch_token"] = launch_token
     _add_optional_roles(message, connection)
     return encode_message(message)
 

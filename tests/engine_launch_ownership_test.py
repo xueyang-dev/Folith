@@ -202,6 +202,8 @@ def test_the_launch_token_is_stored_before_the_start_line(isolated, stub_child,
     assert seen["token"] == seen["bound"] == sup._end_launch_token
     assert _wait_until(lambda: _status(job_id) == "running"), _state(job_id)
     assert len(_start_lines(data_dir, job_id)) == 1
+    sent = json.loads(_start_lines(data_dir, job_id)[0])
+    assert sent.get("launch_token") == seen["token"]
 
 
 # ---------------------------------------------------------------------------
