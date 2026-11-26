@@ -121,13 +121,8 @@ def normalize_section_profile(raw: Any, index: int = 0) -> Optional[SectionProfi
     end = clean_int(raw.get("end_segment"), default=-1)
     if start < 0 or end < 0 or end < start:
         return None
-    # CX-19 (#615 阻断): section_id 一律用本地编号，不保留模型给的值。
-    # 模型可以把这个字段写成任意字符串（甚至把它当凭据塞进去），而它会随
-    # document_profile 整份写进 state.json 并导出到备份。用列表位置生成的值
-    # 稳定、可复现，且下游（dynamic_context / context / terminology）都只按
-    # start/end_segment 范围定位、不依赖模型 ID，因此统一替换不会破坏引用。
     return {
-        "section_id": f"section-{index + 1}",
+        "section_id": clean_str(raw.get("section_id"), default=f"section-{index + 1}"),
         "start_segment": start,
         "end_segment": end,
         "topic": clean_str(raw.get("topic")),
