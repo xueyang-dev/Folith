@@ -716,7 +716,6 @@ def test_recovered_old_task_keeps_section_terms_by_original_id(isolated):
     })
     assert profile["sections"][0]["section_id"] == "intro"
     # 术语 scope 用 section:intro，与画像一致 -> 匹配成功。
-    matched = []
     term = {"term": "合同", "scope": "section:intro"}
     scope = (term.get("scope") or "").strip()
     section = profile["sections"][0]
