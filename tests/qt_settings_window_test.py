@@ -761,11 +761,12 @@ def test_export_scrubs_long_secret_across_all_references_and_recovers(isolated, 
     }
     state["understanding_warnings"] = ["摘要失败 " + secret]
     state["document_synopsis"] = {"summary": "s", "warning": "概要 " + secret}
-    _write_job(data, "feedface12345678", state)
-    (data / "semantic_units.json").write_text(
+    job = _write_job(data, "feedface12345678", state)
+    # 独立文件放任务目录（生产位置），不在数据根。
+    (job / "semantic_units.json").write_text(
         json.dumps([{"source_range_id": "section-" + secret}], ensure_ascii=False),
         encoding="utf-8")
-    (data / "document_synopsis.json").write_text(
+    (job / "document_synopsis.json").write_text(
         json.dumps({"summary": "s", "warning": "概要 " + secret}, ensure_ascii=False),
         encoding="utf-8")
 
@@ -793,3 +794,82 @@ def test_export_scrubs_long_secret_across_all_references_and_recovers(isolated, 
             return True
         return any(s["section_id"] == scope[8:] for s in secs)
     assert all(_sect_match(sc, sections) for sc in scopes)
+
+
+def test_journal_jsonl_keeps_u2028_and_scrubs_long_secret(isolated, tmp_path, monkeypatch):
+    """CX-22：JSONL 按真实 LF 分行——译文含 U+2028 不拆记录，长凭据被擦，条数不变。"""
+    from folith.storage import state_journal as journal
+    data, _store = isolated
+    secret = "Zk" + "w" * 22   # 长合成凭据（>=8，非内置形状）
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "api_key": secret, "connections": [],
+    })
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+    job = data / "0123journal98765"
+    job.mkdir(parents=True, exist_ok=True)
+    core.new_job_state("doc.txt")  # ensure core importable
+    path = journal.journal_path("0123journal98765", output_dir=data)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = [
+        {"schema": journal.JOURNAL_SCHEMA_VERSION,
+         "mutation": journal.MUTATION_TRANSLATION_BATCH, "seq": 1,
+         "mutation_id": "m1", "ts": 1.0, "batch": 0, "offset": 0,
+         "segment_ids": [0], "pairs": [{"source": "s0",
+                                       "target": "译文含分隔符\u2028换行后仍在同一条"}]},
+        {"schema": journal.JOURNAL_SCHEMA_VERSION,
+         "mutation": journal.MUTATION_TRANSLATION_BATCH, "seq": 2,
+         "mutation_id": "m2", "ts": 2.0, "batch": 1, "offset": 1,
+         "segment_ids": [1], "pairs": [{"source": "s1", "target": secret}]},
+    ]
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+                    encoding="utf-8")
+    before = journal.read_mutations("0123journal98765", output_dir=data)
+    assert len(before) == 2
+
+    result = support.export_all_data(tmp_path / "backup-journal")
+    with zipfile.ZipFile(result["path"]) as archive:
+        name = next(n for n in archive.namelist() if n.endswith("state_journal.jsonl"))
+        blob = archive.read(name)
+    # 每一物理行都能解析（U+2028 未被当成换行拆开）。
+    lines = [ln for ln in blob.decode("utf-8").split("\n") if ln.strip()]
+    parsed = [json.loads(ln) for ln in lines]
+    assert len(parsed) == 2, f"记录被拆坏：{len(parsed)} 行"
+    assert secret.encode() not in blob
+    # 恢复端读回条数不变。
+    extract = tmp_path / "restore"
+    with zipfile.ZipFile(result["path"]) as archive:
+        archive.extractall(extract)
+    import shutil as _sh
+    src = extract / "Folith-data"
+    restored = tmp_path / "restoredata"
+    restored.mkdir()
+    _sh.copytree(src, restored, dirs_exist_ok=True)
+    after = journal.read_mutations("0123journal98765", output_dir=restored)
+    assert len(after) == 2, "导出后 journal 回放条数变了"
+
+
+def test_general_warnings_understanding_echo_scrubbed(isolated, tmp_path, monkeypatch):
+    """CX-22：全文理解错误同时进 understanding_warnings 和通用 warnings，两处都被换成固定文案；普通提示保留。"""
+    data, _store = isolated
+    secret = "Qv" + "r" * 20
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "api_key": secret, "connections": [],
+    })
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+    echo = "全文摘要失败：Error code: 400 - body " + secret
+    ordinary = "术语表已更新"
+    state = core.new_job_state("doc.txt")
+    state["understanding_warnings"] = [echo]
+    state["warnings"] = [echo, ordinary]
+    state["document_synopsis"] = {"summary": "s", "warning": echo}
+    _write_job(data, "abcdef0123456789", state)
+
+    result = support.export_all_data(tmp_path / "backup-warn")
+    with zipfile.ZipFile(result["path"]) as archive:
+        exported = json.loads(archive.read(
+            "Folith-data/abcdef0123456789/state.json"))
+        whole = b"".join(archive.read(n) for n in archive.namelist())
+    assert secret.encode() not in whole
+    assert support.EXPORT_CLEANED_ERROR_TEXT in exported["warnings"], \
+        "通用 warnings 里的理解错误副本未替换"
+    assert ordinary in exported["warnings"], "普通提示被误改"

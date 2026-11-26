@@ -270,14 +270,32 @@ def _redact_diagnostic_fields(data: dict) -> None:
         for entry in batches:
             if isinstance(entry, dict) and entry.get("error"):
                 entry["error"] = EXPORT_CLEANED_ERROR_TEXT
-    warnings = data.get("understanding_warnings")
-    if isinstance(warnings, list):
-        for index, item in enumerate(warnings):
+    # CX-22: the same understanding error is also written into the general
+    # ``warnings`` list (core writes both). Capture the original values *before*
+    # replacing the dedicated fields, then swap the matching entries in
+    # ``warnings`` too — otherwise the general copy carries the remote echo
+    # (and any rotated credential) into the ZIP.
+    echoed_warnings = set()
+    uw = data.get("understanding_warnings")
+    if isinstance(uw, list):
+        for item in uw:
             if isinstance(item, str) and item:
-                warnings[index] = EXPORT_CLEANED_ERROR_TEXT
+                echoed_warnings.add(item)
     synopsis = data.get("document_synopsis")
     if isinstance(synopsis, dict) and synopsis.get("warning"):
+        echoed_warnings.add(synopsis["warning"])
+    if isinstance(uw, list):
+        for index, item in enumerate(uw):
+            if isinstance(item, str) and item:
+                uw[index] = EXPORT_CLEANED_ERROR_TEXT
+    if isinstance(synopsis, dict) and synopsis.get("warning"):
         synopsis["warning"] = EXPORT_CLEANED_ERROR_TEXT
+    if echoed_warnings:
+        general = data.get("warnings")
+        if isinstance(general, list):
+            for index, item in enumerate(general):
+                if isinstance(item, str) and item in echoed_warnings:
+                    general[index] = EXPORT_CLEANED_ERROR_TEXT
 
 
 def _redact_auxiliary_failure_copies(data: dict) -> None:
@@ -418,7 +436,14 @@ def _scrub_export_credentials(name: str, payload: bytes,
     except UnicodeDecodeError:
         return payload
     if lower.endswith(".jsonl"):
-        lines = text.splitlines()
+        # CX-22: split on real LF only. str.splitlines() also breaks on
+        # U+2028/U+2029, which a JSON string may legally contain, tearing a
+        # valid record in two and breaking journal replay.
+        lines = [line[:-1] if line.endswith("\r") else line
+                 for line in text.split("\n")]
+        trailing_newline = text.endswith("\n")
+        if trailing_newline:
+            lines = lines[:-1]  # drop the empty element after the final LF
         changed = [False]
         out_lines = []
         for line in lines:
@@ -432,8 +457,8 @@ def _scrub_export_credentials(name: str, payload: bytes,
                 continue
             out_lines.append(json.dumps(
                 _scrub_strings(record, long_secrets, changed), ensure_ascii=False))
-        return ("\n".join(out_lines) + ("\n" if text.endswith("\n") else "")).encode("utf-8") \
-            if changed[0] else payload
+        result = "\n".join(out_lines) + ("\n" if trailing_newline else "")
+        return result.encode("utf-8") if changed[0] else payload
     if lower.endswith(".json"):
         try:
             data = json.loads(text)
@@ -473,8 +498,15 @@ def _clean_export_member(name: str, payload: bytes) -> bytes:
     if name not in _EXPORT_CLEANED_BASENAMES:
         return payload
     if name.endswith(".jsonl"):
+        # CX-22: split on real LF only (U+2028/U+2029 are legal inside a string).
+        raw = payload.decode("utf-8", "replace")
+        split = raw.split("\n")
+        if raw.endswith("\n"):
+            split = split[:-1]
         lines = []
-        for line in payload.decode("utf-8", "replace").splitlines():
+        for line in split:
+            if line.endswith("\r"):
+                line = line[:-1]
             if line.strip():
                 try:
                     record = json.loads(line)
