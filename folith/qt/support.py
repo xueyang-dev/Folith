@@ -536,8 +536,12 @@ def _clean_export_member(name: str, payload: bytes) -> bytes:
             if isinstance(failure, dict) and failure.get("reason"):
                 failure["reason"] = EXPORT_CLEANED_ERROR_TEXT
         if isinstance(data, dict):
-            _redact_auxiliary_failure_copies(data)
+            # CX-23: match the understanding echo in the general warnings BEFORE
+            # the profile/knowledge rules rewrite any 「章节 … 缺少 topic/domain」
+            # fragment inside those same strings — otherwise the exact match below
+            # misses the already-rewritten copy and the raw echo survives.
             _redact_diagnostic_fields(data)
+            _redact_auxiliary_failure_copies(data)
     elif name == "document_synopsis.json" and isinstance(data, dict):
         if data.get("warning"):
             data["warning"] = EXPORT_CLEANED_ERROR_TEXT

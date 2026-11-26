@@ -873,3 +873,31 @@ def test_general_warnings_understanding_echo_scrubbed(isolated, tmp_path, monkey
     assert support.EXPORT_CLEANED_ERROR_TEXT in exported["warnings"], \
         "通用 warnings 里的理解错误副本未替换"
     assert ordinary in exported["warnings"], "普通提示被误改"
+
+
+def test_understanding_echo_with_chapter_fragment_is_scrubbed_before_profile_rule(isolated, tmp_path, monkeypatch):
+    """CX-23：历史理解错误正文含「章节 … 缺少 topic/domain」片段时，通用 warnings 那条仍被整条替换，普通画像提示保留、整包不含片段外的旧串。"""
+    data, _store = isolated
+    # 片段之外放一个未配置的合成凭据形状串（模拟已轮换，不在当前连接）。
+    retired = "sk" + "-" + "R" * 26
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "api_key": "Zz" + "q" * 20, "connections": [],
+    })
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+    echo = "全文摘要失败：Error code: 400 - 章节 secret 缺少 topic/domain 附带 " + retired
+    ordinary = "文档画像提示：样本较短，分节可能不完整"
+    state = core.new_job_state("doc.txt")
+    state["understanding_warnings"] = [echo]
+    state["warnings"] = [echo, ordinary]
+    state["document_synopsis"] = {"summary": "s", "warning": echo}
+    _write_job(data, "a1b2c3d4e5f60718", state)
+
+    result = support.export_all_data(tmp_path / "backup-order")
+    with zipfile.ZipFile(result["path"]) as archive:
+        exported = json.loads(archive.read("Folith-data/a1b2c3d4e5f60718/state.json"))
+        whole = b"".join(archive.read(n) for n in archive.namelist())
+    assert retired.encode() not in whole, "片段外的旧凭据串仍进包"
+    assert support.EXPORT_CLEANED_ERROR_TEXT in exported["warnings"], \
+        "通用 warnings 里的理解错误副本未被整条替换（清理顺序问题）"
+    assert ordinary in exported["warnings"], "普通画像提示被误改"
+    assert support.EXPORT_CLEANED_ERROR_TEXT in exported["understanding_warnings"]
