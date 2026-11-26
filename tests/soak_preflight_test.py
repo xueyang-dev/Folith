@@ -12,6 +12,12 @@ preflight = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preflight)
 
 
+def test_probe_path_is_in_this_checkout():
+    assert preflight.REPO.resolve() == ROOT.resolve()
+    assert preflight.PROBE.is_file()
+    preflight.assert_safe_data_dir(preflight.REPO / ".loop/c68-allowed")
+
+
 def test_guard_allows_tmp_rejects_home(tmp_path):
     preflight.assert_safe_data_dir(Path("/tmp/c68-allowed"))
     with pytest.raises(SystemExit):

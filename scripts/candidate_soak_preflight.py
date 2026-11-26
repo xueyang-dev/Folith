@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 _here = Path(__file__).resolve()
-REPO = _here.parents[2]
+REPO = _here.parents[1]
 
 
 def assert_safe_data_dir(path: Path) -> None:
