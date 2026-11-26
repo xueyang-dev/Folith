@@ -671,7 +671,7 @@ def test_export_scrubs_every_credential_echo_across_all_fields(isolated, tmp_pat
         "glossary": [{"term": "x", "scope": "section:" + secret}],
         "auto_term_entries": [{"term": "y", "scope": "section:" + secret}],
         "semantic_units": [{"source_range_id": secret, "unit_id": "u1"}],
-        "annotation_batches": [{"error": "boom " + secret + " /Users/a/secret.docx"}],
+        "annotation_batches": [{"error": "boom " + secret + " /mnt/ext/secret.docx"}],
         "understanding_warnings": ["摘要失败 " + secret],
         "document_synopsis": {"summary": "s", "warning": "概要 " + secret},
         "profile_warnings": [], "warnings": [],
