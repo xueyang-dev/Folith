@@ -277,6 +277,90 @@ def _redact_auxiliary_failure_copies(data: dict) -> None:
             event["reason"] = EXPORT_CLEANED_ERROR_TEXT
 
 
+_EXPORT_TEXT_SUFFIXES = (".json", ".jsonl", ".md", ".txt", ".csv", ".tsv", ".yaml", ".yml")
+
+
+def _known_export_secrets() -> list[str]:
+    """CX-20: every real credential value in the current configuration.
+
+    The export scrubber replaces these literals everywhere, so any echo — a
+    document-profile section id, a glossary scope, a semantic unit label, a
+    synopsis warning, whatever — is caught without enumerating fields one by
+    one.  Sourced from the live connections; config files themselves never enter
+    the archive (``_exported`` excludes them).
+    """
+    secrets: list[str] = []
+    import core as _core  # 局部导入：avoid import cycle at module load
+
+    def _add(value):
+        text = str(value or "").strip()
+        if text:
+            secrets.append(text)
+
+    try:
+        cfg = _core.load_provider_config() or {}
+    except Exception:  # noqa: BLE001 - a broken config must not break export
+        cfg = {}
+    _add(cfg.get("api_key"))
+    reviewer = cfg.get("reviewer")
+    if isinstance(reviewer, dict):
+        _add(reviewer.get("api_key"))
+    for conn in cfg.get("connections") or ():
+        if isinstance(conn, dict):
+            _add(conn.get("api_key"))
+    try:
+        ocr = _core.load_ocr_online_config() or {}
+    except Exception:  # noqa: BLE001
+        ocr = {}
+    _add(ocr.get("api_key"))
+    # Deduplicate, keep order longest-first so a long key is replaced whole
+    # before a shorter one that is a substring of it.
+    seen, ordered = set(), []
+    for value in sorted(secrets, key=len, reverse=True):
+        if value not in seen:
+            seen.add(value)
+            ordered.append(value)
+    return ordered
+
+
+def _scrub_export_credentials(name: str, payload: bytes,
+                              secrets: list[str]) -> bytes:
+    """CX-20: strip known credential literals + credential shapes from a text member.
+
+    Applied to every text member after the field-anchored clean step.  Binary
+    members and non-text suffixes ride through untouched.  Shape-only literals
+    with no live secret still get the pattern/`key: value` redaction so a leaked
+    key of an external shape never survives either.
+    """
+    if not name.lower().endswith(_EXPORT_TEXT_SUFFIXES):
+        return payload
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return payload
+    from folith.engine.redaction import (
+        PLACEHOLDER, SECRET_PATTERNS, SECRET_KEY_NAMES)
+    # 1) Known credential literals, longest-first.  Long values are replaced
+    #    wherever they occur (a relay can glue a key into a longer token);
+    #    short ones whole-token only, so ordinary words survive.
+    for secret in secrets:
+        if len(secret) >= 8:
+            text = text.replace(secret, PLACEHOLDER)
+        elif secret:
+            text = re.sub(
+                r"(?<![A-Za-z0-9_\-])" + re.escape(secret)
+                + r"(?![A-Za-z0-9_\-])", PLACEHOLDER, text)
+    # 2) Credential shapes and `key: value` forms, regardless of whether the
+    #    literal is still on disk (an external-shaped key of an old task).
+    for pattern in SECRET_PATTERNS:
+        text = pattern.sub(PLACEHOLDER, text)
+    key_value = re.compile(
+        r"(?i)\b(" + "|".join(re.escape(n) for n in SECRET_KEY_NAMES)
+        + r")(\s*[\"']?\s*[:=]\s*[\"']?)(\"[^\"]*\"|'[^']*'|[^\s\"'{{}}\[,]+)")
+    text = key_value.sub(lambda m: m.group(1) + m.group(2) + PLACEHOLDER, text)
+    return text.encode("utf-8")
+
+
 def _clean_export_member(name: str, payload: bytes) -> bytes:
     """The export copy of a task file carries no legacy error free text.
 
@@ -355,6 +439,7 @@ def export_all_data(destination: str | os.PathLike[str]) -> dict:
     else:
         raise adapter.AdapterError("备份包不能放在数据目录里面。")
     files = 0
+    secrets = _known_export_secrets()
     partial = target.with_name(target.name + ".partial")
     with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(root.rglob("*")):
@@ -362,8 +447,11 @@ def export_all_data(destination: str | os.PathLike[str]) -> dict:
                 continue
             member = Path("Folith-data") / path.relative_to(root)
             # CX-11 §2：任务错误字段在导出副本里替换为占位符（原文件不动）。
-            archive.writestr(member.as_posix(), _clean_export_member(
-                path.name, path.read_bytes()))
+            # CX-20：再对所有文本成员按凭据值/形状统一擦除，兜住画像、术语
+            # scope、语义单元、警告、标注错误、概要等所有字段。
+            cleaned = _clean_export_member(path.name, path.read_bytes())
+            cleaned = _scrub_export_credentials(path.name, cleaned, secrets)
+            archive.writestr(member.as_posix(), cleaned)
             files += 1
         archive.writestr("Folith-data/README.txt", (
             "Folith 数据备份（私有备份：包含文档、译文、术语与记忆等数据）。\n"

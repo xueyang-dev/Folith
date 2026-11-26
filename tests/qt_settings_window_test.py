@@ -646,3 +646,78 @@ def test_profile_warnings_do_not_keep_the_model_section_id(isolated, tmp_path):
     assert exported["warnings"][3] == "术语表已更新"
     joined = "\n".join(exported["profile_warnings"] + exported["warnings"])
     assert secret not in joined
+
+
+def test_export_scrubs_every_credential_echo_across_all_fields(isolated, tmp_path, monkeypatch):
+    """CX-20：画像/术语 scope/语义单元/标注错误/概要里的凭据都从整包里擦掉。"""
+    data, _store = isolated
+    job = data / "c0ffee1234567890"
+    job.mkdir()
+    secret = "sk" + "-" + "z" * 24  # 运行时拼，源码无字面量
+    # 当前连接里确有这个凭据值（供导出层按值擦除）。
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "model": "m", "api_key": secret, "connections": [],
+    })
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+    state = {
+        "document_profile": {
+            "domain": "law", "confidence": 0.9,
+            "sections": [
+                {"section_id": "intro", "start_segment": 0, "end_segment": 2,
+                 "topic": "引言"},
+                {"section_id": secret, "start_segment": 3, "end_segment": 4},
+            ],
+        },
+        "glossary": [{"term": "x", "scope": "section:" + secret}],
+        "auto_term_entries": [{"term": "y", "scope": "section:" + secret}],
+        "semantic_units": [{"source_range_id": secret, "unit_id": "u1"}],
+        "annotation_batches": [{"error": "boom " + secret + " /Users/a/secret.docx"}],
+        "understanding_warnings": ["摘要失败 " + secret],
+        "document_synopsis": {"summary": "s", "warning": "概要 " + secret},
+        "profile_warnings": [], "warnings": [],
+    }
+    (job / "state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    (job / "document_synopsis.json").write_text(
+        json.dumps({"summary": "s", "warning": "概要 " + secret}, ensure_ascii=False),
+        encoding="utf-8")
+    (job / "semantic_units.json").write_text(
+        json.dumps([{"source_range_id": secret}], ensure_ascii=False), encoding="utf-8")
+
+    # 一个不符合任何内置密钥形状的合成凭据（只能靠"按值擦除"兜住）。
+    blobby = "relay" + "-" + "q" * 18
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "model": "m", "api_key": blobby,
+        "connections": [{"api_key": secret}],
+    })
+    state["document_synopsis"] = {"summary": "s", "warning": "概要 " + blobby}
+    (job / "state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup-cx20")
+    with zipfile.ZipFile(result["path"]) as archive:
+        blob = b"".join(archive.read(name) for name in archive.namelist())
+    assert secret.encode() not in blob, "合成凭据仍在备份包里"
+    assert blobby.encode() not in blob, "非形状合成凭据仍在备份包里"
+    # 画像的普通字段保留（只擦凭据，不改结构）。
+    with zipfile.ZipFile(result["path"]) as archive:
+        exported = json.loads(archive.read("Folith-data/c0ffee1234567890/state.json"))
+    assert exported["document_profile"]["sections"][0]["section_id"] == "intro"
+    assert len(exported["document_profile"]["sections"]) == 2
+
+
+def test_recovered_old_task_keeps_section_terms_by_original_id(isolated):
+    """CX-20 回归：不重写 section_id，旧任务的章节术语按原 ID 恢复后仍生效。"""
+    from folith import models
+
+    # 归一化保留模型给的 section_id（revert 后行为）。
+    profile = models.normalize_document_profile({
+        "domain": "law", "confidence": 0.9,
+        "sections": [{"section_id": "intro", "start_segment": 0, "end_segment": 2,
+                      "topic": "引言"}],
+    })
+    assert profile["sections"][0]["section_id"] == "intro"
+    # 术语 scope 用 section:intro，与画像一致 -> 匹配成功。
+    matched = []
+    term = {"term": "合同", "scope": "section:intro"}
+    scope = (term.get("scope") or "").strip()
+    section = profile["sections"][0]
+    assert scope.startswith("section:") and section.get("section_id") == scope[8:]

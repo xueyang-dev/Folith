@@ -5011,7 +5011,18 @@ def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
                                        error_kind=_retry_error_kind(e),
                                        job_id=_runtime_job_id())
                 continue
-            return AnnotationBatchResult(status="request_failed", error=str(e)[:500])
+            # CX-20: no raw exception text into annotation state (a relay reply
+            # can echo credentials/document text). Classified provider copy, else
+            # the exception class name.
+            try:
+                _status = provider_error_status(e)
+                _detail = (_status.get("message")
+                           if _status.get("status") != "unknown"
+                           else type(e).__name__)
+            except Exception:  # noqa: BLE001 - diagnosis must never raise
+                _detail = type(e).__name__
+            return AnnotationBatchResult(status="request_failed",
+                                         error=str(_detail or type(e).__name__)[:500])
     return AnnotationBatchResult(status="request_failed", error="请求限流，重试次数已用尽")
 
 
