@@ -50,7 +50,9 @@ def test_document_profile_normalize_validate():
     p = models.normalize_document_profile(raw)
     assert p["domain"] == "生物学"
     assert p["confidence"] == 0.8
-    assert [s["section_id"] for s in p["sections"]] == ["s1", "s2"]
+    # CX-19 (#615): section_id 一律用本地编号（按输出去掉无效段后连续），
+    # 不保留模型给的 s1/s2——那段值会随画像写进 state.json 并导出。
+    assert [s["section_id"] for s in p["sections"]] == ["section-1", "section-2"]
     assert models.validate_document_profile(p) == []
 
     # 垃圾输入 -> 全默认值，不抛异常
