@@ -1026,20 +1026,51 @@ def test_a_failed_journal_stat_never_serves_a_state_without_the_journal(
     assert len(repo.load_job_state_cached(job_id, force_reload=True)["pairs"]) == 4
 
 
+def _review_evidence_shape(state):
+    """(count, [batch/shape]) trailing summary of review_evidence for diagnostics."""
+    events = state.get("review_evidence") or []
+    return [{"batch": e.get("batch"), "freshness_status": e.get("freshness_status"),
+             "keys": sorted(e.keys())} for e in events]
+
+
+def _journal_cache_diagnostic(job_id, probe_before, probe_after, loaded, cold):
+    """#442/A-87 evidence blob: what the cache saw vs what a cold reload saw."""
+    force_sig = repo.state_signature(job_id)
+    return (
+        "\n=== journal cache diagnostic ===\n"
+        f"probe (before replace): {probe_before!r}\n"
+        f"probe (after  replace): {probe_after!r}\n"
+        f"state_signature now   : {force_sig!r}\n"
+        f"loaded pairs          : {len(loaded.get('pairs') or [])}\n"
+        f"cold   pairs          : {len(cold.get('pairs') or [])}\n"
+        f"loaded review_evidence: {_review_evidence_shape(loaded)!r}\n"
+        f"cold   review_evidence: {_review_evidence_shape(cold)!r}\n"
+        "=== end diagnostic ==="
+    )
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows repetition of the #441 flake")
 @pytest.mark.parametrize("attempt", range(20))
 def test_replaced_journal_reloads_cold_repeatedly(temp_job_env, attempt):
-    """The replacement scenario that failed once on Windows, 20 times over."""
+    """The replacement scenario that failed once on Windows, 20 times over.
+
+    A-87: on failure, dump what the cache actually observed — the journal probe
+    before and after the swap, the current state signature, and both sides'
+    review_evidence shape — so the next Windows red is self-explaining.
+    """
     job_id = f"journal-replaced-repeat-{attempt}"
     _crash_run(job_id, _paragraphs(8))
     records = journal.read_mutations(job_id)
     _rewrite_journal(job_id, records[:2])
     repo.invalidate_cache()
     assert len(core.load_job_state(job_id)["pairs"]) == 4
+    probe_before = repo._journal_probe(job_id)
     _replace_journal_with_a_larger_single_record(job_id, records)
+    probe_after = repo._journal_probe(job_id)
     loaded = core.load_job_state(job_id)
     cold = repo.load_job_state_cached(job_id, force_reload=True)
-    assert loaded == cold
+    assert loaded == cold, _journal_cache_diagnostic(
+        job_id, probe_before, probe_after, loaded, cold)
     assert len(loaded["pairs"]) == 2
 
 
