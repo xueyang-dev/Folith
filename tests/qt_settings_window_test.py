@@ -648,75 +648,148 @@ def test_profile_warnings_do_not_keep_the_model_section_id(isolated, tmp_path):
     assert secret not in joined
 
 
-def test_export_scrubs_every_credential_echo_across_all_fields(isolated, tmp_path, monkeypatch):
-    """CX-20：画像/术语 scope/语义单元/标注错误/概要里的凭据都从整包里擦掉。"""
+def _write_job(data, job_id, state):
+    job = data / job_id
+    job.mkdir(parents=True, exist_ok=True)
+    (job / "state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    return job
+
+
+def test_export_keeps_structure_and_scrubs_only_long_credentials(isolated, tmp_path, monkeypatch):
+    """CX-21：按值只擦长凭据；正文/译文/术语/TM/布尔结构原样保留；JSON 可解析。"""
+    from folith import models
     data, _store = isolated
-    job = data / "c0ffee1234567890"
-    job.mkdir()
-    secret = "sk" + "-" + "z" * 24  # 运行时拼，源码无字面量
-    # 当前连接里确有这个凭据值（供导出层按值擦除）。
+    long_secret = "sk" + "-" + "z" * 24              # 形状长凭据（>=8）
+    plain_secret = "relay" + "-" + "q" * 18          # 非形状长凭据（>=8）
+    short_secret = "false"                            # 短凭据，不应全包替换
     monkeypatch.setattr(core, "load_provider_config", lambda: {
-        "provider": "relay", "model": "m", "api_key": secret, "connections": [],
+        "provider": "relay", "api_key": short_secret, "connections": [
+            {"provider": "relay", "api_key": long_secret},
+            {"provider": "OpenAI", "api_key": plain_secret},
+        ],
     })
     monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
-    state = {
-        "document_profile": {
-            "domain": "law", "confidence": 0.9,
-            "sections": [
-                {"section_id": "intro", "start_segment": 0, "end_segment": 2,
-                 "topic": "引言"},
-                {"section_id": secret, "start_segment": 3, "end_segment": 4},
-            ],
-        },
-        "glossary": [{"term": "x", "scope": "section:" + secret}],
-        "auto_term_entries": [{"term": "y", "scope": "section:" + secret}],
-        "semantic_units": [{"source_range_id": secret, "unit_id": "u1"}],
-        "annotation_batches": [{"error": "boom " + secret + " /mnt/ext/secret.docx"}],
-        "understanding_warnings": ["摘要失败 " + secret],
-        "document_synopsis": {"summary": "s", "warning": "概要 " + secret},
-        "profile_warnings": [], "warnings": [],
+
+    state = core.new_job_state("doc.txt")
+    state["pairs"] = [
+        {"source": "token: punctuation 是正文", "target": "password = example 保留"},
+        {"source": "手册示例 sk-example-not-a-key 保留", "target": plain_secret},
+    ]
+    state["glossary"] = [{"term": "词", "scope": "section:" + long_secret}]
+    state["document_profile"] = models.normalize_document_profile({
+        "domain": "law", "confidence": 0.9,
+        "sections": [
+            {"section_id": "intro", "start_segment": 0, "end_segment": 0, "topic": "引言"},
+            {"section_id": long_secret, "start_segment": 1, "end_segment": 1},
+        ],
+    })
+    state["p2_done"] = False          # 布尔：不得被改成占位符
+    state["annotation_batches"] = {   # 生产按偏移索引对象结构
+        "2": {"status": "request_failed", "error": "boom " + long_secret,
+              "segment_count": 2},
     }
-    (job / "state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    state["understanding_warnings"] = ["摘要失败 " + long_secret]
+    state["document_synopsis"] = {"summary": "ok", "warning": "概要 " + long_secret}
+    job = _write_job(data, "cafe1234567890ab", state)
+    # 翻译记忆：作用域键 = 语言 + 分隔符 + 原文；键不能被改动。
+    from folith.translation_memory import tm_scope_key
+    tm_entry_key = tm_scope_key("zh-CN", "token: punctuation 是正文") or "token: punctuation 是正文"
     (job / "document_synopsis.json").write_text(
-        json.dumps({"summary": "s", "warning": "概要 " + secret}, ensure_ascii=False),
+        json.dumps({"summary": "ok", "warning": "概要 " + long_secret}, ensure_ascii=False),
         encoding="utf-8")
     (job / "semantic_units.json").write_text(
-        json.dumps([{"source_range_id": secret}], ensure_ascii=False), encoding="utf-8")
+        json.dumps([{"source_range_id": "section-" + long_secret}], ensure_ascii=False),
+        encoding="utf-8")
+    tm_dir = data
+    (tm_dir / "translation_memory.json").write_text(
+        json.dumps({tm_entry_key: {"target": plain_secret}}, ensure_ascii=False),
+        encoding="utf-8")
 
-    # 一个不符合任何内置密钥形状的合成凭据（只能靠"按值擦除"兜住）。
-    blobby = "relay" + "-" + "q" * 18
-    monkeypatch.setattr(core, "load_provider_config", lambda: {
-        "provider": "relay", "model": "m", "api_key": blobby,
-        "connections": [{"api_key": secret}],
-    })
-    state["document_synopsis"] = {"summary": "s", "warning": "概要 " + blobby}
-    (job / "state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-
-    result = support.export_all_data(tmp_path / "backup-cx20")
+    result = support.export_all_data(tmp_path / "backup-cx21")
+    members = {}
     with zipfile.ZipFile(result["path"]) as archive:
-        blob = b"".join(archive.read(name) for name in archive.namelist())
-    assert secret.encode() not in blob, "合成凭据仍在备份包里"
-    assert blobby.encode() not in blob, "非形状合成凭据仍在备份包里"
-    # 画像的普通字段保留（只擦凭据，不改结构）。
-    with zipfile.ZipFile(result["path"]) as archive:
-        exported = json.loads(archive.read("Folith-data/c0ffee1234567890/state.json"))
-    assert exported["document_profile"]["sections"][0]["section_id"] == "intro"
-    assert len(exported["document_profile"]["sections"]) == 2
+        for name in archive.namelist():
+            blob = archive.read(name)
+            members[name] = blob
+    # 1) 所有 JSON/JSONL 成员可解析
+    for name, blob in members.items():
+        if name.endswith(".json"):
+            json.loads(blob.decode("utf-8"))
+        elif name.endswith(".jsonl"):
+            for line in blob.decode("utf-8").splitlines():
+                if line.strip():
+                    json.loads(line)
+    whole = b"".join(members.values())
+    # 2) 长凭据全部 0 命中；短凭据 false 不做全包替换（p2_done 保持布尔）
+    assert long_secret.encode() not in whole
+    assert plain_secret.encode() not in whole
+    job_state = json.loads(members["Folith-data/cafe1234567890ab/state.json"])
+    assert job_state["p2_done"] is False, "false 短凭据不应把布尔改成占位符"
+    # 3) 正文/译文/术语/TM 键原样保留
+    assert job_state["pairs"][0]["source"] == "token: punctuation 是正文"
+    assert job_state["pairs"][0]["target"] == "password = example 保留"
+    assert job_state["pairs"][1]["source"] == "手册示例 sk-example-not-a-key 保留"
+    tm = json.loads(members["Folith-data/translation_memory.json"])
+    assert tm_entry_key in tm, "TM 条目键被改动"
 
 
-def test_recovered_old_task_keeps_section_terms_by_original_id(isolated):
-    """CX-20 回归：不重写 section_id，旧任务的章节术语按原 ID 恢复后仍生效。"""
+def test_export_scrubs_long_secret_across_all_references_and_recovers(isolated, tmp_path, monkeypatch):
+    """CX-21：长凭据在画像ID/术语scope/语义单元/标注错误/概要 0 命中，章节引用对应；导出→解压→load_job_state 非 None 且术语按原ID匹配。"""
     from folith import models
-
-    # 归一化保留模型给的 section_id（revert 后行为）。
-    profile = models.normalize_document_profile({
-        "domain": "law", "confidence": 0.9,
-        "sections": [{"section_id": "intro", "start_segment": 0, "end_segment": 2,
-                      "topic": "引言"}],
+    data, _store = isolated
+    secret = "AbcKey" + "u" * 20     # 长且非内置形状
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "api_key": secret, "connections": [],
     })
-    assert profile["sections"][0]["section_id"] == "intro"
-    # 术语 scope 用 section:intro，与画像一致 -> 匹配成功。
-    term = {"term": "合同", "scope": "section:intro"}
-    scope = (term.get("scope") or "").strip()
-    section = profile["sections"][0]
-    assert scope.startswith("section:") and section.get("section_id") == scope[8:]
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+
+    state = core.new_job_state("doc.txt")
+    state["pairs"] = [{"source": "s0", "target": "t0"}, {"source": "s1", "target": "t1"}]
+    state["paras"] = ["s0", "s1"]
+    state["document_profile"] = models.normalize_document_profile({
+        "domain": "law", "confidence": 0.9,
+        "sections": [
+            {"section_id": "intro", "start_segment": 0, "end_segment": 0, "topic": "引言"},
+            {"section_id": secret, "start_segment": 1, "end_segment": 1},
+        ],
+    })
+    state["glossary"] = [{"term": "词A", "scope": "section:intro"}]
+    state["auto_term_entries"] = [{"term": "词B", "scope": "section:" + secret}]
+    state["semantic_units"] = [{"source_range_id": "section-" + secret, "unit_id": "u1"}]
+    state["annotation_batches"] = {
+        "2": {"status": "request_failed", "error": "boom " + secret, "segment_count": 1},
+    }
+    state["understanding_warnings"] = ["摘要失败 " + secret]
+    state["document_synopsis"] = {"summary": "s", "warning": "概要 " + secret}
+    _write_job(data, "feedface12345678", state)
+    (data / "semantic_units.json").write_text(
+        json.dumps([{"source_range_id": "section-" + secret}], ensure_ascii=False),
+        encoding="utf-8")
+    (data / "document_synopsis.json").write_text(
+        json.dumps({"summary": "s", "warning": "概要 " + secret}, ensure_ascii=False),
+        encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup-cx21b")
+    with zipfile.ZipFile(result["path"]) as archive:
+        whole = b"".join(archive.read(n) for n in archive.namelist())
+    assert secret.encode() not in whole, "长凭据仍残留"
+
+    # 解压回一个新数据目录，用真实 load_job_state 读回（必须非 None）。
+    import shutil as _sh
+    restore = tmp_path / "restore"
+    restore.mkdir()
+    with zipfile.ZipFile(result["path"]) as archive:
+        archive.extractall(restore / "_x")
+    src = restore / "_x" / "Folith-data"
+    monkeypatch.setattr(core, "OUTPUT_DIR", restore)
+    _sh.copytree(src, restore, dirs_exist_ok=True)
+    loaded = core.load_job_state("feedface12345678")
+    assert loaded is not None, "恢复后 state.json 读回 None"
+    # 章节术语按原 ID（intro）匹配；secret 章节已脱敏，引用仍一一对应。
+    sections = loaded["document_profile"]["sections"]
+    scopes = [e["scope"] for e in loaded["glossary"]]
+    def _sect_match(scope, secs):
+        if not scope.startswith("section:"):
+            return True
+        return any(s["section_id"] == scope[8:] for s in secs)
+    assert all(_sect_match(sc, sections) for sc in scopes)

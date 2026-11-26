@@ -168,6 +168,7 @@ EXPORT_CLEANED_ERROR_TEXT = "（升级前记录的错误文本，导出时已脱
 #: 会被清理错误字段的成员（其余文件按原字节打包）。
 _EXPORT_CLEANED_BASENAMES = frozenset({
     "state.json", "runtime_state.json", "events.jsonl", "runtime_events.jsonl",
+    "document_synopsis.json",
 })
 
 
@@ -251,6 +252,34 @@ def _omit_model_chapter_ids(text: str) -> str:
     return _CHAPTER_TOPIC_GAP.sub(_CHAPTER_TOPIC_PLACEHOLDER, text)
 
 
+def _redact_diagnostic_fields(data: dict) -> None:
+    """CX-21: fixed diagnostic text for known error/warning/diagnostic fields.
+
+    Batch-annotation errors, full-document understanding warnings, and the
+    synopsis warning can echo a provider reply (credentials, document text, a
+    path).  They are replaced with the fixed marker, like every other legacy
+    error field — this also covers rotated credentials that no current value can
+    match.  Structure and non-error fields are untouched.
+    """
+    batches = data.get("annotation_batches")
+    if isinstance(batches, dict):
+        for entry in batches.values():
+            if isinstance(entry, dict) and entry.get("error"):
+                entry["error"] = EXPORT_CLEANED_ERROR_TEXT
+    elif isinstance(batches, list):
+        for entry in batches:
+            if isinstance(entry, dict) and entry.get("error"):
+                entry["error"] = EXPORT_CLEANED_ERROR_TEXT
+    warnings = data.get("understanding_warnings")
+    if isinstance(warnings, list):
+        for index, item in enumerate(warnings):
+            if isinstance(item, str) and item:
+                warnings[index] = EXPORT_CLEANED_ERROR_TEXT
+    synopsis = data.get("document_synopsis")
+    if isinstance(synopsis, dict) and synopsis.get("warning"):
+        synopsis["warning"] = EXPORT_CLEANED_ERROR_TEXT
+
+
 def _redact_auxiliary_failure_copies(data: dict) -> None:
     """Replace legacy profile/knowledge failure text in the export copy.
 
@@ -279,42 +308,59 @@ def _redact_auxiliary_failure_copies(data: dict) -> None:
 
 _EXPORT_TEXT_SUFFIXES = (".json", ".jsonl", ".md", ".txt", ".csv", ".tsv", ".yaml", ".yml")
 
+#: CX-21：只对长度 ≥ 这个值的凭据做全包按值替换。更短的值（如 "false"、
+#: "k"）在全量备份里全包替换会误伤布尔/短词，甚至把 JSON 变成非法——因此
+#: 这里**不做**短值替换。这个限制是有意的：短凭据只在按字段的错误/日志诊断
+#: 清理里处理。
+_EXPORT_MIN_SCRUB_LEN = 8
+
 
 def _known_export_secrets() -> list[str]:
-    """CX-20: every real credential value in the current configuration.
+    """CX-21: real credential values from the current configuration + environment.
 
-    The export scrubber replaces these literals everywhere, so any echo — a
-    document-profile section id, a glossary scope, a semantic unit label, a
-    synopsis warning, whatever — is caught without enumerating fields one by
-    one.  Sourced from the live connections; config files themselves never enter
-    the archive (``_exported`` excludes them).
+    Sourced from provider api_key, reviewer.api_key, connections[].api_key, the
+    OCR api_key, and the runtime environment fallback each connection provider
+    exposes (`model_connections.environment_key`).  Config files themselves never
+    enter the archive.  Short values are kept here but the export scrubber only
+    applies the long ones (>= _EXPORT_MIN_SCRUB_LEN); see _scrub_export_credentials.
     """
     secrets: list[str] = []
     import core as _core  # 局部导入：avoid import cycle at module load
+    from folith import model_connections as _mc
 
     def _add(value):
         text = str(value or "").strip()
         if text:
             secrets.append(text)
 
+    def _add_env(provider):
+        try:
+            _add(_mc.environment_key(str(provider or "")))
+        except Exception:  # noqa: BLE001 - env lookup must never break export
+            pass
+
     try:
         cfg = _core.load_provider_config() or {}
     except Exception:  # noqa: BLE001 - a broken config must not break export
         cfg = {}
     _add(cfg.get("api_key"))
+    _add_env(cfg.get("provider"))
     reviewer = cfg.get("reviewer")
     if isinstance(reviewer, dict):
         _add(reviewer.get("api_key"))
+        _add_env(reviewer.get("provider"))
     for conn in cfg.get("connections") or ():
         if isinstance(conn, dict):
             _add(conn.get("api_key"))
+            _add_env(conn.get("provider"))
     try:
         ocr = _core.load_ocr_online_config() or {}
     except Exception:  # noqa: BLE001
         ocr = {}
     _add(ocr.get("api_key"))
-    # Deduplicate, keep order longest-first so a long key is replaced whole
-    # before a shorter one that is a substring of it.
+    _add_env(ocr.get("provider"))
+    # Deduplicate, longest-first so a long key is replaced whole before a
+    # shorter one that is a substring of it.
     seen, ordered = set(), []
     for value in sorted(secrets, key=len, reverse=True):
         if value not in seen:
@@ -323,42 +369,87 @@ def _known_export_secrets() -> list[str]:
     return ordered
 
 
+def _scrub_strings(value, secrets, changed):
+    """Recursively replace long-credential substrings only inside string values.
+
+    Returns the (possibly new) value.  Numbers, booleans, keys and structure are
+    left untouched, so `"p2_done": false` and numeric fields stay valid JSON.
+    ``changed`` is a one-element list used as a flag.
+    """
+    from folith.engine.redaction import PLACEHOLDER
+    if isinstance(value, str):
+        out = value
+        for secret in secrets:
+            if len(secret) >= _EXPORT_MIN_SCRUB_LEN and secret in out:
+                out = out.replace(secret, PLACEHOLDER)
+        if out != value:
+            changed[0] = True
+        return out
+    if isinstance(value, list):
+        return [_scrub_strings(item, secrets, changed) for item in value]
+    if isinstance(value, dict):
+        return {key: _scrub_strings(val, secrets, changed) for key, val in value.items()}
+    return value
+
+
 def _scrub_export_credentials(name: str, payload: bytes,
                               secrets: list[str]) -> bytes:
-    """CX-20: strip known credential literals + credential shapes from a text member.
+    """CX-21: precise by-value scrubbing of long credentials, structure-preserving.
 
-    Applied to every text member after the field-anchored clean step.  Binary
-    members and non-text suffixes ride through untouched.  Shape-only literals
-    with no live secret still get the pattern/`key: value` redaction so a leaked
-    key of an external shape never survives either.
+    Only string values are touched; never the raw serialized bytes, so a
+    credential value inside a profile id, `section:<value>`, a semantic unit's
+    `source_range_id`, an annotation error or a synopsis warning all change
+    together and references stay consistent, while `token: punctuation` prose,
+    translation-memory entry keys and booleans are untouched.  Short (<
+    _EXPORT_MIN_SCRUB_LEN) credentials are intentionally not scrubbed here — a
+    whole-archive replace of a value like `false` would corrupt real data; those
+    are handled only by the field-anchored diagnostic cleaning.  JSON/JSONL that
+    parse are edited structurally; nothing changed -> original bytes; a member
+    that does not parse is carried through as-is (never guessed).
     """
+    long_secrets = [s for s in secrets if len(s) >= _EXPORT_MIN_SCRUB_LEN]
+    if not long_secrets:
+        return payload
     if not name.lower().endswith(_EXPORT_TEXT_SUFFIXES):
         return payload
+    lower = name.lower()
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError:
         return payload
-    from folith.engine.redaction import (
-        PLACEHOLDER, SECRET_PATTERNS, SECRET_KEY_NAMES)
-    # 1) Known credential literals, longest-first.  Long values are replaced
-    #    wherever they occur (a relay can glue a key into a longer token);
-    #    short ones whole-token only, so ordinary words survive.
-    for secret in secrets:
-        if len(secret) >= 8:
-            text = text.replace(secret, PLACEHOLDER)
-        elif secret:
-            text = re.sub(
-                r"(?<![A-Za-z0-9_\-])" + re.escape(secret)
-                + r"(?![A-Za-z0-9_\-])", PLACEHOLDER, text)
-    # 2) Credential shapes and `key: value` forms, regardless of whether the
-    #    literal is still on disk (an external-shaped key of an old task).
-    for pattern in SECRET_PATTERNS:
-        text = pattern.sub(PLACEHOLDER, text)
-    key_value = re.compile(
-        r"(?i)\b(" + "|".join(re.escape(n) for n in SECRET_KEY_NAMES)
-        + r")(\s*[\"']?\s*[:=]\s*[\"']?)(\"[^\"]*\"|'[^']*'|[^\s\"'{{}}\[,]+)")
-    text = key_value.sub(lambda m: m.group(1) + m.group(2) + PLACEHOLDER, text)
-    return text.encode("utf-8")
+    if lower.endswith(".jsonl"):
+        lines = text.splitlines()
+        changed = [False]
+        out_lines = []
+        for line in lines:
+            if not line.strip():
+                out_lines.append(line)
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                out_lines.append(line)  # a torn tail: never guess
+                continue
+            out_lines.append(json.dumps(
+                _scrub_strings(record, long_secrets, changed), ensure_ascii=False))
+        return ("\n".join(out_lines) + ("\n" if text.endswith("\n") else "")).encode("utf-8") \
+            if changed[0] else payload
+    if lower.endswith(".json"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return payload
+        changed = [False]
+        scrubbed = _scrub_strings(data, long_secrets, changed)
+        if not changed[0]:
+            return payload
+        return (json.dumps(scrubbed, ensure_ascii=False) + ("\n" if text.endswith("\n") else "")).encode("utf-8")
+    # Plain text (.md/.txt/.csv/...): only the long-value substring replace.
+    from folith.engine.redaction import PLACEHOLDER
+    out = text
+    for secret in long_secrets:
+        out = out.replace(secret, PLACEHOLDER)
+    return out.encode("utf-8") if out != text else payload
 
 
 def _clean_export_member(name: str, payload: bytes) -> bytes:
@@ -414,6 +505,10 @@ def _clean_export_member(name: str, payload: bytes) -> bytes:
                 failure["reason"] = EXPORT_CLEANED_ERROR_TEXT
         if isinstance(data, dict):
             _redact_auxiliary_failure_copies(data)
+            _redact_diagnostic_fields(data)
+    elif name == "document_synopsis.json" and isinstance(data, dict):
+        if data.get("warning"):
+            data["warning"] = EXPORT_CLEANED_ERROR_TEXT
     elif name == "runtime_state.json" and isinstance(data, dict):
         error = data.get("error")
         if isinstance(error, dict) and error.get("message"):
