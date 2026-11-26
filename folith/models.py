@@ -153,9 +153,8 @@ def normalize_document_profile(raw: Any) -> DocumentProfile:
     }
     raw_sections = raw.get("sections")
     if isinstance(raw_sections, list):
-        for sec in raw_sections:
-            # 用输出位置编号（跳过被丢弃的无效段），保证 section-<n> 连续稳定。
-            norm = normalize_section_profile(sec, index=len(out["sections"]))
+        for i, sec in enumerate(raw_sections):
+            norm = normalize_section_profile(sec, index=i)
             if norm is not None:
                 out["sections"].append(norm)
     return out
