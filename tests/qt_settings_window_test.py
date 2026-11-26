@@ -646,3 +646,54 @@ def test_profile_warnings_do_not_keep_the_model_section_id(isolated, tmp_path):
     assert exported["warnings"][3] == "术语表已更新"
     joined = "\n".join(exported["profile_warnings"] + exported["warnings"])
     assert secret not in joined
+
+
+def test_document_profile_section_ids_are_local_and_exported_profile_is_clean(isolated, tmp_path):
+    """CX-19 (#615 阻断)：模型给的 section_id 不落到 state.json，也不进备份。
+
+    真实管线的 state.json 会带归一化后的完整 document_profile；这里写一份
+    含合成凭据 section_id 的画像，验证归一化用本地编号替换，且导出副本同样干净。
+    """
+    from folith import models
+
+    data, _store = isolated
+    job = data / "fedcba9876543210"
+    job.mkdir()
+    secret = "sk" + "-" + "y" * 24  # 运行时拼，源码无字面量
+    profile = models.normalize_document_profile({
+        "domain": "medicine",
+        "confidence": 0.8,
+        "sections": [
+            {"section_id": secret, "start_segment": 0, "end_segment": 2,
+             "topic": "intro", "domain": "medicine"},
+            {"section_id": "also-" + secret, "start_segment": 3, "end_segment": 5},
+        ],
+    })
+    # 归一化即已把模型 ID 换成本地编号。
+    assert [s["section_id"] for s in profile["sections"]] == ["section-1", "section-2"]
+    assert secret not in json.dumps(profile, ensure_ascii=False)
+
+    # 历史任务：磁盘上的 state.json 仍可能带模型 ID，导出副本也要归一化。
+    historical = {
+        "document_profile": {
+            "domain": "medicine", "confidence": 0.8,
+            "sections": [
+                {"section_id": secret, "start_segment": 0, "end_segment": 2,
+                 "topic": "intro"},
+                {"section_id": "also-" + secret, "start_segment": 3, "end_segment": 5},
+            ],
+        },
+        "profile_warnings": [], "warnings": [],
+    }
+    (job / "state.json").write_text(json.dumps(historical, ensure_ascii=False),
+                                    encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup-profile")
+    with zipfile.ZipFile(result["path"]) as archive:
+        blob = b"".join(archive.read(name) for name in archive.namelist())
+        exported = json.loads(archive.read(
+            "Folith-data/fedcba9876543210/state.json"))
+    assert secret.encode() not in blob, "合成凭据不应出现在备份包里"
+    sections = exported["document_profile"]["sections"]
+    assert [s["section_id"] for s in sections] == ["section-1", "section-2"]
+    assert len(sections) == 2 and sections[0]["topic"] == "intro"

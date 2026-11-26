@@ -277,6 +277,25 @@ def _redact_auxiliary_failure_copies(data: dict) -> None:
             event["reason"] = EXPORT_CLEANED_ERROR_TEXT
 
 
+def _normalize_export_section_ids(data: dict) -> None:
+    """CX-19 (#615 阻断): 导出副本里的历史画像也改用本地章节编号。
+
+    升级前的任务把模型给的 `sections[].section_id` 原样存进了 state.json。
+    归一化只影响之后的写入；这里对历史画像的导出副本再归一化一次，保证备份
+    里不出现模型给的原始 ID（可能是凭据或任意字符串）。下游按 start/end_segment
+    范围定位，不依赖模型 ID，替换成 `section-<序号>` 安全。
+    """
+    profile = data.get("document_profile")
+    if not isinstance(profile, dict):
+        return
+    sections = profile.get("sections")
+    if not isinstance(sections, list):
+        return
+    for index, section in enumerate(sections):
+        if isinstance(section, dict):
+            section["section_id"] = f"section-{index + 1}"
+
+
 def _clean_export_member(name: str, payload: bytes) -> bytes:
     """The export copy of a task file carries no legacy error free text.
 
@@ -330,6 +349,7 @@ def _clean_export_member(name: str, payload: bytes) -> bytes:
                 failure["reason"] = EXPORT_CLEANED_ERROR_TEXT
         if isinstance(data, dict):
             _redact_auxiliary_failure_copies(data)
+            _normalize_export_section_ids(data)
     elif name == "runtime_state.json" and isinstance(data, dict):
         error = data.get("error")
         if isinstance(error, dict) and error.get("message"):
