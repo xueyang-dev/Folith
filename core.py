@@ -8993,7 +8993,12 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                 pass  # owner alive: fall through to write the cancel-intent changes
             elif str(current.get("status") or "") not in {
                     "cancelled", "interrupted", "completed", "failed"}:
-                changes = {**changes, **stop_terminal_if_unowned}
+                changes = {**changes, **stop_terminal_if_unowned,
+                           # CX-26 #2: match the normal no-owner terminal branch —
+                           # clear the stale owner pid/id/lease so the finished
+                           # task does not look alive through a recorded pid.
+                           "worker": {"owner_pid": None, "worker_id": None,
+                                      "lease_expires_at": None}}
         # CX-10 §1 / CX-15 §3：比对与即将发生的替换在同一把 runtime 写锁里。
         # 启动所有权也由这次加锁写入发布，所以读到的 token 和即将落盘的字节
         # 之间没有锁外窗口。只有**非空且不同**的 token 才是接管：当前值为空

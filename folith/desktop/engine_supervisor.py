@@ -1319,8 +1319,13 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
         rt = core.load_runtime_state(job_id) or {}
         cancel_only = bool(rt.get("cancel_requested")) and not bool(rt.get("exit_requested"))
         try:
+            # CX-26 #1: bind this terminal to A's launch token. If a new launch B
+            # already wrote its own token (queued) in the meantime, the in-lock
+            # token compare skips this write, so A cannot clobber B's run or clear
+            # its worker block and make B abort on a stale terminal.
             core.update_runtime_state(
                 job_id, on_timeout="retry", require_replace=True, leave_terminal=True,
+                expect_launch_token=launch_token,
                 status="cancelled" if cancel_only else "interrupted",
                 phase="cancelled" if cancel_only else "interrupted",
                 phase_label="任务已取消" if cancel_only else "已停止以便退出",

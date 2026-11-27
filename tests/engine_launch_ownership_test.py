@@ -793,9 +793,55 @@ def test_real_abort_before_start_publishes_cancelled(isolated, stub_child, monke
                                   phase="cancelling")
         return real_register(*args, **kwargs)
     monkeypatch.setattr(core, "register_engine_owner", register_with_cancel)
+    # CX-26 #3: make the monitor a no-op so `cancelled` can only come from the
+    # abort-tail's own terminal write (not from _watch's _never_ran path). Then
+    # reverting the direct write makes this test red.
+    monkeypatch.setattr(supervisor_module.EngineSupervisor, "_watch", lambda self: None)
 
     outcome = supervisor_module.start_engine(
         job_id, mode="resume", connection=_connection())
     assert not outcome.started, "发前取消必须中止启动"
     assert sent["n"] == 0, "父进程 send_line 必须是 0 次"
     assert _wait_until(lambda: _status(job_id) == "cancelled"), _state(job_id)
+
+
+def test_abort_tail_does_not_clobber_a_new_launch(isolated, stub_child, monkeypatch):
+    """CX-26 #1：A 的发前中止收尾绑定 A 的 token；若 B 已用新 token 写 queued，
+    A 的写被 token 比对跳过，不得覆盖 B、也不得清 B 的 worker 块。"""
+    data_dir, _logs = isolated
+    job_id = "abort-vs-new-launch"
+    _create_job(job_id)
+    real_register = core.register_engine_owner
+
+    def register_with_cancel(*args, **kwargs):
+        core.update_runtime_state(job_id, on_timeout="raise",
+                                  status="cancelling", cancel_requested=True,
+                                  phase="cancelling")
+        return real_register(*args, **kwargs)
+    monkeypatch.setattr(core, "register_engine_owner", register_with_cancel)
+
+    # Intercept the abort-tail update: right before it, a new launch B writes its
+    # own token + queued. The abort-tail (expect A's token) must then skip.
+    real_update = core.update_runtime_state
+    injected = {"done": False}
+
+    def wrapped(job, **kw):
+        if kw.get("expect_launch_token") is not None and not injected["done"]:
+            injected["done"] = True
+            # B launches: new token, active queued, worker block present.
+            real_update(job, on_timeout="raise", require_replace=True,
+                        status="queued", phase="starting",
+                        launch={"token": "B-token", "pid": 0},
+                        worker={"owner_pid": 424242, "worker_id": "bw",
+                                "lease_expires_at": None},
+                        cancel_requested=False, exit_requested=False)
+        return real_update(job, **kw)
+    monkeypatch.setattr(core, "update_runtime_state", wrapped)
+
+    outcome = supervisor_module.start_engine(
+        job_id, mode="resume", connection=_connection())
+    assert not outcome.started
+    st = _state(job_id)
+    assert st.get("status") == "queued", f"A 的收尾覆盖了 B：{st}"
+    assert (st.get("launch") or {}).get("token") == "B-token"
+    assert (st.get("worker") or {}).get("owner_pid") == 424242, "B 的 worker 块被清"
