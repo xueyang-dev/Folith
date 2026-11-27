@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import sys
 import threading
 import time
@@ -222,6 +223,31 @@ def generate_run_id() -> str:
     now_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     rand_hex = hashlib.sha256(os.urandom(16)).hexdigest()[:8]
     return f"run_{now_str}_{rand_hex}"
+
+
+#: The shape an external, provider-supplied identifier may have in diagnostics:
+#: a bounded token with no whitespace and no URL punctuation, so it cannot carry
+#: a credential (a user-and-password prefix on the host, or a secret in the query
+#: string) into a log line.
+_IDENTIFIER_SHAPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\-]{0,63}")
+
+
+def safe_request_identifier(value: Any) -> Optional[str]:
+    """The provider's request id, or ``None`` when it is not identifier-shaped.
+
+    The value arrives from an external service, so until it is checked it is
+    free text: a relay may answer with a URL that carries a user-and-password
+    pair or a credential among its query parameters, and ``requests.jsonl`` is
+    written straight from it.  The error diagnostics already accept only
+    identifier-shaped provider codes; this is that same rule, applied where the
+    timing record stores the id.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text or not _IDENTIFIER_SHAPE.fullmatch(text):
+        return None
+    return text
 
 
 def sanitize_metadata(data: Any, max_str_len: int = 120) -> Any:
@@ -1028,7 +1054,7 @@ class RunContext:
             "timestamp": _now_iso(),
             "provider": str(provider or "unknown"),
             "model": str(model or "unknown"),
-            "request_id": str(request_id) if request_id else None,
+            "request_id": safe_request_identifier(request_id),
             "duration_s": _safe_float(duration_s),
             "input_segments": _safe_int(input_segments),
             "input_chars": _safe_int(input_chars),

@@ -12,7 +12,7 @@ import re
 from folith import llm_transport as _llm_transport
 from folith import request_control as _request_control
 from folith import translation_protocol as _translation_protocol
-from folith.trace import trace
+from folith.trace import safe_request_identifier, trace
 from urllib.parse import urlparse
 from folith.engine._link import core as _c
 
@@ -475,6 +475,9 @@ def provider_error_status(error):
     """
     info = _provider_error_payload(error)
     http_status = info["http_status"]
+    # The code is provider-supplied text; the status dict also exposes it to the
+    # UI, so it is held to the identifier shape the timing record uses.
+    provider_code = safe_request_identifier(info["code"]) or ""
     code = info["code"].replace("-", "_").upper()
     searchable = " ".join((info["text"], info["code"], info["message"])).lower()
     status_suffix = f"（HTTP {http_status}）" if http_status else ""
@@ -489,7 +492,7 @@ def provider_error_status(error):
             "label": "余额不足",
             "message": "余额不足，请充值或更换 API Key。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if (http_status == 401 or code in {"INVALID_API_KEY", "UNAUTHORIZED"}
@@ -501,7 +504,7 @@ def provider_error_status(error):
             "label": "API Key 无效",
             "message": f"API Key 无效或已过期{status_suffix}，请检查密钥和服务商。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     # 额度用尽和"限流"是两件事，必须排在 429 前面判断：限流等一会儿会好，按月计量
@@ -524,7 +527,7 @@ def provider_error_status(error):
             "message": (f"该连接的{period}用量额度已用尽，等一会儿不会恢复；"
                         "请更换连接或提升额度。"),
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if (http_status == 429 or code in {"RATE_LIMITED", "TOO_MANY_REQUESTS"}
@@ -534,7 +537,7 @@ def provider_error_status(error):
             "label": "请求受限",
             "message": f"请求过于频繁或已达到服务商限额{status_suffix}，请稍后重试。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if http_status == 403:
@@ -543,7 +546,7 @@ def provider_error_status(error):
             "label": "访问被拒绝",
             "message": "服务商拒绝了请求（HTTP 403），请检查 API 权限、余额或接口地址。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if isinstance(error, httpx.RequestError):
@@ -552,7 +555,7 @@ def provider_error_status(error):
             "label": "无法连接服务商",
             "message": "无法连接服务商，请检查 API 地址和网络。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if http_status is not None and http_status >= 500:
@@ -561,7 +564,7 @@ def provider_error_status(error):
             "label": "服务商暂时不可用",
             "message": f"服务商暂时不可用{status_suffix}，请稍后重试。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     return {
@@ -569,7 +572,7 @@ def provider_error_status(error):
         "label": "API 请求失败",
         "message": f"API 请求失败{status_suffix}，请检查服务商配置后重试。",
         "http_status": http_status,
-        "provider_code": info["code"],
+        "provider_code": provider_code,
     }
 
 
