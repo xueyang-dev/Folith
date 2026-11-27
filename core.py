@@ -8826,6 +8826,34 @@ def _write_terminal_runtime_state(job_id, *, what, expect_launch_token=None,
     return published
 
 
+def _inprocess_owner_visible_locked(job_id, current):
+    """CX-24: is an owner visible, using only lock-free data?
+
+    Called while holding ``_RUNTIME_LOCK``. It must not acquire
+    ``_RUNTIME_WORKERS_LOCK`` or ``_RUNTIME_ENGINE_OWNERS_LOCK`` (the in-process
+    start path takes the former then waits for ``_RUNTIME_LOCK``; reversing that
+    order deadlocks). ``dict.get`` is atomic under the GIL, and the disk worker
+    block is already in ``current``.
+    """
+    # In-process worker thread: the registry holds a Thread object; is_alive()
+    # reads its own state without any of our locks.
+    worker = _RUNTIME_WORKERS.get(str(job_id))
+    try:
+        if worker is not None and worker.is_alive():
+            return True
+    except Exception:  # noqa: BLE001 - a foreign object must not raise here
+        pass
+    # Engine child registered by this process: entry present and its pid alive.
+    engine = _RUNTIME_ENGINE_OWNERS.get(str(job_id))
+    if engine and _runtime_pid_alive((engine or {}).get("pid")):
+        return True
+    # Disk worker block (another surface, or a stale-but-live lease).
+    disk = (current or {}).get("worker") or {}
+    if disk.get("owner_pid") and _runtime_pid_alive(disk.get("owner_pid")):
+        return True
+    return False
+
+
 @_runtime_write_timeout_policy
 def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
@@ -8902,8 +8930,15 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
         # 无执行者的终态写入必须在这把锁里再看一次进程内 owner。调用方在锁外
         # 看到「还没登记」之后，启动线程可能已经把 owner 放进内存；若这里仍按
         # 无执行者落盘，会把 cancel_requested 清掉，随后启动行发出去也没人停。
-        if only_if_unowned and (
-                is_job_worker_alive(job_id) or _engine_owner_alive(job_id)):
+        #
+        # CX-24: do NOT call is_job_worker_alive / _engine_owner_alive here — they
+        # take _RUNTIME_WORKERS_LOCK / _RUNTIME_ENGINE_OWNERS_LOCK, while the
+        # in-process start path holds _RUNTIME_WORKERS_LOCK and then waits for
+        # _RUNTIME_LOCK (we hold it). That is a lock-order inversion that deadlocks
+        # even with FOLITH_ENGINE_PROCESS=0. Read only data that needs no other
+        # lock: the two registries via a lock-free dict snapshot (atomic under the
+        # GIL) and the disk worker block already in ``current``.
+        if only_if_unowned and _inprocess_owner_visible_locked(job_id, current):
             return None
         if leave_terminal and str(current.get("status") or "") in {
                 "cancelled", "interrupted", "completed", "failed"}:

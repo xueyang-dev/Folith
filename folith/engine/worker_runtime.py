@@ -522,14 +522,27 @@ def request_job_cancel(job_id, *, force=False):
     # cancel_requested cleared here, and a stop that already landed must not be
     # reopened. If the lock-time check finds an owner the write is skipped; the
     # launch path re-reads the stop intent before sending the start line.
-    core.update_runtime_state(
+    terminal = core.update_runtime_state(
         job_id, on_timeout="raise", status="cancelled", phase="cancelled", phase_label="已取消",
         cancel_requested=False, error=None,
         event="任务已取消", event_name="job_cancelled",
         event_visibility="user", event_category="lifecycle",
         progress=True, heartbeat=True, only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
-    return True
+    if terminal is not None:
+        return True
+    # CX-24 #2: an owner registered between the liveness check above and the lock
+    # below, so the no-executor terminal write was skipped.  Do NOT swallow the
+    # request: write the cancelling stop intent the live executor will read.  A
+    # Windows replace that never landed returns None; report success only when
+    # the write actually published (require_replace + not-None).
+    published = core.update_runtime_state(
+        job_id, on_timeout="raise", require_replace=True,
+        status="cancelling", phase="cancelling", phase_label="正在取消",
+        cancel_requested=True,
+        event="已请求取消任务", event_name="cancel_requested",
+        progress=True)
+    return published is not None
 
 
 def request_job_exit(job_id):
@@ -570,7 +583,7 @@ def request_job_exit(job_id):
     # directly instead of leaving a stale active status behind.
     # GUI/action side (E-6u): quitting waits on this write; a refusal is
     # reported to the exit flow ("停止任务失败"), and the app stays open.
-    core.update_runtime_state(
+    terminal = core.update_runtime_state(
         job_id, on_timeout="retry", status="interrupted", phase="interrupted",
         phase_label="已停止以便退出", cancel_requested=False,
         exit_requested=True, error=None,
@@ -579,4 +592,16 @@ def request_job_exit(job_id):
         event_category="lifecycle", progress=True, heartbeat=True,
         only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
-    return True
+    if terminal is not None:
+        return True
+    # CX-24 #2: an owner registered in the window; publish the exit+cancel stop
+    # intent the live executor reads instead of dropping it.  Success only when
+    # the write actually landed.
+    published = core.update_runtime_state(
+        job_id, on_timeout="retry", require_replace=True,
+        exit_requested=True, cancel_requested=True,
+        status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
+        event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
+        event_name="exit_requested", event_visibility="user",
+        event_category="lifecycle", progress=True)
+    return published is not None

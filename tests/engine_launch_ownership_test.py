@@ -608,51 +608,110 @@ def test_a_readable_state_without_a_launch_token_still_accepts_terminal(
 # CX-19 (#621): a stop that lands after the queued write but before registration
 # ---------------------------------------------------------------------------
 
-def _stop_before_register(monkeypatch, job_id, **stop_changes):
-    """Inject a stop request in the window between queued write and owner reg."""
-    real_register = core.register_engine_owner
+def _owner_registers_in_window(monkeypatch, job_id):
+    """Make the in-lock owner probe register an owner on its first call (CX-24 #2)."""
+    real_probe = core._inprocess_owner_visible_locked
+    fired = {"n": 0}
 
-    def register_with_stop(*args, **kwargs):
-        # The launch token is already on disk; the owner is not registered yet.
-        core.update_runtime_state(job_id, require_replace=False, **stop_changes)
-        return real_register(*args, **kwargs)
+    def probe(j, cur):
+        if fired["n"] == 0:
+            fired["n"] += 1
+            # Simulate the launch thread's owner appearing in the in-lock check.
+            # We do NOT call register_engine_owner here: it would re-enter the
+            # very .runtime-write.lock this probe runs under. The point is that
+            # the no-executor write is skipped and the stop entry must fall back.
+            return True
+        return real_probe(j, cur)
 
-    monkeypatch.setattr(core, "register_engine_owner", register_with_stop)
+    monkeypatch.setattr(core, "_inprocess_owner_visible_locked", probe)
 
 
-def test_exit_before_registration_never_sends_the_start_line(isolated, stub_child,
-                                                             monkeypatch):
+def _queued_launch(job_id):
+    token = "tok-" + job_id
+    core.update_runtime_state(
+        job_id, on_timeout="raise", require_replace=True, status="queued",
+        phase="starting", launch={"token": token, "pid": 0},
+        pause_requested=False, cancel_requested=False, exit_requested=False,
+        restart_requested=False, event="queued", event_name="engine_starting")
+    return token
+
+
+def test_exit_is_not_swallowed_when_owner_registers_in_window(isolated, monkeypatch):
+    """CX-24 #2：锁外无 owner、锁内 owner 已登记时，退出不得被吞，要落成停止意图。"""
+    from folith.engine import worker_runtime as wr
     data_dir, _logs = isolated
-    job_id = "launch-not-lost-exit"
+    job_id = "stop-window-exit"
     _create_job(job_id)
-    sent = _count_send_line(monkeypatch)
-    _stop_before_register(monkeypatch, job_id,
-                          exit_requested=True, cancel_requested=True,
-                          status="interrupting", phase="interrupting")
+    token = _queued_launch(job_id)
+    # Lock-out check must see no owner so request_job_exit takes the no-executor
+    # branch; the owner then appears inside the probe (the CX-24 #2 window).
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda j: False)
+    monkeypatch.setattr(core, "_job_execution_alive", lambda j: False)
+    _owner_registers_in_window(monkeypatch, job_id)
 
-    outcome = supervisor_module.start_engine(
-        job_id, mode="resume", connection=_connection())
-    assert not outcome.started, "登记前的退出必须阻止启动行"
-    assert sent["n"] == 0, "父进程 send_line 必须是 0 次"
-    # 终态是用户要的「退出」：可续跑的 interrupted，不是仍在跑。
-    assert _wait_until(lambda: _status(job_id) in {"interrupted", "cancelling", "cancelled"} | {"interrupting"}), _state(job_id)
-    assert _status(job_id) != "running"
-    assert not supervisor_module.supervisor(job_id), "子进程应被回收、无 supervisor"
+    ok = wr.request_job_exit(job_id)
+    assert ok is True, "退出返回失败"
+    st = _state(job_id)
+    assert st.get("exit_requested") is True and st.get("cancel_requested") is True, st
+    # 实际运行能读到停止位；父进程 launch_stop_requested 也看得到。
+    assert core.launch_stop_requested(job_id, token) is True
 
 
-def test_cancel_before_registration_never_sends_the_start_line(isolated, stub_child,
-                                                               monkeypatch):
+def test_cancel_is_not_swallowed_when_owner_registers_in_window(isolated, monkeypatch):
+    """CX-24 #2：取消同理，落成 cancel_requested 停止意图。"""
+    from folith.engine import worker_runtime as wr
     data_dir, _logs = isolated
-    job_id = "launch-not-lost-cancel"
+    job_id = "stop-window-cancel"
     _create_job(job_id)
-    sent = _count_send_line(monkeypatch)
-    _stop_before_register(monkeypatch, job_id,
-                          cancel_requested=True, status="cancelling",
-                          phase="cancelling")
+    token = _queued_launch(job_id)
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda j: False)
+    monkeypatch.setattr(core, "_job_execution_alive", lambda j: False)
+    _owner_registers_in_window(monkeypatch, job_id)
 
-    outcome = supervisor_module.start_engine(
-        job_id, mode="resume", connection=_connection())
-    assert not outcome.started, "登记前的取消必须阻止启动行"
-    assert sent["n"] == 0, "父进程 send_line 必须是 0 次"
-    assert _status(job_id) != "running"
-    assert not supervisor_module.supervisor(job_id), "子进程应被回收、无 supervisor"
+    ok = wr.request_job_cancel(job_id)
+    assert ok is True, "取消返回失败"
+    st = _state(job_id)
+    assert st.get("cancel_requested") is True, st
+    assert core.launch_stop_requested(job_id, token) is True
+
+
+def test_owner_probe_takes_no_second_lock_under_runtime_lock(isolated, monkeypatch):
+    """CX-24 #1：`_inprocess_owner_visible_locked` 在持 RUNTIME_LOCK 时不得再拿
+    WORKERS_LOCK / ENGINE_OWNERS_LOCK（那与进程内启动的相反顺序互等）。
+
+    确定性验证：在已持 WORKERS_LOCK 的线程里调用它，若它还去拿 WORKERS_LOCK 会
+    因 RLock 重入而不暴露——所以改为断言它在**另一线程持 WORKERS_LOCK**时也能
+    立即返回（不阻塞），证明它从不 acquire 那把锁；超时即锁顺序反转。
+    """
+    import threading as _th
+    data_dir, _logs = isolated
+    job_id = "owner-probe-p12"
+    _create_job(job_id)
+
+    holding = _th.Event()
+    done = _th.Event()
+    result = {}
+
+    def hold_workers():
+        # Hold WORKERS_LOCK for a while; if the probe needs it, it blocks.
+        with core._RUNTIME_WORKERS_LOCK:
+            holding.set()
+            done.wait(timeout=30)  # hold until the main thread signals completion
+
+    t = _th.Thread(target=hold_workers)
+    t.start()
+    assert holding.wait(timeout=5)
+
+    def run_probe():
+        with core._RUNTIME_LOCK:
+            result["v"] = core._inprocess_owner_visible_locked(job_id, {})
+        result["ran"] = True
+
+    pt = _th.Thread(target=run_probe)
+    pt.start()
+    pt.join(timeout=8)
+    ran = not pt.is_alive()
+    done.set()
+    t.join(timeout=5)
+    assert ran, "probe 在另一线程持有 WORKERS_LOCK 时阻塞（锁顺序反转）"
+    assert result.get("v") in (True, False)

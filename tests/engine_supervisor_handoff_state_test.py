@@ -192,6 +192,20 @@ def _diagnose(sup, job_id: str) -> str:
     return " | ".join(parts)
 
 
+def _technical_tail(job_id: str, limit: int = 800) -> str:
+    """Tail of the runtime technical log, for failure diagnostics only."""
+    try:
+        path = core.runtime_technical_log_path(job_id)
+    except Exception:  # noqa: BLE001 - diagnostic must never raise
+        return ""
+    try:
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _wait_until(predicate, timeout: float = 120.0, interval: float = 0.02) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -425,7 +439,20 @@ def test_a_handoff_run_is_published_when_the_executor_dies(isolated, gateway,
     assert _wait_until(lambda: sup.wait_finished(0), timeout=60), \
         "the supervisor never published after the executor died"
     runtime = _runtime(job_id)
-    assert runtime.get("status") == "interrupted", runtime
+    # CX-24 #5: if this ever reds on Windows again, dump enough to tell whether
+    # the monitor's terminal write landed and what the last state looked like,
+    # instead of only the status. (test-only; no product behaviour.)
+    _diag = {
+        "status": runtime.get("status"),
+        "error": runtime.get("error"),
+        "worker": runtime.get("worker"),
+        "events": _events(job_id)[-8:],
+        "wait_finished": sup.wait_finished(0),
+        "exit_code": getattr(sup, "_exit_code", None),
+        "terminal_published": getattr(sup, "_end_launch_token", None) is not None,
+        "technical_log_tail": _technical_tail(job_id),
+    }
+    assert runtime.get("status") == "interrupted", _diag
     assert (runtime.get("error") or {}).get("type") == "EngineProcessExited", runtime
     assert (runtime.get("worker") or {}).get("owner_pid") in (None, 0), runtime
     assert "engine_process_exited" in _events(job_id), _events(job_id)
@@ -1015,3 +1042,47 @@ def test_a_retry_during_the_replacement_cold_start_does_not_land(
     assert replacement.wait_finished(10)
     final = _runtime(job_id)
     assert final.get("status") == "completed", final
+
+
+def test_cancel_before_start_line_publishes_cancelled_not_interrupted(isolated):
+    """CX-24 #3：登记后、启动行前被取消（child 从未运行）→ 终态 cancelled，不是 interrupted。
+
+    通过 `_never_ran` 区分「child 从未发送启动行」，避免把运行中被取消后 executor
+    死亡的正常场景（test_a_cancelling_run_still_converges_to_interrupted）误判成 cancelled。
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6sneverb1"
+    _create_job(job_id)
+    # 该次运行的 launch token 已落盘，状态停在 cancelling + cancel_requested。
+    token = "launch-never-" + job_id
+    core.update_runtime_state(
+        job_id, on_timeout="raise", require_replace=True, status="queued",
+        phase="starting", launch={"token": token, "pid": 0},
+        cancel_requested=False, exit_requested=False, event="queued")
+    core.update_runtime_state(
+        job_id, on_timeout="raise", status="cancelling", phase="cancelling",
+        cancel_requested=True)
+
+    import io as _io
+
+    class _Proc:
+        pid = 0
+        # __init__ starts a drain thread that reads proc.stdout; give it an
+        # already-closed empty pipe so it exits immediately.
+        stdout = _io.BytesIO(b"")
+        stdin = _io.BytesIO(b"")
+        def poll(self): return None
+        def wait(self, timeout=None): return 0
+        def kill(self): pass
+        def terminate(self): pass
+
+    sup = supervisor_module.EngineSupervisor(
+        job_id, _Proc(), token="tok", command=["true"],
+        data_dir=data_dir, log_dir=_log_dir, launch_token=token)
+    sup._never_ran = True          # aborted before the start line
+    sup._exit_code = None
+    written = sup._publish_terminal_state()
+    assert written is True
+    runtime = _runtime(job_id)
+    assert runtime.get("status") == "cancelled", runtime
+    assert runtime.get("cancel_requested") is True, runtime

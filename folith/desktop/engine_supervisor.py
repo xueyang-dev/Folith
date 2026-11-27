@@ -422,6 +422,7 @@ class EngineSupervisor:
         self._write_lock = threading.Lock()
         self._stdin_closed = False
         self._stopping = False
+        self._never_ran = False
         self._exit_code: Optional[int] = None
         self._bound_worker_id = ""
         self._started_at = time.monotonic()
@@ -940,14 +941,28 @@ class EngineSupervisor:
         # silently, and the "reopen offers resume" contract depends on this
         # write; a final loss is counted and written to the technical log by
         # ``_write_terminal_runtime_state`` rather than swallowed.
+        # CX-24 #3: a user cancel that landed after registration but before the
+        # start line left a child that never ran; give THAT the cancel terminal
+        # (``cancelled``), not a resumable ``interrupted``. A run that actually
+        # executed and was then stopped/crashed keeps ``interrupted`` — so this
+        # keys on ``_never_ran`` (set only when the launch was aborted before the
+        # start line), not on the cancel flag alone.
+        if getattr(self, "_never_ran", False) and cancel_requested and not exit_requested:
+            terminal_status = "cancelled"
+            terminal_phase = "cancelled"
+            terminal_label = "任务已取消"
+        else:
+            terminal_status = "interrupted"
+            terminal_phase = "interrupted"
+            terminal_label = message
         written = core._write_terminal_runtime_state(
             self.job_id, what="engine_process_exited",
             # CX-10 §1: the ownership comparison also happens inside the
             # runtime-write lock (core.update_runtime_state), so a takeover
             # that lands between this check and the write still wins.
             expect_launch_token=self._end_launch_token,
-            status="interrupted", phase="interrupted",
-            phase_label=message, cancel_requested=cancel_requested,
+            status=terminal_status, phase=terminal_phase,
+            phase_label=terminal_label, cancel_requested=cancel_requested,
             exit_requested=exit_requested,
             error=error, event=message, event_name="engine_process_exited",
             event_visibility="user", event_category="lifecycle",
@@ -1292,6 +1307,7 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
     except Exception:  # noqa: BLE001 - a failed check must not start blindly
         stop_requested = True
     if stop_requested:
+        sup._never_ran = True
         sup.abandon()
         try:
             core.release_engine_owner(job_id, token)
