@@ -139,6 +139,9 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         def _worker_tail_terminal(cur):
             cur_exit = bool(cur.get("exit_requested"))
             cur_cancel = bool(cur.get("cancel_requested"))
+            # Preserve the original precedence: an exit needs the business to be
+            # incomplete for `interrupted`; a cancel is cancelled REGARDLESS of
+            # business-completeness (a cancel must never be reported as success).
             if cur_exit and not _business_done:
                 return {"status": "interrupted", "phase": "interrupted",
                         "phase_label": "已停止以便退出",
@@ -146,7 +149,7 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                         "event_name": "job_stopped_for_exit",
                         "event_category": "lifecycle", "cancel_requested": False,
                         "exit_requested": True, "error": None}
-            if cur_cancel and not _business_done:
+            if cur_cancel:
                 return {"status": "cancelled", "phase": "cancelled",
                         "phase_label": "已取消", "event": "任务已取消",
                         "event_name": "job_cancelled", "event_category": "lifecycle",
