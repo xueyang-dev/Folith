@@ -2,6 +2,16 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import unquote, urlsplit, urlunsplit
+
+#: Query parameters that carry a credential rather than routing information.
+#: A relay that authenticates through the URL puts the secret here (``?key=``,
+#: ``?api_key=``), so the auditable copy of the URL must drop these entries.
+CREDENTIAL_QUERY_KEYS = frozenset({
+    "key", "api_key", "api-key", "apikey", "x-api-key",
+    "access_key", "access_token", "token", "auth", "authorization",
+    "password", "secret", "client_secret", "sig", "signature",
+})
 
 
 def normalize_role_config(
@@ -34,13 +44,47 @@ def resolve_review_runtime(
     return normalize_role_config(config)
 
 
+def public_base_url(base_url: str) -> str:
+    """The auditable copy of a base URL: no userinfo, no credential parameters.
+
+    A custom connection may authenticate through the URL — ``user:pass@host`` or
+    ``?key=`` / ``?api_key=`` — and the connection form accepts it, because the
+    same URL is what the request needs.  The task state keeps a copy of that URL
+    for exports and diagnostics, which outlive the process and are read by people
+    the secret is not for, so this copy drops the two credential carriers.
+
+    Everything else is preserved byte for byte: a relay can put routing data in
+    the path or in a non-credential query parameter, and rewriting those would
+    change what the state says the connection was.
+    """
+    text = str(base_url or "").strip()
+    if not text:
+        return ""
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text
+    if not parts.scheme or not parts.netloc:
+        return text
+    # Everything before the last "@" is userinfo; a password may contain "@".
+    netloc = parts.netloc.rsplit("@", 1)[-1]
+    if parts.query:
+        kept = [chunk for chunk in parts.query.split("&")
+                if chunk and unquote(chunk.split("=", 1)[0]).strip().lower()
+                not in CREDENTIAL_QUERY_KEYS]
+        query = "&".join(kept)
+    else:
+        query = ""
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
 def public_role_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Return an auditable role config with no API key."""
+    """Return an auditable role config with no API key and no URL credential."""
     config = normalize_role_config(config)
     return {
         "provider": config["provider"],
         "model": config["model"],
-        "base_url": config["base_url"],
+        "base_url": public_base_url(config["base_url"]),
         "configured": bool(config["provider"] and config["model"]),
     }
 
