@@ -958,3 +958,39 @@ def test_live_owner_stop_keeps_a_terminal_published_meanwhile(isolated, monkeypa
 
     assert wr.request_job_cancel(job_id) is True
     assert _status(job_id) == "completed", f"活 owner 停止入口覆盖了终态：{_state(job_id)}"
+
+
+def test_live_owner_stop_keeps_idle_incomplete_checkpoint(isolated, monkeypatch):
+    """CX-30 #1：worker 已写 idle_incomplete 检查点后，迟到的退出/取消不得改回 cancelling。"""
+    from folith.engine import worker_runtime as wr
+    data_dir, _logs = isolated
+    for entry, fn in (("exit", wr.request_job_exit), ("cancel", wr.request_job_cancel)):
+        job_id = f"idle-keep-{entry}"
+        _create_job(job_id)
+        core.update_runtime_state(job_id, on_timeout="raise", require_replace=True,
+                                  status="idle_incomplete", phase="idle_incomplete",
+                                  worker={"owner_pid": os.getpid(), "worker_id": "w",
+                                          "lease_expires_at": None})
+        monkeypatch.setattr(core, "is_job_worker_alive", lambda j: True)
+        assert fn(job_id) is True
+        assert _status(job_id) == "idle_incomplete", f"{entry} 覆盖了检查点：{_state(job_id)}"
+
+
+def test_completion_tail_sets_overall_progress_1_0(isolated):
+    """CX-30 #2：完成兜底写不靠状态回调，直接验证终态带 overall_progress=1.0 且 status=completed。"""
+    data_dir, _logs = isolated
+    job_id = "complete-prog"
+    _create_job(job_id)
+    core.update_runtime_state(job_id, on_timeout="raise", require_replace=True,
+                              status="running", overall_progress=0.4)
+    # Worker tail: business complete -> completed with overall_progress 1.0.
+    def tail(cur):
+        return {"status": "completed", "phase": "completed", "phase_label": "已完成",
+                "event": "任务已完成", "event_name": "job_completed",
+                "event_category": "lifecycle", "heartbeat": True, "overall_progress": 1.0}
+    core._write_terminal_runtime_state(job_id, what="t", status="idle_incomplete",
+                                       phase="idle_incomplete", phase_label="x",
+                                       event="x", event_name="y", terminal_func=tail)
+    rt = core.load_runtime_state(job_id)
+    assert rt.get("status") == "completed"
+    assert rt.get("overall_progress") == 1.0, rt

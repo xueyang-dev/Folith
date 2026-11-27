@@ -155,12 +155,19 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                         "event_name": "job_cancelled", "event_category": "lifecycle",
                         "cancel_requested": True, "exit_requested": False, "error": None}
             if _business_done:
+                # CX-30: restore main's user-visible fields — the completion
+                # fallback must carry overall_progress=1.0 and refresh the
+                # heartbeat at teardown.
                 return {"status": "completed", "phase": "completed",
                         "phase_label": "已完成", "event": "任务已完成",
-                        "event_name": "job_completed", "event_category": "lifecycle"}
+                        "event_name": "job_completed", "event_category": "lifecycle",
+                        "heartbeat": True, "overall_progress": 1.0}
             return {"status": "idle_incomplete", "phase": "idle_incomplete",
                     "phase_label": "等待继续", "event": "阶段已保存，等待继续",
-                    "event_name": "job_checkpointed", "event_category": "checkpoint"}
+                    "event_name": "job_checkpointed", "event_category": "checkpoint",
+                    # checkpoint teardown refreshes the heartbeat; the checkpoint
+                    # event stays technical (not user activity) as in main.
+                    "heartbeat": True, "event_visibility": "technical"}
         # Trace the final kind from one locked read for the trace record only.
         if not segment_operation:
             core.trace.finish_run(

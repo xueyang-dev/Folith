@@ -8980,7 +8980,11 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             # stop-intent write" instead of swallowing the request.
             return False
         if leave_terminal and str(current.get("status") or "") in {
-                "cancelled", "interrupted", "completed", "failed"}:
+                "cancelled", "interrupted", "completed", "failed",
+                # CX-30: a saved checkpoint terminal is a non-active, resumable
+                # state (Qt waits on it); a late stop must not reopen it as
+                # cancelling and hang the 45 s exit.
+                "idle_incomplete"}:
             return current
         # CX-29: a terminal writer may pass terminal_func to choose the terminal
         # KIND from THIS lock's read (not an out-of-lock snapshot), for writers
@@ -8998,6 +9002,12 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                 event_name = _tf.pop("event_name")
             if _tf.get("event_category") is not None:
                 event_category = _tf.pop("event_category")
+            if _tf.get("event_visibility") is not None:
+                event_visibility = _tf.pop("event_visibility")
+            # heartbeat is a function arg (drives last_heartbeat_at), not a state
+            # field; let terminal_func decide it from the in-lock kind.
+            if _tf.get("heartbeat") is not None:
+                heartbeat = _tf.pop("heartbeat")
             changes = {**changes, **_tf}
         # CX-25: a stop's fallback write races a run that may publish its own
         # terminal and exit between the skip and this lock. If it already ended,
@@ -9010,7 +9020,8 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             if _inprocess_owner_visible_locked(job_id, current):
                 pass  # owner alive: fall through to write the cancel-intent changes
             elif str(current.get("status") or "") not in {
-                    "cancelled", "interrupted", "completed", "failed"}:
+                    "cancelled", "interrupted", "completed", "failed",
+                    "idle_incomplete"}:
                 # CX-27: the terminal *kind* must be chosen from THIS lock's
                 # read, not an out-of-lock snapshot. A callable receives the
                 # in-lock state and returns the terminal dict; a plain dict is
@@ -9271,8 +9282,10 @@ def _runtime_mark_lost(job_id, status, message):
     # by publish_lost_runtime_state under .worker.lock, and the supervisor
     # terminal boundary) — a single-owner path, not the A/B abort race. Still,
     # guard it with leave_terminal so it can never reopen a terminal that a
-    # concurrent writer already published, and only clear the worker block when
-    # no owner is visible (in-lock), matching the other terminal writers.
+    # concurrent writer already published. NOTE: the worker block is chosen by
+    # `_job_execution_alive(job_id)` evaluated OUT OF LOCK (before this call),
+    # not in-lock — kept as-is from main; a stale liveness read here only affects
+    # whether the block is cleared, never the terminal kind.
     return update_runtime_state(
         job_id, on_timeout="raise", status=status, phase=status, phase_label=message,
         leave_terminal=True,
