@@ -8831,7 +8831,8 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
                          event_visibility=None, event_category=None,
                          event_logged=False, expect_launch_token=None,
-                         require_replace=False, companion_event=None, **changes):
+                         require_replace=False, companion_event=None,
+                         only_if_unowned=False, leave_terminal=False, **changes):
     """Atomically merge a worker status update into runtime_state.json.
 
     ``event_logged=True`` says the event has already been appended to
@@ -8862,6 +8863,19 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     dict already includes changes that never reached disk.  With
     ``require_replace`` the same error is raised instead, and the caller must
     not treat the update as published.
+
+    ``only_if_unowned`` re-checks the in-process owner inside this lock and
+    writes nothing (returns ``None``) when a worker thread or a registered
+    engine child is already visible.  Exit and cancel use it for the
+    no-executor terminal write, so a launch that registered between the
+    caller's liveness check and this lock cannot be published as "nobody is
+    running" and have ``cancel_requested`` cleared.  A disk pid alone does
+    not count: that tier is the historical lease, not this process's child.
+
+    ``leave_terminal`` keeps an already terminal status (``cancelled``,
+    ``interrupted``, ``completed``, ``failed``) instead of merging over it.
+    The notify form of exit/cancel uses it so a stop that already landed is
+    not reopened as ``cancelling``.
     """
     if not job_id:
         return _runtime_defaults()
@@ -8885,6 +8899,15 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
         if (expect_launch_token is not None
                 and isinstance(current, RuntimeStateUnreadable)):
             return None
+        # 无执行者的终态写入必须在这把锁里再看一次进程内 owner。调用方在锁外
+        # 看到「还没登记」之后，启动线程可能已经把 owner 放进内存；若这里仍按
+        # 无执行者落盘，会把 cancel_requested 清掉，随后启动行发出去也没人停。
+        if only_if_unowned and (
+                is_job_worker_alive(job_id) or _engine_owner_alive(job_id)):
+            return None
+        if leave_terminal and str(current.get("status") or "") in {
+                "cancelled", "interrupted", "completed", "failed"}:
+            return current
         # CX-10 §1 / CX-15 §3：比对与即将发生的替换在同一把 runtime 写锁里。
         # 启动所有权也由这次加锁写入发布，所以读到的 token 和即将落盘的字节
         # 之间没有锁外窗口。只有**非空且不同**的 token 才是接管：当前值为空
@@ -9003,6 +9026,38 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             _RUNTIME_PERSIST_STATS["state_write_seconds"] += (
                 time.perf_counter() - started)
         return current
+
+
+def launch_stop_requested(job_id, launch_token):
+    """CX-19 (#621): did a stop land for this launch before the start line?
+
+    Called by the supervisor inside the runtime-write lock immediately before
+    it hands the child its start line.  Returns True when the state for *this*
+    ``launch_token`` already carries an exit or cancel request, or has already
+    reached a stop/terminal status — a quit or cancel that arrived after the
+    ``queued`` write but before the owner was registered.  The launch then must
+    not send the start line; it reaps the child and keeps the user's terminal
+    state.  A state whose launch token is still empty (old format) or belongs to
+    another run is not this launch's stop, so it returns False.
+    """
+    if not job_id:
+        return False
+    token = str(launch_token or "")
+    if not token:
+        return False
+    with _RUNTIME_LOCK, _job_lock.exclusive(
+            job_dir(job_id) / ".runtime-write.lock",
+            timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
+        current = load_runtime_state(job_id)
+        if isinstance(current, RuntimeStateUnreadable) or not isinstance(current, dict):
+            return False
+        current_token = str((current.get("launch") or {}).get("token") or "")
+        if current_token != token:
+            return False
+        if current.get("exit_requested") is True or current.get("cancel_requested") is True:
+            return True
+        status = str(current.get("status") or "")
+        return status in {"cancelling", "cancelled", "interrupted", "completed", "failed"}
 
 
 def _runtime_pid_alive(pid):

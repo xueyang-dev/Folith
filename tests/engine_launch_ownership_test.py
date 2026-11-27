@@ -604,3 +604,57 @@ def test_a_readable_state_without_a_launch_token_still_accepts_terminal(
     assert isinstance(published, dict)
     assert _status(job_id) == "interrupted"
     assert not (_state(job_id).get("worker") or {}).get("worker_id")
+
+
+# ---------------------------------------------------------------------------
+# CX-19 (#621): a stop that lands after the queued write but before registration
+# ---------------------------------------------------------------------------
+
+def _stop_before_register(monkeypatch, job_id, **stop_changes):
+    """Inject a stop request in the window between queued write and owner reg."""
+    real_register = core.register_engine_owner
+
+    def register_with_stop(*args, **kwargs):
+        # The launch token is already on disk; the owner is not registered yet.
+        core.update_runtime_state(job_id, require_replace=False, **stop_changes)
+        return real_register(*args, **kwargs)
+
+    monkeypatch.setattr(core, "register_engine_owner", register_with_stop)
+
+
+def test_exit_before_registration_never_sends_the_start_line(isolated, stub_child,
+                                                             monkeypatch):
+    data_dir, _logs = isolated
+    job_id = "launch-not-lost-exit"
+    _create_job(job_id)
+    sent = _count_send_line(monkeypatch)
+    _stop_before_register(monkeypatch, job_id,
+                          exit_requested=True, cancel_requested=True,
+                          status="interrupting", phase="interrupting")
+
+    outcome = supervisor_module.start_engine(
+        job_id, mode="resume", connection=_connection())
+    assert not outcome.started, "登记前的退出必须阻止启动行"
+    assert sent["n"] == 0, "父进程 send_line 必须是 0 次"
+    # 终态是用户要的「退出」：可续跑的 interrupted，不是仍在跑。
+    assert _wait_until(lambda: _status(job_id) in {"interrupted", "cancelling", "cancelled"} | {"interrupting"}), _state(job_id)
+    assert _status(job_id) != "running"
+    assert not supervisor_module.supervisor(job_id), "子进程应被回收、无 supervisor"
+
+
+def test_cancel_before_registration_never_sends_the_start_line(isolated, stub_child,
+                                                               monkeypatch):
+    data_dir, _logs = isolated
+    job_id = "launch-not-lost-cancel"
+    _create_job(job_id)
+    sent = _count_send_line(monkeypatch)
+    _stop_before_register(monkeypatch, job_id,
+                          cancel_requested=True, status="cancelling",
+                          phase="cancelling")
+
+    outcome = supervisor_module.start_engine(
+        job_id, mode="resume", connection=_connection())
+    assert not outcome.started, "登记前的取消必须阻止启动行"
+    assert sent["n"] == 0, "父进程 send_line 必须是 0 次"
+    assert _status(job_id) != "running"
+    assert not supervisor_module.supervisor(job_id), "子进程应被回收、无 supervisor"

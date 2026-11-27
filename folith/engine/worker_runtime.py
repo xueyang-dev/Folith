@@ -542,12 +542,19 @@ def request_job_cancel(job_id, *, force=False):
     # GUI/action side (E-6u): the user is waiting on Cancel, so a refused write
     # is reported ("please retry") instead of parking the slot for a retry
     # budget; the terminal state is either written or explicitly refused.
+    # CX-19 (#621): this terminal write happens only when no executor is alive.
+    # Re-check the in-process owner inside the state lock (only_if_unowned) and
+    # keep an already-terminal status (leave_terminal): a launch thread that
+    # registered just after the liveness check above must not have its
+    # cancel_requested cleared here, and a stop that already landed must not be
+    # reopened. If the lock-time check finds an owner the write is skipped; the
+    # launch path re-reads the stop intent before sending the start line.
     core.update_runtime_state(
         job_id, on_timeout="raise", status="cancelled", phase="cancelled", phase_label="已取消",
         cancel_requested=False, error=None,
         event="任务已取消", event_name="job_cancelled",
         event_visibility="user", event_category="lifecycle",
-        progress=True, heartbeat=True,
+        progress=True, heartbeat=True, only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
     return True
 
@@ -597,5 +604,6 @@ def request_job_exit(job_id):
         event="任务已停止以便退出；可继续处理。",
         event_name="job_stopped_for_exit", event_visibility="user",
         event_category="lifecycle", progress=True, heartbeat=True,
+        only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
     return True
