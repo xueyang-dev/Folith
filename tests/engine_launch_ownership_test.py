@@ -819,6 +819,11 @@ def test_abort_tail_does_not_clobber_a_new_launch(isolated, stub_child, monkeypa
                                   phase="cancelling")
         return real_register(*args, **kwargs)
     monkeypatch.setattr(core, "register_engine_owner", register_with_cancel)
+    # CX-27 #2: silence the monitor so the intercepted write can only be the
+    # abort tail's direct one, and locate it by an independent marker
+    # (stop_terminal_if_unowned, which only the abort tail passes), not by the
+    # token argument alone.
+    monkeypatch.setattr(supervisor_module.EngineSupervisor, "_watch", lambda self: None)
 
     # Intercept the abort-tail update: right before it, a new launch B writes its
     # own token + queued. The abort-tail (expect A's token) must then skip.
@@ -826,7 +831,7 @@ def test_abort_tail_does_not_clobber_a_new_launch(isolated, stub_child, monkeypa
     injected = {"done": False}
 
     def wrapped(job, **kw):
-        if kw.get("expect_launch_token") is not None and not injected["done"]:
+        if kw.get("stop_terminal_if_unowned") is not None and not injected["done"]:
             injected["done"] = True
             # B launches: new token, active queued, worker block present.
             real_update(job, on_timeout="raise", require_replace=True,
@@ -845,3 +850,43 @@ def test_abort_tail_does_not_clobber_a_new_launch(isolated, stub_child, monkeypa
     assert st.get("status") == "queued", f"A 的收尾覆盖了 B：{st}"
     assert (st.get("launch") or {}).get("token") == "B-token"
     assert (st.get("worker") or {}).get("owner_pid") == 424242, "B 的 worker 块被清"
+
+
+def test_abort_terminal_kind_uses_in_lock_stop_flags(isolated, stub_child, monkeypatch):
+    """CX-27 #1：发前中止收尾的终态种类用锁内停位。锁外读取后、加锁前退出位落盘，
+    收尾应写 interrupted（退出约定），不是 cancelled。"""
+    data_dir, _logs = isolated
+    job_id = "abort-kind-inlock"
+    _create_job(job_id)
+    sent = _count_send_line(monkeypatch)
+    real_register = core.register_engine_owner
+
+    def register_with_cancel(*args, **kwargs):
+        core.update_runtime_state(job_id, on_timeout="raise",
+                                  status="cancelling", cancel_requested=True,
+                                  phase="cancelling")
+        return real_register(*args, **kwargs)
+    monkeypatch.setattr(core, "register_engine_owner", register_with_cancel)
+    monkeypatch.setattr(supervisor_module.EngineSupervisor, "_watch", lambda self: None)
+
+    real_update = core.update_runtime_state
+    injected = {"done": False}
+
+    def wrapped(job, **kw):
+        # Just before the abort tail's own write, a quit lands for the SAME token:
+        # exit_requested=True + cancelling. The tail must pick interrupted.
+        if kw.get("stop_terminal_if_unowned") is not None and not injected["done"]:
+            injected["done"] = True
+            real_update(job, on_timeout="raise", status="cancelling",
+                        phase="cancelling", exit_requested=True,
+                        cancel_requested=True)
+        return real_update(job, **kw)
+    monkeypatch.setattr(core, "update_runtime_state", wrapped)
+
+    outcome = supervisor_module.start_engine(
+        job_id, mode="resume", connection=_connection())
+    assert not outcome.started
+    assert sent["n"] == 0
+    st = _state(job_id)
+    assert st.get("status") == "interrupted", f"退出被写成取消：{st}"
+    assert st.get("cancel_requested") is not True

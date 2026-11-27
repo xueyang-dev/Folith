@@ -8993,7 +8993,14 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                 pass  # owner alive: fall through to write the cancel-intent changes
             elif str(current.get("status") or "") not in {
                     "cancelled", "interrupted", "completed", "failed"}:
-                changes = {**changes, **stop_terminal_if_unowned,
+                # CX-27: the terminal *kind* must be chosen from THIS lock's
+                # read, not an out-of-lock snapshot. A callable receives the
+                # in-lock state and returns the terminal dict; a plain dict is
+                # used as-is.
+                _terminal = (stop_terminal_if_unowned(current)
+                             if callable(stop_terminal_if_unowned)
+                             else stop_terminal_if_unowned)
+                changes = {**changes, **_terminal,
                            # CX-26 #2: match the normal no-owner terminal branch —
                            # clear the stale owner pid/id/lease so the finished
                            # task does not look alive through a recorded pid.

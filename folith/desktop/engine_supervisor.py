@@ -1316,8 +1316,23 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
         # CX-24 #3 / CX-25: the child never ran and no monitor will publish, so
         # land the user's terminal here — cancelled for a cancel, interrupted for
         # a quit — while keeping any already-published terminal.
-        rt = core.load_runtime_state(job_id) or {}
-        cancel_only = bool(rt.get("cancel_requested")) and not bool(rt.get("exit_requested"))
+        #
+        # CX-27: the terminal KIND must come from the same in-lock read as the
+        # ownership/token guard, not an out-of-lock snapshot. A quit request can
+        # land (exit_requested=True, cancelling) after the out-of-lock read but
+        # before this write; choosing the kind from a stale read would write
+        # `cancelled` over an exit and leave exit_requested=True. So pass a
+        # callable that reads the in-lock state.
+        def _abort_terminal(cur):
+            cancel_only = (bool(cur.get("cancel_requested"))
+                           and not bool(cur.get("exit_requested")))
+            if cancel_only:
+                return {"status": "cancelled", "phase": "cancelled",
+                        "phase_label": "任务已取消", "cancel_requested": False,
+                        "error": None}
+            return {"status": "interrupted", "phase": "interrupted",
+                    "phase_label": "已停止以便退出", "cancel_requested": False,
+                    "error": None}
         try:
             # CX-26 #1: bind this terminal to A's launch token. If a new launch B
             # already wrote its own token (queued) in the meantime, the in-lock
@@ -1326,11 +1341,11 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
             core.update_runtime_state(
                 job_id, on_timeout="retry", require_replace=True, leave_terminal=True,
                 expect_launch_token=launch_token,
-                status="cancelled" if cancel_only else "interrupted",
-                phase="cancelled" if cancel_only else "interrupted",
-                phase_label="任务已取消" if cancel_only else "已停止以便退出",
-                cancel_requested=False, error=None,
-                worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+                stop_terminal_if_unowned=_abort_terminal,
+                status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
+                event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
+                event_name="exit_requested", event_visibility="user",
+                event_category="lifecycle", progress=True)
         except Exception:  # noqa: BLE001 - a failed write must not crash the launch abort
             pass
         return EngineOutcome(False, "任务已被取消或退出，未启动运行。")
