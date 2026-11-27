@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -67,7 +68,10 @@ def test_a_credential_bearing_id_never_reaches_the_file(tmp_path):
 
 def test_error_diagnostics_apply_the_same_rule():
     # The same helper names the provider code in error diagnostics, so a relay
-    # cannot put a URL into the status dict either.
+    # cannot put a URL into the status dict either.  The payload is walked with
+    # ``code -> error_code -> type`` and every candidate is shape-validated, so a
+    # rejected ``code`` falls through to the next field instead of leaving the
+    # field empty: what survives is still an identifier, never the URL.
     from folith.engine.llm_provider import provider_error_status
 
     class _ProviderError(Exception):
@@ -77,6 +81,26 @@ def test_error_diagnostics_apply_the_same_rule():
     error.status_code = 429
     error.body = {"error": {"code": "https://user:pass@relay.example/v1?key=synthetic",
                             "type": "rate_limit_error"}}
+
+    status = provider_error_status(error)
+    assert status["provider_code"] == "rate_limit_error"
+    assert re.fullmatch(r"[A-Za-z0-9_.\-]+", status["provider_code"])
+    assert "relay.example" not in status["provider_code"]
+    dump = json.dumps(status, ensure_ascii=False)
+    assert "user:pass" not in dump and "synthetic" not in dump
+
+
+def test_a_url_code_with_no_usable_fallback_leaves_the_field_empty():
+    # Same shape rule, no fallback field: nothing identifier-shaped is available,
+    # so the field stays empty rather than echoing the rejected value.
+    from folith.engine.llm_provider import provider_error_status
+
+    class _ProviderError(Exception):
+        pass
+
+    error = _ProviderError("rate limited")
+    error.status_code = 429
+    error.body = {"error": {"code": "https://user:pass@relay.example/v1?key=synthetic"}}
 
     status = provider_error_status(error)
     assert status["provider_code"] == ""
