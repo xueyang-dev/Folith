@@ -141,7 +141,9 @@ class StoragePage(QWidget):
             '以后遇到相同内容时会重新调用模型。') + ' ' + i18n.tr(A65_SCOPE_NOTE))
         self.clear_button.clicked.connect(self._clear)
         self.export_button = QPushButton(i18n.tr('导出全部数据…'))
-        self.export_button.setToolTip(i18n.tr('打成一个 zip 备份包；不包含 API 密钥。'))
+        self.export_button.setToolTip(i18n.tr(
+            '打成一个 zip 备份包；不含 API 密钥与连接配置，也不含可能记录了'
+            '服务商原始回包的取证文件；在新机器上恢复后需重新填写密钥。'))
         self.export_button.clicked.connect(self._export)
         actions = QHBoxLayout()
         actions.addWidget(self.clear_button)

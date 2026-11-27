@@ -69,3 +69,77 @@ def test_pipeline_persists_and_reports_profile_failure(tmp_path, monkeypatch):
     assert saved['profile_warnings'] == [reason]
     assert reason in saved['warnings']
     assert reason in captions
+
+
+def test_unclassified_remote_profile_failure_stores_a_structured_diagnostic():
+    """HTTP 400 that matches no category must not persist the relay body."""
+    secret = 'Ab3kQ9z'
+
+    class Remote(Exception):
+        status_code = 400
+        code = secret
+
+        def __init__(self):
+            super().__init__(
+                'Error code: 400 - {"error":"bad","api_key":"' + secret + '"}')
+
+    calls = []
+
+    def fail(*_args, **_kwargs):
+        calls.append(1)
+        raise Remote()
+
+    profile, warnings = profile_document(
+        ['A memoir.'], 'relay', secret, 'model', call_llm=fail)
+    assert profile is None
+    assert len(calls) == 1
+    text = warnings[0]
+    assert secret not in text
+    assert 'Error code' not in text
+    assert 'api_key' not in text
+    assert 'class=unknown' in text
+    assert 'http=400' in text
+    assert 'code=' not in text
+    assert '已跳过' in text
+
+
+def test_pipeline_persists_the_structured_profile_failure(tmp_path, monkeypatch):
+    """The warning written into both state lists is the diagnostic, not the body."""
+    import core
+    secret = 'Ab3kQ9zT4mN1'
+
+    class Remote(Exception):
+        status_code = 400
+
+        def __init__(self):
+            super().__init__('Error code: 400 - relay echoed ' + secret)
+
+    monkeypatch.setattr(core, 'OUTPUT_DIR', tmp_path)
+    state = core.new_job_state('memoir.txt')
+    state.update(p1_done=True, p2_done=False, paras=['A memoir.'],
+                 pairs=[{'source': 'A memoir.', 'target': '回忆录。'}],
+                 understanding_done=True)
+    core.save_job_state('profile-remote', state)
+    calls = []
+
+    def llm(*_args, **_kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise Remote()
+        return '["回忆录。"]'
+
+    monkeypatch.setattr(core, 'call_llm', llm)
+    core.run_job_pipeline(
+        'profile-remote', 'memoir.txt', None,
+        provider='DeepSeek', api_key=secret, model='test', target_lang='简体中文',
+        auto_term=False, enable_report=False, translation_theory='',
+        enable_review=False, enable_annotate=False, enable_understanding=True,
+        use_tm=False, on_caption=lambda _text: None)
+    saved = core.load_job_state('profile-remote')
+    stored = saved['profile_warnings']
+    assert stored and stored[0] in saved['warnings']
+    assert secret not in ''.join(stored)
+    assert secret not in ''.join(saved['warnings'])
+    assert 'class=unknown' in stored[0]
+    assert 'http=400' in stored[0]
+    assert saved['profile_done'] is False

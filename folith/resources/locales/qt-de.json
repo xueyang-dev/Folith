@@ -1284,6 +1284,7 @@
   "打开来源": "Quelle öffnen",
   "打开案例终审": "Fall-Endprüfung öffnen",
   "打成一个 zip 备份包；不包含 API 密钥。": "Erstellt ein Zip-Sicherungsarchiv; enthält keine API-Schlüssel.",
+  "打成一个 zip 备份包；不含 API 密钥与连接配置，也不含可能记录了服务商原始回包的取证文件；在新机器上恢复后需重新填写密钥。": "Packt alles in ein Zip-Backup; enthält keine API-Schlüssel und keine Verbindungseinstellungen, und keine Beweisdateien, die unformatierte Anbieterantworten zitieren könnten; nach dem Wiederherstellen auf einem neuen Rechner müssen die Schlüssel neu eingegeben werden.",
   "扫描件": "Scans",
   "扫描件 OCR": "OCR für gescannte Dokumente",
   "扫描件 · {pages} 页 · 本地读不出文字，开始后由视觉模型识别": "Gescannter Beleg · {pages} Seiten · Text lokal nicht lesbar; das Vision-Modell erkennt ihn nach dem Start",

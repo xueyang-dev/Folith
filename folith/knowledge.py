@@ -112,13 +112,12 @@ def extract_observations(
             call_llm, provider, api_key, model, system_prompt, numbered))
     except Exception as exc:
         try:
-            import core
-            provider_status = core.provider_error_status(exc)
-            detail = (provider_status["message"]
-                      if provider_status["status"] != "unknown"
-                      else str(exc)[:160])
+            from folith.engine.llm_provider import persisted_auxiliary_failure
+            # 未分类远端失败只留结构化诊断；额度/限流文案仍由分类器给出。
+            detail = persisted_auxiliary_failure(
+                exc, api_key=api_key, stage="knowledge_feedback")[:160]
         except Exception:  # pragma: no cover - defensive import fallback
-            detail = str(exc)[:160]
+            detail = f"诊断未能生成（{type(exc).__name__}）"
         return [], f"知识反馈调用失败：{detail}"
     if parsed is None:
         return [], "知识反馈返回不是 JSON 数组"

@@ -14,6 +14,7 @@ import os
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
+from folith.engine.redaction import redact_error_text  # CX-06 §3: worker error text is redacted before it reaches the user
 
 
 def _core():
@@ -196,11 +197,20 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
             exit_requested = False
         final_status = "interrupted" if exit_requested else (
             "cancelled" if cancelled else "failed")
+        # CX-15：性能摘要、技术日志和用户可见失败文案共用这一组凭据。短凭据
+        # 没有 sk- 形状，trace 自己的模式匹配兜不住，必须在进摘要前替换。
+        known_secrets = tuple(
+            str(value or "") for value in (
+                kwargs.get("api_key"), kwargs.get("reviewer_api_key"),
+                kwargs.get("auxiliary_api_key")))
         if not segment_operation:
-            core.trace.finish_run(job_id=job_id, status=final_status, failure_reason=str(exc))
+            core.trace.finish_run(
+                job_id=job_id, status=final_status,
+                failure_reason=redact_error_text(str(exc), known_secrets=known_secrets))
         if not cancelled and not exit_requested:
             try:
-                core._write_runtime_technical_log(job_id, exc)
+                core._write_runtime_technical_log(
+                    job_id, exc, known_secrets=known_secrets)
             except OSError:
                 pass
         current = runtime_after
@@ -208,7 +218,10 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         user_error_message = (
             core.provider_error_message(exc, "任务执行失败")
             if provider_status["status"] != "unknown"
-            else str(exc)[:500] or "任务执行失败")
+            # CX-11 §1：非提供商异常的兜底文案按本次连接的已知凭据脱敏——普通
+            # 自定义凭据没有 sk- 形状，模式匹配兜不住，字面替换才兜得住。
+            else redact_error_text(str(exc), known_secrets=known_secrets)[:500]
+            or "任务执行失败")
         error = None if (cancelled or exit_requested) else {
             "type": type(exc).__name__,
             "message": user_error_message,

@@ -173,13 +173,14 @@ def profile_document(
                 raise RuntimeError("任务已请求取消") from e
             provider_status = {"status": "unknown"}
             try:
-                import core
-                provider_status = core.provider_error_status(e)
-                last_err = (provider_status["message"]
-                            if provider_status["status"] != "unknown"
-                            else raw_error)
+                from folith.engine.llm_provider import (
+                    persisted_auxiliary_failure, provider_error_status)
+                provider_status = provider_error_status(e)
+                # 未分类的远端回包不再把原文写进画像警告。限流/额度仍用分类文案。
+                last_err = persisted_auxiliary_failure(
+                    e, api_key=api_key, stage="document_profile")
             except Exception:  # pragma: no cover - defensive import fallback
-                last_err = raw_error
+                last_err = f"诊断未能生成（{type(e).__name__}）"
             if provider_status.get("status") == "quota_exhausted":
                 # 额度用尽不是限流：等多久都不会恢复，再试只会把同一份额度再撞一次，
                 # 还把失败推迟到更晚（#49 的真实原因就是这个）。直接如实降级。

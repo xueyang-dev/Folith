@@ -49,6 +49,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from folith import page_events, request_control
+from folith.engine.redaction import redact_error_text
 from folith.ocr_evidence import OCRBackend, OCRBlock, OCRRuntimeInfo
 
 ONLINE_OCR_BACKEND = "online"
@@ -343,12 +344,16 @@ def default_vision_effort(provider, model):
     return ""
 
 
-def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
+def classify_request_error(error: BaseException,
+                           *, known_secrets: Tuple[str, ...] = ()) \
+        -> OnlineOCRRequestError:
     """Turn an SDK/transport exception into an explicit retry decision.
 
     Authentication (401/403) and request-shape errors (400/404/405/422) never
     succeed on a retry and are surfaced immediately.  Rate limits, timeouts and
-    5xx/connection failures are retryable.
+    5xx/connection failures are retryable.  ``known_secrets`` are the
+    connection's own credentials: the fallback message quotes the raw error
+    text, and a rejected reply can echo them (CX-06 §3).
     """
     status = getattr(error, "status_code", None)
     response = getattr(error, "response", None)
@@ -399,9 +404,11 @@ def classify_request_error(error: BaseException) -> OnlineOCRRequestError:
                                      f"线上 OCR 请求暂时失败（HTTP {status}）。",
                                      retryable=True, http_status=status,
                                      retry_after=retry_after)
-    return OnlineOCRRequestError("request_failed", f"线上 OCR 请求失败：{text[:200]}",
-                                 retryable=True, http_status=status,
-                                 retry_after=retry_after)
+    return OnlineOCRRequestError(
+        "request_failed",
+        f"线上 OCR 请求失败：{redact_error_text(text, known_secrets=known_secrets)[:200]}",
+        retryable=True, http_status=status,
+        retry_after=retry_after)
 
 
 def response_body_excerpt(error: BaseException,
@@ -865,23 +872,29 @@ class OnlineOCRBackend(OCRBackend):
                               if user_prompt is not None else self._attempt(png_bytes, system_prompt))
                 except BaseException as exc:  # noqa: BLE001 - classified below
                     self._ensure_cancelled()  # a cancel is not a failed attempt to retry
-                    classified = classify_request_error(exc)
+                    # CX-06 §3: a rejected reply can echo the credential it was
+                    # sent with; every piece of it that is kept is redacted first.
+                    known = (self.config.api_key,)
+                    classified = classify_request_error(exc, known_secrets=known)
                     attempts.append({
                         "attempt": attempt,
                         "status": "failed",
                         "error_code": classified.code,
                         "http_status": classified.http_status,
-                        "message": classified.message[:200],
+                        "message": redact_error_text(classified.message,
+                                                      known_secrets=known)[:200],
                         "seconds": time.perf_counter() - attempt_started,
                         "usage_unknown": True,
                     })
                     if classified.http_status == 400:
                         # The body is the only way to tell a transient relay reply
-                        # from a real parameter mistake; keep its head, never all of it.
+                        # from a real parameter mistake; keep its head, never all
+                        # of it — and never the credential it may echo.
                         excerpt, body_chars = response_body_excerpt(exc)
                         if body_chars:
                             attempts[-1].update(response_chars=body_chars,
-                                                response_body=excerpt)
+                                                response_body=redact_error_text(
+                                                    excerpt, known_secrets=known))
                     # A failed attempt is billable work too: keep it in the trace
                     # so a retry never erases the tokens it burnt (#231).
                     self._record_attempt(
@@ -945,7 +958,10 @@ class OnlineOCRBackend(OCRBackend):
                 if finish == "length":
                     # The reply never finished, so it never reaches the decoder: keep its
                     # head and tail, and how repetitive it is, so a runaway can be studied.
-                    text = str(result.get("text") or "")
+                    # CX-06 §3: whatever is kept goes through redaction first — the
+                    # identity on clean text, minus any credential it may echo.
+                    text = redact_error_text(str(result.get("text") or ""),
+                                             known_secrets=(self.config.api_key,))
                     half = RESPONSE_EXCERPT_CHARS // 2
                     pieces = text.split(",")
                     attempts[-1].update(
@@ -976,8 +992,11 @@ class OnlineOCRBackend(OCRBackend):
                     segments = decoder(raw)
                 except ValueError as exc:
                     code = str(exc)
-                    attempts[-1].update(error_code=code, response_chars=len(raw),
-                                        response_excerpt=raw[:RESPONSE_EXCERPT_CHARS])
+                    attempts[-1].update(
+                        error_code=code, response_chars=len(raw),
+                        response_excerpt=redact_error_text(
+                            raw[:RESPONSE_EXCERPT_CHARS],
+                            known_secrets=(self.config.api_key,)))
                     self._record_attempt(
                         trace_run, attempt=attempt, page_index=page_index,
                         page_number=page_number, duration_s=attempt_seconds,
@@ -1030,7 +1049,9 @@ class OnlineOCRBackend(OCRBackend):
         page_events.emit("failed", attempts=len(attempts),
                          http_status=getattr(last_error, "http_status", None),
                          code=getattr(last_error, "code", ""),
-                         message=str(getattr(last_error, "message", ""))[:120])
+                         message=redact_error_text(
+                             str(getattr(last_error, "message", "")),
+                             known_secrets=(self.config.api_key,))[:120])
         error = last_error or OnlineOCRRequestError("request_failed", "线上 OCR 请求失败。",
                                                     retryable=False)
         self._last_request = {
@@ -1055,7 +1076,9 @@ class OnlineOCRBackend(OCRBackend):
     def _fail(self, code: str, message: str, attempts, usage_total, request_ids,
               started) -> Tuple[List[OCRBlock], Optional[str]]:
         page_events.emit("failed", attempts=len(attempts), http_status=None,
-                         code=code, message=str(message)[:120])
+                         code=code,
+                         message=redact_error_text(str(message),
+                                                    known_secrets=(self.config.api_key,))[:120])
         self._last_request = {
             "status": "failed",
             "backend": self.name,

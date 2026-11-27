@@ -998,9 +998,11 @@ from folith.engine.document_export import (  # noqa: F401  (re-export: core keep
     translations_to_word,
 )
 from folith.engine import reasoning_catalog as _reasoning_catalog  # noqa: F401  (#540: dispatch + unified level field)
+from folith.engine.redaction import redact_error_text  # CX-06 §3: model errors are redacted before they persist
 from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps its public surface)
     _fetch_gemini_models,
     _llm_request_controller,
+    _plain_identifier,
     _provider_error_payload,
     _record_llm_thread_stats,
     _trace_http_request,
@@ -1013,6 +1015,8 @@ from folith.engine.llm_provider import (  # noqa: F401  (re-export: core keeps i
     normalize_openai_base_url,
     parse_json_array,
     parse_translation_array,
+    provider_error_detail,
+    provider_error_is_remote,
     provider_error_message,
     provider_error_status,
     reasoning_effort_options,
@@ -2669,7 +2673,12 @@ def call_llm(provider, api_key, model, system_prompt, user_prompt,
             )
             run.record_error(
                 stage="model_request", operation=model,
-                error_type=type(exc).__name__, message=str(exc),
+                # CX-11 §1：trace 摘要会落盘并随备份讨论，模型异常只留结构化
+                # 诊断（状态码/错误类/请求 ID），原始回包文本一律不进任何字段。
+                error_type=type(exc).__name__,
+                message=provider_error_detail(
+                    exc, stage="model_request",
+                    known_secrets=(str(api_key or ""),)),
             )
         if runtime_job_id:
             # 失败必须立即持久化：既让 UI 不再停在"等待模型"，也保证崩溃恢复
@@ -4377,10 +4386,24 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
         prompt_stats.append(_translation_prompt_cost(
             segments=segments, system_prompt=sys_prompt, user_prompt=user_prompt,
             render_stats=render_stats, attempt=3, output_chars=0, failed=True))
-    raise RuntimeError(
-        f"批次翻译失败（{len(segments)} 段）："
-        f"{last_err or '模型返回格式异常或数量不匹配'}"
-    )
+    if last_err is None:
+        summary = "模型返回格式异常或数量不匹配"
+    elif (provider_error_is_remote(last_err)
+            # 内部协议错误自带稳定的 code：走结构化（excerpt 里是回包预览，
+            # 绝不落盘）。
+            or _plain_identifier(getattr(last_err, "code", None), 64,
+                                 (str(api_key or ""),))):
+        # CX-11 §1：远端回包绝不字符串化——回显的密钥、正文和路径随之会进入
+        # 任务状态/事件/日志/trace。结构化诊断取而代之；异常对象只留在内存。
+        # CX-15：本次连接的凭据即使长得像 code/request_id 也不进诊断。
+        summary = provider_error_detail(
+            last_err, known_secrets=(str(api_key or ""),))
+    else:
+        # 纯内部异常（模拟故障、我们自己的断言文本）没见过任何回包：保留
+        # 原文，按本次连接的已知凭据脱敏（CX-12：普通自定义凭据没有形状）。
+        summary = redact_error_text(
+            str(last_err), known_secrets=(str(api_key or ""),))[:500]
+    raise RuntimeError(f"批次翻译失败（{len(segments)} 段）：{summary}")
 
 
 DYNAMIC_CONTEXT_RECORD_LIMIT = 600
@@ -4988,7 +5011,18 @@ def annotate_batch(pairs_slice, target_lang, provider, api_key, model):
                                        error_kind=_retry_error_kind(e),
                                        job_id=_runtime_job_id())
                 continue
-            return AnnotationBatchResult(status="request_failed", error=str(e)[:500])
+            # CX-20: no raw exception text into annotation state (a relay reply
+            # can echo credentials/document text). Classified provider copy, else
+            # the exception class name.
+            try:
+                _status = provider_error_status(e)
+                _detail = (_status.get("message")
+                           if _status.get("status") != "unknown"
+                           else type(e).__name__)
+            except Exception:  # noqa: BLE001 - diagnosis must never raise
+                _detail = type(e).__name__
+            return AnnotationBatchResult(status="request_failed",
+                                         error=str(_detail or type(e).__name__)[:500])
     return AnnotationBatchResult(status="request_failed", error="请求限流，重试次数已用尽")
 
 
@@ -9429,12 +9463,17 @@ def _append_runtime_technical_log(job_id, text):
         pass  # 日志失败不得影响任务本身
 
 
-def _write_runtime_technical_log(job_id, exc):
+def _write_runtime_technical_log(job_id, exc, known_secrets=()):
     path = runtime_technical_log_path(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as stream:
-        stream.write(f"[{_utc_now_iso()}] {type(exc).__name__}: {exc}\n")
-        stream.write(traceback.format_exc())
+        # CX-06 §3：异常字符串与 traceback 末行都带原始消息（可能含回显的
+        # 密钥与本机路径），整段先脱敏；源码位置的相对信息保留给排障。
+        # CX-15：调用方手里的短凭据没有 sk- 形状，必须一并传进来。
+        stream.write(f"[{_utc_now_iso()}] {type(exc).__name__}: "
+                     f"{redact_error_text(str(exc), known_secrets=known_secrets)}\n")
+        stream.write(redact_error_text(traceback.format_exc(),
+                                        known_secrets=known_secrets))
         stream.write("\n")
         stream.flush()
 
@@ -11739,13 +11778,17 @@ def rescan_pdf_source(job_id, *, filename=None, provider, api_key, model,
                     "lease_expires_at": None})
         return state
     except BaseException as exc:
-        trace.finish_run(job_id=job_id, status="failed", failure_reason=str(exc))
-        _write_runtime_technical_log(job_id, exc)
+        rescan_secrets = (str(api_key or ""),)
+        trace.finish_run(
+            job_id=job_id, status="failed",
+            failure_reason=redact_error_text(str(exc), known_secrets=rescan_secrets))
+        _write_runtime_technical_log(job_id, exc, known_secrets=rescan_secrets)
         provider_status = provider_error_status(exc)
         user_error_message = (
             provider_error_message(exc, "原文重新扫描失败")
             if provider_status["status"] != "unknown"
-            else str(exc)[:500] or "原文重新扫描失败")
+            else redact_error_text(str(exc), known_secrets=rescan_secrets)[:500]
+            or "原文重新扫描失败")
         _write_terminal_runtime_state(
             job_id, what="source_rescan_failed",
             status="failed", phase="failed", phase_label="原文重新扫描失败",

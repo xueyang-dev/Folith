@@ -1284,6 +1284,7 @@
   "打开来源": "Abrir la fuente",
   "打开案例终审": "Abrir la revisión de casos",
   "打成一个 zip 备份包；不包含 API 密钥。": "Lo empaqueta todo en un zip de copia, sin claves API.",
+  "打成一个 zip 备份包；不含 API 密钥与连接配置，也不含可能记录了服务商原始回包的取证文件；在新机器上恢复后需重新填写密钥。": "Empaqueta todo en una copia zip; no incluye claves API ni configuraciones de conexión, ni evidencias que puedan citar respuestas sin procesar del proveedor; tras restaurarlo en una máquina nueva hay que volver a introducir las claves.",
   "扫描件": "Escaneos",
   "扫描件 OCR": "OCR de documentos escaneados",
   "扫描件 · {pages} 页 · 本地读不出文字，开始后由视觉模型识别": "Documento escaneado · {pages} páginas · texto no legible localmente; lo reconoce el modelo de visión al empezar",
