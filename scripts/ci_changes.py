@@ -85,6 +85,11 @@ RISK_TESTS = (
     # loses a sharing race.  ``engine_launch_ownership_test.py`` matches none
     # of the needles above, so the Windows persistence job never ran it.
     "engine_launch_ownership",
+    # B-100 #2 / CX-19: the launch-not-lost cases (a quit or cancel between the
+    # queued write and owner registration) live in engine_launch_not_lost_test
+    # (#633). The file only exists there, so this needle matches by name and is
+    # added here in #621; the Windows persistence job runs it once #633 lands.
+    "engine_launch_not_lost",
     # M-1: deleting a task first asks the engine to stop, and that request is a
     # cross-process ``runtime_state`` write.  On Windows its lock retries in
     # whole seconds and pushed a 3 s delete to 7.06 s — a 150-minute full

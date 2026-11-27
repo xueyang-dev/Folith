@@ -1282,6 +1282,22 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
     # clears again (E-6a).  This launch stamp is the durable ownership of the
     # new run (CX-10 §1): it lands before the start line, so the moment the UI
     # can show the new run, an older monitor can already tell it apart.
+    # CX-19 (#621): a quit or cancel that landed after the ``queued`` write but
+    # before the owner was registered must abort the launch here rather than let
+    # the start line run an already-stopped task.  Re-check inside the lock: if
+    # this launch_token now carries a stop request or a terminal status, reap
+    # the child and keep the user's terminal state instead of sending the line.
+    try:
+        stop_requested = core.launch_stop_requested(job_id, launch_token)
+    except Exception:  # noqa: BLE001 - a failed check must not start blindly
+        stop_requested = True
+    if stop_requested:
+        sup.abandon()
+        try:
+            core.release_engine_owner(job_id, token)
+        except Exception:  # noqa: BLE001
+            pass
+        return EngineOutcome(False, "任务已被取消或退出，未启动运行。")
     if not sup.send_line(line):
         sup.abandon()
         try:
