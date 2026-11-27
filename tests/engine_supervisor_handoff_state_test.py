@@ -1086,3 +1086,89 @@ def test_cancel_before_start_line_publishes_cancelled_not_interrupted(isolated):
     runtime = _runtime(job_id)
     assert runtime.get("status") == "cancelled", runtime
     assert runtime.get("cancel_requested") is True, runtime
+
+
+def _sup_for(job_id, data_dir, log_dir, launch_token):
+    import io as _io
+
+    class _Proc:
+        pid = 0
+        stdout = _io.BytesIO(b"")
+        stdin = _io.BytesIO(b"")
+        def poll(self): return None
+        def wait(self, timeout=None): return 0
+        def kill(self): pass
+        def terminate(self): pass
+    return supervisor_module.EngineSupervisor(
+        job_id, _Proc(), token="tok", command=["true"],
+        data_dir=data_dir, log_dir=log_dir, launch_token=launch_token)
+
+
+def test_monitor_terminal_kind_uses_in_lock_flags_not_stale_snapshot(isolated, monkeypatch):
+    """CX-28 #1：监控器锁外读到仅取消，但在它加锁前退出位落盘——监控器终态应为
+    interrupted（退出约定），不被锁外取消快照写成 cancelled。"""
+    data_dir, _log_dir = isolated
+    job_id = "mon-kind-inlock"
+    _create_job(job_id)
+    token = "mon-" + job_id
+    core.update_runtime_state(job_id, on_timeout="raise", require_replace=True,
+                              status="queued", phase="starting",
+                              launch={"token": token, "pid": 0},
+                              cancel_requested=False, exit_requested=False, event="queued")
+    core.update_runtime_state(job_id, on_timeout="raise", status="cancelling",
+                              phase="cancelling", cancel_requested=True)
+    sup = _sup_for(job_id, data_dir, _log_dir, token)
+    sup._never_ran = True       # pre-start abort
+    sup._exit_code = None
+
+    # Right before the monitor's terminal write lands, a quit for the same token
+    # flips the flags. The monitor read 'cancelling, cancel-only' out of lock; it
+    # must still publish interrupted using the in-lock flags.
+    real_update = core.update_runtime_state
+    injected = {"done": False}
+
+    def wrapped(job, **kw):
+        if kw.get("stop_terminal_if_unowned") is not None and not injected["done"]:
+            injected["done"] = True
+            real_update(job, on_timeout="raise", status="cancelling", phase="cancelling",
+                        exit_requested=True, cancel_requested=True)
+        return real_update(job, **kw)
+    monkeypatch.setattr(core, "update_runtime_state", wrapped)
+
+    assert sup._publish_terminal_state() is True
+    rt = _runtime(job_id)
+    assert rt.get("status") == "interrupted", f"退出被监控器写成取消：{rt}"
+
+
+def test_monitor_keeps_a_terminal_the_abort_tail_already_wrote(isolated, monkeypatch):
+    """CX-28 #1：直接收尾已写 interrupted 后监控器再写，leave_terminal 保留，不改回 cancelled。"""
+    data_dir, _log_dir = isolated
+    job_id = "mon-after-direct"
+    _create_job(job_id)
+    token = "mon2-" + job_id
+    core.update_runtime_state(job_id, on_timeout="raise", require_replace=True,
+                              status="queued", phase="starting",
+                              launch={"token": token, "pid": 0},
+                              cancel_requested=False, exit_requested=False, event="queued")
+    core.update_runtime_state(job_id, on_timeout="raise", status="cancelling",
+                              phase="cancelling", cancel_requested=True)
+    sup = _sup_for(job_id, data_dir, _log_dir, token)
+    sup._never_ran = True
+    sup._exit_code = None
+
+    real_update = core.update_runtime_state
+    injected = {"done": False}
+
+    def wrapped(job, **kw):
+        if kw.get("stop_terminal_if_unowned") is not None and not injected["done"]:
+            injected["done"] = True
+            # The direct abort tail already published cancelled (a cancel abort).
+            real_update(job, on_timeout="raise", require_replace=True,
+                        status="cancelled", phase="cancelled",
+                        cancel_requested=True, exit_requested=False)
+        return real_update(job, **kw)
+    monkeypatch.setattr(core, "update_runtime_state", wrapped)
+
+    assert sup._publish_terminal_state() is True
+    rt = _runtime(job_id)
+    assert rt.get("status") == "cancelled", f"监控器覆写了直接收尾的终态：{rt}"

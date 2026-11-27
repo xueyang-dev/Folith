@@ -947,23 +947,37 @@ class EngineSupervisor:
         # executed and was then stopped/crashed keeps ``interrupted`` — so this
         # keys on ``_never_ran`` (set only when the launch was aborted before the
         # start line), not on the cancel flag alone.
-        if getattr(self, "_never_ran", False) and cancel_requested and not exit_requested:
-            terminal_status = "cancelled"
-            terminal_phase = "cancelled"
-            terminal_label = "任务已取消"
-        else:
-            terminal_status = "interrupted"
-            terminal_phase = "interrupted"
-            terminal_label = message
+        # CX-28: the terminal KIND must come from the same in-lock read as the
+        # token/terminal guard, never this out-of-lock snapshot, or the monitor can
+        # overwrite an exit (or a terminal the direct abort tail already wrote)
+        # with a `cancelled` chosen from a stale flag. leave_terminal keeps an
+        # already-published terminal; the callable picks cancelled vs interrupted
+        # from the locked state.
+        never_ran = getattr(self, "_never_ran", False)
+
+        def _monitor_terminal(cur):
+            cur_cancel = bool(cur.get("cancel_requested"))
+            cur_exit = bool(cur.get("exit_requested"))
+            if never_ran and cur_cancel and not cur_exit:
+                return {"status": "cancelled", "phase": "cancelled",
+                        "phase_label": "任务已取消", "cancel_requested": cur_cancel,
+                        "exit_requested": cur_exit, "error": None}
+            return {"status": "interrupted", "phase": "interrupted",
+                    "phase_label": ("后台任务已停止；已完成的进度会保留，可以继续处理。"
+                                    if (self._stopping or cur_exit or cur_cancel)
+                                    else message),
+                    "cancel_requested": cur_cancel, "exit_requested": cur_exit,
+                    "error": None if (self._stopping or cur_exit or cur_cancel) else error}
         written = core._write_terminal_runtime_state(
             self.job_id, what="engine_process_exited",
             # CX-10 §1: the ownership comparison also happens inside the
             # runtime-write lock (core.update_runtime_state), so a takeover
             # that lands between this check and the write still wins.
             expect_launch_token=self._end_launch_token,
-            status=terminal_status, phase=terminal_phase,
-            phase_label=terminal_label, cancel_requested=cancel_requested,
-            exit_requested=exit_requested,
+            leave_terminal=True,
+            stop_terminal_if_unowned=_monitor_terminal,
+            status="interrupted", phase="interrupted", phase_label=message,
+            cancel_requested=cancel_requested, exit_requested=exit_requested,
             error=error, event=message, event_name="engine_process_exited",
             event_visibility="user", event_category="lifecycle",
             progress=True, heartbeat=True,
@@ -1342,9 +1356,11 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
                 job_id, on_timeout="retry", require_replace=True, leave_terminal=True,
                 expect_launch_token=launch_token,
                 stop_terminal_if_unowned=_abort_terminal,
-                status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
-                event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
-                event_name="exit_requested", event_visibility="user",
+                # CX-28 应修: use neutral wording so a pure cancel does not record
+                # an "exit" event; the exact kind lives in stop_terminal_if_unowned.
+                status="cancelling", phase="cancelling", phase_label="正在停止",
+                event="任务已停止；已完成的进度会保留，可稍后继续。",
+                event_name="job_stopped_before_start", event_visibility="user",
                 event_category="lifecycle", progress=True)
         except Exception:  # noqa: BLE001 - a failed write must not crash the launch abort
             pass
