@@ -529,7 +529,7 @@ def request_job_cancel(job_id, *, force=False):
         event_visibility="user", event_category="lifecycle",
         progress=True, heartbeat=True, only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
-    if terminal is not None:
+    if terminal is not False:
         return True
     # CX-24 #2: an owner registered between the liveness check above and the lock
     # below, so the no-executor terminal write was skipped.  Do NOT swallow the
@@ -592,7 +592,7 @@ def request_job_exit(job_id):
         event_category="lifecycle", progress=True, heartbeat=True,
         only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
-    if terminal is not None:
+    if terminal is not False:
         return True
     # CX-24 #2: an owner registered in the window; publish the exit+cancel stop
     # intent the live executor reads instead of dropping it.  Success only when

@@ -8939,7 +8939,10 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
         # lock: the two registries via a lock-free dict snapshot (atomic under the
         # GIL) and the disk worker block already in ``current``.
         if only_if_unowned and _inprocess_owner_visible_locked(job_id, current):
-            return None
+            # CX-24 #2: a sentinel distinct from None (which means "unreadable").
+            # The stop entry treats False as "an owner is live; fall back to the
+            # stop-intent write" instead of swallowing the request.
+            return False
         if leave_terminal and str(current.get("status") or "") in {
                 "cancelled", "interrupted", "completed", "failed"}:
             return current
