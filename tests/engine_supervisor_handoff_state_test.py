@@ -1141,7 +1141,7 @@ def test_monitor_terminal_kind_uses_in_lock_flags_not_stale_snapshot(isolated, m
 
 
 def test_monitor_keeps_a_terminal_the_abort_tail_already_wrote(isolated, monkeypatch):
-    """CX-28 #1：直接收尾已写 interrupted 后监控器再写，leave_terminal 保留，不改回 cancelled。"""
+    """CX-28 #1：直接收尾已写 cancelled 后监控器再写，leave_terminal 保留，不被覆写回 interrupted。"""
     data_dir, _log_dir = isolated
     job_id = "mon-after-direct"
     _create_job(job_id)

@@ -890,3 +890,71 @@ def test_abort_terminal_kind_uses_in_lock_stop_flags(isolated, stub_child, monke
     st = _state(job_id)
     assert st.get("status") == "interrupted", f"退出被写成取消：{st}"
     assert st.get("cancel_requested") is not True
+
+
+def test_worker_tail_terminal_kind_uses_in_lock_flags(isolated, monkeypatch):
+    """CX-29 #1：worker 收尾种类用锁内停位——锁外触发时看到 cancel，加锁前退出位
+    落盘，收尾应写 interrupted 而非 cancelled。"""
+    data_dir, _logs = isolated
+    job_id = "worker-tail-inlock"
+    _create_job(job_id)
+    core.update_runtime_state(job_id, on_timeout="raise", require_replace=True,
+                              status="running", cancel_requested=True,
+                              exit_requested=False)
+
+    real_update = core.update_runtime_state
+    injected = {"done": False}
+
+    def wrapped(job, **kw):
+        if kw.get("terminal_func") is not None and not injected["done"]:
+            injected["done"] = True
+            real_update(job, on_timeout="raise", status="running",
+                        cancel_requested=True, exit_requested=True)
+        return real_update(job, **kw)
+    monkeypatch.setattr(core, "update_runtime_state", wrapped)
+
+    def tail(cur):
+        ex = bool(cur.get("exit_requested")); cn = bool(cur.get("cancel_requested"))
+        if ex:
+            return {"status": "interrupted", "phase": "interrupted",
+                    "phase_label": "已停止以便退出", "event": "任务已停止以便退出；可继续处理。",
+                    "event_name": "job_stopped_for_exit", "event_category": "lifecycle"}
+        if cn:
+            return {"status": "cancelled", "phase": "cancelled", "phase_label": "已取消",
+                    "event": "任务已取消", "event_name": "job_cancelled",
+                    "event_category": "lifecycle"}
+        return {"status": "completed", "phase": "completed", "phase_label": "已完成",
+                "event": "任务已完成", "event_name": "job_completed",
+                "event_category": "lifecycle"}
+    core._write_terminal_runtime_state(job_id, what="t", status="idle_incomplete",
+                                       phase="idle_incomplete", phase_label="x",
+                                       event="x", event_name="y", terminal_func=tail)
+    assert _status(job_id) == "interrupted", _state(job_id)
+
+
+def test_live_owner_stop_keeps_a_terminal_published_meanwhile(isolated, monkeypatch):
+    """CX-29 #2：首次看到活 owner 的取消入口，若 owner 已在两步之间写好终态，
+    leave_terminal 保留，不改回 cancelling。"""
+    from folith.engine import worker_runtime as wr
+    data_dir, _logs = isolated
+    job_id = "live-owner-terminal"
+    _create_job(job_id)
+    core.update_runtime_state(job_id, on_timeout="raise", require_replace=True,
+                              status="running", worker={"owner_pid": os.getpid(),
+                                                        "worker_id": "w", "lease_expires_at": None})
+    # Owner appears alive for the outer check, but publishes completed right
+    # before the cancelling write lands.
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda j: True)
+    real_update = core.update_runtime_state
+    injected = {"done": False}
+
+    def wrapped(job, **kw):
+        if kw.get("leave_terminal") and not injected["done"]:
+            injected["done"] = True
+            real_update(job, on_timeout="raise", status="completed", phase="completed",
+                        completed_units=2)
+        return real_update(job, **kw)
+    monkeypatch.setattr(core, "update_runtime_state", wrapped)
+
+    assert wr.request_job_cancel(job_id) is True
+    assert _status(job_id) == "completed", f"活 owner 停止入口覆盖了终态：{_state(job_id)}"

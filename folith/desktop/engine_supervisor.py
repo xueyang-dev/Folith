@@ -958,16 +958,20 @@ class EngineSupervisor:
         def _monitor_terminal(cur):
             cur_cancel = bool(cur.get("cancel_requested"))
             cur_exit = bool(cur.get("exit_requested"))
+            stopped = self._stopping or cur_exit or cur_cancel
+            # CX-29 #4: pick the event text too from the in-lock flags — an
+            # out-of-lock 'crash' message must not survive a stop that landed.
+            stopped_msg = "后台任务已停止；已完成的进度会保留，可以继续处理。"
             if never_ran and cur_cancel and not cur_exit:
                 return {"status": "cancelled", "phase": "cancelled",
                         "phase_label": "任务已取消", "cancel_requested": cur_cancel,
-                        "exit_requested": cur_exit, "error": None}
+                        "exit_requested": cur_exit, "error": None,
+                        "event": "任务已取消"}
             return {"status": "interrupted", "phase": "interrupted",
-                    "phase_label": ("后台任务已停止；已完成的进度会保留，可以继续处理。"
-                                    if (self._stopping or cur_exit or cur_cancel)
-                                    else message),
+                    "phase_label": stopped_msg if stopped else message,
                     "cancel_requested": cur_cancel, "exit_requested": cur_exit,
-                    "error": None if (self._stopping or cur_exit or cur_cancel) else error}
+                    "error": None if stopped else error,
+                    "event": stopped_msg if stopped else message}
         written = core._write_terminal_runtime_state(
             self.job_id, what="engine_process_exited",
             # CX-10 §1: the ownership comparison also happens inside the

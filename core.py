@@ -8895,7 +8895,8 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_logged=False, expect_launch_token=None,
                          require_replace=False, companion_event=None,
                          only_if_unowned=False, leave_terminal=False,
-                         stop_terminal_if_unowned=None, **changes):
+                         stop_terminal_if_unowned=None, terminal_func=None,
+                         **changes):
     """Atomically merge a worker status update into runtime_state.json.
 
     ``event_logged=True`` says the event has already been appended to
@@ -8981,6 +8982,23 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
         if leave_terminal and str(current.get("status") or "") in {
                 "cancelled", "interrupted", "completed", "failed"}:
             return current
+        # CX-29: a terminal writer may pass terminal_func to choose the terminal
+        # KIND from THIS lock's read (not an out-of-lock snapshot), for writers
+        # that run while they are still the owner (the in-process worker tail).
+        # It is applied after the leave_terminal guard, so a terminal already
+        # published is still kept.
+        if terminal_func is not None:
+            _tf = dict(terminal_func(current) or {})
+            # The event text/name/category may also depend on the in-lock flags
+            # (a stop vs a crash); pull them out for the event record and keep
+            # only real state fields for the merge (event keys are not state).
+            if _tf.get("event") is not None:
+                event = _tf.pop("event")
+            if _tf.get("event_name") is not None:
+                event_name = _tf.pop("event_name")
+            if _tf.get("event_category") is not None:
+                event_category = _tf.pop("event_category")
+            changes = {**changes, **_tf}
         # CX-25: a stop's fallback write races a run that may publish its own
         # terminal and exit between the skip and this lock. If it already ended,
         # leave_terminal above returned it. If it is gone and no terminal is
@@ -8997,9 +9015,15 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                 # read, not an out-of-lock snapshot. A callable receives the
                 # in-lock state and returns the terminal dict; a plain dict is
                 # used as-is.
-                _terminal = (stop_terminal_if_unowned(current)
-                             if callable(stop_terminal_if_unowned)
-                             else stop_terminal_if_unowned)
+                _terminal = dict((stop_terminal_if_unowned(current)
+                                  if callable(stop_terminal_if_unowned)
+                                  else stop_terminal_if_unowned) or {})
+                if _terminal.get("event") is not None:
+                    event = _terminal.pop("event")
+                if _terminal.get("event_name") is not None:
+                    event_name = _terminal.pop("event_name")
+                if _terminal.get("event_category") is not None:
+                    event_category = _terminal.pop("event_category")
                 changes = {**changes, **_terminal,
                            # CX-26 #2: match the normal no-owner terminal branch —
                            # clear the stale owner pid/id/lease so the finished
@@ -9243,8 +9267,15 @@ def _runtime_mark_lost(job_id, status, message):
     # user is waiting on "Start") plus the delete/launch observers.  A verdict
     # that cannot be written must fail that action with a retriable message, not
     # park it for the terminal retry budget; nothing is written on failure.
+    # CX-29 #3: this is the pre-start "previous run was lost" marker (called only
+    # by publish_lost_runtime_state under .worker.lock, and the supervisor
+    # terminal boundary) — a single-owner path, not the A/B abort race. Still,
+    # guard it with leave_terminal so it can never reopen a terminal that a
+    # concurrent writer already published, and only clear the worker block when
+    # no owner is visible (in-lock), matching the other terminal writers.
     return update_runtime_state(
         job_id, on_timeout="raise", status=status, phase=status, phase_label=message,
+        leave_terminal=True,
         worker=worker if _job_execution_alive(job_id) else {
             "owner_pid": None, "worker_id": None, "lease_expires_at": None},
         event=message, event_name=status)
