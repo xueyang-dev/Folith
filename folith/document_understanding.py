@@ -20,6 +20,7 @@ from folith.document_ir import (BLOCK_TYPES, DocumentUnderstandingProvider, Page
                                 SemanticBlock, SourceSpan, new_document, normalized_bbox)
 from folith import page_events
 from folith.engine import ocr_config as _ocr_config
+from folith.engine.redaction import redact_error_text
 from folith.ocr_online import OnlineOCRBackend, default_vision_reasoning
 from folith.spatial_index import SpatialTextIndex, align_blocks
 
@@ -647,10 +648,14 @@ def _understand_page_job(provider, envelope, spatial_engine, identity, checkpoin
             # 文件名保持 0 基不再改：同目录的逐页成功缓存 <index>.json 也是 0 基，
             # 只改失败文件会撞号（22.json 是第 23 页的缓存、22-failure.json 却是
             # 第 22 页），一起改则旧缓存全部失配，恢复任务会整本真实重读。
+            # CX-06 §3：失败取证会落盘并随备份带出。error 是原始异常字符串，
+            # request 里嵌着 attempts 的回包摘录——先脱敏再留（干净文本原样保留）。
+            _known = (str(getattr(getattr(provider, 'config', None), 'api_key', '') or ''),)
             failure ={'page': i + 1, 'page_index': i,
                       'page_id':envelope.page_id, 'provider':'vlm', 'semantic_result':'failed',
                       'regions':len(index.regions), 'spatial_available':bool(index.regions),
-                      'error':str(exc), 'latency_s':time.perf_counter()-started,
+                      'error':redact_error_text(str(exc), known_secrets=_known),
+                      'latency_s':time.perf_counter()-started,
                       'request':dict(getattr(getattr(provider, 'transport', None), '_last_request', {}))}
             _diag = getattr(exc, 'diagnostics', None) if isinstance(exc, DocumentUnderstandingError) else None
             if _diag:

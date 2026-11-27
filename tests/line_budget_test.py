@@ -25,10 +25,12 @@ ROOT = Path(__file__).resolve().parent.parent
 #:
 #: 抬这些数字只有一条合规路径：在 PR 描述里写明理由，并且新逻辑确实没法放进新模块。
 #: 「这个 PR 需要多写几十行」不是理由——放到新模块再 import 进来。
+#:
+#: 2026-11-22 A-59 纯搬移后下调，保留 150 行余量。
 LINE_BUDGETS = {
     "core.py": 15_702,
-    "folith/qt/views.py": 7_702,
-    "folith/qt/adapter.py": 6_756,
+    "folith/qt/views.py": 7_587,
+    "folith/qt/adapter.py": 6_705,
     "folith/qt/window.py": 5_224,
 }
 

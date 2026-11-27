@@ -218,6 +218,53 @@ def test_export_leaves_out_keys_and_locks(isolated, tmp_path):
         support.export_all_data(data / "inside.zip")
 
 
+def test_export_excludes_vision_credentials_and_raw_forensics(isolated, tmp_path):
+    """CX-06 §1/§3：视觉密钥与可能回显密钥的原始取证都不进备份。
+
+    对应证据 ``backup_members_with_model_keys_by_role`` 逐项：
+    ``ocr_online_config.json``、``document_understanding/*-failure.json``、
+    ``failures.jsonl``、``.performance/*/summary.json``、
+    ``runtime_technical.log``（外加一直排除的 ``provider_config.json``）。
+    任务数据本身照带；README 提示恢复后重填密钥，且不再写本机绝对路径。
+    """
+    data, _store = isolated
+    _seed(data)
+    job = data / "0123456789abcdef"
+    forensics = job / "document_understanding"
+    forensics.mkdir()
+    (forensics / "0-failure.json").write_text('{"error": "api_key secret-key echoed"}')
+    (forensics / "failures.jsonl").write_text('{"at": 1, "error": "secret-key"}\n')
+    (job / "runtime_technical.log").write_text("RuntimeError: relay said secret-key\n")
+    perf = job / ".performance" / "runs" / "run_1"
+    perf.mkdir(parents=True)
+    (perf / "summary.json").write_text('{"errors": [{"message": "secret-key"}]}')
+    (data / "ocr_online_config.json").write_text('{"api_key": "secret-key"}')
+    (job / "source.txt").write_text("document bytes")
+
+    result = support.export_all_data(tmp_path / "backup2")
+    with zipfile.ZipFile(result["path"]) as archive:
+        names = archive.namelist()
+        blob = b"".join(archive.read(name) for name in names
+                        if not name.endswith("README.txt"))
+        readme = archive.read("Folith-data/README.txt").decode("utf-8")
+
+    # 任务数据照带：备份的用途不变。
+    assert "Folith-data/0123456789abcdef/state.json" in names
+    assert "Folith-data/0123456789abcdef/source.txt" in names
+    # 凭据文件与原始取证全部排除。
+    assert not any("ocr_online_config" in name for name in names)
+    assert not any("provider_config" in name for name in names)
+    assert not any(name.endswith("-failure.json") for name in names)
+    assert not any(name.endswith("failures.jsonl") for name in names)
+    assert not any("runtime_technical.log" in name for name in names)
+    assert not any("/.performance/" in name for name in names)
+    # 任何成员里都搜不到密钥。
+    assert b"secret-key" not in blob
+    # README：恢复后要重填密钥，且没有本机绝对路径。
+    assert "重新填写" in readme
+    assert str(data) not in readme and str(tmp_path) not in readme
+
+
 # ----------------------------------------------------------------- 关于 -------
 
 def test_issue_link_carries_only_version_and_system():
@@ -324,10 +371,533 @@ def test_cleanup_list_names_the_data_folder_in_use(isolated, tmp_path):
 
     moved = tmp_path / "elsewhere" / "Folith data"
     logs = tmp_path / "logs"
-    lines = settings_pages.cleanup_paths_text(str(moved), str(logs))
+    lines = settings_pages.cleanup_paths(str(moved), str(logs))
     assert lines[:2] == [str(moved), str(logs)]
     assert len(lines) == 3
-    default = settings_pages.cleanup_paths_text(
+    default = settings_pages.cleanup_paths(
         str(desktop_paths.default_data_dir()), str(logs))[0]
     expected = desktop_paths.default_data_dir()
     assert default == str(expected if sys.platform == "win32" else expected.parent)
+
+
+def test_export_replaces_legacy_error_text_with_a_marker(isolated, tmp_path):
+    """CX-11 §2：升级前任务里的指定错误字段在导出副本里替换为占位符。
+
+    旧构建把提供商原始异常写进任务错误字段（可能回显密钥、正文和路径），
+    事后无法识别，所以这些字段打包时不带原文；批号、偏移、事件标识等恢复
+    任务所需的结构原样保留。
+    """
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    (job / "state.json").write_text(json.dumps({
+        "p1_done": False,
+        "translation_failures": [
+            {"batch": 0, "offset": 0, "segment_count": 1, "recovered": False,
+             "reason": "批次翻译失败（1 段）：Error code: 400 - relay said secret-key"}],
+    }, ensure_ascii=False), encoding="utf-8")
+    (job / "events.jsonl").write_text(json.dumps({
+        "batch": 0, "offset": 0, "phase": "translation_protocol_failed",
+        "reason": "raw relay body with secret-key and /srv/relay/fixture/scan.png",
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    (job / "runtime_state.json").write_text(json.dumps({
+        "status": "failed",
+        "error": {"type": "RuntimeError",
+                  "message": "步骤失败：批次翻译失败（1 段）：… secret-key …"},
+        "last_event": "步骤失败：批次翻译失败（1 段）：… secret-key …",
+        "events": [{"event": "job_failed", "category": "error",
+                    "message": "步骤失败：… secret-key …"},
+                   {"event": "translation", "category": "progress",
+                    "message": "正在翻译第 1-4 段（无敏感内容）"}],
+    }, ensure_ascii=False), encoding="utf-8")
+    (job / "runtime_events.jsonl").write_text(json.dumps({
+        "event": "job_failed", "category": "error",
+        "message": "步骤失败：… secret-key …"}, ensure_ascii=False) + "\n",
+        encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup3")
+    with zipfile.ZipFile(result["path"]) as archive:
+        names = archive.namelist()
+        blob = b"".join(archive.read(name) for name in names)
+        state = json.loads(archive.read("Folith-data/0123456789abcdef/state.json"))
+        segment_events = [json.loads(line) for line in
+                          archive.read("Folith-data/0123456789abcdef/events.jsonl")
+                          .decode("utf-8").splitlines() if line.strip()]
+        runtime = json.loads(archive.read("Folith-data/0123456789abcdef/runtime_state.json"))
+        runtime_events = [json.loads(line) for line in
+                          archive.read("Folith-data/0123456789abcdef/runtime_events.jsonl")
+                          .decode("utf-8").splitlines() if line.strip()]
+    # 任何成员里都搜不到旧错误文本。
+    assert b"secret-key" not in blob
+    # 指定字段替换为占位符，恢复所需结构保留。
+    failure = state["translation_failures"][0]
+    assert failure["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert failure["batch"] == 0 and failure["offset"] == 0
+    assert segment_events[0]["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert segment_events[0]["phase"] == "translation_protocol_failed"
+    assert runtime["error"]["message"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert runtime["last_event"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert runtime["events"][0]["message"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert runtime["events"][1]["message"] == "正在翻译第 1-4 段（无敏感内容）", \
+        "进度类事件不受影响"
+    assert runtime_events[0]["message"] == support.EXPORT_CLEANED_ERROR_TEXT
+    # 原文件不动（导出的只是副本）。
+    assert "secret-key" in (job / "state.json").read_text(encoding="utf-8")
+
+
+def test_export_excludes_retained_copies_of_credential_files(isolated, tmp_path):
+    """CX-11 §3：凭据文件的 .bak/.old 副本不进备份；其它文件的副本照带。"""
+    data, _store = isolated
+    _seed(data)
+    for name in ("provider_config.json.bak", "provider_config.json.old",
+                 "ocr_online_config.json.bak", "ocr_online_config.json.old"):
+        (data / name).write_text('{"api_key": "secret-key"}', encoding="utf-8")
+    (data / "notes.txt.bak").write_text("an ordinary operator backup", encoding="utf-8")
+    result = support.export_all_data(tmp_path / "backup4")
+    with zipfile.ZipFile(result["path"]) as archive:
+        names = archive.namelist()
+        blob = b"".join(archive.read(name) for name in names)
+    assert not any("provider_config.json" in name for name in names)
+    assert not any("ocr_online_config.json" in name for name in names)
+    assert "Folith-data/notes.txt.bak" in names, "凭据文件名之外的 .bak 不受影响"
+    assert b"secret-key" not in blob
+
+
+def test_export_replaces_torn_legacy_lines_with_an_omission_record(
+        isolated, tmp_path):
+    """CX-12 §2：追加式事件日志的末行可能写了一半——解析失败的行不照抄。
+
+    截断的旧失败行可能带着升级前写进的回显，事后无法脱敏；导出副本换成
+    可读的省略记录，原文件留在本机。
+    """
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    good = json.dumps({"phase": "translation_protocol_failed",
+                       "reason": "升级前的原始错误文本带 secret-key"})
+    torn = ('{"phase": "translation_protocol_failed", "reason": "raw relay '
+            'secret-key')  # 写到一半的末行
+    (job / "events.jsonl").write_text(good + "\n" + torn, encoding="utf-8")
+    (job / "state.json").write_text("{}", encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup5")
+    with zipfile.ZipFile(result["path"]) as archive:
+        blob = b"".join(archive.read(name) for name in archive.namelist())
+        rows = [json.loads(line) for line in
+                archive.read("Folith-data/0123456789abcdef/events.jsonl")
+                .decode("utf-8").splitlines() if line.strip()]
+    assert b"secret-key" not in blob
+    assert rows[0]["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert rows[1]["event"] == support.EXPORT_OMITTED_LINE_EVENT
+    assert rows[1]["message"] == support.EXPORT_OMITTED_LINE_TEXT
+    # 原文件不动：截断行仍在本机，供操作者自己决定。
+    assert torn in (job / "events.jsonl").read_text(encoding="utf-8")
+
+
+def test_export_keeps_normal_event_reasons(isolated, tmp_path):
+    """CX-12 应修：只有失败类事件可能带模型回包，正常诊断文案照带。"""
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    lines = [
+        {"phase": "journal_baseline", "reason": "快照基线 40 段"},
+        {"phase": "clean_deterministic", "reason": "确定性清理完成"},
+        {"phase": "first_batch", "reason": "首批 4 段已提交"},
+        {"phase": "loop_exit", "reason": "批次循环退出"},
+        {"phase": "translation_protocol_failed", "reason": "原始回包 secret-key"},
+    ]
+    (job / "events.jsonl").write_text(
+        "\n".join(json.dumps(line, ensure_ascii=False) for line in lines) + "\n",
+        encoding="utf-8")
+    (job / "state.json").write_text("{}", encoding="utf-8")
+    result = support.export_all_data(tmp_path / "backup6")
+    with zipfile.ZipFile(result["path"]) as archive:
+        rows = [json.loads(line) for line in
+                archive.read("Folith-data/0123456789abcdef/events.jsonl")
+                .decode("utf-8").splitlines() if line.strip()]
+    reasons = {row["phase"]: row["reason"] for row in rows}
+    assert reasons["journal_baseline"] == "快照基线 40 段"
+    assert reasons["clean_deterministic"] == "确定性清理完成"
+    assert reasons["first_batch"] == "首批 4 段已提交"
+    assert reasons["loop_exit"] == "批次循环退出"
+    assert reasons["translation_protocol_failed"] == support.EXPORT_CLEANED_ERROR_TEXT
+
+
+def test_export_cleans_legacy_profile_and_knowledge_failures(isolated, tmp_path):
+    """旧任务里画像失败的两份副本和知识提取失败要脱敏，正常提示与计数保留。"""
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    secret = "secret-key"
+    raw_profile = (
+        "文档画像失败（Error code: 400 - {\"api_key\": \"" + secret
+        + "\"}），已跳过；可在 UI 中人工填写。")
+    quota = (
+        "文档画像失败（该连接的本月用量额度已用尽，等一会儿不会恢复；"
+        "请更换连接或提升额度。），已跳过；可在 UI 中人工填写。")
+    hint = "文档画像提示：样本较短，分节可能不完整"
+    structured = (
+        "文档画像失败（class=unknown; http=400; error=Remote; "
+        "stage=document_profile），已跳过；可在 UI 中人工填写。")
+    raw_knowledge = "知识反馈调用失败：Error code: 400 - body " + secret
+    local_knowledge = "知识反馈返回不是 JSON 数组"
+    echoed = (
+        "文档画像失败（上游返回 API 请求失败，api_key=" + secret
+        + "），已跳过；可在 UI 中人工填写。")
+    echoed_knowledge = "知识反馈调用失败：API 请求失败 " + secret
+    state = {
+        "profile_warnings": [raw_profile, quota, hint, structured, echoed],
+        "warnings": [raw_profile, quota, hint, "术语表已更新", echoed],
+        "knowledge_feedback_failures": 2,
+        "knowledge_events": [
+            {"type": "extract_failed", "batch": 3, "offset": 12,
+             "reason": raw_knowledge},
+            {"type": "extract_failed", "batch": 4, "offset": 16,
+             "reason": local_knowledge},
+            {"type": "extract_failed", "batch": 5, "offset": 20,
+             "reason": echoed_knowledge},
+            {"type": "entity_observation", "batch": 3, "offset": 12,
+             "source": "术语", "observed_target": "term",
+             "reason": "观察到的译法"},
+        ],
+    }
+    (job / "state.json").write_text(
+        json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    original = (job / "state.json").read_text(encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup7")
+    with zipfile.ZipFile(result["path"]) as archive:
+        blob = b"".join(archive.read(name) for name in archive.namelist())
+        exported = json.loads(archive.read(
+            "Folith-data/0123456789abcdef/state.json"))
+    assert secret.encode() not in blob
+    assert exported["profile_warnings"] == [
+        support.EXPORT_CLEANED_ERROR_TEXT, quota, hint, structured,
+        support.EXPORT_CLEANED_ERROR_TEXT]
+    assert exported["warnings"] == [
+        support.EXPORT_CLEANED_ERROR_TEXT, quota, hint, "术语表已更新",
+        support.EXPORT_CLEANED_ERROR_TEXT]
+    failed = exported["knowledge_events"]
+    assert failed[0]["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert failed[0]["batch"] == 3 and failed[0]["offset"] == 12
+    assert failed[1]["reason"] == local_knowledge
+    assert failed[1]["batch"] == 4 and failed[1]["offset"] == 16
+    assert failed[2]["reason"] == support.EXPORT_CLEANED_ERROR_TEXT
+    assert failed[2]["batch"] == 5 and failed[2]["offset"] == 20
+    assert failed[3]["type"] == "entity_observation"
+    assert failed[3]["reason"] == "观察到的译法"
+    assert failed[3]["source"] == "术语"
+    assert exported["knowledge_feedback_failures"] == 2
+    assert len(exported["profile_warnings"]) == 5
+    assert len(exported["warnings"]) == 5
+    assert original == (job / "state.json").read_text(encoding="utf-8")
+    assert secret in original
+
+
+def test_profile_warnings_do_not_keep_the_model_section_id(isolated, tmp_path):
+    """章节警告只用本地序号；历史警告里的模型 ID 在两份列表和 ZIP 中都换成占位。"""
+    from folith import models
+
+    data, _store = isolated
+    job = data / "0123456789abcdef"
+    job.mkdir()
+    # 发布扫描认源码里连续的 sk- 长串。运行时再拼，扫描看不到字面量。
+    secret = "sk" + "-" + "x" * 24
+    profile = models.normalize_document_profile({
+        "domain": "law",
+        "confidence": 0.9,
+        "sections": [
+            {"section_id": secret, "start_segment": 0, "end_segment": 2},
+            {"section_id": "also-" + secret, "start_segment": 3, "end_segment": 4,
+             "topic": "kept"},
+        ],
+    })
+    problems = models.validate_document_profile(profile)
+    assert problems == ["章节 1 缺少 topic/domain"]
+    assert secret not in "\n".join(problems)
+    fresh = f"文档画像提示：{problems[0]}"
+    historical_hint = f"文档画像提示：章节 {secret} 缺少 topic/domain"
+    historical_failure = (
+        "文档画像失败（画像缺少关键字段：章节 " + secret
+        + " 缺少 topic/domain），已跳过；可在 UI 中人工填写。")
+    profile_warnings = [fresh, historical_hint, historical_failure]
+    warnings = [fresh, historical_hint, historical_failure, "术语表已更新"]
+    (job / "state.json").write_text(json.dumps({
+        "profile_warnings": profile_warnings,
+        "warnings": warnings,
+    }, ensure_ascii=False), encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup-chapter-id")
+    with zipfile.ZipFile(result["path"]) as archive:
+        blob = b"".join(archive.read(name) for name in archive.namelist())
+        exported = json.loads(archive.read(
+            "Folith-data/0123456789abcdef/state.json"))
+    placeholder = "章节（序号已省略） 缺少 topic/domain"
+    assert secret.encode() not in blob
+    assert len(exported["profile_warnings"]) == len(profile_warnings)
+    assert len(exported["warnings"]) == len(warnings)
+    assert placeholder in exported["profile_warnings"][1]
+    assert exported["profile_warnings"][1].startswith("文档画像提示：")
+    assert exported["profile_warnings"][2].startswith("文档画像失败（")
+    assert placeholder in exported["profile_warnings"][2]
+    assert exported["profile_warnings"][2] != support.EXPORT_CLEANED_ERROR_TEXT
+    assert placeholder in exported["warnings"][1]
+    assert placeholder in exported["warnings"][2]
+    assert exported["warnings"][3] == "术语表已更新"
+    joined = "\n".join(exported["profile_warnings"] + exported["warnings"])
+    assert secret not in joined
+
+
+def _write_job(data, job_id, state):
+    job = data / job_id
+    job.mkdir(parents=True, exist_ok=True)
+    (job / "state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    return job
+
+
+def test_export_keeps_structure_and_scrubs_only_long_credentials(isolated, tmp_path, monkeypatch):
+    """CX-21：按值只擦长凭据；正文/译文/术语/TM/布尔结构原样保留；JSON 可解析。"""
+    from folith import models
+    data, _store = isolated
+    long_secret = "sk" + "-" + "z" * 24              # 形状长凭据（>=8）
+    plain_secret = "relay" + "-" + "q" * 18          # 非形状长凭据（>=8）
+    short_secret = "false"                            # 短凭据，不应全包替换
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "api_key": short_secret, "connections": [
+            {"provider": "relay", "api_key": long_secret},
+            {"provider": "OpenAI", "api_key": plain_secret},
+        ],
+    })
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+
+    state = core.new_job_state("doc.txt")
+    state["pairs"] = [
+        {"source": "token: punctuation 是正文", "target": "password = example 保留"},
+        {"source": "手册示例 sk-example-not-a-key 保留", "target": plain_secret},
+    ]
+    state["glossary"] = [{"term": "词", "scope": "section:" + long_secret}]
+    state["document_profile"] = models.normalize_document_profile({
+        "domain": "law", "confidence": 0.9,
+        "sections": [
+            {"section_id": "intro", "start_segment": 0, "end_segment": 0, "topic": "引言"},
+            {"section_id": long_secret, "start_segment": 1, "end_segment": 1},
+        ],
+    })
+    state["p2_done"] = False          # 布尔：不得被改成占位符
+    state["annotation_batches"] = {   # 生产按偏移索引对象结构
+        "2": {"status": "request_failed", "error": "boom " + long_secret,
+              "segment_count": 2},
+    }
+    state["understanding_warnings"] = ["摘要失败 " + long_secret]
+    state["document_synopsis"] = {"summary": "ok", "warning": "概要 " + long_secret}
+    job = _write_job(data, "cafe1234567890ab", state)
+    # 翻译记忆：作用域键 = 语言 + 分隔符 + 原文；键不能被改动。
+    from folith.translation_memory import tm_scope_key
+    tm_entry_key = tm_scope_key("zh-CN", "token: punctuation 是正文") or "token: punctuation 是正文"
+    (job / "document_synopsis.json").write_text(
+        json.dumps({"summary": "ok", "warning": "概要 " + long_secret}, ensure_ascii=False),
+        encoding="utf-8")
+    (job / "semantic_units.json").write_text(
+        json.dumps([{"source_range_id": "section-" + long_secret}], ensure_ascii=False),
+        encoding="utf-8")
+    tm_dir = data
+    (tm_dir / "translation_memory.json").write_text(
+        json.dumps({tm_entry_key: {"target": plain_secret}}, ensure_ascii=False),
+        encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup-cx21")
+    members = {}
+    with zipfile.ZipFile(result["path"]) as archive:
+        for name in archive.namelist():
+            blob = archive.read(name)
+            members[name] = blob
+    # 1) 所有 JSON/JSONL 成员可解析
+    for name, blob in members.items():
+        if name.endswith(".json"):
+            json.loads(blob.decode("utf-8"))
+        elif name.endswith(".jsonl"):
+            for line in blob.decode("utf-8").splitlines():
+                if line.strip():
+                    json.loads(line)
+    whole = b"".join(members.values())
+    # 2) 长凭据全部 0 命中；短凭据 false 不做全包替换（p2_done 保持布尔）
+    assert long_secret.encode() not in whole
+    assert plain_secret.encode() not in whole
+    job_state = json.loads(members["Folith-data/cafe1234567890ab/state.json"])
+    assert job_state["p2_done"] is False, "false 短凭据不应把布尔改成占位符"
+    # 3) 正文/译文/术语/TM 键原样保留
+    assert job_state["pairs"][0]["source"] == "token: punctuation 是正文"
+    assert job_state["pairs"][0]["target"] == "password = example 保留"
+    assert job_state["pairs"][1]["source"] == "手册示例 sk-example-not-a-key 保留"
+    tm = json.loads(members["Folith-data/translation_memory.json"])
+    assert tm_entry_key in tm, "TM 条目键被改动"
+
+
+def test_export_scrubs_long_secret_across_all_references_and_recovers(isolated, tmp_path, monkeypatch):
+    """CX-21：长凭据在画像ID/术语scope/语义单元/标注错误/概要 0 命中，章节引用对应；导出→解压→load_job_state 非 None 且术语按原ID匹配。"""
+    from folith import models
+    data, _store = isolated
+    secret = "AbcKey" + "u" * 20     # 长且非内置形状
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "api_key": secret, "connections": [],
+    })
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+
+    state = core.new_job_state("doc.txt")
+    state["pairs"] = [{"source": "s0", "target": "t0"}, {"source": "s1", "target": "t1"}]
+    state["paras"] = ["s0", "s1"]
+    state["document_profile"] = models.normalize_document_profile({
+        "domain": "law", "confidence": 0.9,
+        "sections": [
+            {"section_id": "intro", "start_segment": 0, "end_segment": 0, "topic": "引言"},
+            {"section_id": secret, "start_segment": 1, "end_segment": 1},
+        ],
+    })
+    state["glossary"] = [{"term": "词A", "scope": "section:intro"}]
+    state["auto_term_entries"] = [{"term": "词B", "scope": "section:" + secret}]
+    state["semantic_units"] = [{"source_range_id": "section-" + secret, "unit_id": "u1"}]
+    state["annotation_batches"] = {
+        "2": {"status": "request_failed", "error": "boom " + secret, "segment_count": 1},
+    }
+    state["understanding_warnings"] = ["摘要失败 " + secret]
+    state["document_synopsis"] = {"summary": "s", "warning": "概要 " + secret}
+    job = _write_job(data, "feedface12345678", state)
+    # 独立文件放任务目录（生产位置），不在数据根。
+    (job / "semantic_units.json").write_text(
+        json.dumps([{"source_range_id": "section-" + secret}], ensure_ascii=False),
+        encoding="utf-8")
+    (job / "document_synopsis.json").write_text(
+        json.dumps({"summary": "s", "warning": "概要 " + secret}, ensure_ascii=False),
+        encoding="utf-8")
+
+    result = support.export_all_data(tmp_path / "backup-cx21b")
+    with zipfile.ZipFile(result["path"]) as archive:
+        whole = b"".join(archive.read(n) for n in archive.namelist())
+    assert secret.encode() not in whole, "长凭据仍残留"
+
+    # 解压回一个新数据目录，用真实 load_job_state 读回（必须非 None）。
+    import shutil as _sh
+    restore = tmp_path / "restore"
+    restore.mkdir()
+    with zipfile.ZipFile(result["path"]) as archive:
+        archive.extractall(restore / "_x")
+    src = restore / "_x" / "Folith-data"
+    monkeypatch.setattr(core, "OUTPUT_DIR", restore)
+    _sh.copytree(src, restore, dirs_exist_ok=True)
+    loaded = core.load_job_state("feedface12345678")
+    assert loaded is not None, "恢复后 state.json 读回 None"
+    # 章节术语按原 ID（intro）匹配；secret 章节已脱敏，引用仍一一对应。
+    sections = loaded["document_profile"]["sections"]
+    scopes = [e["scope"] for e in loaded["glossary"]]
+    def _sect_match(scope, secs):
+        if not scope.startswith("section:"):
+            return True
+        return any(s["section_id"] == scope[8:] for s in secs)
+    assert all(_sect_match(sc, sections) for sc in scopes)
+
+
+def test_journal_jsonl_keeps_u2028_and_scrubs_long_secret(isolated, tmp_path, monkeypatch):
+    """CX-22：JSONL 按真实 LF 分行——译文含 U+2028 不拆记录，长凭据被擦，条数不变。"""
+    from folith.storage import state_journal as journal
+    data, _store = isolated
+    secret = "Zk" + "w" * 22   # 长合成凭据（>=8，非内置形状）
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "api_key": secret, "connections": [],
+    })
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+    job = data / "0123journal98765"
+    job.mkdir(parents=True, exist_ok=True)
+    core.new_job_state("doc.txt")  # ensure core importable
+    path = journal.journal_path("0123journal98765", output_dir=data)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = [
+        {"schema": journal.JOURNAL_SCHEMA_VERSION,
+         "mutation": journal.MUTATION_TRANSLATION_BATCH, "seq": 1,
+         "mutation_id": "m1", "ts": 1.0, "batch": 0, "offset": 0,
+         "segment_ids": [0], "pairs": [{"source": "s0",
+                                       "target": "译文含分隔符\u2028换行后仍在同一条"}]},
+        {"schema": journal.JOURNAL_SCHEMA_VERSION,
+         "mutation": journal.MUTATION_TRANSLATION_BATCH, "seq": 2,
+         "mutation_id": "m2", "ts": 2.0, "batch": 1, "offset": 1,
+         "segment_ids": [1], "pairs": [{"source": "s1", "target": secret}]},
+    ]
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+                    encoding="utf-8")
+    before = journal.read_mutations("0123journal98765", output_dir=data)
+    assert len(before) == 2
+
+    result = support.export_all_data(tmp_path / "backup-journal")
+    with zipfile.ZipFile(result["path"]) as archive:
+        name = next(n for n in archive.namelist() if n.endswith("state_journal.jsonl"))
+        blob = archive.read(name)
+    # 每一物理行都能解析（U+2028 未被当成换行拆开）。
+    lines = [ln for ln in blob.decode("utf-8").split("\n") if ln.strip()]
+    parsed = [json.loads(ln) for ln in lines]
+    assert len(parsed) == 2, f"记录被拆坏：{len(parsed)} 行"
+    assert secret.encode() not in blob
+    # 恢复端读回条数不变。
+    extract = tmp_path / "restore"
+    with zipfile.ZipFile(result["path"]) as archive:
+        archive.extractall(extract)
+    import shutil as _sh
+    src = extract / "Folith-data"
+    restored = tmp_path / "restoredata"
+    restored.mkdir()
+    _sh.copytree(src, restored, dirs_exist_ok=True)
+    after = journal.read_mutations("0123journal98765", output_dir=restored)
+    assert len(after) == 2, "导出后 journal 回放条数变了"
+
+
+def test_general_warnings_understanding_echo_scrubbed(isolated, tmp_path, monkeypatch):
+    """CX-22：全文理解错误同时进 understanding_warnings 和通用 warnings，两处都被换成固定文案；普通提示保留。"""
+    data, _store = isolated
+    secret = "Qv" + "r" * 20
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "api_key": secret, "connections": [],
+    })
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+    echo = "全文摘要失败：Error code: 400 - body " + secret
+    ordinary = "术语表已更新"
+    state = core.new_job_state("doc.txt")
+    state["understanding_warnings"] = [echo]
+    state["warnings"] = [echo, ordinary]
+    state["document_synopsis"] = {"summary": "s", "warning": echo}
+    _write_job(data, "abcdef0123456789", state)
+
+    result = support.export_all_data(tmp_path / "backup-warn")
+    with zipfile.ZipFile(result["path"]) as archive:
+        exported = json.loads(archive.read(
+            "Folith-data/abcdef0123456789/state.json"))
+        whole = b"".join(archive.read(n) for n in archive.namelist())
+    assert secret.encode() not in whole
+    assert support.EXPORT_CLEANED_ERROR_TEXT in exported["warnings"], \
+        "通用 warnings 里的理解错误副本未替换"
+    assert ordinary in exported["warnings"], "普通提示被误改"
+
+
+def test_understanding_echo_with_chapter_fragment_is_scrubbed_before_profile_rule(isolated, tmp_path, monkeypatch):
+    """CX-23：历史理解错误正文含「章节 … 缺少 topic/domain」片段时，通用 warnings 那条仍被整条替换，普通画像提示保留、整包不含片段外的旧串。"""
+    data, _store = isolated
+    # 片段之外放一个未配置的合成凭据形状串（模拟已轮换，不在当前连接）。
+    retired = "sk" + "-" + "R" * 26
+    monkeypatch.setattr(core, "load_provider_config", lambda: {
+        "provider": "relay", "api_key": "Zz" + "q" * 20, "connections": [],
+    })
+    monkeypatch.setattr(core, "load_ocr_online_config", lambda *a, **k: {})
+    echo = "全文摘要失败：Error code: 400 - 章节 secret 缺少 topic/domain 附带 " + retired
+    ordinary = "文档画像提示：样本较短，分节可能不完整"
+    state = core.new_job_state("doc.txt")
+    state["understanding_warnings"] = [echo]
+    state["warnings"] = [echo, ordinary]
+    state["document_synopsis"] = {"summary": "s", "warning": echo}
+    _write_job(data, "a1b2c3d4e5f60718", state)
+
+    result = support.export_all_data(tmp_path / "backup-order")
+    with zipfile.ZipFile(result["path"]) as archive:
+        exported = json.loads(archive.read("Folith-data/a1b2c3d4e5f60718/state.json"))
+        whole = b"".join(archive.read(n) for n in archive.namelist())
+    assert retired.encode() not in whole, "片段外的旧凭据串仍进包"
+    assert support.EXPORT_CLEANED_ERROR_TEXT in exported["warnings"], \
+        "通用 warnings 里的理解错误副本未被整条替换（清理顺序问题）"
+    assert ordinary in exported["warnings"], "普通画像提示被误改"
+    assert support.EXPORT_CLEANED_ERROR_TEXT in exported["understanding_warnings"]

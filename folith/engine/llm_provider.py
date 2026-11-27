@@ -12,7 +12,7 @@ import re
 from folith import llm_transport as _llm_transport
 from folith import request_control as _request_control
 from folith import translation_protocol as _translation_protocol
-from folith.trace import trace
+from folith.trace import safe_request_identifier, trace
 from urllib.parse import urlparse
 from folith.engine._link import core as _c
 
@@ -382,13 +382,42 @@ def _trace_http_response(response):
         run.record_http_response(response)
 
 
-def _provider_error_payload(error):
+def _plain_identifier(value, limit, known_secrets=()):
+    """A short machine identifier, or ``""`` — never arbitrary relay text.
+
+    CX-12 §1: ``code``/``request_id``/``period`` are persisted as structured
+    diagnostic fields, and a relay can echo the very credential that was sent
+    inside any of them.  Only a plain, short identifier survives; anything
+    with spaces, prose, punctuation or excessive length is dropped before it
+    can reach task state, events, logs or trace summaries.
+
+    CX-15: shape is not enough.  A 7- or 12-character credential is itself a
+    plain identifier, and so is a longer identifier that merely contains it.
+    When the caller passes this connection's credentials, a value equal to
+    one of them — or containing one — is dropped.
+    """
+    text = str(value or "").strip()
+    if not text or len(text) > limit or not re.fullmatch(r"[A-Za-z0-9_.\-]+", text):
+        return ""
+    for secret in known_secrets or ():
+        needle = str(secret or "").strip()
+        if needle and needle in text:
+            return ""
+    return text
+
+
+def _provider_error_payload(error, known_secrets=()):
     """Extract safe, non-secret fields from SDK/http responses.
 
     OpenAI-compatible relays do not all use the same exception shape: the
     OpenAI SDK exposes ``status_code``/``body`` while httpx exposes a response
     object.  Keep this extraction deliberately small and never return the raw
     exception text to the UI (it may contain request details or credentials).
+
+    The request id is read the reliable way first (CX-12: the SDK's own
+    ``request_id``, then the ``x-request-id`` response header); a value found
+    in the reply body is only a fallback, and every extracted identifier is
+    shape-validated so a relay cannot hide its echo inside a diagnostic field.
     """
     response = error if isinstance(error, httpx.Response) else getattr(
         error, "response", None)
@@ -413,9 +442,21 @@ def _provider_error_payload(error):
     code = ""
     message = ""
     period = ""
+    # 内部协议错误自带稳定的 code（wrong_item_count 等，翻译协议的契约）——
+    # 优先于回包读取，同样要过形状校验。
+    code = _plain_identifier(getattr(error, "code", None), 64, known_secrets)
+    # CX-12 应修：请求 ID 优先读 SDK 与 ``x-request-id`` 响应头——回包里的
+    # ``request_id``/``id`` 只是兜底，且同样要过形状校验。
+    sdk_request_id = getattr(error, "request_id", None)
+    if not sdk_request_id and response is not None:
+        try:
+            sdk_request_id = response.headers.get("x-request-id")
+        except Exception:  # noqa: BLE001 - a header read must never raise
+            sdk_request_id = None
+    request_id = _plain_identifier(sdk_request_id, 128, known_secrets)
 
     def visit(payload):
-        nonlocal code, message, period
+        nonlocal code, message, period, request_id
         if isinstance(payload, str):
             stripped = payload.strip()
             if stripped.startswith(("{", "[")):
@@ -426,12 +467,19 @@ def _provider_error_payload(error):
             return
         if not isinstance(payload, dict):
             return
+        if not request_id:
+            value = payload.get("request_id") or payload.get("id")
+            if isinstance(value, (str, int)):
+                # CX-12 §1：回包里的 id 只是兜底，且必须过形状校验——回显可以
+                # 藏在任何一个"结构化"字段里。
+                request_id = _plain_identifier(value, 128, known_secrets)
         if not code:
             for key in ("code", "error_code", "type"):
                 value = payload.get(key)
-                if isinstance(value, (str, int)) and str(value).strip():
-                    code = str(value).strip()
-                    break
+                if isinstance(value, (str, int)):
+                    code = _plain_identifier(value, 64, known_secrets)
+                    if code:
+                        break
         if not message:
             value = payload.get("message") or payload.get("detail")
             if isinstance(value, str) and value.strip():
@@ -441,9 +489,10 @@ def _provider_error_payload(error):
             if isinstance(metadata, dict):
                 for key in ("limitName", "limit_name", "period", "resetPeriod"):
                     value = metadata.get(key)
-                    if isinstance(value, str) and value.strip():
-                        period = value.strip().lower()
-                        break
+                    if isinstance(value, (str, int)):
+                        period = _plain_identifier(value, 32, known_secrets).lower()
+                        if period:
+                            break
         for key in ("error", "detail"):
             nested = payload.get(key)
             if isinstance(nested, dict):
@@ -461,6 +510,7 @@ def _provider_error_payload(error):
         "code": code,
         "message": message,
         "period": period,
+        "request_id": request_id,
         "text": error_text,
     }
 
@@ -475,6 +525,9 @@ def provider_error_status(error):
     """
     info = _provider_error_payload(error)
     http_status = info["http_status"]
+    # The code is provider-supplied text; the status dict also exposes it to the
+    # UI, so it is held to the identifier shape the timing record uses.
+    provider_code = safe_request_identifier(info["code"]) or ""
     code = info["code"].replace("-", "_").upper()
     searchable = " ".join((info["text"], info["code"], info["message"])).lower()
     status_suffix = f"（HTTP {http_status}）" if http_status else ""
@@ -489,7 +542,7 @@ def provider_error_status(error):
             "label": "余额不足",
             "message": "余额不足，请充值或更换 API Key。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if (http_status == 401 or code in {"INVALID_API_KEY", "UNAUTHORIZED"}
@@ -501,7 +554,7 @@ def provider_error_status(error):
             "label": "API Key 无效",
             "message": f"API Key 无效或已过期{status_suffix}，请检查密钥和服务商。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     # 额度用尽和"限流"是两件事，必须排在 429 前面判断：限流等一会儿会好，按月计量
@@ -524,7 +577,7 @@ def provider_error_status(error):
             "message": (f"该连接的{period}用量额度已用尽，等一会儿不会恢复；"
                         "请更换连接或提升额度。"),
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if (http_status == 429 or code in {"RATE_LIMITED", "TOO_MANY_REQUESTS"}
@@ -534,7 +587,7 @@ def provider_error_status(error):
             "label": "请求受限",
             "message": f"请求过于频繁或已达到服务商限额{status_suffix}，请稍后重试。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if http_status == 403:
@@ -543,7 +596,7 @@ def provider_error_status(error):
             "label": "访问被拒绝",
             "message": "服务商拒绝了请求（HTTP 403），请检查 API 权限、余额或接口地址。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if isinstance(error, httpx.RequestError):
@@ -552,7 +605,7 @@ def provider_error_status(error):
             "label": "无法连接服务商",
             "message": "无法连接服务商，请检查 API 地址和网络。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     if http_status is not None and http_status >= 500:
@@ -561,7 +614,7 @@ def provider_error_status(error):
             "label": "服务商暂时不可用",
             "message": f"服务商暂时不可用{status_suffix}，请稍后重试。",
             "http_status": http_status,
-            "provider_code": info["code"],
+            "provider_code": provider_code,
         }
 
     return {
@@ -569,7 +622,7 @@ def provider_error_status(error):
         "label": "API 请求失败",
         "message": f"API 请求失败{status_suffix}，请检查服务商配置后重试。",
         "http_status": http_status,
-        "provider_code": info["code"],
+        "provider_code": provider_code,
     }
 
 
@@ -578,6 +631,71 @@ def provider_error_message(error, action="请求失败"):
     status = provider_error_status(error)
     message = status["message"]
     return f"{action}：{message}" if action else message
+
+
+def provider_error_is_remote(error):
+    """True when the error carries a remote reply's shape (CX-12 §1).
+
+    SDK/http exceptions expose ``response``/``body``/``status_code``; internal
+    errors (our own protocol codes, simulated faults, plain RuntimeErrors)
+    carry none of these — their text never saw a relay, so callers may keep
+    it (redacted against the connection's own credentials) instead of
+    replacing it with the structured summary.
+    """
+    return (getattr(error, "response", None) is not None
+            or getattr(error, "body", None) is not None
+            or getattr(error, "status_code", None) is not None)
+
+
+def persisted_auxiliary_failure(error, *, api_key="", stage=""):
+    """Text safe to store after an auxiliary-model call fails.
+
+    Quota, rate-limit and the other classified statuses keep their user-facing
+    message.  An unclassified remote reply — or one whose ``code`` is only an
+    identifier — becomes :func:`provider_error_detail`, with this connection's
+    credential excluded, instead of the raw exception text.  A purely local
+    fault keeps its own text, redacted against that same credential.
+    """
+    status = provider_error_status(error)
+    secrets = (str(api_key or ""),)
+    if status["status"] != "unknown":
+        return status["message"]
+    if (provider_error_is_remote(error)
+            or _plain_identifier(getattr(error, "code", None), 64, secrets)):
+        return provider_error_detail(error, stage=stage, known_secrets=secrets)
+    from folith.engine.redaction import redact_error_text
+    return redact_error_text(str(error), known_secrets=secrets)
+
+
+def provider_error_detail(error, *, stage="", known_secrets=()):
+    """A structured, persistable diagnostic for a provider failure (CX-11 §1).
+
+    The raw SDK/relay exception text can echo the very credential that was
+    sent, stretches of the user's text and local paths, so it never goes into
+    task state, events, logs or trace summaries.  Every place that used to
+    stringify the exception now persists this summary instead: the error
+    class, the HTTP status, the provider's own error code, the request id
+    and the stage — the fields support actually needs.  The exception object
+    itself stays in memory only.  ``known_secrets`` drops a diagnostic value
+    that equals or contains this connection's credential (CX-15): a 7- or
+    12-character key is a legal identifier and would otherwise be persisted
+    as ``code=`` or ``request_id=``.
+    """
+    info = _provider_error_payload(error, known_secrets)
+    status = provider_error_status(error)
+    parts = [f"class={status['status']}"]
+    if info["http_status"]:
+        parts.append(f"http={info['http_status']}")
+    if info["code"]:
+        parts.append(f"code={info['code']}")
+    if info["request_id"]:
+        parts.append(f"request_id={info['request_id']}")
+    if info["period"]:
+        parts.append(f"period={info['period']}")
+    parts.append(f"error={type(error).__name__}")
+    if stage:
+        parts.append(f"stage={stage}")
+    return "; ".join(parts)
 
 
 def _fetch_gemini_models(api_key):

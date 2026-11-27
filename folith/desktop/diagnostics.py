@@ -42,19 +42,14 @@ _ERROR_MARKERS = ("error", "warning", "traceback", "错误", "失败", "异常")
 
 # Paths that must never be read while building diagnostics.
 _FORBIDDEN_SOURCES = ("provider_config.json", ".onboarded")
-_SECRET_KEYS = ("api_key", "apikey", "token", "authorization", "secret", "password")
 
 # High-confidence credential shapes.  Log lines can carry a key *without* the
 # `api_key=` prefix (an upstream error echoing the header value, a provider SDK
 # message), and §3.5 requires API keys to be excluded from the export.  These
 # patterns deliberately do not match plain hashes, so diagnostics stay useful.
-_SECRET_PATTERNS = (
-    re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),           # OpenAI-style
-    re.compile(r"AIza[0-9A-Za-z_\-]{20,}"),          # Google
-    re.compile(r"ghp_[A-Za-z0-9]{20,}"),             # GitHub
-    re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}"),     # Slack
-    re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]{12,}"),  # Authorization: Bearer …
-)
+# One source of truth with the error-forensics writers: folith.engine.redaction.
+from folith.engine.redaction import SECRET_KEY_NAMES as _SECRET_KEYS  # noqa: E402
+from folith.engine.redaction import SECRET_PATTERNS as _SECRET_PATTERNS  # noqa: E402
 
 
 @dataclass
@@ -342,21 +337,28 @@ def collect(*, paths: desktop_paths.DesktopPaths | None = None,
 def collect_error_summary(paths: desktop_paths.DesktopPaths,
                           home: Path | None = None,
                           limit: int = ERROR_LINE_LIMIT) -> list[str]:
-    """Filtered tail of the app's own logs; never includes document content."""
-    lines: list[str] = []
+    """A-82: controlled error categories/counts, never raw log-line text.
+
+    Raw lines can carry document text, synthetic credentials that match no
+    pattern, or volume-absolute paths. Export only which log produced which
+    category and how often; the existing build/path facts stay untouched.
+    """
+    counts: dict[tuple[str, str], int] = {}
     for log_path in (paths.launcher_log, paths.service_log):
         try:
             content = log_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for line in content.splitlines()[-ERROR_SCAN_LIMIT:]:
-            stripped = line.strip()
-            if not stripped:
+            lowered = line.lower()
+            category = next((marker for marker in _ERROR_MARKERS
+                             if marker in lowered), None)
+            if category is None:
                 continue
-            lowered = stripped.lower()
-            if any(marker in lowered for marker in _ERROR_MARKERS):
-                lines.append(f"{log_path.name}: {_redact_text(stripped, home)}")
-    return lines[-limit:]
+            key = (log_path.name, category)
+            counts[key] = counts.get(key, 0) + 1
+    return [f"{name}: {category} x{count}"
+            for (name, category), count in list(counts.items())[-limit:]]
 
 
 # --- reporting -------------------------------------------------------------
@@ -408,7 +410,8 @@ def collect_tools() -> dict[str, Any]:
             "render_qa": "available" if soffice else "NOT_RUN",
         }
     except Exception as exc:  # pragma: no cover - diagnostics must never fail
-        tools["error"] = f"{type(exc).__name__}: {exc}"
+        # A-82: controlled category only, never the exception's free text.
+        tools["error"] = type(exc).__name__
     return tools
 
 

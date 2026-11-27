@@ -22,3 +22,4 @@
 - **Nothing merges automatically before 1.0.** CI green is necessary, not permission: a product-code PR goes to a reviewer who checks the diff and the evidence and makes the merge decision; pure docs/test/workflow PRs may be self-merged once CI is green, with the merge commit recorded. What stays human is native acceptance (Cocoa title bar, Windows native window, frozen-build fluency) and the merge decision itself. See [CONTRIBUTING.md § 1.0 之前不自动合并](CONTRIBUTING.md#10-之前不自动合并).
 - Finish requested implementations and proportionate verification. Diagnosis
   remains read-only unless changes were requested.
+- **Run the Python test suite with the project venv (`venv/bin/python`), not the system `python3`.** Several test modules import `typst` and PySide6, which only the venv installs; under a bare system `python3` they fail to collect rather than skip. This is an environment fact, not a test bug. (#220 F2)

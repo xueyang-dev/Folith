@@ -134,7 +134,13 @@ def _note_rate_limited(gate, error: BaseException) -> None:
 
 
 def _provider_failure_detail(error, fallback):
-    """Use readable provider copy while preserving local parser diagnostics."""
+    """A controlled failure category, never the exception's raw text.
+
+    CX-20: the ``unknown`` branch used to return the raw ``str(error)`` head,
+    which a remote reply could fill with echoed credentials, document text or a
+    path. It now collapses to the exception class name; classified provider
+    errors still use their readable copy.
+    """
     try:
         import core
         status = core.provider_error_status(error)
@@ -142,7 +148,7 @@ def _provider_failure_detail(error, fallback):
             return status["message"]
     except Exception:  # pragma: no cover - defensive import fallback
         pass
-    return fallback
+    return type(error).__name__ or "未知错误"
 
 
 def _clean(value: Any, limit: int = 1200) -> str:

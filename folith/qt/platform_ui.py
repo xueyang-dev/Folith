@@ -61,6 +61,18 @@ _STANDARD = {
     "settings": QKeySequence.StandardKey.Preferences,
 }
 # Qt interprets Ctrl as Command on macOS, including custom application actions.
+#: Review actions: (platform_ui action name, source-language label).
+#: The one table drives keycaps, visible labels, AT descriptions and bindings.
+REVIEW_ACTIONS = (
+    ("review_next", "下一项"),
+    ("review_apply", "暂存建议"),
+    ("review_open", "确认问题存在"),
+    ("review_confirm", "确认已解决"),
+    ("review_keep", "保留当前译文"),
+    ("review_edit", "修改译文"),
+)
+
+
 _CUSTOM = {
     "settings": "Ctrl+,",  # Qt has no Preferences binding on some platforms.
     "home": "Ctrl+Shift+H",
@@ -73,6 +85,14 @@ _CUSTOM = {
     "escape": "Esc",
     "previous_segment": "Up",
     "next_segment": "Down",
+    # Audit-stage actions (C5 / #524): single-letter bindings, one definition
+    # for both the QShortcut and the visible keycap hint.
+    "review_next": "N",
+    "review_apply": "A",
+    "review_open": "O",
+    "review_confirm": "C",
+    "review_keep": "K",
+    "review_edit": "E",
 }
 
 

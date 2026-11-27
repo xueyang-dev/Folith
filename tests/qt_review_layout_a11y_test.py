@@ -232,11 +232,15 @@ def test_tab_order_follows_the_reading_order(qt_app):
 
 
 def test_keyboard_shortcut_hint_lists_every_binding(qt_app):
+    from folith.qt import components, platform_ui
+
     panel = _panel(_item())
     try:
-        text = panel.shortcut_hint.text()
-        for key in ("N", "A", "O", "C", "K", "E"):
-            assert key in text
+        caps = panel.shortcut_hint.findChildren(components.KeyHint)
+        assert len(caps) == 6
+        for action in ("review_next", "review_apply", "review_open",
+                       "review_confirm", "review_keep", "review_edit"):
+            assert platform_ui.shortcut_text(action) in [cap.text() for cap in caps]
         assert set(panel.shortcut_handlers()) >= {
             "next", "apply", "open", "confirm", "keep", "edit"}
     finally:
