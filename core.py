@@ -8847,9 +8847,15 @@ def _inprocess_owner_visible_locked(job_id, current):
     engine = _RUNTIME_ENGINE_OWNERS.get(str(job_id))
     if engine and _runtime_pid_alive((engine or {}).get("pid")):
         return True
-    # Disk worker block (another surface, or a stale-but-live lease).
+    # Disk worker block: another surface/process, or a stale-but-live lease.
+    # CX-25: a disk pid equal to THIS process is the GUI that launched the run,
+    # not a live executor of it (that would be a worker thread or engine child,
+    # checked above). After an in-process worker deregisters, its disk pid still
+    # equals ours — it must not be mistaken for an owner, or the stop would write
+    # a "cancelling" nobody consumes.
     disk = (current or {}).get("worker") or {}
-    if disk.get("owner_pid") and _runtime_pid_alive(disk.get("owner_pid")):
+    disk_pid = disk.get("owner_pid")
+    if disk_pid and int(disk_pid) != os.getpid() and _runtime_pid_alive(disk_pid):
         return True
     return False
 
@@ -8860,7 +8866,8 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_visibility=None, event_category=None,
                          event_logged=False, expect_launch_token=None,
                          require_replace=False, companion_event=None,
-                         only_if_unowned=False, leave_terminal=False, **changes):
+                         only_if_unowned=False, leave_terminal=False,
+                         stop_terminal_if_unowned=None, **changes):
     """Atomically merge a worker status update into runtime_state.json.
 
     ``event_logged=True`` says the event has already been appended to
@@ -8946,6 +8953,19 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
         if leave_terminal and str(current.get("status") or "") in {
                 "cancelled", "interrupted", "completed", "failed"}:
             return current
+        # CX-25: a stop's fallback write races a run that may publish its own
+        # terminal and exit between the skip and this lock. If it already ended,
+        # leave_terminal above returned it. If it is gone and no terminal is
+        # published, writing "cancelling" would leave a stop nobody can consume —
+        # so publish the requested terminal directly. If an owner is still live,
+        # write the normal cancel-intent ``changes``. One lock, one decision, no
+        # TOCTOU between a separate liveness read and this write.
+        if stop_terminal_if_unowned is not None:
+            if _inprocess_owner_visible_locked(job_id, current):
+                pass  # owner alive: fall through to write the cancel-intent changes
+            elif str(current.get("status") or "") not in {
+                    "cancelled", "interrupted", "completed", "failed"}:
+                changes = {**changes, **stop_terminal_if_unowned}
         # CX-10 §1 / CX-15 §3：比对与即将发生的替换在同一把 runtime 写锁里。
         # 启动所有权也由这次加锁写入发布，所以读到的 token 和即将落盘的字节
         # 之间没有锁外窗口。只有**非空且不同**的 token 才是接管：当前值为空

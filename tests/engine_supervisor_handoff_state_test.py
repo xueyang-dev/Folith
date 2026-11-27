@@ -449,7 +449,7 @@ def test_a_handoff_run_is_published_when_the_executor_dies(isolated, gateway,
         "events": _events(job_id)[-8:],
         "wait_finished": sup.wait_finished(0),
         "exit_code": getattr(sup, "_exit_code", None),
-        "terminal_published": getattr(sup, "_end_launch_token", None) is not None,
+        "terminal_published": getattr(sup, "terminal_published", None),
         "technical_log_tail": _technical_tail(job_id),
     }
     assert runtime.get("status") == "interrupted", _diag

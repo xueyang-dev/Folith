@@ -1313,6 +1313,21 @@ def start_engine(job_id: str, *, mode: str, connection: ConnectionSpec,
             core.release_engine_owner(job_id, token)
         except Exception:  # noqa: BLE001
             pass
+        # CX-24 #3 / CX-25: the child never ran and no monitor will publish, so
+        # land the user's terminal here — cancelled for a cancel, interrupted for
+        # a quit — while keeping any already-published terminal.
+        rt = core.load_runtime_state(job_id) or {}
+        cancel_only = bool(rt.get("cancel_requested")) and not bool(rt.get("exit_requested"))
+        try:
+            core.update_runtime_state(
+                job_id, on_timeout="retry", require_replace=True, leave_terminal=True,
+                status="cancelled" if cancel_only else "interrupted",
+                phase="cancelled" if cancel_only else "interrupted",
+                phase_label="任务已取消" if cancel_only else "已停止以便退出",
+                cancel_requested=False, error=None,
+                worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
+        except Exception:  # noqa: BLE001 - a failed write must not crash the launch abort
+            pass
         return EngineOutcome(False, "任务已被取消或退出，未启动运行。")
     if not sup.send_line(line):
         sup.abandon()

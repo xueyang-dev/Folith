@@ -609,19 +609,15 @@ def test_a_readable_state_without_a_launch_token_still_accepts_terminal(
 # ---------------------------------------------------------------------------
 
 def _owner_registers_in_window(monkeypatch, job_id):
-    """Make the in-lock owner probe register an owner on its first call (CX-24 #2)."""
-    real_probe = core._inprocess_owner_visible_locked
+    """Keep the in-lock owner probe seeing a live owner (CX-24 #2 / CX-25)."""
     fired = {"n": 0}
 
     def probe(j, cur):
-        if fired["n"] == 0:
-            fired["n"] += 1
-            # Simulate the launch thread's owner appearing in the in-lock check.
-            # We do NOT call register_engine_owner here: it would re-enter the
-            # very .runtime-write.lock this probe runs under. The point is that
-            # the no-executor write is skipped and the stop entry must fall back.
-            return True
-        return real_probe(j, cur)
+        # The owner stays visible across both the skip and the fallback write, so
+        # this exercises the "owner alive -> write the cancelling stop intent"
+        # path (the top-level skip returns False, the fallback keeps cancelling).
+        fired["n"] += 1
+        return True
 
     monkeypatch.setattr(core, "_inprocess_owner_visible_locked", probe)
 
@@ -715,3 +711,91 @@ def test_owner_probe_takes_no_second_lock_under_runtime_lock(isolated, monkeypat
     t.join(timeout=5)
     assert ran, "probe 在另一线程持有 WORKERS_LOCK 时阻塞（锁顺序反转）"
     assert result.get("v") in (True, False)
+
+
+def test_stop_fallback_preserves_a_terminal_published_before_the_rewrite(isolated, monkeypatch):
+    """CX-25 #1：owner 在 no-owner 写被跳过后、补写停止前发布终态并退出，补写
+    不得把 completed 改回 cancelling（leave_terminal）。确定性：两次独立锁之间
+    由包装器发布终态，不用 sleep。"""
+    from folith.engine import worker_runtime as wr
+    data_dir, _logs = isolated
+    job_id = "stop-then-terminal"
+    _create_job(job_id)
+
+    # no-owner terminal write is skipped (owner appears in the probe): first probe
+    # returns True, so request_job_cancel falls back to the stop-intent write.
+    real_probe = core._inprocess_owner_visible_locked
+    fired = {"n": 0}
+
+    def probe(j, cur):
+        if fired["n"] == 0:
+            fired["n"] += 1
+            return True
+        return real_probe(j, cur)
+    monkeypatch.setattr(core, "_inprocess_owner_visible_locked", probe)
+
+    real_update = core.update_runtime_state
+    calls = {"n": 0}
+
+    def wrapped(job, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # the no-owner terminal write; only_if_unowned sees the owner -> False
+            return real_update(job, **kw)
+        # Before the fallback rewrite: the owner publishes a terminal and exits.
+        real_update(job, status="completed", phase="completed",
+                    completed_units=2, cancel_requested=False, on_timeout="raise")
+        return real_update(job, **kw)
+
+    monkeypatch.setattr(core, "update_runtime_state", wrapped)
+
+    assert wr.request_job_cancel(job_id) is True
+    st = _state(job_id)
+    assert st.get("status") == "completed", f"终态被补写改回：{st}"
+    assert st.get("cancel_requested") is not True
+
+
+def test_self_pid_on_disk_is_not_an_owner_after_worker_deregisters(isolated, monkeypatch):
+    """CX-25 #1 进程内分支：磁盘 worker.owner_pid 是本进程但线程已注销，不算 owner，
+    取消应直接落 cancelled 终态，而不是给无人消费的 cancelling。"""
+    from folith.engine import worker_runtime as wr
+    data_dir, _logs = isolated
+    job_id = "self-pid-p12"
+    _create_job(job_id)
+    core.update_runtime_state(
+        job_id, on_timeout="raise", require_replace=True, status="running",
+        worker={"owner_pid": os.getpid(), "worker_id": "w1",
+                "lease_expires_at": None})  # stale: thread is gone
+    monkeypatch.setattr(core, "is_job_worker_alive", lambda j: False)
+    monkeypatch.setattr(core, "_job_execution_alive", lambda j: False)
+
+    assert core._inprocess_owner_visible_locked(job_id, core.load_runtime_state(job_id)) is False
+    assert wr.request_job_cancel(job_id) is True
+    st = _state(job_id)
+    assert st.get("status") == "cancelled", st
+
+
+def test_real_abort_before_start_publishes_cancelled(isolated, stub_child, monkeypatch):
+    """CX-24 #3 / ④：走真实 start_engine 发前中止链路，取消 → 终态 cancelled。
+
+    在注册钩子里写 cancelling+cancel_requested（child 尚未收到启动行），随后
+    launch_stop_requested 命中 → start_engine 中止并落 cancelled。
+    """
+    data_dir, _logs = isolated
+    job_id = "abort-before-start"
+    _create_job(job_id)
+    sent = _count_send_line(monkeypatch)
+    real_register = core.register_engine_owner
+
+    def register_with_cancel(*args, **kwargs):
+        core.update_runtime_state(job_id, on_timeout="raise",
+                                  status="cancelling", cancel_requested=True,
+                                  phase="cancelling")
+        return real_register(*args, **kwargs)
+    monkeypatch.setattr(core, "register_engine_owner", register_with_cancel)
+
+    outcome = supervisor_module.start_engine(
+        job_id, mode="resume", connection=_connection())
+    assert not outcome.started, "发前取消必须中止启动"
+    assert sent["n"] == 0, "父进程 send_line 必须是 0 次"
+    assert _wait_until(lambda: _status(job_id) == "cancelled"), _state(job_id)

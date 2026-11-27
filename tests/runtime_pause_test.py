@@ -73,8 +73,10 @@ def test_request_job_exit_releases_paused_worker_and_keeps_resumable(monkeypatch
                "cancel_requested": False, "exit_requested": False}
     monkeypatch.setattr(core, "load_runtime_state", lambda job: dict(runtime))
     monkeypatch.setattr(core, "is_job_worker_alive", lambda job: True)
-    monkeypatch.setattr(core, "update_runtime_state",
-                        lambda job, **changes: runtime.update(changes))
+    def _update(job, **changes):
+        runtime.update(changes)
+        return dict(runtime)   # real update_runtime_state returns the state dict
+    monkeypatch.setattr(core, "update_runtime_state", _update)
     assert core.request_job_exit("job")
     assert runtime["exit_requested"] and runtime["cancel_requested"]
     assert runtime["status"] == "cancelling"
@@ -87,8 +89,10 @@ def test_request_job_exit_without_worker_marks_interrupted(monkeypatch):
     monkeypatch.setattr(core, "load_runtime_state", lambda job: dict(runtime))
     monkeypatch.setattr(core, "is_job_worker_alive", lambda job: False)
     monkeypatch.setattr(core, "_job_execution_alive", lambda job: False)
-    monkeypatch.setattr(core, "update_runtime_state",
-                        lambda job, **changes: runtime.update(changes))
+    def _update(job, **changes):
+        runtime.update(changes)
+        return dict(runtime)   # real update_runtime_state returns the state dict
+    monkeypatch.setattr(core, "update_runtime_state", _update)
     assert core.request_job_exit("job")
     assert runtime["status"] == "interrupted"
     assert runtime["error"] is None

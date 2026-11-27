@@ -537,9 +537,15 @@ def request_job_cancel(job_id, *, force=False):
     # Windows replace that never landed returns None; report success only when
     # the write actually published (require_replace + not-None).
     published = core.update_runtime_state(
-        job_id, on_timeout="raise", require_replace=True,
+        job_id, on_timeout="raise", require_replace=True, leave_terminal=True,
         status="cancelling", phase="cancelling", phase_label="正在取消",
         cancel_requested=True,
+        # CX-25: if the owner already published a terminal and exited, keep it
+        # (leave_terminal). If it is gone with no terminal, publish cancelled
+        # instead of a "cancelling" nobody can finish.
+        stop_terminal_if_unowned={
+            "status": "cancelled", "phase": "cancelled", "phase_label": "已取消",
+            "cancel_requested": False, "error": None},
         event="已请求取消任务", event_name="cancel_requested",
         progress=True)
     return published is not None
@@ -598,9 +604,16 @@ def request_job_exit(job_id):
     # intent the live executor reads instead of dropping it.  Success only when
     # the write actually landed.
     published = core.update_runtime_state(
-        job_id, on_timeout="retry", require_replace=True,
+        job_id, on_timeout="retry", require_replace=True, leave_terminal=True,
         exit_requested=True, cancel_requested=True,
         status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
+        # CX-25: keep an already-published terminal; if the owner is gone with no
+        # terminal, converge to a resumable interrupted instead of a stuck
+        # "cancelling" the dead executor cannot consume.
+        stop_terminal_if_unowned={
+            "status": "interrupted", "phase": "interrupted",
+            "phase_label": "已停止以便退出", "cancel_requested": False,
+            "exit_requested": True, "error": None},
         event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
         event_name="exit_requested", event_visibility="user",
         event_category="lifecycle", progress=True)
