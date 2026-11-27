@@ -180,7 +180,14 @@ def test_report_states_interruptions_and_never_claims_100_percent_gap(tmp_path):
     assert "**Interrupted (excluded)**: **7926.0 s** in 1 span(s)" in md
     assert "## Interrupted Time (excluded)" in md
     assert "| 2026-11-11T01:00:00.000+00:00 | 7926.0 s | inactive_gap |" in md
-    assert "100.0%" not in md
+    # The claim is about the gap that is not accounted for, so it is checked in
+    # that section only.  Searching the whole report also matched the Resource
+    # Utilization CPU line, which the real sampler can legitimately print as
+    # ``Avg 100.0% · Peak 100.0%`` on a saturated runner.
+    unaccounted_section = md.split("## Unaccounted Time", 1)[1].split(
+        "## Potential Bottlenecks", 1)[0]
+    assert "100.0%" not in unaccounted_section
+    assert "(0.0% of active work time)" in unaccounted_section
     assert summary["unaccounted_pct"] == 0.0
     assert "no top-level stage times were recorded" in summary["unaccounted_note"]
 
