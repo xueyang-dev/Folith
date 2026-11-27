@@ -414,7 +414,8 @@ def main(argv: list[str] | None = None) -> int:
             if child.poll() is not None:
                 raise AssertionError(
                     "child exited before starting a task: "
-                    + (log_dir / "child.log").read_text(errors="replace")[-500:])
+                    + (log_dir / "child.log").read_text(
+                        encoding="utf-8", errors="replace")[-500:])
             time.sleep(0.2)
         job_id = job_file.read_text(encoding="utf-8").strip()
         report["job_id"] = job_id
@@ -449,7 +450,8 @@ def main(argv: list[str] | None = None) -> int:
         while time.monotonic() < deadline:
             if child.poll() is not None:
                 raise AssertionError("child exited before durable progress: " +
-                                     (log_dir / "child.log").read_text(errors="replace")[-1000:])
+                                     (log_dir / "child.log").read_text(
+                                         encoding="utf-8", errors="replace")[-1000:])
             try:
                 observed, _ = _durable_state(data_dir, job_id)
             except (OSError, ValueError, AssertionError):
@@ -463,7 +465,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             raise AssertionError("no durable translation checkpoint before timeout")
         if args.exercise_lifecycle:
-            report["lifecycle"] = json.loads((log_dir / "lifecycle.json").read_text())
+            report["lifecycle"] = json.loads(
+                (log_dir / "lifecycle.json").read_text(encoding="utf-8"))
         runtime = _read_runtime_with_retry(runtime_path)
         report["before_kill"] = {
             "status": runtime.get("status"),
