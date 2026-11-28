@@ -14,6 +14,7 @@ import re
 import zipfile
 from copy import deepcopy
 from datetime import datetime, timezone
+from functools import cache
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -491,7 +492,7 @@ def _element_tag(element) -> str:
     return str(getattr(element, "tag", "")).split("}")[-1].split(":")[-1].lower()
 
 
-def _flatten_at_rules(css: str, depth: int = 0) -> str:
+def _flatten_at_rules(css: str, depth: int = 0, *, keep_nested: bool = True) -> str:
     """Drop at-rule wrappers but keep the style rules inside them.
 
     ``@media``/``@supports`` bodies contain ordinary rules; ``@font-face`` and
@@ -525,7 +526,8 @@ def _flatten_at_rules(css: str, depth: int = 0) -> str:
                 if level == 0:
                     break
             end += 1
-        out.append(_flatten_at_rules(text[opening + 1:end], depth + 1))
+        if keep_nested:
+            out.append(_flatten_at_rules(text[opening + 1:end], depth + 1))
         index = end + 1
     return "".join(out)
 
@@ -585,10 +587,40 @@ def _css_background_rules(text: str):
     return rules
 
 
-def _epub_background_rules(book, path: str, content, encrypted: set,
-                           cache: dict) -> tuple[list, set[str]]:
-    """Stylesheet backgrounds reaching one spine document, and their targets."""
+_CSS_MEDIA_ATTR_RE = re.compile(r"""\bmedia\s*=\s*(['"])(.*?)\1""", re.IGNORECASE)
+
+
+def _epub_stylesheets(book, path: str, content: str, encrypted: set, cache: dict):
+    """Read linked and inline CSS in document order."""
     from .text_import import decode_text
+
+    tags = sorted([*_CSS_LINK_RE.finditer(content), *_INLINE_STYLE_RE.finditer(content)],
+                  key=lambda tag: tag.start())
+    for tag in tags:
+        header = tag.group(0).split(">", 1)[0]
+        media = _CSS_MEDIA_ATTR_RE.search(header)
+        media = media.group(2).strip().casefold() if media else ""
+        if "css" in tag.groupdict():
+            style_type = _INLINE_STYLE_TYPE_RE.search(header)
+            if not style_type or style_type.group("type").strip().lower() in ("", "text/css"):
+                yield path, tag.group("css"), media
+            continue
+        match = _CSS_HREF_ATTR_RE.search(header)
+        if match is None:
+            continue
+        sheet = _zip_target(path, match.group("href"))
+        if sheet is None or sheet in encrypted:
+            continue
+        if sheet not in cache:
+            try:
+                cache[sheet] = decode_text(book.read(sheet))
+            except (KeyError, OSError, ValueError, RuntimeError, zipfile.BadZipFile, NotImplementedError):
+                cache[sheet] = ""
+        yield sheet, cache[sheet], media
+
+
+def _epub_background_rules(path: str, stylesheets: list, cache: dict) -> tuple[list, set[str]]:
+    """Stylesheet backgrounds reaching one spine document, and their targets."""
 
     rules: list = []
     targets: set[str] = set()
@@ -602,32 +634,18 @@ def _epub_background_rules(book, path: str, content, encrypted: set,
             targets.add(resolved)
             rules.append((compound, posixpath.relpath(resolved, base)))
 
-    for tag in _CSS_LINK_RE.finditer(content or ""):
-        match = _CSS_HREF_ATTR_RE.search(tag.group(0))
-        if match is None:
-            continue
-        sheet = _zip_target(path, match.group("href"))
-        if sheet is None or sheet in encrypted or sheet not in book.namelist():
+    for sheet, css, _media in sorted(stylesheets, key=lambda style: style[0] == path):
+        if sheet == path:
+            add(css, path)
             continue
         if sheet not in cache:
-            try:
-                cache[sheet] = _css_background_rules(decode_text(book.read(sheet)))
-            except Exception:  # noqa: BLE001 - an unreadable sheet is not a picture
-                cache[sheet] = []
+            cache[sheet] = _css_background_rules(css)
         for compound, href in cache[sheet]:
             resolved = _zip_target(sheet, href)
             if resolved is None:
                 continue
             targets.add(resolved)
             rules.append((compound, posixpath.relpath(resolved, base)))
-    # A document may also carry the declarations inline; those URLs resolve
-    # against the document itself, not against a stylesheet.
-    for block in _INLINE_STYLE_RE.finditer(content or ""):
-        header = block.group(0).split(">", 1)[0]
-        match = _INLINE_STYLE_TYPE_RE.search(header)
-        if match and match.group("type").strip().lower() not in ("", "text/css"):
-            continue
-        add(block.group("css"), path)
     return rules, targets
 
 
@@ -659,6 +677,85 @@ def _background_resolver(rules: list, document_path: str):
     return resolve
 
 
+_CSS_DISPLAY_RE = re.compile(r"(?:^|;)\s*display\s*:\s*([\w -]+?)\s*(!important)?\s*(?=;|$)",
+                             re.IGNORECASE)
+_CSS_STATIC_SELECTOR_RE = re.compile(r"[A-Za-z][\w-]*(?:[.#][\w-]+)*|(?:[.#][\w-]+)+")
+
+
+def _display_value(css: str) -> tuple[bool, str]:
+    value, priority = max(reversed(_CSS_DISPLAY_RE.findall(css)),
+                          key=lambda declaration: bool(declaration[1]), default=("", ""))
+    return bool(priority), value.casefold()
+
+
+def _css_display_rules(css: str):
+    # Conditional rules can differ across readers. Only use unconditional
+    # declarations with compound selectors we can evaluate in full.
+    for block in _CSS_BLOCK_RE.finditer(_flatten_at_rules(_CSS_COMMENT_RE.sub("", css), keep_nested=False)):
+        important, value = _display_value(block.group("body"))
+        if not value:
+            continue
+        for selector in block.group("selector").split(","):
+            selector = selector.strip()
+            compound = _simple_selector(selector) if _CSS_STATIC_SELECTOR_RE.fullmatch(selector) else None
+            if compound:
+                tag, _, ident = compound
+                priority = (important, False, bool(ident), selector.count("."), bool(tag))
+                yield compound, priority, value
+
+
+def _epub_hidden_resolver(path: str, stylesheets: list, display_cache: dict):
+    rules = []
+    for sheet, css, media in stylesheets:
+        if media not in ("", "all"):
+            continue
+        if sheet == path:
+            rules.extend(_css_display_rules(css))
+        else:
+            if sheet not in display_cache:
+                display_cache[sheet] = list(_css_display_rules(css))
+            rules.extend(display_cache[sheet])
+
+    @cache
+    def hidden(element) -> bool:
+        if element is None:
+            return False
+        if "hidden" in element.attrib or hidden(element.getparent()):
+            return True
+        tag, classes, ident = _element_tag(element), set(element.get("class", "").split()), element.get("id")
+        important, display = _display_value(element.get("style", ""))
+        priority = (important, bool(display), False, 0, False)
+        for (rule_tag, rule_classes, rule_id), rank, value in rules:
+            if (rank >= priority and (not rule_tag or rule_tag == tag)
+                    and (not rule_id or rule_id == ident) and rule_classes <= classes):
+                priority, display = rank, value
+        return display == "none"
+
+    return hidden
+
+
+def _paragraph_href(owners: set) -> str | None:
+    """Return the href that covers the entire paragraph, if there is one."""
+    hrefs = {
+        next((ancestor.get("href") for ancestor in (owner, *owner.iterancestors())
+              if _element_tag(ancestor) == "a"), None)
+        for owner in owners
+    }
+    return hrefs.pop() if len(hrefs) == 1 else None
+
+
+def _epub_link_destination(path: str, href: str, documents: dict) -> int | None:
+    try:
+        parts = urlsplit(href)
+    except ValueError:
+        return None
+    if parts.scheme or parts.netloc or href.startswith("//"):
+        return None
+    destination = _zip_target(path, href) if parts.path else path
+    start, anchors = documents.get(destination, (None, {}))
+    return anchors.get(unquote(parts.fragment)) if parts.fragment else start
+
+
 def _epub_source(source: bytes, *, stats: dict | None = None):
     """Read source order, paragraph breaks and images from an EPUB payload.
 
@@ -668,7 +765,7 @@ def _epub_source(source: bytes, *, stats: dict | None = None):
     translated paragraph.  Every reference is kept even when the package stores
     one file; the cover is returned separately and is not repeated in the body.
     """
-    from .text_import import _html_paragraphs, epub_spine_entries, open_epub
+    from .text_import import _html_paragraphs, decode_text, epub_spine_entries, open_epub
 
     if stats is None:
         stats = {}
@@ -682,7 +779,12 @@ def _epub_source(source: bytes, *, stats: dict | None = None):
     seen: dict[str, str] = {}
     heading_levels: dict[int, int] = {}
     document_starts: set[int] = set()
-    css_cache: dict[str, list] = {}
+    css_cache: dict[str, str] = {}
+    background_cache: dict[str, list] = {}
+    display_cache: dict[str, list] = {}
+    documents: dict[str, tuple[int | None, dict[str, int]]] = {}
+    paragraph_links: dict[int, tuple[str, str]] = {}
+    hidden_paragraphs: set[int] = set()
     css_targets_all: set[str] = set()
     used_targets: set[str] = set()
 
@@ -696,22 +798,39 @@ def _epub_source(source: bytes, *, stats: dict | None = None):
                 book, package_path, manifest, spine, encrypted):
             if content is None:
                 continue
+            if isinstance(content, bytes):
+                content = decode_text(content)
             images: list[dict] = []
             headings: list[dict] = []
-            rules, css_targets = _epub_background_rules(
-                book, path, content, encrypted, css_cache)
+            anchors: dict[str, int] = {}
+            text_owners: list[set] = []
+            stylesheets = list(_epub_stylesheets(book, path, content, encrypted, css_cache))
+            rules, css_targets = _epub_background_rules(path, stylesheets, background_cache)
             css_targets_all |= css_targets
             # Always resolve inline ``style`` declarations too; linked rules may
             # be absent while one element carries its own background.
             decorations = _background_resolver(rules, path)
             chapter, _omitted = _html_paragraphs(
-                content, headings=headings, images=images,
-                decorations=decorations)
+                content, headings=headings, anchors=anchors, images=images,
+                decorations=decorations, text_owners=text_owners)
             offset = len(paragraphs)
-            if chapter:
-                # The source package's spine is the structure a reader sees as
-                # "chapters"; keep each document's start as a chapter boundary.
-                document_starts.add(offset)
+            hidden = _epub_hidden_resolver(path, stylesheets, display_cache)
+            first_visible = None
+            for ref, owners in enumerate(text_owners, offset):
+                if owners and all(hidden(element) for element in owners):
+                    hidden_paragraphs.add(ref)
+                    continue
+                if first_visible is None:
+                    first_visible = ref
+                href = _paragraph_href(owners)
+                if href and href.strip():
+                    paragraph_links[ref] = (path, href.strip())
+            documents.setdefault(path, (first_visible, {
+                anchor: offset + index for anchor, index in anchors.items()
+                if index < len(chapter)
+            }))
+            if first_visible is not None:
+                document_starts.add(first_visible)
             paragraphs.extend(chapter)
             for item in headings:
                 index = offset + int(item["index"])
@@ -804,6 +923,11 @@ def _epub_source(source: bytes, *, stats: dict | None = None):
                      "document_start": index in document_starts}
             if level:
                 entry["level"] = level
+            if index in hidden_paragraphs:
+                entry["hidden"] = True
+            if index in paragraph_links:
+                path, href = paragraph_links[index]
+                entry["href_ref"] = _epub_link_destination(path, href, documents)
             nodes.append(entry)
     stats["heading_count"] = len(heading_levels)
     stats["document_count"] = len(document_starts)
@@ -1094,20 +1218,27 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
     direction = text_direction(" ".join(str(pair.get("target") or "") for pair in pairs),
                                state.get("target_lang"))
     source_links = _toc_links(paragraphs, nodes)
+    source_links.update((node["ref"], node["href_ref"]) for node in nodes if "href_ref" in node)
+    hidden_refs = {node["ref"] for node in nodes if node.get("hidden")}
     group_links = {}
     for index, group in enumerate(groups):
         if len(group["refs"]) != 1:
             continue
-        destination_ref = source_links.get(group["refs"][0])
+        ref = group["refs"][0]
+        destination_ref = source_links.get(ref)
+        if ref in hidden_refs or destination_ref in hidden_refs:
+            continue
         destinations = groups_by_ref.get(destination_ref, [])
         if destinations and _join_targets(groups[destinations[0]]["targets"]):
             group_links[index] = destinations[0]
     unit_locations = {}
-    emitted = set()
+    emitted = {index for index, group in enumerate(groups) if hidden_refs.issuperset(group["refs"])}
     chapters = []
     current_title, current_parts, current_size = "正文", [], 0
     caption_count = sum(node["kind"] == "caption" for node in nodes)
     for node in nodes:
+        if node.get("hidden"):
+            continue
         if node["kind"] == "text":
             for index in groups_by_ref.get(node["ref"], []):
                 if index in emitted:
@@ -1155,7 +1286,7 @@ def build_translation_epub(state: dict, source: bytes, *, job_id: str = "") -> t
         warnings.append("图片内部文字保持原样。")
     missing = sum(bool(str(pair.get("source") or "").strip()) and not str(pair.get("target") or "").strip() for pair in pairs)
     if missing:
-        warnings.append(f"{missing} 个翻译单元尚无译文，正文中留空。")
+        warnings.append(f"{missing} 个翻译单元尚无译文。")
     body_image_count = sum(node["kind"] == "image" for node in nodes)
     heading_node_count = sum(node["kind"] == "text" and node["role"] == "heading"
                              for node in nodes)
