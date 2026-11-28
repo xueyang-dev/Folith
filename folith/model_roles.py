@@ -1,6 +1,7 @@
 """Translator/reviewer role configuration and provider capability helpers."""
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import unquote, urlsplit, urlunsplit
 
@@ -76,6 +77,81 @@ def public_base_url(base_url: str) -> str:
     else:
         query = ""
     return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
+def credential_fingerprint(value: str) -> str:
+    """A short, non-reversible marker for a value that must never be stored."""
+    text = str(value or "")
+    if not text:
+        return ""
+    try:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    except Exception:  # noqa: BLE001 - a hashing failure must not block a run
+        return "present"
+
+
+def connection_endpoint_signature(base_url: str) -> Dict[str, str]:
+    """The stored identity of one endpoint: no URL credentials, still comparable.
+
+    ``public_base_url`` drops userinfo and credential query parameters, so the
+    copy that lands in ``runtime_state.json`` (and therefore in an exported
+    backup) is auditable.  Two endpoints that differ *only* in those credentials
+    must still compare as different — a credential change is a connection
+    change — so the dropped part contributes a short fingerprint.
+
+    An endpoint without credentials yields exactly ``{"base_url": ...}``, the
+    historical shape, so an existing signature still compares equal.  A stored
+    signature that predates this function keeps the raw URL and compares unequal
+    once; that is the intended one-time restart, not a migration.
+    """
+    raw = str(base_url or "").strip().rstrip("/")
+    cleaned = public_base_url(raw)
+    if cleaned == raw:
+        return {"base_url": cleaned}
+    return {"base_url": cleaned, "base_url_credential_fp": credential_fingerprint(raw)}
+
+
+def url_credential_values(base_url: str) -> tuple:
+    """The credential values a URL carries: userinfo halves and query values."""
+    text = str(base_url or "").strip()
+    if not text:
+        return ()
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return ()
+    values: list = []
+    if parts.netloc and "@" in parts.netloc:
+        userinfo = parts.netloc.rsplit("@", 1)[0]
+        values.extend(part for part in userinfo.split(":", 1) if part)
+    for chunk in (parts.query or "").split("&"):
+        if not chunk:
+            continue
+        key, _, value = chunk.partition("=")
+        if (value and unquote(key).strip().lower() in CREDENTIAL_QUERY_KEYS):
+            values.append(unquote(value))
+    return tuple(values)
+
+
+def scrub_role_copy(role: Any) -> bool:
+    """Clean URL credentials from one stored role copy in place; True if changed."""
+    if not isinstance(role, dict):
+        return False
+    base_url = role.get("base_url")
+    if not isinstance(base_url, str):
+        return False
+    cleaned = public_base_url(base_url)
+    if cleaned == base_url:
+        return False
+    role["base_url"] = cleaned
+    return True
+
+
+def scrub_connection_copies(container: Any, *, roles: tuple = ("translator", "reviewer")) -> bool:
+    """Clean URL credentials from the named role copies in place; True if changed."""
+    if not isinstance(container, dict):
+        return False
+    return any(scrub_role_copy(container.get(key)) for key in roles)
 
 
 def public_role_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:

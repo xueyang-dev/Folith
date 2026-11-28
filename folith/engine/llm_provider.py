@@ -662,12 +662,18 @@ def persisted_auxiliary_failure(error, *, api_key="", stage=""):
         return status["message"]
     if (provider_error_is_remote(error)
             or _plain_identifier(getattr(error, "code", None), 64, secrets)):
-        return provider_error_detail(error, stage=stage, known_secrets=secrets)
+        # CX-34: the profile warning is persisted into task state and shipped in
+        # backups.  0.8.3 kept no request id there, and a relay can echo a URL
+        # credential in ``x-request-id``; the shape check is not a credential
+        # guarantee, so this one path keeps the identifier out entirely.
+        return provider_error_detail(error, stage=stage, known_secrets=secrets,
+                                     include_request_id=False)
     from folith.engine.redaction import redact_error_text
     return redact_error_text(str(error), known_secrets=secrets)
 
 
-def provider_error_detail(error, *, stage="", known_secrets=()):
+def provider_error_detail(error, *, stage="", known_secrets=(),
+                          include_request_id=True):
     """A structured, persistable diagnostic for a provider failure (CX-11 §1).
 
     The raw SDK/relay exception text can echo the very credential that was
@@ -688,7 +694,7 @@ def provider_error_detail(error, *, stage="", known_secrets=()):
         parts.append(f"http={info['http_status']}")
     if info["code"]:
         parts.append(f"code={info['code']}")
-    if info["request_id"]:
+    if info["request_id"] and include_request_id:
         parts.append(f"request_id={info['request_id']}")
     if info["period"]:
         parts.append(f"period={info['period']}")
