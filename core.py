@@ -8322,6 +8322,7 @@ from folith.engine.runtime_state import (  # noqa: E402 - late by design
     runtime_technical_log_path as runtime_technical_log_path,
     _runtime_defaults as _runtime_defaults,
     load_runtime_state as load_runtime_state,
+    RuntimeStateUnreadable as RuntimeStateUnreadable,
     _runtime_event_code as _runtime_event_code,
     _runtime_event_meta as _runtime_event_meta,
     _append_runtime_event as _append_runtime_event,
@@ -8794,7 +8795,30 @@ def _runtime_write_timeout_policy(writer):
     return write_with_policy
 
 
-def _write_terminal_runtime_state(job_id, *, what, **changes):
+def _runtime_replace_sharing_violation(exc):
+    """True when Windows refused the replace because a reader still holds the file.
+
+    A heartbeat or progress checkpoint may keep the in-memory state and try
+    again next tick (winerror 5, 32 or 33).  A launch-ownership write must not:
+    that in-memory dict already contains the new token while the file on disk
+    is unchanged, and reporting it as success sends the start line anyway.
+    """
+    return os.name == "nt" and getattr(exc, "winerror", None) in {5, 32, 33}
+
+
+def _after_launch_token_read(job_id, token):
+    """Inside the runtime-write lock, after the launch token was read.
+
+    Production does nothing.  A test parks the owning monitor here — the token
+    is already snapshotted, the state file is not yet replaced, and the lock is
+    still held — to prove a replacement launch cannot publish a newer token
+    until this write finishes or its own acquire times out.
+    """
+    return None
+
+
+def _write_terminal_runtime_state(job_id, *, what, expect_launch_token=None,
+                                 **changes):
     """Publish a terminal state with bounded retries; report the loss if it fails.
 
     This is for the two places that cannot let a ``JobLockTimeout`` travel:
@@ -8804,9 +8828,17 @@ def _write_terminal_runtime_state(job_id, *, what, **changes):
     silently: a final failure is counted in ``runtime_write_timeout_stats()``
     and written to the durable ``runtime_technical.log``, and the caller gets
     ``None`` so it can re-raise its own exception instead of masking it.
+
+    ``expect_launch_token`` (CX-10 §1) makes the write conditional on the
+    run's ownership, compared inside the runtime-write lock: a newer launch
+    that stamped its own token means nothing is written, and the skip is
+    recorded in the technical log so support can tell "abandoned because a
+    new run launched" from "could not be published".
     """
     try:
-        return update_runtime_state(job_id, on_timeout="retry", **changes)
+        published = update_runtime_state(
+            job_id, on_timeout="retry", expect_launch_token=expect_launch_token,
+            **changes)
     except _job_lock.JobLockTimeout:
         _append_runtime_technical_log(
             job_id,
@@ -8814,19 +8846,71 @@ def _write_terminal_runtime_state(job_id, *, what, **changes):
             "keeps its last published state and will be reported as interrupted "
             "by the next launch/observer")
         return None
+    if published is None and expect_launch_token is not None:
+        _append_runtime_technical_log(
+            job_id,
+            f"terminal runtime state ({what}) was skipped: a newer run has "
+            "launched and owns the task")
+    return published
+
+
+def _inprocess_owner_visible_locked(job_id, current):
+    """CX-24: is an owner visible, using only lock-free data?
+
+    Called while holding ``_RUNTIME_LOCK``. It must not acquire
+    ``_RUNTIME_WORKERS_LOCK`` or ``_RUNTIME_ENGINE_OWNERS_LOCK`` (the in-process
+    start path takes the former then waits for ``_RUNTIME_LOCK``; reversing that
+    order deadlocks). ``dict.get`` is atomic under the GIL, and the disk worker
+    block is already in ``current``.
+    """
+    # In-process worker thread: the registry holds a Thread object; is_alive()
+    # reads its own state without any of our locks.
+    worker = _RUNTIME_WORKERS.get(str(job_id))
+    try:
+        if worker is not None and worker.is_alive():
+            return True
+    except Exception:  # noqa: BLE001 - a foreign object must not raise here
+        pass
+    # Engine child registered by this process: entry present and its pid alive.
+    engine = _RUNTIME_ENGINE_OWNERS.get(str(job_id))
+    if engine and _runtime_pid_alive((engine or {}).get("pid")):
+        return True
+    # Disk worker block: another surface/process, or a stale-but-live lease.
+    # CX-25: a disk pid equal to THIS process is the GUI that launched the run,
+    # not a live executor of it (that would be a worker thread or engine child,
+    # checked above). After an in-process worker deregisters, its disk pid still
+    # equals ours — it must not be mistaken for an owner, or the stop would write
+    # a "cancelling" nobody consumes.
+    disk = (current or {}).get("worker") or {}
+    disk_pid = disk.get("owner_pid")
+    if disk_pid and int(disk_pid) != os.getpid() and _runtime_pid_alive(disk_pid):
+        return True
+    return False
 
 
 @_runtime_write_timeout_policy
 def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
                          event_visibility=None, event_category=None,
-                         event_logged=False, **changes):
+                         event_logged=False, expect_launch_token=None,
+                         require_replace=False, companion_event=None,
+                         only_if_unowned=False, leave_terminal=False,
+                         stop_terminal_if_unowned=None, terminal_func=None,
+                         **changes):
     """Atomically merge a worker status update into runtime_state.json.
 
     ``event_logged=True`` says the event has already been appended to
     ``runtime_events.jsonl`` by the caller (the merged status writer does
     that, so the activity log keeps every event while the state file is
     written once per window).
+
+    ``expect_launch_token`` (CX-10 §1) makes the write conditional on the
+    run's ownership: it is compared **inside** the runtime-write lock, right
+    before the merge, so no window remains between "the caller checked" and
+    "the bytes land".  When the current state's ``launch.token`` differs — a
+    newer launch stamped its own token — nothing is written and ``None`` is
+    returned; the caller re-reads and decides.  A caller that passes no
+    token keeps the unconditional behaviour.
 
     ``on_timeout`` (E-6u) declares how a ``JobLockTimeout`` from the bounded
     ``.runtime-write.lock`` acquire is treated: ``"raise"`` (default) lets it
@@ -8836,6 +8920,26 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
     number of attempts and then raises, recording the loss first — the terminal
     states.  Every call site states its intent explicitly; see
     ``RUNTIME_WRITE_TIMEOUT_POLICIES``.
+
+    ``require_replace`` (CX-15 / B-94) is for the launch-ownership write only.
+    After the Windows replace retries are exhausted, a sharing violation
+    normally returns the in-memory state so a heartbeat is not fatal.  That
+    dict already includes changes that never reached disk.  With
+    ``require_replace`` the same error is raised instead, and the caller must
+    not treat the update as published.
+
+    ``only_if_unowned`` re-checks the in-process owner inside this lock and
+    writes nothing (returns ``None``) when a worker thread or a registered
+    engine child is already visible.  Exit and cancel use it for the
+    no-executor terminal write, so a launch that registered between the
+    caller's liveness check and this lock cannot be published as "nobody is
+    running" and have ``cancel_requested`` cleared.  A disk pid alone does
+    not count: that tier is the historical lease, not this process's child.
+
+    ``leave_terminal`` keeps an already terminal status (``cancelled``,
+    ``interrupted``, ``completed``, ``failed``) instead of merging over it.
+    The notify form of exit/cancel uses it so a stop that already landed is
+    not reopened as ``cancelling``.
     """
     if not job_id:
         return _runtime_defaults()
@@ -8852,6 +8956,100 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             job_dir(job_id) / ".runtime-write.lock",
             timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
         current = load_runtime_state(job_id)
+        # 读失败和无效 JSON 也是一份「没有 token」的默认值。终态比较和清
+        # worker 块不能把「读不到」当成「确实没有登记」放行，否则一次读失败
+        # 随后又能写盘时会盖掉真正的状态。文件可读、只是没有 launch（旧格式）
+        # 仍是普通 dict，下面的空 token 规则照旧放行。
+        if (expect_launch_token is not None
+                and isinstance(current, RuntimeStateUnreadable)):
+            return None
+        # 无执行者的终态写入必须在这把锁里再看一次进程内 owner。调用方在锁外
+        # 看到「还没登记」之后，启动线程可能已经把 owner 放进内存；若这里仍按
+        # 无执行者落盘，会把 cancel_requested 清掉，随后启动行发出去也没人停。
+        #
+        # CX-24: do NOT call is_job_worker_alive / _engine_owner_alive here — they
+        # take _RUNTIME_WORKERS_LOCK / _RUNTIME_ENGINE_OWNERS_LOCK, while the
+        # in-process start path holds _RUNTIME_WORKERS_LOCK and then waits for
+        # _RUNTIME_LOCK (we hold it). That is a lock-order inversion that deadlocks
+        # even with FOLITH_ENGINE_PROCESS=0. Read only data that needs no other
+        # lock: the two registries via a lock-free dict snapshot (atomic under the
+        # GIL) and the disk worker block already in ``current``.
+        if only_if_unowned and _inprocess_owner_visible_locked(job_id, current):
+            # CX-24 #2: a sentinel distinct from None (which means "unreadable").
+            # The stop entry treats False as "an owner is live; fall back to the
+            # stop-intent write" instead of swallowing the request.
+            return False
+        if leave_terminal and str(current.get("status") or "") in {
+                "cancelled", "interrupted", "completed", "failed",
+                # CX-30: a saved checkpoint terminal is a non-active, resumable
+                # state (Qt waits on it); a late stop must not reopen it as
+                # cancelling and hang the 45 s exit.
+                "idle_incomplete"}:
+            return current
+        # CX-29: a terminal writer may pass terminal_func to choose the terminal
+        # KIND from THIS lock's read (not an out-of-lock snapshot), for writers
+        # that run while they are still the owner (the in-process worker tail).
+        # It is applied after the leave_terminal guard, so a terminal already
+        # published is still kept.
+        if terminal_func is not None:
+            _tf = dict(terminal_func(current) or {})
+            # The event text/name/category may also depend on the in-lock flags
+            # (a stop vs a crash); pull them out for the event record and keep
+            # only real state fields for the merge (event keys are not state).
+            if _tf.get("event") is not None:
+                event = _tf.pop("event")
+            if _tf.get("event_name") is not None:
+                event_name = _tf.pop("event_name")
+            if _tf.get("event_category") is not None:
+                event_category = _tf.pop("event_category")
+            if _tf.get("event_visibility") is not None:
+                event_visibility = _tf.pop("event_visibility")
+            # heartbeat is a function arg (drives last_heartbeat_at), not a state
+            # field; let terminal_func decide it from the in-lock kind.
+            if _tf.get("heartbeat") is not None:
+                heartbeat = _tf.pop("heartbeat")
+            changes = {**changes, **_tf}
+        # CX-25: a stop's fallback write races a run that may publish its own
+        # terminal and exit between the skip and this lock. If it already ended,
+        # leave_terminal above returned it. If it is gone and no terminal is
+        # published, writing "cancelling" would leave a stop nobody can consume —
+        # so publish the requested terminal directly. If an owner is still live,
+        # write the normal cancel-intent ``changes``. One lock, one decision, no
+        # TOCTOU between a separate liveness read and this write.
+        if stop_terminal_if_unowned is not None:
+            if _inprocess_owner_visible_locked(job_id, current):
+                pass  # owner alive: fall through to write the cancel-intent changes
+            elif str(current.get("status") or "") not in {
+                    "cancelled", "interrupted", "completed", "failed",
+                    "idle_incomplete"}:
+                # CX-27: the terminal *kind* must be chosen from THIS lock's
+                # read, not an out-of-lock snapshot. A callable receives the
+                # in-lock state and returns the terminal dict; a plain dict is
+                # used as-is.
+                _terminal = dict((stop_terminal_if_unowned(current)
+                                  if callable(stop_terminal_if_unowned)
+                                  else stop_terminal_if_unowned) or {})
+                if _terminal.get("event") is not None:
+                    event = _terminal.pop("event")
+                if _terminal.get("event_name") is not None:
+                    event_name = _terminal.pop("event_name")
+                if _terminal.get("event_category") is not None:
+                    event_category = _terminal.pop("event_category")
+                changes = {**changes, **_terminal,
+                           # CX-26 #2: match the normal no-owner terminal branch —
+                           # clear the stale owner pid/id/lease so the finished
+                           # task does not look alive through a recorded pid.
+                           "worker": {"owner_pid": None, "worker_id": None,
+                                      "lease_expires_at": None}}
+        # CX-10 §1 / CX-15 §3：比对与即将发生的替换在同一把 runtime 写锁里。
+        # 启动所有权也由这次加锁写入发布，所以读到的 token 和即将落盘的字节
+        # 之间没有锁外窗口。只有**非空且不同**的 token 才是接管：当前值为空
+        # 意味着从未盖过（旧格式任务）或被裸写覆盖——那不是接管，终态照写。
+        current_launch = str((current.get("launch") or {}).get("token") or "")
+        if (expect_launch_token is not None and current_launch
+                and current_launch != str(expect_launch_token)):
+            return None
+        _after_launch_token_read(job_id, current_launch)
         # ``None`` is normally omitted so optional status fields do not erase
         # an existing value accidentally.  ``error`` is different: callers
         # pass ``error=None`` when a retry or a successful checkpoint clears a
@@ -8916,6 +9114,19 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                         stage=current.get("stage_id") or current.get("stage"),
                         operation=current.get("operation_id") or current.get("operation"),
                         metadata=event_metadata, visibility=visibility, category=category)
+        if companion_event:
+            # Same lock, before the replace.  The engine launch uses this for
+            # ``run_launched`` so the cold-start ordering stays one write:
+            # the boundary event is durable before the owner is visible, and
+            # a failed replace leaves the state file untouched.
+            extra_message, extra_name = companion_event
+            _append_runtime_event(
+                job_id,
+                {"event": extra_name, "message": extra_message,
+                 "pipeline": current.get("pipeline")},
+                stage=current.get("stage_id") or current.get("stage"),
+                operation=current.get("operation_id") or current.get("operation"),
+                visibility="technical", category="lifecycle")
         directory = job_dir(job_id)
         directory.mkdir(parents=True, exist_ok=True)
         tmp = directory / f"{RUNTIME_STATE_FILE}.{uuid.uuid4().hex}.tmp"
@@ -8926,11 +9137,12 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             _atomic_file.replace_file(tmp, runtime_state_path(job_id))
         except OSError as exc:
             _workflow_errors.raise_if_fatal(exc, job_id)
-            if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32, 33}:
+            if require_replace or not _runtime_replace_sharing_violation(exc):
                 raise
             # A status checkpoint must not abort an already-paid translation.
             # The event stream is appended separately, and the next heartbeat
-            # or progress update rewrites the full state.
+            # or progress update rewrites the full state.  Launch ownership
+            # does not use this path: ``require_replace`` raises instead.
             try:
                 _append_runtime_technical_log(
                     job_id,
@@ -8947,6 +9159,38 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             _RUNTIME_PERSIST_STATS["state_write_seconds"] += (
                 time.perf_counter() - started)
         return current
+
+
+def launch_stop_requested(job_id, launch_token):
+    """CX-19 (#621): did a stop land for this launch before the start line?
+
+    Called by the supervisor inside the runtime-write lock immediately before
+    it hands the child its start line.  Returns True when the state for *this*
+    ``launch_token`` already carries an exit or cancel request, or has already
+    reached a stop/terminal status — a quit or cancel that arrived after the
+    ``queued`` write but before the owner was registered.  The launch then must
+    not send the start line; it reaps the child and keeps the user's terminal
+    state.  A state whose launch token is still empty (old format) or belongs to
+    another run is not this launch's stop, so it returns False.
+    """
+    if not job_id:
+        return False
+    token = str(launch_token or "")
+    if not token:
+        return False
+    with _RUNTIME_LOCK, _job_lock.exclusive(
+            job_dir(job_id) / ".runtime-write.lock",
+            timeout=_job_lock.DEFAULT_TIMEOUT_SECONDS):
+        current = load_runtime_state(job_id)
+        if isinstance(current, RuntimeStateUnreadable) or not isinstance(current, dict):
+            return False
+        current_token = str((current.get("launch") or {}).get("token") or "")
+        if current_token != token:
+            return False
+        if current.get("exit_requested") is True or current.get("cancel_requested") is True:
+            return True
+        status = str(current.get("status") or "")
+        return status in {"cancelling", "cancelled", "interrupted", "completed", "failed"}
 
 
 def _runtime_pid_alive(pid):
@@ -9034,8 +9278,17 @@ def _runtime_mark_lost(job_id, status, message):
     # user is waiting on "Start") plus the delete/launch observers.  A verdict
     # that cannot be written must fail that action with a retriable message, not
     # park it for the terminal retry budget; nothing is written on failure.
+    # CX-29 #3: this is the pre-start "previous run was lost" marker (called only
+    # by publish_lost_runtime_state under .worker.lock, and the supervisor
+    # terminal boundary) — a single-owner path, not the A/B abort race. Still,
+    # guard it with leave_terminal so it can never reopen a terminal that a
+    # concurrent writer already published. NOTE: the worker block is chosen by
+    # `_job_execution_alive(job_id)` evaluated OUT OF LOCK (before this call),
+    # not in-lock — kept as-is from main; a stale liveness read here only affects
+    # whether the block is cleared, never the terminal kind.
     return update_runtime_state(
         job_id, on_timeout="raise", status=status, phase=status, phase_label=message,
+        leave_terminal=True,
         worker=worker if _job_execution_alive(job_id) else {
             "owner_pid": None, "worker_id": None, "lease_expires_at": None},
         event=message, event_name=status)

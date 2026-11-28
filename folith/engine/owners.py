@@ -30,16 +30,16 @@ def register_engine_owner(job_id, *, pid, worker_id="", token=None):
     the registration tied to *that* run rather than to a pid (see
     :func:`_engine_owner_alive`).
 
-    The **first** registration is also the launch boundary of a run, and it
-    clears the pending pause/cancel/exit/restart requests exactly once
-    (E-6a).  Ordering is the whole point: ``start_engine`` calls this
-    synchronously *before* it returns, so nothing the user (or a script) does
-    after "Start" — in particular a Pause/Cancel click during the child's cold
-    start — can be erased by it; and a request left over from the *previous*
-    run cannot leak into this one.  A later registration of the same run
-    (:func:`_bind_worker_id` passes ``token``) must never clear again: it runs
-    up to a second after launch, i.e. precisely inside the window a user
-    request can appear in.
+    The **first** registration (``token is None``) is also the launch boundary
+    of a run, and it clears the pending pause/cancel/exit/restart requests
+    exactly once (E-6a).  Passing ``token`` means "not that boundary": the
+    in-memory entry is updated and nothing is written, so a rebind cannot
+    erase a request.  :func:`_bind_worker_id` passes the token for that
+    reason, and so does ``start_engine`` — its flag clear is the strict
+    ``publish_starting_status`` write, which lands *before* this registry
+    entry becomes visible.  A caller that still clears here gets the token
+    back only after the write; if the write raises, the entry just stored is
+    removed with that same token before the error propagates.
     """
     core = _core()
     if not job_id or not pid:
@@ -55,12 +55,18 @@ def register_engine_owner(job_id, *, pid, worker_id="", token=None):
         }
     if launch:
         # "A new run starts here."  Written once, by the process that owns the
-        # launch, before the child can publish anything.
-        core.update_runtime_state(
-            job_id, on_timeout="raise", pause_requested=False, cancel_requested=False,
-            exit_requested=False, restart_requested=False,
-            event="已启动新的运行", event_name="run_launched",
-            event_visibility="technical", event_category="lifecycle")
+        # launch, before the child can publish anything.  The registry entry
+        # must not outlive a write that never returned the token.
+        try:
+            core.update_runtime_state(
+                job_id, on_timeout="raise", pause_requested=False,
+                cancel_requested=False, exit_requested=False,
+                restart_requested=False,
+                event="已启动新的运行", event_name="run_launched",
+                event_visibility="technical", event_category="lifecycle")
+        except Exception:
+            release_engine_owner(job_id, token)
+            raise
     return token
 
 

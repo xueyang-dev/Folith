@@ -129,56 +129,59 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         # 会把 "completed" 覆盖回 "running"。
         core.flush_runtime_status(job_id)
         core.reset_runtime_status(job_id)
-        if core._runtime_cancel_requested(job_id):
-            # An exit stop reuses the cancel boundary but must publish a
-            # resumable ``interrupted`` state, never "the user cancelled".
-            if core._runtime_exit_requested(job_id) and not core._runtime_business_complete(result_state):
-                if not segment_operation:
-                    core.trace.finish_run(job_id=job_id, status="interrupted")
-                core._write_terminal_runtime_state(
-                    job_id, what="job_stopped_for_exit",
-                    status="interrupted", phase="interrupted",
-                    phase_label="已停止以便退出",
-                    event="任务已停止以便退出；可继续处理。",
-                    event_name="job_stopped_for_exit", progress=True,
-                    event_visibility="user", event_category="lifecycle",
-                    worker={"owner_pid": None, "worker_id": None,
-                            "lease_expires_at": None})
-            else:
-                if not segment_operation:
-                    core.trace.finish_run(job_id=job_id, status="cancelled")
-                core._write_terminal_runtime_state(
-                    job_id, what="job_cancelled",
-                    status="cancelled", phase="cancelled", phase_label="已取消",
-                    event="任务已取消",
-                    event_name="job_cancelled", progress=True,
-                    event_visibility="user", event_category="lifecycle",
-                    worker={"owner_pid": None, "worker_id": None,
-                            "lease_expires_at": None})
-        elif core._runtime_business_complete(result_state):
-            if not segment_operation:
-                core.trace.finish_run(job_id=job_id, status="completed")
-            core._write_terminal_runtime_state(
-                job_id, what="job_completed",
-                status="completed", phase="completed", phase_label="已完成",
-                event="任务已完成",
-                event_name="job_completed", progress=True,
-                event_visibility="user", event_category="lifecycle",
-                heartbeat=True, overall_progress=1.0,
-                worker={"owner_pid": None, "worker_id": None,
-                        "lease_expires_at": None})
-        else:
-            if not segment_operation:
-                core.trace.finish_run(job_id=job_id, status="checkpointed")
-            core._write_terminal_runtime_state(
-                job_id, what="job_checkpointed",
-                status="idle_incomplete", phase="idle_incomplete",
-                phase_label="等待继续", event="阶段已保存，等待继续",
-                event_name="job_checkpointed", progress=True,
-                event_visibility="technical", event_category="checkpoint",
-                heartbeat=True,
-                worker={"owner_pid": None, "worker_id": None,
-                        "lease_expires_at": None})
+        # CX-29: the terminal KIND must come from the in-lock read, not an
+        # out-of-lock stop-flag snapshot — a quit can land after this snapshot
+        # but before the write and would be overwritten as `cancelled`. Build the
+        # terminal from the locked state; business-complete is fixed by the run's
+        # own result, so it needs no flag.
+        _business_done = core._runtime_business_complete(result_state)
+
+        def _worker_tail_terminal(cur):
+            cur_exit = bool(cur.get("exit_requested"))
+            cur_cancel = bool(cur.get("cancel_requested"))
+            # Preserve the original precedence: an exit needs the business to be
+            # incomplete for `interrupted`; a cancel is cancelled REGARDLESS of
+            # business-completeness (a cancel must never be reported as success).
+            if cur_exit and not _business_done:
+                return {"status": "interrupted", "phase": "interrupted",
+                        "phase_label": "已停止以便退出",
+                        "event": "任务已停止以便退出；可继续处理。",
+                        "event_name": "job_stopped_for_exit",
+                        "event_category": "lifecycle", "cancel_requested": False,
+                        "exit_requested": True, "error": None}
+            if cur_cancel:
+                return {"status": "cancelled", "phase": "cancelled",
+                        "phase_label": "已取消", "event": "任务已取消",
+                        "event_name": "job_cancelled", "event_category": "lifecycle",
+                        "cancel_requested": True, "exit_requested": False, "error": None}
+            if _business_done:
+                # CX-30: restore main's user-visible fields — the completion
+                # fallback must carry overall_progress=1.0 and refresh the
+                # heartbeat at teardown.
+                return {"status": "completed", "phase": "completed",
+                        "phase_label": "已完成", "event": "任务已完成",
+                        "event_name": "job_completed", "event_category": "lifecycle",
+                        "heartbeat": True, "overall_progress": 1.0}
+            return {"status": "idle_incomplete", "phase": "idle_incomplete",
+                    "phase_label": "等待继续", "event": "阶段已保存，等待继续",
+                    "event_name": "job_checkpointed", "event_category": "checkpoint",
+                    # checkpoint teardown refreshes the heartbeat; the checkpoint
+                    # event stays technical (not user activity) as in main.
+                    "heartbeat": True, "event_visibility": "technical"}
+        # Trace the final kind from one locked read for the trace record only.
+        if not segment_operation:
+            core.trace.finish_run(
+                job_id=job_id,
+                status=_worker_tail_terminal(core.load_runtime_state(job_id) or {}).get("status")
+                or ("completed" if _business_done else "checkpointed"))
+        core._write_terminal_runtime_state(
+            job_id, what="job_tail_primary",
+            status="idle_incomplete", phase="idle_incomplete", phase_label="等待继续",
+            event="阶段已保存，等待继续", event_name="job_checkpointed",
+            progress=True, event_visibility="user", event_category="lifecycle",
+            terminal_func=_worker_tail_terminal,
+            worker={"owner_pid": None, "worker_id": None,
+                    "lease_expires_at": None})
         return result
     # 捕获 BaseException 而不是 Exception：worker 只捕 Exception 时，若线程抛出
     # SystemExit 一类的 BaseException，`finally` 不会执行 → 心跳线程继续续租 →
@@ -234,20 +237,42 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
         if storage_failed:
             error["errno"] = exc.errno
             error["storage_error_type"] = type(exc.storage_error).__name__
+        # CX-29: choose the failed/cancelled/interrupted KIND inside the write
+        # lock, so a quit landing after the out-of-lock snapshot is not
+        # overwritten as cancelled. `cancelled` here also covers an explicit
+        # "请求取消" exception; storage_failed is never an exit.
+        _exc = exc  # bind for the closure (except-as name is cleared at block end)
+        def _worker_fail_terminal(cur):
+            cur_exit = bool(cur.get("exit_requested")) and not storage_failed
+            cur_cancelled = (not cur_exit) and not storage_failed and (
+                bool(cur.get("cancel_requested")) or "请求取消" in str(_exc))
+            if cur_exit:
+                return {"status": "interrupted", "phase": "interrupted",
+                        "phase_label": "已停止以便退出", "error": None,
+                        "event": "任务已停止以便退出；可继续处理。",
+                        "event_name": "job_stopped_for_exit",
+                        "event_category": "lifecycle", "cancel_requested": False,
+                        "exit_requested": True}
+            if cur_cancelled:
+                return {"status": "cancelled", "phase": "cancelled",
+                        "phase_label": "已取消", "error": None,
+                        "event": "任务已取消", "event_name": "job_cancelled",
+                        "event_category": "lifecycle", "cancel_requested": True,
+                        "exit_requested": False}
+            return {"status": "failed", "phase": "failed",
+                    "phase_label": "步骤失败", "error": error,
+                    "event": f"步骤失败：{user_error_message[:180]}",
+                    "event_name": "job_failed", "event_category": "error"}
         try:
             core._write_terminal_runtime_state(
-                job_id, what="job_failed", status=final_status,
-                phase=final_status,
-                phase_label="已停止以便退出" if exit_requested
-                else ("已取消" if cancelled else "步骤失败"),
+                job_id, what="job_failed", status="failed",
+                phase="failed", phase_label="步骤失败",
                 error=error,
-                event="任务已停止以便退出；可继续处理。" if exit_requested
-                else ("任务已取消" if cancelled else f"步骤失败：{user_error_message[:180]}"),
-                event_name="job_stopped_for_exit" if exit_requested
-                else ("job_cancelled" if cancelled else "job_failed"),
+                event="阶段已保存", event_name="job_failed",
                 event_visibility="user",
-                event_category="lifecycle" if (cancelled or exit_requested) else "error",
+                event_category="error",
                 progress=True, heartbeat=True,
+                terminal_func=_worker_fail_terminal,
                 **({"pause_requested": False} if storage_failed else {}),
                 worker={"owner_pid": None, "worker_id": None,
                         "lease_expires_at": None})
@@ -517,10 +542,13 @@ def request_job_cancel(job_id, *, force=False):
         return False
     alive = core.is_job_worker_alive(job_id)
     if alive or core._job_execution_alive(job_id):
+        # CX-29: keep an already-published terminal (owner may have finished and
+        # exited between the liveness check above and this write) instead of
+        # reopening it as a cancelling nobody consumes.
         core.update_runtime_state(job_id, on_timeout="raise", status="cancelling", cancel_requested=True,
                              phase="cancelling", phase_label="正在取消",
                              event="已请求取消任务", event_name="cancel_requested",
-                             progress=True)
+                             progress=True, leave_terminal=True)
         return True
 
     # If no worker is alive or force cancel was explicitly requested:
@@ -528,14 +556,40 @@ def request_job_cancel(job_id, *, force=False):
     # GUI/action side (E-6u): the user is waiting on Cancel, so a refused write
     # is reported ("please retry") instead of parking the slot for a retry
     # budget; the terminal state is either written or explicitly refused.
-    core.update_runtime_state(
+    # CX-19 (#621): this terminal write happens only when no executor is alive.
+    # Re-check the in-process owner inside the state lock (only_if_unowned) and
+    # keep an already-terminal status (leave_terminal): a launch thread that
+    # registered just after the liveness check above must not have its
+    # cancel_requested cleared here, and a stop that already landed must not be
+    # reopened. If the lock-time check finds an owner the write is skipped; the
+    # launch path re-reads the stop intent before sending the start line.
+    terminal = core.update_runtime_state(
         job_id, on_timeout="raise", status="cancelled", phase="cancelled", phase_label="已取消",
         cancel_requested=False, error=None,
         event="任务已取消", event_name="job_cancelled",
         event_visibility="user", event_category="lifecycle",
-        progress=True, heartbeat=True,
+        progress=True, heartbeat=True, only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
-    return True
+    if terminal is not False:
+        return True
+    # CX-24 #2: an owner registered between the liveness check above and the lock
+    # below, so the no-executor terminal write was skipped.  Do NOT swallow the
+    # request: write the cancelling stop intent the live executor will read.  A
+    # Windows replace that never landed returns None; report success only when
+    # the write actually published (require_replace + not-None).
+    published = core.update_runtime_state(
+        job_id, on_timeout="raise", require_replace=True, leave_terminal=True,
+        status="cancelling", phase="cancelling", phase_label="正在取消",
+        cancel_requested=True,
+        # CX-25: if the owner already published a terminal and exited, keep it
+        # (leave_terminal). If it is gone with no terminal, publish cancelled
+        # instead of a "cancelling" nobody can finish.
+        stop_terminal_if_unowned={
+            "status": "cancelled", "phase": "cancelled", "phase_label": "已取消",
+            "cancel_requested": False, "error": None},
+        event="已请求取消任务", event_name="cancel_requested",
+        progress=True)
+    return published is not None
 
 
 def request_job_exit(job_id):
@@ -570,18 +624,38 @@ def request_job_exit(job_id):
             status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
             event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
             event_name="exit_requested", event_visibility="user",
-            event_category="lifecycle", progress=True)
+            event_category="lifecycle", progress=True, leave_terminal=True)
         return True
     # No live worker owns this task: publish the resumable terminal state
     # directly instead of leaving a stale active status behind.
     # GUI/action side (E-6u): quitting waits on this write; a refusal is
     # reported to the exit flow ("停止任务失败"), and the app stays open.
-    core.update_runtime_state(
+    terminal = core.update_runtime_state(
         job_id, on_timeout="retry", status="interrupted", phase="interrupted",
         phase_label="已停止以便退出", cancel_requested=False,
         exit_requested=True, error=None,
         event="任务已停止以便退出；可继续处理。",
         event_name="job_stopped_for_exit", event_visibility="user",
         event_category="lifecycle", progress=True, heartbeat=True,
+        only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
-    return True
+    if terminal is not False:
+        return True
+    # CX-24 #2: an owner registered in the window; publish the exit+cancel stop
+    # intent the live executor reads instead of dropping it.  Success only when
+    # the write actually landed.
+    published = core.update_runtime_state(
+        job_id, on_timeout="retry", require_replace=True, leave_terminal=True,
+        exit_requested=True, cancel_requested=True,
+        status="cancelling", phase="cancelling", phase_label="正在停止以便退出",
+        # CX-25: keep an already-published terminal; if the owner is gone with no
+        # terminal, converge to a resumable interrupted instead of a stuck
+        # "cancelling" the dead executor cannot consume.
+        stop_terminal_if_unowned={
+            "status": "interrupted", "phase": "interrupted",
+            "phase_label": "已停止以便退出", "cancel_requested": False,
+            "exit_requested": True, "error": None},
+        event="正在停止任务以便退出；已完成的进度会保留，可稍后继续。",
+        event_name="exit_requested", event_visibility="user",
+        event_category="lifecycle", progress=True)
+    return published is not None

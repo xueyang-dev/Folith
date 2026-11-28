@@ -39,6 +39,13 @@ def test_packaging_inputs_request_release_validation():
         assert ci_changes.classify([path])["packaging"] == "true", path
 
 
+def test_launch_ownership_is_in_the_windows_risk_selection():
+    filename = "engine_launch_ownership_test.py"
+    result = ci_changes.classify([f"tests/{filename}"])
+    assert result["risk"] == "true"
+    assert any(needle in filename for needle in result["risk_tests"].split(","))
+
+
 def test_async_knowledge_commits_are_checked_on_windows():
     filename = "knowledge_async_commit_test.py"
     result = ci_changes.classify([f"tests/{filename}"])

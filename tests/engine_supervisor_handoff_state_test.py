@@ -192,6 +192,20 @@ def _diagnose(sup, job_id: str) -> str:
     return " | ".join(parts)
 
 
+def _technical_tail(job_id: str, limit: int = 800) -> str:
+    """Tail of the runtime technical log, for failure diagnostics only."""
+    try:
+        path = core.runtime_technical_log_path(job_id)
+    except Exception:  # noqa: BLE001 - diagnostic must never raise
+        return ""
+    try:
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _wait_until(predicate, timeout: float = 120.0, interval: float = 0.02) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -425,7 +439,20 @@ def test_a_handoff_run_is_published_when_the_executor_dies(isolated, gateway,
     assert _wait_until(lambda: sup.wait_finished(0), timeout=60), \
         "the supervisor never published after the executor died"
     runtime = _runtime(job_id)
-    assert runtime.get("status") == "interrupted", runtime
+    # CX-24 #5: if this ever reds on Windows again, dump enough to tell whether
+    # the monitor's terminal write landed and what the last state looked like,
+    # instead of only the status. (test-only; no product behaviour.)
+    _diag = {
+        "status": runtime.get("status"),
+        "error": runtime.get("error"),
+        "worker": runtime.get("worker"),
+        "events": _events(job_id)[-8:],
+        "wait_finished": sup.wait_finished(0),
+        "exit_code": getattr(sup, "_exit_code", None),
+        "terminal_published": getattr(sup, "terminal_published", None),
+        "technical_log_tail": _technical_tail(job_id),
+    }
+    assert runtime.get("status") == "interrupted", _diag
     assert (runtime.get("error") or {}).get("type") == "EngineProcessExited", runtime
     assert (runtime.get("worker") or {}).get("owner_pid") in (None, 0), runtime
     assert "engine_process_exited" in _events(job_id), _events(job_id)
@@ -852,3 +879,296 @@ def test_shutdown_does_not_wait_for_a_failing_terminal_retry(
         f"{len(attempts)} terminal write attempts after the shutdown asked "
         f"the monitor to go: {attempts}")
     assert report["waited"] < supervisor_module.EXIT_STOP_BUDGET, report
+
+
+# ---------------------------------------------------------------------------
+# 8. CX-10 §1: the launch token closes the check-to-write and cold-start windows
+# ---------------------------------------------------------------------------
+
+def test_a_takeover_between_the_check_and_the_write_does_not_land(
+        isolated, gateway, monkeypatch):
+    """The pre-write check passed; the user resumes before the bytes land.
+
+    CX-10's first interleaving: the old monitor's terminal write is already
+    inside the runtime-write path when the replacement engine takes the lock
+    and publishes its own run.  The ownership comparison happens *inside*
+    that write lock, so the old write is skipped and the replacement's state
+    survives to its own conclusion.
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6slaunchwin1"
+    _create_job(job_id)
+    old = _start_engine(job_id, gateway)
+    assert _wait_until(lambda: exit_flow.worker_lock_held(data_dir, job_id)
+                        and (_runtime(job_id).get("worker") or {}).get("worker_id"),
+                        timeout=180), _runtime(job_id)
+    launch_before = (_runtime(job_id).get("launch") or {}).get("token")
+    assert launch_before, "the launch must stamp its token before the child runs"
+
+    # The dying run's worker block lingers until the old monitor's write clears
+    # it — and that write is about to be held — so the replacement's identity
+    # must be told apart from it explicitly.
+    old_worker_id = (_runtime(job_id).get("worker") or {}).get("worker_id")
+
+    allow_write = threading.Event()
+    held = threading.Event()
+    real_write = core._write_terminal_runtime_state
+
+    def hold_first_write(write_job_id, **kwargs):
+        if (write_job_id == job_id
+                and threading.current_thread().name.startswith("folith-engine-monitor")
+                and not held.is_set()):
+            held.set()
+            assert allow_write.wait(30), "fixture stalled before the resume"
+        return real_write(write_job_id, **kwargs)
+
+    monkeypatch.setattr(core, "_write_terminal_runtime_state", hold_first_write)
+    old.proc.kill()
+    assert _wait_until(held.is_set, timeout=60), "the old monitor never wrote"
+    # The user resumes *after* the check, before the write lands.
+    replacement = None
+    try:
+        assert commands.start_job(job_id, _settings(gateway), file_bytes=None), \
+            "the command layer refused the resume"
+        replacement = supervisor_module.supervisor(job_id)
+        assert replacement is not None and replacement is not old
+        assert _wait_until(
+            lambda: (exit_flow.worker_lock_held(data_dir, job_id)
+                     and (_runtime(job_id).get("worker") or {}).get("worker_id")
+                     and (_runtime(job_id).get("launch") or {}).get("token")
+                     != launch_before
+                     and (_runtime(job_id).get("worker") or {}).get("worker_id")
+                     != old_worker_id),
+            timeout=180), _runtime(job_id)
+        state_held = _runtime(job_id)
+        worker_before = (state_held.get("worker") or {}).get("worker_id")
+        allow_write.set()
+        assert old.wait_finished(30), _diagnose(old, job_id)
+    finally:
+        allow_write.set()
+
+    assert old.terminal_published is False, _diagnose(old, job_id)
+    after = _runtime(job_id)
+    assert (after.get("worker") or {}).get("worker_id") == worker_before, (
+        "the old write cleared the replacement's worker block")
+    assert after.get("status") not in ("interrupted",), after
+    assert replacement.running, "the replacement engine died during the test"
+    # The replacement finishes and publishes its own truth.
+    assert replacement.wait(60)
+    assert replacement.wait_finished(10)
+    final = _runtime(job_id)
+    assert final.get("status") == "completed", final
+
+
+def test_a_retry_during_the_replacement_cold_start_does_not_land(
+        isolated, gateway, monkeypatch):
+    """First write fails; the retry meets the replacement in its cold start.
+
+    CX-10's second interleaving: the user resumes while the new engine is
+    still importing — it holds neither lock nor worker block yet, so the
+    old snapshot's worker id and lock probes all match.  The new launch's
+    token, stamped at click time, is the one trace that differs.
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6slaunchcold1"
+    _create_job(job_id)
+    old = _start_engine(job_id, gateway)
+    assert _wait_until(lambda: exit_flow.worker_lock_held(data_dir, job_id)
+                        and (_runtime(job_id).get("worker") or {}).get("worker_id"),
+                        timeout=180), _runtime(job_id)
+    launch_before = (_runtime(job_id).get("launch") or {}).get("token")
+    assert launch_before, "the launch must stamp its token before the child runs"
+
+    failed_once = threading.Event()
+    at_write = threading.Event()
+    allow_write = threading.Event()
+    retry_writes: list[str] = []
+    real_write = core._write_terminal_runtime_state
+
+    def fail_first_write(write_job_id, **kwargs):
+        if (write_job_id == job_id
+                and threading.current_thread().name.startswith("folith-engine-monitor")):
+            if failed_once.is_set():
+                retry_writes.append(str(kwargs.get("status") or ""))
+            at_write.set()
+            if not failed_once.is_set():
+                failed_once.set()
+                assert allow_write.wait(30), "fixture stalled before the resume"
+                raise OSError("controlled first-write failure")
+        return real_write(write_job_id, **kwargs)
+
+    stopped_pid = []
+    _send_line_real = supervisor_module.EngineSupervisor.send_line
+
+    def hold_cold_start(sup, line):
+        # POSIX only: freeze the replacement mid-import so the cold-start
+        # window is deterministic; the token stamp needs no help.
+        if sup is not old and sup.job_id == job_id and hasattr(signal, "SIGSTOP"):
+            stopped_pid.append(sup.pid)
+            os.kill(sup.pid, signal.SIGSTOP)
+        return _send_line_real(sup, line)
+
+    monkeypatch.setattr(core, "_write_terminal_runtime_state", fail_first_write)
+    old.proc.kill()
+    assert _wait_until(at_write.is_set, timeout=60), "the old monitor never wrote"
+    replacement = None
+    try:
+        monkeypatch.setattr(supervisor_module.EngineSupervisor, "send_line",
+                            hold_cold_start)
+        assert commands.start_job(job_id, _settings(gateway), file_bytes=None), \
+            "the command layer refused the resume"
+        replacement = supervisor_module.supervisor(job_id)
+        assert replacement is not None and replacement is not old
+        assert (_runtime(job_id).get("launch") or {}).get("token") != launch_before, \
+            "the resume must stamp a fresh launch token at click time"
+        allow_write.set()
+        assert old.wait_finished(30), _diagnose(old, job_id)
+    finally:
+        allow_write.set()
+        for pid in stopped_pid:
+            try:
+                os.kill(pid, signal.SIGCONT)
+            except OSError:
+                pass
+
+    assert old.terminal_published is False, _diagnose(old, job_id)
+    assert (old._taken_over or "launch_replaced" in _diagnose(old, job_id)), \
+        _diagnose(old, job_id)
+    # 预写规则独立可证伪：续跑之后的重试连写都不该进（锁内比对是第二道闸）。
+    assert retry_writes == [], retry_writes
+    # The new run must own the task and finish with its own truth.
+    assert replacement.running
+    assert replacement.wait(120)
+    assert replacement.wait_finished(10)
+    final = _runtime(job_id)
+    assert final.get("status") == "completed", final
+
+
+def test_cancel_before_start_line_publishes_cancelled_not_interrupted(isolated):
+    """CX-24 #3：登记后、启动行前被取消（child 从未运行）→ 终态 cancelled，不是 interrupted。
+
+    通过 `_never_ran` 区分「child 从未发送启动行」，避免把运行中被取消后 executor
+    死亡的正常场景（test_a_cancelling_run_still_converges_to_interrupted）误判成 cancelled。
+    """
+    data_dir, _log_dir = isolated
+    job_id = "e6sneverb1"
+    _create_job(job_id)
+    # 该次运行的 launch token 已落盘，状态停在 cancelling + cancel_requested。
+    token = "launch-never-" + job_id
+    core.update_runtime_state(
+        job_id, on_timeout="raise", require_replace=True, status="queued",
+        phase="starting", launch={"token": token, "pid": 0},
+        cancel_requested=False, exit_requested=False, event="queued")
+    core.update_runtime_state(
+        job_id, on_timeout="raise", status="cancelling", phase="cancelling",
+        cancel_requested=True)
+
+    import io as _io
+
+    class _Proc:
+        pid = 0
+        # __init__ starts a drain thread that reads proc.stdout; give it an
+        # already-closed empty pipe so it exits immediately.
+        stdout = _io.BytesIO(b"")
+        stdin = _io.BytesIO(b"")
+        def poll(self): return None
+        def wait(self, timeout=None): return 0
+        def kill(self): pass
+        def terminate(self): pass
+
+    sup = supervisor_module.EngineSupervisor(
+        job_id, _Proc(), token="tok", command=["true"],
+        data_dir=data_dir, log_dir=_log_dir, launch_token=token)
+    sup._never_ran = True          # aborted before the start line
+    sup._exit_code = None
+    written = sup._publish_terminal_state()
+    assert written is True
+    runtime = _runtime(job_id)
+    assert runtime.get("status") == "cancelled", runtime
+    assert runtime.get("cancel_requested") is True, runtime
+
+
+def _sup_for(job_id, data_dir, log_dir, launch_token):
+    import io as _io
+
+    class _Proc:
+        pid = 0
+        stdout = _io.BytesIO(b"")
+        stdin = _io.BytesIO(b"")
+        def poll(self): return None
+        def wait(self, timeout=None): return 0
+        def kill(self): pass
+        def terminate(self): pass
+    return supervisor_module.EngineSupervisor(
+        job_id, _Proc(), token="tok", command=["true"],
+        data_dir=data_dir, log_dir=log_dir, launch_token=launch_token)
+
+
+def test_monitor_terminal_kind_uses_in_lock_flags_not_stale_snapshot(isolated, monkeypatch):
+    """CX-28 #1：监控器锁外读到仅取消，但在它加锁前退出位落盘——监控器终态应为
+    interrupted（退出约定），不被锁外取消快照写成 cancelled。"""
+    data_dir, _log_dir = isolated
+    job_id = "mon-kind-inlock"
+    _create_job(job_id)
+    token = "mon-" + job_id
+    core.update_runtime_state(job_id, on_timeout="raise", require_replace=True,
+                              status="queued", phase="starting",
+                              launch={"token": token, "pid": 0},
+                              cancel_requested=False, exit_requested=False, event="queued")
+    core.update_runtime_state(job_id, on_timeout="raise", status="cancelling",
+                              phase="cancelling", cancel_requested=True)
+    sup = _sup_for(job_id, data_dir, _log_dir, token)
+    sup._never_ran = True       # pre-start abort
+    sup._exit_code = None
+
+    # Right before the monitor's terminal write lands, a quit for the same token
+    # flips the flags. The monitor read 'cancelling, cancel-only' out of lock; it
+    # must still publish interrupted using the in-lock flags.
+    real_update = core.update_runtime_state
+    injected = {"done": False}
+
+    def wrapped(job, **kw):
+        if kw.get("stop_terminal_if_unowned") is not None and not injected["done"]:
+            injected["done"] = True
+            real_update(job, on_timeout="raise", status="cancelling", phase="cancelling",
+                        exit_requested=True, cancel_requested=True)
+        return real_update(job, **kw)
+    monkeypatch.setattr(core, "update_runtime_state", wrapped)
+
+    assert sup._publish_terminal_state() is True
+    rt = _runtime(job_id)
+    assert rt.get("status") == "interrupted", f"退出被监控器写成取消：{rt}"
+
+
+def test_monitor_keeps_a_terminal_the_abort_tail_already_wrote(isolated, monkeypatch):
+    """CX-28 #1：直接收尾已写 cancelled 后监控器再写，leave_terminal 保留，不被覆写回 interrupted。"""
+    data_dir, _log_dir = isolated
+    job_id = "mon-after-direct"
+    _create_job(job_id)
+    token = "mon2-" + job_id
+    core.update_runtime_state(job_id, on_timeout="raise", require_replace=True,
+                              status="queued", phase="starting",
+                              launch={"token": token, "pid": 0},
+                              cancel_requested=False, exit_requested=False, event="queued")
+    core.update_runtime_state(job_id, on_timeout="raise", status="cancelling",
+                              phase="cancelling", cancel_requested=True)
+    sup = _sup_for(job_id, data_dir, _log_dir, token)
+    sup._never_ran = True
+    sup._exit_code = None
+
+    real_update = core.update_runtime_state
+    injected = {"done": False}
+
+    def wrapped(job, **kw):
+        if kw.get("stop_terminal_if_unowned") is not None and not injected["done"]:
+            injected["done"] = True
+            # The direct abort tail already published cancelled (a cancel abort).
+            real_update(job, on_timeout="raise", require_replace=True,
+                        status="cancelled", phase="cancelled",
+                        cancel_requested=True, exit_requested=False)
+        return real_update(job, **kw)
+    monkeypatch.setattr(core, "update_runtime_state", wrapped)
+
+    assert sup._publish_terminal_state() is True
+    rt = _runtime(job_id)
+    assert rt.get("status") == "cancelled", f"监控器覆写了直接收尾的终态：{rt}"
