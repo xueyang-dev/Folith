@@ -8820,7 +8820,7 @@ def _write_terminal_runtime_state(job_id, *, what, **changes):
 def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
                          event_name=None, event_metadata=None,
                          event_visibility=None, event_category=None,
-                         event_logged=False, **changes):
+                         event_logged=False, require_replace=False, **changes):
     """Atomically merge a worker status update into runtime_state.json.
 
     ``event_logged=True`` says the event has already been appended to
@@ -8926,7 +8926,8 @@ def update_runtime_state(job_id, *, event=None, progress=False, heartbeat=False,
             _atomic_file.replace_file(tmp, runtime_state_path(job_id))
         except OSError as exc:
             _workflow_errors.raise_if_fatal(exc, job_id)
-            if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32, 33}:
+            if (require_replace or os.name != "nt"
+                    or getattr(exc, "winerror", None) not in {5, 32, 33}):
                 raise
             # A status checkpoint must not abort an already-paid translation.
             # The event stream is appended separately, and the next heartbeat
