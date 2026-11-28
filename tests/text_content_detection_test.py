@@ -154,7 +154,7 @@ def test_non_latin_paragraphs_enter_the_translation_pipeline(tmp_path):
 
         # 装饰行不得被提交翻译（它们不该消耗模型调用）。
         translation_prompts = [user for system, user in prompts
-                               if "学术翻译专家" in system]
+                               if "专业翻译人员" in system]
         assert translation_prompts, "正文段落必须产生翻译请求"
         submitted = [segment for user in translation_prompts
                      for segment in _submitted_segments(user)]

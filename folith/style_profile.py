@@ -173,6 +173,114 @@ def profile_to_rules(profile: Dict[str, Any]) -> str:
     return "；".join(rules) + "。" if rules else "保持原文风格。"
 
 
+# ---------------- 文学作品沿用产品默认风格时的自动切换 ----------------
+
+#: 文本类型里出现这些词，说明是虚构/文学创作，不是“关于文学的学术文本”。
+_FICTION_GENRE_MARKERS = (
+    "小说", "诗", "散文", "戏剧", "剧本", "童话", "故事", "回忆录",
+    "fiction", "novel", "poem", "poetry", "short story", "memoir", "drama",
+)
+_NONFICTION_GENRE_MARKERS = (
+    "学术", "论文", "专著", "教材", "研究", "评论", "综述",
+    "academic", "thesis", "paper", "monograph", "textbook", "review",
+)
+
+#: 任务状态里记录自动切换的键：{"from": 原规则, "to": 文学规则}。
+AUTO_STYLE_STATE_KEY = "style_rules_auto_literary"
+
+
+def is_fiction_profile(document_profile: Any) -> bool:
+    """文档画像是否指向文学创作（长篇小说、诗歌等）。
+
+    以 genre 为准：domain「文学」也可能是文学理论专著。genre 为空时，只有
+    domain 恰好是「文学」才算。
+    """
+    if not isinstance(document_profile, dict):
+        return False
+    genre = str(document_profile.get("genre") or "").strip().casefold()
+    domain = str(document_profile.get("domain") or "").strip().casefold()
+    if genre:
+        if any(marker in genre for marker in _NONFICTION_GENRE_MARKERS):
+            return False
+        return any(marker in genre for marker in _FICTION_GENRE_MARKERS)
+    return domain in {"文学", "literature", "fiction"}
+
+
+_TECHNICAL_GENRE_MARKERS = (
+    "技术", "手册", "文档", "指南", "教程", "规范", "api", "白皮书",
+    "technical", "manual", "documentation", "guide", "specification", "tutorial",
+)
+_LEGAL_GENRE_MARKERS = (
+    "法律", "合同", "协议", "条例", "法规", "判例", "诉讼",
+    "legal", "contract", "agreement", "statute", "regulation", "law",
+)
+_PUBLICITY_GENRE_MARKERS = (
+    "宣传", "营销", "广告", "推广", "公关", "新闻稿", "品牌故事",
+    "marketing", "publicity", "advertising", "promotional", "press release",
+)
+
+
+def infer_style_profile_id(document_profile: Any) -> Optional[str]:
+    """Map a document profile to a predefined STYLE_PROFILES id, or None."""
+    if not isinstance(document_profile, dict):
+        return None
+    if is_fiction_profile(document_profile):
+        return "literary"
+    genre = str(document_profile.get("genre") or "").strip().casefold()
+    domain = str(document_profile.get("domain") or "").strip().casefold()
+    combined = f"{genre} {domain}".strip()
+    if not combined:
+        return None
+    if any(m in combined for m in _LEGAL_GENRE_MARKERS):
+        return "legal"
+    if any(m in genre for m in _NONFICTION_GENRE_MARKERS):
+        return "academic"
+    if any(m in combined for m in _TECHNICAL_GENRE_MARKERS):
+        return "technical"
+    if any(m in combined for m in _PUBLICITY_GENRE_MARKERS):
+        return "publicity"
+    return None
+
+
+def genre_rules_replacing_default(
+    style_rules: str,
+    default_rules: str,
+    document_profile: Any,
+    *,
+    legacy_defaults: tuple[str, ...] = (),
+) -> Optional[Tuple[str, str]]:
+    """Replace an untouched product default with the detected genre's style rules.
+
+    Returns ``(profile_id, new_rules)`` when switched, or ``None`` if the user
+    supplied custom rules or no concrete genre matched.
+    """
+    rules = str(style_rules or "")
+    candidates = [str(d) for d in (default_rules, *legacy_defaults) if str(d or "")]
+    matched_default = next((d for d in candidates if d in rules), None)
+    if matched_default is None:
+        return None
+    profile_id = infer_style_profile_id(document_profile)
+    if not profile_id or profile_id not in STYLE_PROFILES:
+        return None
+    return profile_id, rules.replace(matched_default, profile_to_rules({"selected": profile_id}))
+
+
+def literary_rules_replacing_default(style_rules: str, default_rules: str,
+                                     document_profile: Any) -> Optional[str]:
+    """把未经修改的产品默认风格（学术书面语、专名保留原文）换成文学风格。
+
+    只有规则里仍含完整的默认文本时才替换；用户或项目写过的规则原样保留。
+    返回 ``None`` 表示不切换。
+    """
+    rules = str(style_rules or "")
+    default_rules = str(default_rules or "")
+    if not default_rules or default_rules not in rules:
+        return None
+    if not is_fiction_profile(document_profile):
+        return None
+    return rules.replace(default_rules, profile_to_rules({"selected": "literary"}))
+
+
 # ---------------- 结构化推荐 ----------------
 
 def _parse_json_object(text: Any) -> Optional[Dict[str, Any]]:

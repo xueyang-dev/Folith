@@ -3255,6 +3255,10 @@ def check_translation_batch(sources, targets, glossary, target_lang,
         # #101: numbers / units / markup tags are mechanical structure checks.
         # They only add findings; grouping and handling live in finding_groups.
         findings.extend(check_token_structure(src, tgt, target_lang, i))
+        from folith.engine import quality_tuning as _qt
+        findings.extend(_qt.check_quote_preservation(src, tgt, target_lang, i))
+        findings.extend(_qt.check_partial_copy_through(
+            src, tgt, target_lang, i, preserve_re=PRESERVE_RE))
         findings.extend(check_glossary_compliance(
             src, tgt, glossary, segment_id=i, section_profile=section_profile,
             entries=normalized_glossary, matcher=glossary_matcher))
@@ -4210,30 +4214,10 @@ def job_is_active(job_id, state=None):
 
 
 # ================= 翻译 / 修复 / 审校（对齐 localize-anything 的三通道）=================
-def _translator_system(glossary_text, style_rules, target_lang):
-    return (f"你是一位专业翻译人员，请将用户提供的段落翻译成{target_lang}。\n"
-            "先识别原文体裁并沿用其语气；执行学术翻译专家常见工作时，也不得把小说、"
-            "回忆录、对话或商业文本改写成论文语体。只翻译可翻译的正文，译文须与原文"
-            "一一对应并保持顺序。\n"
-            "人名、地名、机构名、品牌名和作品名不应一律保留源语：遵循已提供的术语表、"
-            "实体提示和全书既定译法；没有既定译法时，选择目标语言中自然、连贯的表达，"
-            "并在后文保持一致。只有明确标为“保留原文”的词条才按其规则原样保留。URL、"
-            "邮箱、DOI 和其他机器标识符逐字符保持不变（其中的数字也不改写）；引用标注"
-            "（如 [12]）保留括号、格式和位置，标号数值不变。\n"
-            "数字、电话号码、日期和脚注/引用标号的数值保持不变，但改用目标语言通行的"
-            "数字写法：原文的阿拉伯-印度数字（如 ١٢٣、۴۵）在中文、英文等译文中写作 123、45，"
-            "脚注标号 (١) 写作 (1)、引用标注 [٣] 写作 [3]，括号与位置不变；"
-            "目标语言本身使用这种数字时保持原样。\n"
-            f"{glossary_text}\n"
-            f"{style_rules}\n"
-            "翻译前请在内部检查：指代与照应关系、术语和专名、理论/非字面用法、"
-            "临时造词、长句逻辑关系与修辞功能；优先复用已提供的术语、实体和连续性选择，"
-            "人工锁定实体/术语优先于审校、TM 和生成式建议；生成式实体提示不得覆盖锁定术语。"
-            "避免明显的逐词直译和词典首义机械替换。\n"
-            "输入段落前的序号仅用于对齐，不属于原文，不要把这些序号加进译文；"
-            "原文本身的编号和数字须保留。\n"
-            "不要输出分析过程，只输出最终译文。\n"
-            "请严格输出合法的 JSON 字符串数组，不要包含任何解释文字。")
+def _translator_system(glossary_text, style_rules, target_lang, *, source_text=""):
+    from folith.engine import quality_tuning as _qt
+    return _qt.build_translator_system(
+        glossary_text, style_rules, target_lang, source_text=source_text)
 
 
 def _invoke_llm(call_fn, provider, api_key, model, system_prompt, user_prompt,
@@ -4276,16 +4260,19 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
     skips the provider call only; ordering, TM, review and persistence are
     untouched.
     """
+    from folith.engine import quality_tuning as _qt
     numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(segments))
+    source_sample = "\n".join(str(s or "") for s in segments)
     render_stats = {}
     if context_packet is not None:
         # Keep the system prefix invariant across batches.  Glossary/style are
         # carried once in the ordered context packet below.
-        sys_prompt = _translator_system("", "", target_lang)
+        sys_prompt = _translator_system("", "", target_lang, source_text=source_sample)
         user_prompt, render_stats = _context.render_context_packet_with_stats(
             context_packet)
     else:
-        sys_prompt = _translator_system(glossary_text, style_rules, target_lang)
+        sys_prompt = _translator_system(
+            glossary_text, style_rules, target_lang, source_text=source_sample)
         context = ""
         if ctx_prev:
             context += "【前文上下文】：\n" + "\n".join(f"- {s}" for s in ctx_prev) + "\n\n"
@@ -4300,6 +4287,10 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             },
             "source_chars": len(numbered),
         }
+    temp = _qt.translation_temperature(
+        style_rules or ((context_packet or {}).get("style_rules") if isinstance(context_packet, dict) else ""),
+        (context_packet or {}).get("document_profile") if isinstance(context_packet, dict) else None,
+    )
     call_fn = call_llm_fn or call_llm
     request_target = getattr(call_fn, "request_target", {})
     response_format = _native_translation_response_format(
@@ -4308,7 +4299,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
     if result_cache is not None:
         cache_key = _translation_cache.prompt_fingerprint(
             provider=provider, model=model, system_prompt=sys_prompt,
-            user_prompt=user_prompt, temperature=0.3,
+            user_prompt=user_prompt, temperature=temp,
             response_format=response_format,
             route={**effective_request_route(provider, model, role="translation"),
                    # 网关按地址 + 凭据计费与限流：同一模型名换个端点就是另一个服务。
@@ -4352,7 +4343,7 @@ def translate_batch(segments, ctx_prev, ctx_next, glossary_text, style_rules, ta
             try:
                 res = _invoke_llm(
                     call_fn, provider, api_key, model, sys_prompt, user_prompt,
-                    temperature=0.3, response_format=response_format)
+                    temperature=temp, response_format=response_format)
             finally:
                 _LLM_CTX.prompt_cost = previous_cost
             controller.note_success()
@@ -4552,14 +4543,20 @@ def _record_translation_prompt_cost(state, records):
 
 
 def repair_batch(sources, targets, findings, glossary_text, style_rules, target_lang,
-                 provider, api_key, model, call_llm_fn=None):
+                 provider, api_key, model, call_llm_fn=None, *,
+                 context_packet=None, ctx_prev=None, ctx_next=None):
     """根据确定性检查发现的问题自动修复一批译文；返回与 sources 等长的译文列表。"""
+    from folith.engine import quality_tuning as _qt
     numbered = "\n".join(
         f"{i + 1}. 原文：{s}\n   译文：{t}" for i, (s, t) in enumerate(zip(sources, targets)))
     issues = "\n".join(f"- 段落 {f['segment_index'] + 1}: [{f['severity']}] {f['reason']}"
                        for f in findings)
-    sys_prompt = _translator_system(glossary_text, style_rules, target_lang)
-    user_prompt = ("以下译文未通过检查，请仅修正有问题的段落，其余段落保持原样，"
+    sys_prompt = _translator_system(
+        glossary_text, style_rules, target_lang,
+        source_text="\n".join(str(s or "") for s in sources))
+    repair_ctx = _qt.format_repair_context(
+        context_packet=context_packet, ctx_prev=ctx_prev, ctx_next=ctx_next)
+    user_prompt = (f"{repair_ctx}以下译文未通过检查，请仅修正有问题的段落，其余段落保持原样，"
                    f"返回与段落数相同的 JSON 字符串数组：\n\n{numbered}\n\n问题清单：\n{issues}")
     call_fn = call_llm_fn or call_llm
     response_format = _native_translation_response_format(
@@ -6516,26 +6513,17 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
         _translation_runtime("context_build", f"正在构建第 {bi + 1} 批翻译上下文")
 
         try:
-            ctx_prev = [
-                para for index, para in enumerate(paras[max(0, offset - 2):offset],
-                                                 start=max(0, offset - 2))
-                if index not in blocked_source_indexes
-            ]
-            ctx_next = [
-                para for index, para in enumerate(
-                    paras[min(len(paras), offset + len(batch)):
-                          min(len(paras), offset + len(batch) + 2)],
-                    start=min(len(paras), offset + len(batch)))
-                if index not in blocked_source_indexes
-            ]
+            from folith.engine import quality_tuning as _qt
+            ctx_prev = _qt.select_neighbor_source_context(
+                paras, offset, offset + len(batch),
+                direction="prev", blocked=blocked_source_indexes)
+            ctx_next = _qt.select_neighbor_source_context(
+                paras, offset, offset + len(batch),
+                direction="next", blocked=blocked_source_indexes)
             with commit_lock:
                 pairs_to_query = pairs if effective_pairs is None else effective_pairs
-                # 这里只需要"最近 2 段"。原式传 limit=max(2, offset) 再取 [-2:] —— 等价，
-                # 但 `select_target_context` 会 list(pairs)[:offset] 并为每个历史段落建字典，
-                # 每批 O(offset)、整篇 O(n²)（20k 段实测占 setup 65%）。尾部快路径与它逐字
-                # 等价，由 tests/context_target_selection_equivalence_test.py 逐例差分守住。
                 previous_target = _context.recent_target_context(
-                    pairs_to_query, offset, 2,
+                    pairs_to_query, offset, _qt.RECENT_TARGET_CONTEXT_COUNT,
                     exclude_indexes=blocked_source_indexes)
             section_digest = _context.digest_for_segment(section_digests, offset)
 
@@ -6829,7 +6817,9 @@ def translate_stage(state, job_id, glossary, provider, api_key, model, target_la
                                             translator_config["provider"],
                                             translator_config["api_key"],
                                             translator_config["model"],
-                                            call_llm_fn=translator_call)
+                                            call_llm_fn=translator_call,
+                                            context_packet=context_packet,
+                                            ctx_prev=ctx_prev, ctx_next=ctx_next)
                     if repaired and len(repaired) == len(repair_local_indexes):
                         formal_targets = list(batch_targets)
                         shadow_targets = list(formal_targets)
@@ -13481,6 +13471,8 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
                 "injected_at": _project_now_iso(),
             }
 
+    # 文学作品沿用了产品默认（学术）风格时，恢复运行沿用此前的自动切换。
+    style_rules = _resolve_auto_literary_style(state, style_rules)
     previous_target_lang = str(state.get("target_lang") or "")
     previous_style_rules = str(state.get("style_rules") or "")
     review_required = bool(state.get("translation_core_review_required")) \
@@ -14115,6 +14107,17 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
             on_caption("文档画像失败，已跳过（可在 UI 中人工填写）。")
         save_job_state(job_id, state)
 
+    # 画像确认是文学作品、而风格仍是产品默认的学术规则时，在翻译开始前换成
+    # 「文学表达」：默认规则要求专名保留原文、保持学术书面语，用在小说上会
+    # 让品牌名/线索词留英文、反复括注原文。
+    resolved_style_rules = _resolve_auto_literary_style(
+        state, style_rules, warnings=warnings, on_caption=on_caption)
+    if resolved_style_rules != style_rules:
+        style_rules = resolved_style_rules
+        state["style_rules"] = style_rules
+        state.setdefault("pipeline_config", {})["style_rules"] = style_rules
+        save_job_state(job_id, state)
+
     if _runtime_cancel_requested(job_id):
         raise RuntimeError("任务已请求取消")
 
@@ -14364,6 +14367,48 @@ def _run_job_pipeline_impl(job_id, filename, file_bytes, *, provider, api_key, m
 
 #: 本次 run_job_pipeline 调用启动的后台识别；无论任务怎样结束都要停掉它们。
 _SCAN_STREAMS = contextvars.ContextVar("folith_scan_streams", default=None)
+
+
+def _resolve_auto_literary_style(state, style_rules, *, warnings=None,
+                                 on_caption=None):
+    """Style rules to use, adapting an untouched default to the detected genre.
+
+    The switch is recorded in the task state so a resume (whose caller passes
+    the default again) keeps the adapted rules, and it never happens once any
+    segment has a translation: a book must not change style half way through.
+    """
+    from folith import style_profile as _style_profile
+    from folith.application.settings import (
+        DEFAULT_STYLE_RULES as _default_rules,
+        LEGACY_ACADEMIC_STYLE_RULES as _legacy_rules,
+    )
+
+    current = str(style_rules or "")
+    record = state.get(_style_profile.AUTO_STYLE_STATE_KEY)
+    if isinstance(record, dict) and record.get("to") and record.get("from") == current:
+        return str(record["to"])
+    if any(str((pair or {}).get("target") or "").strip()
+           for pair in state.get("pairs") or [] if isinstance(pair, dict)):
+        return style_rules
+    profile = state.get("document_profile")
+    switched = _style_profile.genre_rules_replacing_default(
+        current, _default_rules, profile, legacy_defaults=(_legacy_rules,))
+    if not switched:
+        return style_rules
+    profile_id, new_rules = switched
+    profile_name = (_style_profile.STYLE_PROFILES.get(profile_id) or {}).get("name") or profile_id
+    genre = str((profile or {}).get("genre") or (profile or {}).get("domain") or "")
+    state[_style_profile.AUTO_STYLE_STATE_KEY] = {
+        "from": current, "to": new_rules, "profile": profile_id, "genre": genre,
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    message = (f"文档画像判断为「{genre or profile_name}」，默认风格已自动切换为"
+               f"「{profile_name}」。如需其他风格，请在任务设置里写明风格规则。")
+    if warnings is not None and message not in warnings:
+        warnings.append(message)
+    if on_caption:
+        on_caption(message)
+    return new_rules
 
 
 @_exclusive_job_execution(0)

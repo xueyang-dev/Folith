@@ -34,7 +34,7 @@
         "translation_concurrency": 4,
         "batch_size": 4,
         "max_batch_chars": 2400,
-        "batch_strategy": "sentence",
+        "batch_strategy": "paragraph",
         "knowledge_feedback": true,
         "ocr_language": "ara",
         "ocr_quality": "high",
@@ -112,7 +112,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "627d437710d58d0d594fc128bc936c6573e0f182be1f2732e3abaf4543dd9f2f"
+      "fingerprint": "250dcfdd75d9fdd90452a97d98a64d97157dbca2eed271264fcfa4b6298e1daf"
     },
     "qt_new_pdf_job": {
       "config": {
@@ -130,7 +130,7 @@
         "auto_term": true,
         "translation_theory": "目的论 (Skopos Theory)",
         "user_glossary": [],
-        "style_rules": "保持学术书面语；专有名词、作者姓名、机构名、引用标注、URL 等保留原文；标点遵循目标语言规范。",
+        "style_rules": "忠实原文语义与体裁语气，表达自然流畅；遵循术语表与专名一致译法；保留数字、引用标注与 URL；标点遵循目标语言规范。",
         "enable_review": true,
         "enable_annotate": false,
         "enable_report": false,
@@ -142,7 +142,7 @@
         "translation_concurrency": 4,
         "batch_size": 4,
         "max_batch_chars": 2400,
-        "batch_strategy": "sentence",
+        "batch_strategy": "paragraph",
         "knowledge_feedback": true,
         "ocr_language": "",
         "ocr_quality": "standard",
@@ -214,7 +214,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "c350b1f8cd6df87504ba47d308a853c5edf43d1060389442cbc8a050c9f6420d"
+      "fingerprint": "c16b67f0cded350299c09022821d0a0ed18aa08b0a552dc675bda62b56aca8bc"
     },
     "resumed_pdf_job": {
       "config": {
@@ -250,7 +250,7 @@
         "translation_concurrency": 4,
         "batch_size": 8,
         "max_batch_chars": 6400,
-        "batch_strategy": "sentence",
+        "batch_strategy": "paragraph",
         "knowledge_feedback": true,
         "ocr_language": "ara",
         "ocr_quality": "historical",
@@ -323,7 +323,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "7fc93ae13fa49a56c19395d953e741fb5ad1253454829421880e1b3cc8869692"
+      "fingerprint": "d17dd8fc991c0f69273883eb7a3a72f7b0c851e02e02619210485b021550d5d3"
     }
   }
 }

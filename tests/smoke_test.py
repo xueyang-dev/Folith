@@ -407,7 +407,7 @@ def test_symbol_segment_passthrough_and_tm_gate():
                 return '[]'
             if "翻译审校专家" in system_prompt:
                 return '[]'
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 return json.dumps([f"译文：{s}" for s, _ in _numbered_sources(user_prompt)])
             return "报告章节内容。"
 
@@ -544,7 +544,7 @@ def test_review_truncated_suggestion_rollback():
                 return json.dumps([
                     {"segment_index": 0, "severity": "actionable", "reason": "术语应统一",
                      "suggested_target": "只修正了一句。"}])
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 return json.dumps(["译" * 100])
             return "报告章节内容。"
 
@@ -624,7 +624,7 @@ def _fake_llm_factory():
             return '[{"Source": "MT", "Target": "机器翻译"}, {"Source": "CAT", "Target": "计算机辅助翻译"}, 123, {"Source": null, "Target": "坏数据"}]'
         if "翻译审校专家" in system_prompt:
             return '[]'  # 审校无问题
-        if "学术翻译专家" in system_prompt:
+        if "专业翻译人员" in system_prompt:
             return json.dumps([f"译文：{s}" for _, s in _numbered_sources(user_prompt)])
         return "这是报告章节内容，包含 **加粗** 与列表。\n\n- 要点一\n- 要点二"
 
@@ -691,7 +691,7 @@ def test_deterministic_repair():
                 return '[]'
             if "翻译审校专家" in system_prompt:
                 return '[]'
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 if "以下译文未通过检查" in user_prompt:
                     targets = re.findall(r'^\s*译文：(.*)$', user_prompt, re.M)
                     return json.dumps([t.strip() + " https://example.com/ref" for t in targets])
@@ -750,7 +750,7 @@ def test_review_fix_and_blocking():
                      "detector": "Semantic QA",
                      "reason": "语义严重错误，需人工确认"},
                 ])
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 return json.dumps([f"译文：{s}" for _, s in _numbered_sources(user_prompt)])
             return "报告章节内容。"
 
@@ -793,7 +793,7 @@ def test_tm_reuse():
             if "翻译审校专家" in system_prompt:
                 counting["review"] += 1
                 return '[]'
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 counting["translate"] += 1
                 return json.dumps([f"译文：{s}" for _, s in _numbered_sources(user_prompt)])
             return "报告章节内容。"
@@ -825,7 +825,7 @@ def test_resume_translation():
         jid = "e2e0000000000002"
 
         def flaky_llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 if "第二段" in user_prompt:
                     raise RuntimeError("模拟网络中断")
                 return json.dumps([f"译文：{s}" for _, s in _numbered_sources(user_prompt)])
@@ -883,7 +883,7 @@ def test_resume_report_sections():
                 self.report_calls = 0
 
             def __call__(self, provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-                if "学术翻译专家" in system_prompt:
+                if "专业翻译人员" in system_prompt:
                     return json.dumps([f"译文：{s}" for _, s in _numbered_sources(user_prompt)])
                 if "长文翻译的术语编辑" in system_prompt:
                     return '[]'

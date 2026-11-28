@@ -368,7 +368,7 @@ def test_review_failed_must_not_mark_segment_reviewed_or_promote_tm_or_knowledge
         def llm(provider, key, model, system, user, temperature=0.1):
             if "独立的翻译审校专家" in system:
                 raise RuntimeError("review provider timeout")
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 return json.dumps(["这是译文。"])
             return "[]"
 
@@ -405,7 +405,7 @@ def test_translate_stage_records_current_translation_truth(tmp_path):
         core.OUTPUT_DIR = tmp_path
 
         def llm(provider, key, model, system, user, temperature=0.1):
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 return json.dumps(["流水线译文。"])
             return "[]"
 
@@ -649,7 +649,7 @@ def test_translate_stage_persists_translation_core_formal_review_provenance(tmp_
                     "explanation": "the meaning differs", "recommendation": "revise",
                     "detector": "Semantic QA", "evidence_refs": [],
                 }], "evidence_requests": []})
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 return json.dumps(["这是完整译文。"])
             return "[]"
 
@@ -698,7 +698,7 @@ def test_deterministic_repair_shadow_review_uses_translation_core_packet(tmp_pat
                 return "[]"
             if "翻译流知识抽取器" in system:
                 return "[]"
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 return json.dumps([
                     "值 %s 必须保留。" if "问题清单" in user else "值必须保留。"
                 ])
@@ -744,7 +744,7 @@ def test_reviewer_suggested_candidate_blind_review_uses_core_packet(tmp_path):
                 }], "evidence_requests": []})
             if "翻译流知识抽取器" in system:
                 return "[]"
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 return json.dumps(["猫坐着。"])
             return "[]"
 
