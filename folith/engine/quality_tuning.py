@@ -43,7 +43,8 @@ RECENT_TARGET_CONTEXT_COUNT = 3
 
 
 def _needs_arabic_digit_rule(source_text: str, target_lang: str) -> bool:
-    if source_text and _ARABIC_INDIC_DIGIT_RE.search(source_text):
+    # Unknown source: state the rule rather than silently drop it.
+    if not source_text or _ARABIC_INDIC_DIGIT_RE.search(source_text):
         return True
     return str(target_lang or "").strip().casefold() in _ARABIC_SCRIPT_TARGETS
 
@@ -83,7 +84,7 @@ def build_translator_system(
         lines.append(str(style_rules).strip())
     lines.extend([
         "注意结合前后文把握指代关系（他/她/它/他们/她们）、说话人口吻与习语隐喻；"
-        "输入段落前的序号仅用于对齐，不要写入译文，原文本身的编号须保留。",
+        "输入段落前的序号仅用于对齐，不要写入译文，原文本身的编号和数字须保留。",
         "不要输出分析过程，请严格输出合法的 JSON 字符串数组，不要包含任何解释文字。",
     ])
     return "\n".join(lines)
