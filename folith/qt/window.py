@@ -45,7 +45,7 @@ from . import bootstrap
 from . import dialogs
 from . import prompts
 from .segment_assist import protection_text as _protection_text
-from . import components, loading_handoff, motion
+from . import components, motion
 from . import style as style_module
 from . import theme as theme_module
 from . import views as views_module
@@ -260,8 +260,6 @@ class MainWindow(QMainWindow):
         self._delta_projection_in_flight = False
         #: A poll was requested while a slow projection held the read slot.
         self._pending_poll = False
-        #: Runs the >=300-segment apply after its loading frame is on screen.
-        self._handoff = loading_handoff.PaintingHandoff(self)
         #: The next poll must read the whole state on the worker and apply it as
         #: a forced refresh (``refresh_workbench_soon``, P2-11).
         self._force_full_poll = False
@@ -1486,11 +1484,11 @@ class MainWindow(QMainWindow):
     #: grid takes long enough on the UI thread for the window to look frozen.
     LOADING_SEGMENTS = 300
 
-    def _show_loading(self, message: str) -> None:
+    def _show_loading(self, message: str, *, paint_now: bool = False) -> None:
         overlay = getattr(self, "_loading_overlay", None)
         if overlay is None:
             overlay = self._loading_overlay = components.LoadingOverlay(self.stack)
-        overlay.present(message)
+        overlay.present(message, paint_now=paint_now)
 
     def _hide_loading(self) -> None:
         overlay = getattr(self, "_loading_overlay", None)
@@ -2720,7 +2718,7 @@ class MainWindow(QMainWindow):
 
     def refresh_workbench(self, *, force: bool = False, preloaded: bool = False,
                           prepared: dict | None = None,
-                          models: dict | None = None, apply_now: bool = False) -> None:
+                          models: dict | None = None) -> None:
         if self._opening_job_id:
             return
         job_id = self._current_job_id
@@ -2728,29 +2726,19 @@ class MainWindow(QMainWindow):
             return
         # The once-a-second background refresh is only logged when it is slow.
         timing = _PhaseLog(self._log, "refresh_workbench", job_id, min_ms=self.SLOW_REFRESH_MS)
-        deferred = False
         try:
-            deferred = self._refresh_workbench(job_id, timing, force=force, preloaded=preloaded,
-                                               prepared=prepared, models=models,
-                                               apply_now=apply_now)
+            self._refresh_workbench(job_id, timing, force=force, preloaded=preloaded,
+                                    prepared=prepared, models=models)
         finally:
-            # A deferred refresh keeps the overlay up until its frame has been
-            # painted; the continuation hides it (and flushes the timing) then.
-            if not deferred:
-                timing.flush()
-                self._hide_loading()
+            timing.flush()
+            self._hide_loading()
 
     #: Refreshes faster than this are not written to the log.
     SLOW_REFRESH_MS = 150
 
     def _refresh_workbench(self, job_id: str, timing: _PhaseLog, *, force: bool,
                            preloaded: bool, prepared: dict | None = None,
-                           models: dict | None = None, apply_now: bool = False) -> bool:
-        """Rebuild the workbench from the cached state; True when it deferred.
-
-        With ``apply_now`` the caller is the continuation that already painted
-        the overlay, so the tail runs here directly.
-        """
+                           models: dict | None = None) -> None:
         signature = adapter.state_signature(job_id)
         changed = preloaded or signature != self._cached_signature
         if (changed or force) and not preloaded:
@@ -2787,21 +2775,38 @@ class MainWindow(QMainWindow):
             rows = models.get("rows") if models is not None else None
             if rows is None:
                 rows = self._segment_rows(job_id, state)
-        # Leaving "prepare" for a large task builds the whole grid: the overlay
-        # must be *on screen* first, so the apply waits for its frame.
-        if (not apply_now and (changed or force) and len(rows) >= self.LOADING_SEGMENTS
+        # Leaving "prepare" for a large task builds the whole grid: say so first.
+        # Keeps the 0.8.3 forced paint; the apply below would hide the overlay.
+        if ((changed or force) and len(rows) >= self.LOADING_SEGMENTS
                 and getattr(self.workbench, "_showing_setup", False)):
-            self._show_loading(i18n.tr('正在载入译文…'))
-            self._handoff.defer(
-                self._loading_overlay, job_id,
-                lambda: self.refresh_workbench(force=force, preloaded=True,
-                                               prepared=prepared, models=models,
-                                               apply_now=True))
-            return True
-        loading_handoff.apply_workbench_refresh(
-            self, job_id=job_id, state=state, rows=rows, models=models,
-            prepared=prepared, force=force, changed=changed, timing=timing)
-        return False
+            self._show_loading(i18n.tr('正在载入译文…'), paint_now=True)
+        with timing.phase("runtime_view"):
+            runtime = models.get("runtime") if models is not None else None
+            if runtime is None:
+                runtime = adapter.runtime_view(job_id, state)
+        with timing.phase("delivery_snapshots"):
+            snapshots = models.get("snapshots") if models is not None else None
+            if snapshots is None:
+                snapshots = adapter.delivery_snapshots(job_id) if (changed or force) \
+                    else self.workbench._snapshots
+        # The delivery panel is re-validated on an explicit refresh, or when the
+        # run reaches a terminal state — not on every background state write.
+        status = str(runtime.get("status") or "")
+        terminal = status in ("completed", "failed", "cancelled", "interrupted",
+                              "stalled", "idle_incomplete")
+        terminal_change = terminal and status != self._last_runtime_status
+        self._last_runtime_status = status
+        with timing.phase("workbench.apply"):
+            self.workbench.apply(job_id, state, rows, runtime, snapshots,
+                                 refresh_delivery=force or terminal_change, prepared=prepared,
+                                 models=models)
+        self._sync_menu_state()
+        # 内容变了，布局的最小尺寸也可能跟着变（标题、阶段条、检查器动作条）。
+        # 每次刷新同步一次，窗口的 minimumSize() 才不会比真实下限小 1–8px——
+        # 否则「缩到最小尺寸」会被 Qt 悄悄放大（resize(870,463) → 871×463）。
+        self._sync_minimum_size()
+        # 情境提示等布局与过渡落定之后再挑（锚点要在屏幕上的最终位置）。
+        self._later(600, lambda: self._offer_tips(runtime))
 
     def _segment_rows(self, job_id: str, state: dict) -> list:
         """段落行：任务状态与草稿文件都没变时复用上一次的结果。

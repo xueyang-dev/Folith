@@ -137,3 +137,21 @@ def test_a_real_task_runner_callback_presents_without_painting(app, monkeypatch)
         runner.abandon()
     assert seen.get("visible") is True, "回调没有在 GUI 线程上跑完"
     assert repaint_calls["n"] == 0
+
+
+def test_the_explicit_paint_now_keeps_the_one_0_8_3_caller(app, monkeypatch):
+    """B-111：只有「≥300 段离开译前准备」那一个调用点显式要同步重绘。
+
+    它必须在同一次调用里画完，因为调用方紧接着就在同一个 GUI 调用栈里建表；
+    代价是这条路仍有 G1a 同类风险（正式修法在 0.8.5），所以参数必须是显式的。
+    """
+    host = QWidget()
+    host.resize(400, 300)
+    host.show()
+    overlay = components.LoadingOverlay(host)
+    repaint_calls = _spy_repaint(monkeypatch)
+
+    overlay.present("正在载入译文…", paint_now=True)
+
+    assert overlay.isVisible()
+    assert repaint_calls["n"] == 1, "显式 paint_now 必须同步绘制一次"

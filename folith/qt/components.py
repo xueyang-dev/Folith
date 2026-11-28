@@ -1986,42 +1986,31 @@ class LoadingOverlay(QWidget):
         self._track = ProgressTrack()
         self._track.setRange(0, 0)
         self._track.setFixedWidth(220)
-        self._after_paint = None
         column.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(self._label, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(self._track, 0, Qt.AlignmentFlag.AlignHCenter)
 
-    def run_after_next_paint(self, callback) -> None:
-        """Run *callback* once, right after this widget paints its next frame.
+    def present(self, message: str, *, paint_now: bool = False) -> None:
+        """Show over the whole parent; the event loop paints the frame by default.
 
-        The callback runs **inside** ``paintEvent``, so it may only schedule work
-        (the window queues it on its own single-shot timer); it must not apply
-        state or repaint anything.  A later call replaces an earlier one, and a
-        pending callback survives ``dismiss()`` so a hidden overlay cannot strand
-        its continuation.
-        """
-        self._after_paint = callback
+        A forced ``repaint()`` here runs *inside* whatever call stack asked for it.
+        On the navigation path that stack is a worker result (``TaskRunner``
+        delivers ``on_done`` on the GUI thread from a queued invocation, the window
+        then opens the task and shows this overlay), and on Windows the frozen
+        package died inside Qt6Gui with ``present`` and ``ProgressTrack.paintEvent``
+        on the stack (0.8.4 G1a, 2 of 35 rounds; the same crash is in the 0.8.3
+        release, so it is not a regression).  The default is therefore ``update()``:
+        the frame is painted on the next turn of the event loop, which the caller
+        reaches as soon as it returns, and nothing paints from inside a callback.
 
-    def _fire_after_paint(self) -> None:
-        callback, self._after_paint = self._after_paint, None
-        if callback is not None:
-            callback()
+        ``paint_now`` is the 0.8.3 behaviour and only the ">=300 segments, leaving
+        Prepare" refresh passes it, because that caller does a long synchronous
+        ``workbench.apply`` right after this returns.  That path still forces a
+        synchronous paint from a callback and carries the same risk class as G1a;
+        G1a does not cover it.  The real fix (wait for the first frame, then apply)
+        is scoped for 0.8.5.
 
-    def present(self, message: str) -> None:
-        """Show over the whole parent; the event loop paints the frame.
-
-        This used to end with ``repaint()``, "so the overlay is on screen before
-        the caller blocks".  A forced paint there runs *inside* whatever call stack
-        asked for it, and on the navigation path that stack is a worker result:
-        ``TaskRunner`` delivers ``on_done`` on the GUI thread from a queued
-        invocation, the window then opens the task and shows this overlay.  On
-        Windows the frozen package died inside Qt6Gui with ``present`` and
-        ``ProgressTrack.paintEvent`` on the stack (0.8.4 G1a, 2 of 35 rounds).
-
-        ``update()`` schedules the same frame for the next turn of the event loop,
-        which the caller reaches as soon as it returns — so the overlay still
-        appears before the task is applied, and nothing paints from inside a
-        callback.  Still no ``processEvents()``: a queued poll timer must not
+        Neither branch calls ``processEvents()``: a queued poll timer must not
         re-enter the open.
         """
         self._label.setText(message)
@@ -2033,7 +2022,10 @@ class LoadingOverlay(QWidget):
         self.setGeometry(parent.rect())
         self.raise_()
         self.show()
-        self.update()
+        if paint_now:
+            self.repaint()
+        else:
+            self.update()
 
     def dismiss(self) -> None:
         self.hide()
@@ -2047,9 +2039,6 @@ class LoadingOverlay(QWidget):
         colour = theme_module.qcolor(_tokens()["bg-surface"])
         colour.setAlpha(240)
         painter.fillRect(self.rect(), colour)
-        painter.end()
-        # The frame exists now: let the window queue the work this frame covers.
-        self._fire_after_paint()
 
 
 class ProgressTrack(QWidget):
