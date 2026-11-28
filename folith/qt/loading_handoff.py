@@ -55,6 +55,11 @@ class PaintingHandoff:
     def cancel(self) -> None:
         self._pending = None
 
+    @property
+    def pending(self) -> bool:
+        """Whether an apply is still waiting for the overlay's frame."""
+        return self._pending is not None
+
     def _fire(self, serial: int) -> None:
         pending = self._pending
         if pending is None or pending[0] != serial:

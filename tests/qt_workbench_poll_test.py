@@ -21,6 +21,16 @@ from qt_client_window_test import (  # noqa: E402,F401  (fixtures)
 SEGMENTS = 900
 
 
+def _pump_settled(app, window, seconds: float = 10.0) -> bool:
+    """Wait until the poll read *and* any deferred overlay apply have finished.
+
+    A >=300-segment refresh paints the loading overlay first and applies after
+    that frame (B-110), so "the read finished" is not "the widgets were applied".
+    """
+    return _pump(app, seconds,
+                 lambda: not window._state_load_in_flight and not window._handoff.pending)
+
+
 def _book_job(client, segments=SEGMENTS) -> str:
     adapter, core, tmp = client["adapter"], client["core"], client["tmp"]
     source = tmp / "book.docx"
@@ -234,7 +244,7 @@ def test_poll_projects_review_off_thread_and_only_applies_widgets_on_gui(client,
     state['pairs'][450]['target'] = '后台提交的译文'
     core.save_job_state(job, state)
     window._poll_workbench()
-    assert _pump(app, 5, lambda: not window._state_load_in_flight)
+    assert _pump_settled(app, window, 5)
     assert calls and all(thread != gui for thread in calls)
     assert applied == [gui]
     assert window._cached_state['pairs'][450]['target'] == '后台提交的译文'
@@ -268,7 +278,7 @@ def test_slow_poll_review_cannot_replace_a_newer_explicit_refresh(client, monkey
         window.refresh_workbench(force=True)
         fresh = window._cached_state
         release.set()
-        assert _pump(app, 5, lambda: not window._state_load_in_flight)
+        assert _pump_settled(app, window, 5)
         assert window._cached_state is fresh
         assert fresh['pairs'][450]['target'] == '刚保存的新编辑'
     finally:
@@ -287,7 +297,7 @@ def test_review_projection_failure_does_not_hide_new_committed_pairs(client, mon
     state['pairs'][450]['target'] = '仍然显示已提交的译文'
     core.save_job_state(job, state)
     window._poll_workbench()
-    assert _pump(app, 5, lambda: not window._state_load_in_flight)
+    assert _pump_settled(app, window, 5)
     assert window._cached_state['pairs'][450]['target'] == '仍然显示已提交的译文'
     assert window.workbench.review_panel._view == {}
 
