@@ -290,9 +290,28 @@ def _run_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None
                     execution_lock.close()
 
 
+def _queued_belongs_to_this_launch(runtime, status, *, launch_prepared,
+                                   launch_token):
+    """True when ``queued`` is this launch's starting row, not a dead run.
+
+    ``publish_starting_status`` writes ``status=queued`` and this launch's
+    token before the child imports ``core``.  Holding ``.worker.lock`` does
+    not make that row a leftover: publishing it as lost leaves a user-visible
+    「上次运行的进程已退出」 and can make the monitor treat the run as already
+    over.  A different token, a missing token, or an in-process start is still
+    a leftover and must be published.
+    """
+    if not launch_prepared or status != "queued":
+        return False
+    expected = str(launch_token or "")
+    launch = runtime.get("launch") if isinstance(runtime, dict) else None
+    recorded = str(launch.get("token") or "") if isinstance(launch, dict) else ""
+    return bool(expected) and recorded == expected
+
+
 def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=None,
                      resume_request_id=None, *, segment_operation=None,
-                     launch_prepared=False):
+                     launch_prepared=False, launch_token=""):
     """Start one resumable pipeline worker; repeated UI reruns are idempotent.
 
     ``launch_prepared`` is set only by the engine child
@@ -327,20 +346,26 @@ def start_job_worker(job_id, filename, file_bytes, pipeline_kwargs, base_url=Non
             matching_resume = bool(resume_request_id) and (
                 status not in core.RUNTIME_ACTIVE_STATUSES or (
                     status == "resume_requested" and runtime.get("resume_request_id") == resume_request_id))
-            if status in core.RUNTIME_ACTIVE_STATUSES and not matching_resume:
+            own_launch = _queued_belongs_to_this_launch(
+                runtime, status, launch_prepared=launch_prepared,
+                launch_token=launch_token)
+            if (status in core.RUNTIME_ACTIVE_STATUSES and not matching_resume
+                    and not own_launch):
                 # We hold ``.worker.lock``, so no other execution can exist and
                 # this active status is a leftover from a run that ended without
                 # publishing (the app was closed, a child was killed).  Publish
                 # that loss here, explicitly — the read path no longer heals it
                 # (E-4e) — and start as a resumed run.  ``resume_requested`` is
                 # kept: it is another launch's pending request, not a dead run.
+                # A ``queued`` row stamped with this launch's token is the
+                # parent's starting write, not that leftover (B-82).
                 if status != "resume_requested" and core.publish_lost_runtime_state(
                         job_id, owns_execution_lock=True):
                     runtime = core.load_runtime_state(job_id)
                     status = str(runtime.get("status") or "interrupted")
                 if status in core.RUNTIME_ACTIVE_STATUSES:
                     return False
-            if not matching_resume and not request_pending:
+            if not matching_resume and not request_pending and not own_launch:
                 runtime = core.get_job_runtime_status(job_id)
                 if runtime.get("status") in core.RUNTIME_ACTIVE_STATUSES:
                     return False
@@ -442,7 +467,8 @@ def start_segment_worker(job_id, kind, indexes, *, base_url=None, **kwargs):
 
 
 def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
-               resume_request_id=None, *, launch_prepared=False):
+               resume_request_id=None, *, launch_prepared=False,
+               launch_token=""):
     """Idempotently request resume and publish the transition before worker start.
 
     ``launch_prepared`` has the same meaning as in :func:`start_job_worker`: an
@@ -479,7 +505,8 @@ def resume_job(job_id, filename, pipeline_kwargs, base_url=None,
             pipeline_kwargs["enable_report"] = True
         return core.start_job_worker(
             job_id, filename, None, pipeline_kwargs, base_url=base_url,
-            resume_request_id=request_id, launch_prepared=launch_prepared)
+            resume_request_id=request_id, launch_prepared=launch_prepared,
+            launch_token=launch_token)
 
 
 def is_job_worker_alive(job_id):
@@ -528,12 +555,19 @@ def request_job_cancel(job_id, *, force=False):
     # GUI/action side (E-6u): the user is waiting on Cancel, so a refused write
     # is reported ("please retry") instead of parking the slot for a retry
     # budget; the terminal state is either written or explicitly refused.
+    # CX-19 (#621): this terminal write happens only when no executor is alive.
+    # Re-check the in-process owner inside the state lock (only_if_unowned) and
+    # keep an already-terminal status (leave_terminal): a launch thread that
+    # registered just after the liveness check above must not have its
+    # cancel_requested cleared here, and a stop that already landed must not be
+    # reopened. If the lock-time check finds an owner the write is skipped; the
+    # launch path re-reads the stop intent before sending the start line.
     core.update_runtime_state(
         job_id, on_timeout="raise", status="cancelled", phase="cancelled", phase_label="已取消",
         cancel_requested=False, error=None,
         event="任务已取消", event_name="job_cancelled",
         event_visibility="user", event_category="lifecycle",
-        progress=True, heartbeat=True,
+        progress=True, heartbeat=True, only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
     return True
 
@@ -583,5 +617,6 @@ def request_job_exit(job_id):
         event="任务已停止以便退出；可继续处理。",
         event_name="job_stopped_for_exit", event_visibility="user",
         event_category="lifecycle", progress=True, heartbeat=True,
+        only_if_unowned=True, leave_terminal=True,
         worker={"owner_pid": None, "worker_id": None, "lease_expires_at": None})
     return True

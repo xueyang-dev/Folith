@@ -212,11 +212,11 @@ def _run(request: engine_protocol.StartRequest, reader: "_StdinLines") -> int:
         if request.mode == engine_protocol.MODE_START:
             started = core.start_job_worker(
                 request.job_id, filename, None, kwargs, base_url=base_url,
-                launch_prepared=True)
+                launch_prepared=True, launch_token=request.launch_token)
         else:
             started = core.resume_job(
                 request.job_id, filename, kwargs, base_url=base_url,
-                launch_prepared=True)
+                launch_prepared=True, launch_token=request.launch_token)
     except Exception as exc:  # noqa: BLE001 - report, never crash silently
         return _fail(EXIT_START_FAILED, f"{type(exc).__name__}: "
                                         f"{_sanitize(str(exc), request)}")
