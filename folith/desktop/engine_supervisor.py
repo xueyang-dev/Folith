@@ -914,6 +914,15 @@ class EngineSupervisor:
         # ``_write_terminal_runtime_state`` rather than swallowed.
         written = core._write_terminal_runtime_state(
             self.job_id, what="engine_process_exited",
+            # A terminal state must actually reach disk.  ``update_runtime_state``
+            # answers a Windows sharing violation that outlived its replace retry
+            # budget by returning the *in-memory* state (changes included) while
+            # the file keeps its old status; without this flag the monitor then
+            # reports "published" for a write that never landed (the Windows
+            # handoff test sees ``terminal_published=True`` and a status still at
+            # ``cancelling``).  With it the write raises instead, and ``_watch``
+            # retries within TERMINAL_EVIDENCE_BUDGET_SECONDS and records the loss.
+            require_replace=True,
             status="interrupted", phase="interrupted",
             phase_label=message, cancel_requested=cancel_requested,
             exit_requested=exit_requested,
