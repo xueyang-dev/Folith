@@ -3,11 +3,10 @@
 Covers:
 1. Export target joining without stray spaces before leading punctuation (#630).
 2. Neutral DEFAULT_STYLE_RULES + genre-adaptive auto style switching.
-3. Paragraph batching as desktop default for new jobs (legacy resume preserved).
-4. Focused _translator_system + genre-adaptive translation_temperature.
-5. Character-budgeted neighbor context selection.
-6. Context-aware repair_batch prompts.
-7. Quote-preservation (#630) and partial copy-through (#572) QA checks.
+3. Focused _translator_system + genre-adaptive translation_temperature.
+4. Character-budgeted neighbor context selection.
+5. Context-aware repair_batch prompts.
+6. Quote-preservation (#630) and partial copy-through (#572) QA checks.
 """
 from __future__ import annotations
 
@@ -23,7 +22,6 @@ if str(ROOT) not in sys.path:
 
 import core  # noqa: E402
 from folith import epub, style_profile  # noqa: E402
-from folith.application.job_config import JobConfig  # noqa: E402
 from folith.application.settings import (  # noqa: E402
     DEFAULT_STYLE_RULES,
     LEGACY_ACADEMIC_STYLE_RULES,
@@ -75,12 +73,6 @@ def test_genre_rules_replace_untouched_default(profile, expected_id):
     pid, new_rules = switched
     assert pid == expected_id
     assert new_rules == style_profile.profile_to_rules({"selected": expected_id})
-
-
-def test_desktop_new_job_defaults_to_paragraph_batch_strategy():
-    cfg = JobConfig.from_frontend({})
-    assert cfg.batch_strategy == "paragraph"
-    assert cfg.to_pipeline_kwargs()["batch_strategy"] == "paragraph"
 
 
 # ---------------------------------------------------------------------------

@@ -283,10 +283,15 @@ class JobConfig:
     translation_concurrency: int = DEFAULT_TRANSLATION_CONCURRENCY
     batch_size: int = DEFAULT_BATCH_SIZE
     max_batch_chars: int = DEFAULT_MAX_BATCH_CHARS
-    #: Explicit batching strategy.  New desktop tasks default to ``paragraph``
-    #: (measured to cut quote errors from 59 → 2 and stabilize proper nouns);
-    #: already-started legacy tasks keep their saved strategy on resume.
-    batch_strategy: str = "paragraph"
+    #: Explicit batching strategy (Phase 3 contract).  The desktop entry always
+    #: resolves this to a concrete value — ``sentence`` matches the historic
+    #: behavior where ``batch_size``/``max_batch_chars`` were always supplied.
+    #: This is deliberately different from ``core.DEFAULT_BATCH_STRATEGY``
+    #: (``paragraph``), which stays the core-level default for new tasks that
+    #: do not come through the desktop contract.  A task's own saved strategy
+    #: wins at the runtime; this field never flips an already-started job's
+    #: batch plan.
+    batch_strategy: str = "sentence"
     #: per-batch knowledge feedback (name continuity, term candidates); 快速 is off
     knowledge_feedback: bool = True
 
@@ -667,19 +672,20 @@ def _normalize_positive_int(value: Any, default: int, label: str) -> int:
 
 
 def _normalize_batch_strategy(value: Any) -> str:
-    """Resolve the batching strategy explicitly.
+    """Resolve the batching strategy explicitly (Phase 3 contract).
 
-    Absent/empty means "not configured" and defaults to ``paragraph`` for new
-    tasks.  A *non-empty* unknown value is a configuration error and is
-    rejected, not silently reinterpreted.
+    Absent/empty means "not configured" and falls back to the documented
+    desktop entry default (``sentence``, matching the behavior before the
+    strategy became an explicit field).  A *non-empty* unknown value is a
+    configuration error and is rejected, not silently reinterpreted.
     """
     import core  # local import: keeps this module import-order independent
 
     if value is _MISSING or value is None:
-        return "paragraph"
+        return "sentence"
     text = _as_text(value).strip().lower()
     if not text:
-        return "paragraph"
+        return "sentence"
     if text in core.BATCH_STRATEGIES:
         return text
     raise JobConfigError(

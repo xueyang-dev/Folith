@@ -89,12 +89,12 @@ def _job_config_from_state(state):
 
 @pytest.mark.parametrize("preset", list(STRATEGY_PRESETS))
 def test_strategy_presets_resolve_to_explicit_sentence(preset):
-    """快速 / 标准 / 学术增强 default new desktop jobs to paragraph batching."""
+    """快速 / 标准 / 学术增强 must keep the historic effective strategy."""
     state = dict(STRATEGY_PRESETS[preset])
     config = _job_config_from_state(state)
-    assert config.batch_strategy == "paragraph"
+    assert config.batch_strategy == "sentence"
     kwargs = config.to_pipeline_kwargs()
-    assert kwargs["batch_strategy"] == "paragraph"
+    assert kwargs["batch_strategy"] == "sentence"
     profile = BATCH_PROFILES[state["batch_profile"]]
     assert kwargs["batch_size"] == profile["batch_size"]
     assert kwargs["max_batch_chars"] == profile["max_batch_chars"]
@@ -103,25 +103,25 @@ def test_strategy_presets_resolve_to_explicit_sentence(preset):
 def test_batch_profiles_alone_still_resolve_to_sentence():
     for profile, values in BATCH_PROFILES.items():
         config = _job_config_from_state({"batch_profile": profile})
-        assert config.batch_strategy == "paragraph"
+        assert config.batch_strategy == "sentence"
         assert config.batch_size == values["batch_size"]
         assert config.max_batch_chars == values["max_batch_chars"]
 
 
 def test_new_desktop_job_contract_is_explicit_sentence():
     config = JobConfig.from_frontend({"batch_size": 6, "max_batch_chars": 4800})
-    assert config.batch_strategy == "paragraph"
-    assert config.to_pipeline_kwargs()["batch_strategy"] == "paragraph"
+    assert config.batch_strategy == "sentence"
+    assert config.to_pipeline_kwargs()["batch_strategy"] == "sentence"
 
 
 def test_absent_field_falls_back_to_documented_default():
     config = JobConfig.from_frontend({})
-    assert config.batch_strategy == "paragraph"
+    assert config.batch_strategy == "sentence"
     # An explicitly empty value is "not configured", not an error.
     assert JobConfig.from_frontend({"batch_strategy": ""}).batch_strategy \
-        == "paragraph"
+        == "sentence"
     assert JobConfig.from_frontend({"batch_strategy": None}).batch_strategy \
-        == "paragraph"
+        == "sentence"
 
 
 def test_invalid_strategy_is_rejected_at_contract_layer():
@@ -161,19 +161,19 @@ def test_settings_provenance_records_saved_strategy():
     # No saved decision: the layer stays empty; the contract default applies.
     fresh = resolve_effective_settings(SettingsSources(explicit={}, job_state={}))
     assert fresh.get("batch_strategy") is None
-    assert fresh.to_job_config().batch_strategy == "paragraph"
+    assert fresh.to_job_config().batch_strategy == "sentence"
 
 
 def test_qt_settings_sources_flow_keeps_explicit_contract():
     from folith.qt import adapter
 
-    state = {"pipeline_config": {"batch_strategy": "sentence"}}
+    state = {"pipeline_config": {"batch_strategy": "paragraph"}}
     config = adapter.EngineConfig(provider="OpenAI", model="m", api_key="k",
                                   target_lang="English")
     kwargs = adapter.pipeline_kwargs(config, state)
-    assert kwargs["batch_strategy"] == "sentence"
+    assert kwargs["batch_strategy"] == "paragraph"
     fresh = adapter.pipeline_kwargs(config, {})
-    assert fresh["batch_strategy"] == "paragraph"
+    assert fresh["batch_strategy"] == "sentence"
 
 
 # ---------------------------------------------------------------------------

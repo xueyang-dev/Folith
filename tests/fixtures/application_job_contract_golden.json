@@ -34,7 +34,7 @@
         "translation_concurrency": 4,
         "batch_size": 4,
         "max_batch_chars": 2400,
-        "batch_strategy": "paragraph",
+        "batch_strategy": "sentence",
         "knowledge_feedback": true,
         "ocr_language": "ara",
         "ocr_quality": "high",
@@ -112,7 +112,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "250dcfdd75d9fdd90452a97d98a64d97157dbca2eed271264fcfa4b6298e1daf"
+      "fingerprint": "627d437710d58d0d594fc128bc936c6573e0f182be1f2732e3abaf4543dd9f2f"
     },
     "qt_new_pdf_job": {
       "config": {
@@ -142,7 +142,7 @@
         "translation_concurrency": 4,
         "batch_size": 4,
         "max_batch_chars": 2400,
-        "batch_strategy": "paragraph",
+        "batch_strategy": "sentence",
         "knowledge_feedback": true,
         "ocr_language": "",
         "ocr_quality": "standard",
@@ -214,7 +214,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "c16b67f0cded350299c09022821d0a0ed18aa08b0a552dc675bda62b56aca8bc"
+      "fingerprint": "6fca9e44737b4018d98b4e47a37e059579db0bccfd607a44b2d05bfcb3386c5e"
     },
     "resumed_pdf_job": {
       "config": {
@@ -250,7 +250,7 @@
         "translation_concurrency": 4,
         "batch_size": 8,
         "max_batch_chars": 6400,
-        "batch_strategy": "paragraph",
+        "batch_strategy": "sentence",
         "knowledge_feedback": true,
         "ocr_language": "ara",
         "ocr_quality": "historical",
@@ -323,7 +323,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "d17dd8fc991c0f69273883eb7a3a72f7b0c851e02e02619210485b021550d5d3"
+      "fingerprint": "7fc93ae13fa49a56c19395d953e741fb5ad1253454829421880e1b3cc8869692"
     }
   }
 }
