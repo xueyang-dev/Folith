@@ -2776,6 +2776,9 @@ class MainWindow(QMainWindow):
             if rows is None:
                 rows = self._segment_rows(job_id, state)
         # Leaving "prepare" for a large task builds the whole grid: say so first.
+        # The overlay no longer forces a synchronous paint (B-109 / 0.8.4 G1a
+        # crashed inside it on Windows), so this frame is drawn by the event loop
+        # as soon as ``workbench.apply`` below returns, not before it starts.
         if ((changed or force) and len(rows) >= self.LOADING_SEGMENTS
                 and getattr(self.workbench, "_showing_setup", False)):
             self._show_loading(i18n.tr('正在载入译文…'))

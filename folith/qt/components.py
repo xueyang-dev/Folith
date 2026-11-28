@@ -1991,7 +1991,22 @@ class LoadingOverlay(QWidget):
         column.addWidget(self._track, 0, Qt.AlignmentFlag.AlignHCenter)
 
     def present(self, message: str) -> None:
-        """Show over the whole parent and paint now (do not wait for the event loop)."""
+        """Show over the whole parent; the event loop paints the frame.
+
+        This used to end with ``repaint()``, "so the overlay is on screen before
+        the caller blocks".  A forced paint there runs *inside* whatever call stack
+        asked for it, and on the navigation path that stack is a worker result:
+        ``TaskRunner`` delivers ``on_done`` on the GUI thread from a queued
+        invocation, the window then opens the task and shows this overlay.  On
+        Windows the frozen package died inside Qt6Gui with ``present`` and
+        ``ProgressTrack.paintEvent`` on the stack (0.8.4 G1a, 2 of 35 rounds).
+
+        ``update()`` schedules the same frame for the next turn of the event loop,
+        which the caller reaches as soon as it returns — so the overlay still
+        appears before the task is applied, and nothing paints from inside a
+        callback.  Still no ``processEvents()``: a queued poll timer must not
+        re-enter the open.
+        """
         self._label.setText(message)
         self._track.setAccessibleName(message)
         self._track.setRange(0, 0)
@@ -2001,7 +2016,7 @@ class LoadingOverlay(QWidget):
         self.setGeometry(parent.rect())
         self.raise_()
         self.show()
-        self.repaint()      # no processEvents: a queued poll timer must not re-enter the open
+        self.update()
 
     def dismiss(self) -> None:
         self.hide()
