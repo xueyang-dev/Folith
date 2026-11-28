@@ -62,10 +62,12 @@ class StubEndpoint:
                 return self.url
             if self.proc.poll() is not None:
                 raise RuntimeError("stub server exited: "
-                                   + self.server_log.read_text(errors="replace")[-500:])
+                                   + self.server_log.read_text(
+                                       encoding="utf-8", errors="replace")[-500:])
             time.sleep(0.1)
         raise RuntimeError("stub server did not become ready: "
-                           + self.server_log.read_text(errors="replace")[-1500:])
+                           + self.server_log.read_text(
+                               encoding="utf-8", errors="replace")[-1500:])
 
     def stop(self) -> None:
         if self.proc is not None and self.proc.poll() is None:
@@ -76,6 +78,21 @@ class StubEndpoint:
                 self.proc.kill()
         if self._handle is not None:
             self._handle.close()
+
+
+def load_report(path) -> dict:
+    """Read the report a probe run left on disk, decoded as UTF-8.
+
+    Its writer (``folith.qt.selftest.write_report``) always writes UTF-8, but the
+    reader used to take the platform default: on a Chinese Windows install that
+    is GBK, so any report carrying a Chinese field failed with
+    ``UnicodeDecodeError`` *after* the frozen flow had already succeeded, and the
+    probe exited 1 with the failure pointing at the report instead of the run.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
             result = subprocess.run(command, env=env, cwd=out_dir,
                                     timeout=args.timeout, capture_output=True, text=True,
                                     encoding="utf-8", errors="replace")
-            report = json.loads(Path(args.out).read_text()) if Path(args.out).is_file() else {}
+            report = load_report(args.out)
             print(json.dumps({"ok": report.get("ok"), "exit_code": result.returncode,
                               "stderr_tail": result.stderr[-1000:]}, ensure_ascii=False))
             return 0 if result.returncode == 0 and report.get("ok") else 1

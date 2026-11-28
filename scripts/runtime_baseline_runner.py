@@ -2055,7 +2055,7 @@ def current_rss_mb() -> float | None:
     """Resident set size of this process, in MB, or ``None`` if unreadable."""
     if sys.platform.startswith("linux"):
         try:
-            pages = int(Path("/proc/self/statm").read_text().split()[1])
+            pages = int(Path("/proc/self/statm").read_text(encoding="utf-8").split()[1])
             return pages * (os.sysconf("SC_PAGE_SIZE") / (1024.0 * 1024.0))
         except (OSError, ValueError, IndexError):
             return None
