@@ -374,7 +374,7 @@ def test_review_state_persist_and_restore(monkeypatch):
                     {"Source": "Skopos theory", "Target": "目的论"},
                     {"Source": "fidelity principle", "Target": "忠实原则"},
                 ])
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 calls["translate"] += 1
                 return json.dumps([f"译文：{s}" for _, s in _numbered(user_prompt)])
             if "翻译审校专家" in system_prompt:
@@ -572,7 +572,7 @@ def test_batch_injection_log_and_prompt():
         prompts = []
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 prompts.append(system_prompt + "\n" + user_prompt)
                 return json.dumps([f"译文：{s}" for _, s in _numbered(user_prompt)])
             if "翻译审校专家" in system_prompt:
@@ -701,7 +701,7 @@ def test_retranslate_generates_a_candidate_without_writing():
         }
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 return json.dumps(["完整译文：中队已经为远程任务做好了充分准备。" * 5])
             return "[]"
 
@@ -805,7 +805,7 @@ def test_pipeline_blocking_delivery_status():
             if "翻译审校专家" in system_prompt:
                 return json.dumps([{"segment_index": 1, "severity": "blocking",
                                     "reason": "语义严重错误，需人工确认"}])
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 return json.dumps([f"译文：{s}" for _, s in _numbered(user_prompt)])
             return "报告章节内容。"
 
@@ -1072,7 +1072,7 @@ def test_report_prompt_evidence_contract():
                 return content + "该结论不超出当前项目。" * 30
             if "翻译审校专家" in system_prompt:
                 return '[]'
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 return json.dumps([f"译文：{s}" for _, s in _numbered(user_prompt)])
             return "报告章节内容。"
 
@@ -1114,7 +1114,7 @@ def test_initial_target_recorded():
                 return '[]'
             if "翻译审校专家" in system_prompt:
                 return '[]'
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 if "以下译文未通过检查" in user_prompt:
                     return json.dumps(["修正译文：请参考 https://example.com/ref 获取详细信息。"])
                 return json.dumps(["初译译文：请参考 获取详细信息。"])  # 故意丢失 URL

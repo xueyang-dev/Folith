@@ -18,7 +18,7 @@ _MARK_SYNOPSIS = "全书理解器"
 _MARK_TERMS = "长文翻译的术语编辑"
 _MARK_KNOWLEDGE = "翻译流知识抽取器"
 _MARK_REVIEWER = "独立的翻译审校专家"
-_MARK_TRANSLATOR = "学术翻译专家"
+_MARK_TRANSLATOR = "专业翻译人员"
 _MARK_REPAIR = "以下译文未通过检查"
 
 # 译文中的保留项回填（纯 ASCII 的非保留内容会触发"源语残留"检查）。

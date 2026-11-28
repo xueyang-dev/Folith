@@ -64,7 +64,7 @@ from folith import models as _models  # noqa: E402
 # Role dispatch markers (must match the production prompts)
 # --------------------------------------------------------------------------- #
 REVIEW_MARKER = "独立的翻译审校专家"
-TRANSLATOR_MARKER = "学术翻译专家"
+TRANSLATOR_MARKER = "专业翻译人员"
 REPAIR_MARKER = "以下译文未通过检查"
 KNOWLEDGE_MARKER = "翻译流知识抽取器"
 
@@ -1312,9 +1312,12 @@ def test_multi_batch_chain_propagation(tmp_path):
     assert len(differing) >= 4, differing
 
     # The level vector differs for every batch generated while a staged batch exists.
+    from folith.engine.quality_tuning import RECENT_TARGET_CONTEXT_COUNT
     for offset in (2, 4, 6):
-        assert sequential.levels(offset) == ["reviewed", "reviewed"]
-        assert strategy_a.levels(offset) == ["generated", "generated"]
+        expected_len = min(offset, RECENT_TARGET_CONTEXT_COUNT)
+        assert sequential.levels(offset) == ["reviewed"] * expected_len
+        assert strategy_a.levels(offset)[-2:] == ["generated", "generated"]
+        assert strategy_a.levels(offset) != sequential.levels(offset)
 
 
 def test_context_freshness_diff_is_fieldwise(tmp_path):

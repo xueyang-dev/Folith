@@ -170,7 +170,7 @@ def test_standard_runtime_runs_understanding_and_injects_it_into_translation_con
                 })
             if "翻译流知识抽取器" in system:
                 return "[]"
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 current = user.split("【待翻译段落（按序号返回等长数组）】", 1)[-1]
                 count = len(re.findall(r"(?m)^\d+\.\s+", current))
                 return json.dumps(["这是完整的中文译文。"] * count)
@@ -188,7 +188,7 @@ def test_standard_runtime_runs_understanding_and_injects_it_into_translation_con
         assert state["profile_done"] and state["understanding_done"]
         assert state["semantic_units"] and state["section_digests"]
         assert state["document_synopsis"]["summary"] == "全文概要内容"
-        translation_prompts = [user for system, user in prompts if "学术翻译专家" in system]
+        translation_prompts = [user for system, user in prompts if "专业翻译人员" in system]
         assert translation_prompts
         assert "全文概要内容" in translation_prompts[0]
         assert "当前单元摘要内容" in translation_prompts[0]
@@ -225,7 +225,7 @@ def test_standard_continuity_observation_is_bounded_and_available_without_review
                             "kind": "term",
                         })
                 return json.dumps(observations)
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 current = user.split("【待翻译段落（按序号返回等长数组）】", 1)[-1]
                 current_sources = re.findall(r"(?m)^\d+\.\s+(.+)$", current)
                 return json.dumps([
@@ -246,7 +246,7 @@ def test_standard_continuity_observation_is_bounded_and_available_without_review
         candidates = result["translation_continuity"]
         assert candidates and candidates[0]["provenance"] == "generated_continuity"
         later_translation_users = [
-            user for _, _, system, user in calls if "学术翻译专家" in system
+            user for _, _, system, user in calls if "专业翻译人员" in system
         ]
         assert len(later_translation_users) == 2
         assert "volumetric sensing -> 体积感知" in later_translation_users[1]
@@ -272,7 +272,7 @@ def test_auxiliary_model_and_adaptive_feedback_policy_are_audited(tmp_path):
                     "observed_target": "重复术语",
                     "kind": "term",
                 }])
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 current = user.split("【待翻译段落（按序号返回等长数组）】", 1)[-1]
                 count = len(re.findall(r"(?m)^\d+\.\s+", current))
                 return json.dumps(["重复术语在这里。"] * count)
@@ -300,7 +300,7 @@ def test_auxiliary_model_and_adaptive_feedback_policy_are_audited(tmp_path):
                    for provider, model, system in calls
                    if "翻译流知识抽取器" in system)
         assert all(model != "cheap-model" for provider, model, system in calls
-                   if "学术翻译专家" in system)
+                   if "专业翻译人员" in system)
         assert result["llm_usage"]["by_role"]["translation"]["calls"] > 0
         assert result["llm_usage"]["by_role"]["auxiliary"]["calls"] > 0
         assert result["llm_usage"]["estimated_total_tokens"] > 0
@@ -349,7 +349,7 @@ def test_translator_and_reviewer_role_routing_is_distinct(tmp_path):
                 return "[]"
             if "翻译流知识抽取器" in system:
                 return "[]"
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 return '["这是完整的中文译文。"]'
             raise AssertionError(f"unexpected prompt: {system[:80]}")
 
@@ -365,7 +365,7 @@ def test_translator_and_reviewer_role_routing_is_distinct(tmp_path):
                              "model": "model-B"},
         )
         assert result["pairs"][0]["reviewed"] is True
-        translation_calls = [item for item in calls if "学术翻译专家" in item[2]]
+        translation_calls = [item for item in calls if "专业翻译人员" in item[2]]
         review_calls = [item for item in calls if "独立的翻译审校专家" in item[2]]
         assert translation_calls and all(item[:2] == ("translator-provider", "model-A")
                                          for item in translation_calls)

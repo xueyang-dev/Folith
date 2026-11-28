@@ -753,7 +753,8 @@ def find_residuals(src, tgt, target_lang):
     """检测目标语言中残留的源语言片段。
 
     返回 [(片段, severity)]：连续 ≥2 个源语单词/较长汉字串 -> actionable；
-    单个词（可能是专有名词）-> informational。启发式，不替代审校。
+    单个全小写词（普通词，如 cafeteria）-> actionable；单个含大写的词（可能是
+    专有名词或品牌）-> informational。启发式，不替代审校。
     """
     tgt_clean = _c.PRESERVE_RE.sub(" ", tgt or "")
     if target_lang == "English":
@@ -765,17 +766,19 @@ def find_residuals(src, tgt, target_lang):
     allowed = {"mti"}  # 产品名等明确保留词白名单（审校负责语义判断）
     words = re.findall(r'[A-Za-z]{5,}', tgt_clean)
     hits = [w for w in words if w.lower() in src_words and w.lower() not in allowed]
+    def severity(run):
+        return "actionable" if len(run) >= 2 or run[0].islower() else "informational"
+
     result, run = [], []
     for w in words:
         if w in hits:
             run.append(w)
         else:
             if run:
-                result.append((" ".join(run),
-                               "actionable" if len(run) >= 2 else "informational"))
+                result.append((" ".join(run), severity(run)))
                 run = []
     if run:
-        result.append((" ".join(run), "actionable" if len(run) >= 2 else "informational"))
+        result.append((" ".join(run), severity(run)))
     return result
 
 

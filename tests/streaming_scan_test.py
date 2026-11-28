@@ -96,7 +96,7 @@ def streaming_job(tmp_path, monkeypatch):
     translator = OfflineProvider()
 
     def call_llm(provider, api_key, model, system_prompt, user_prompt, *args, **kwargs):
-        if "学术翻译专家" in (system_prompt or "") and not started.is_set():
+        if "专业翻译人员" in (system_prompt or "") and not started.is_set():
             vision.pages_read_before_translation = vision.max_page_requested + 1
             started.set()
         return translator(provider, api_key, model, system_prompt, user_prompt,

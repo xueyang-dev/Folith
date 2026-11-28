@@ -59,11 +59,17 @@ LAYERS: Tuple[str, ...] = (
 #: Values that must never be echoed into diagnostics, fixtures or logs.
 SECRET_FIELDS = frozenset({"api_key", "reviewer_api_key"})
 
-#: The product's default style rule.  It used to be a literal duplicated in the
-#: Qt adapter and in the Streamlit shell; one default belongs in one place.
-DEFAULT_STYLE_RULES = (
+#: Legacy academic default from <= 0.8.3, retained only so persisted jobs that
+#: still carry the untouched old default can auto-adapt to their detected genre.
+LEGACY_ACADEMIC_STYLE_RULES = (
     "保持学术书面语；专有名词、作者姓名、机构名、引用标注、URL 等保留原文；"
     "标点遵循目标语言规范。")
+
+#: The product's default style rule: neutral across genres so fiction, business
+#: and general books are not forced into academic prose or verbatim proper nouns.
+DEFAULT_STYLE_RULES = (
+    "忠实原文语义与体裁语气，表达自然流畅；遵循术语表与专名一致译法；"
+    "保留数字、引用标注与 URL；标点遵循目标语言规范。")
 
 #: Environment variables the core reads for settings this contract can also
 #: carry.  They are applied *inside* the core when the resolved value is absent,

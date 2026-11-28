@@ -49,7 +49,7 @@ def _job(job_id, *, pairs, filename="candidate.docx", **extra):
 
 def _stub_llm(text="候选译文：中队已经为远程任务做好了充分准备。"):
     def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-        if "学术翻译专家" in system_prompt:
+        if "专业翻译人员" in system_prompt:
             return json.dumps([text])
         return "[]"
 

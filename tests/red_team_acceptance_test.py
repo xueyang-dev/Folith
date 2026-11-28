@@ -53,7 +53,7 @@ def _compliant_translation_llm(glossary):
             return '[]'
         if "翻译审校专家" in system_prompt:
             return '[]'
-        if "学术翻译专家" in system_prompt:
+        if "专业翻译人员" in system_prompt:
             out = []
             for _, src in _numbered(user_prompt):
                 parts = []
@@ -105,7 +105,7 @@ def test_p0_glossary_staleness():
         base_llm = _compliant_translation_llm(v1)
 
         def llm(provider, api_key, model, system_prompt, user_prompt, temperature=0.1):
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 calls["translate"] += 1
             return base_llm(provider, api_key, model, system_prompt, user_prompt,
                             temperature)
@@ -594,7 +594,7 @@ def test_crash_recovery_no_duplicate_tm():
         docx_bytes = _make_docx(texts)
 
         def flaky(provider, api_key, model, system_prompt, user_prompt, temperature=0.1, base_url=None):
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 if any("第5段" in s for _, s in _numbered(user_prompt)):
                     raise RuntimeError("模拟中断")
                 return json.dumps([f"译文：{s}" for _, s in _numbered(user_prompt)])
@@ -621,7 +621,7 @@ def test_crash_recovery_no_duplicate_tm():
             "失败的批次不得提交任何译文（前一批 4 段应已落盘）"
 
         def good(provider, api_key, model, system_prompt, user_prompt, temperature=0.1, base_url=None):
-            if "学术翻译专家" in system_prompt:
+            if "专业翻译人员" in system_prompt:
                 return json.dumps([f"译文：{s}" for _, s in _numbered(user_prompt)])
             if "翻译审校专家" in system_prompt:
                 return '[]'

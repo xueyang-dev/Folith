@@ -172,6 +172,10 @@ class EntityRegistry:
         target = _clean(observed_target)
         if not source or not target:
             return {}
+        if _rank(provenance) < _rank("reviewed") \
+                and terminology.is_function_word_expression(source):
+            # A pronoun's rendering depends on its referent in each sentence.
+            return {}
         record = self._find(source)
         if record is None:
             record = {
@@ -292,6 +296,9 @@ class EntityRegistry:
                 for text in source_texts
             )
             if not source or not matched or record.get("status") == "rejected":
+                continue
+            if record.get("status") != "locked" \
+                    and terminology.is_function_word_expression(source):
                 continue
             if source in locked_terms and record.get("status") != "locked":
                 # A project term is authoritative over a generated entity hint.

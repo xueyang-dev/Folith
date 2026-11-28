@@ -315,7 +315,7 @@ def test_a_finished_pipeline_run_runs_the_pass(monkeypatch):
         return original(state)
 
     def llm(provider, key, model, system, user, temperature=0.1):
-        if "学术翻译专家" in system:
+        if "专业翻译人员" in system:
             return '["流水线译文。"]'
         return "[]"
 

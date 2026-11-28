@@ -130,7 +130,7 @@
         "auto_term": true,
         "translation_theory": "目的论 (Skopos Theory)",
         "user_glossary": [],
-        "style_rules": "保持学术书面语；专有名词、作者姓名、机构名、引用标注、URL 等保留原文；标点遵循目标语言规范。",
+        "style_rules": "忠实原文语义与体裁语气，表达自然流畅；遵循术语表与专名一致译法；保留数字、引用标注与 URL；标点遵循目标语言规范。",
         "enable_review": true,
         "enable_annotate": false,
         "enable_report": false,
@@ -214,7 +214,7 @@
         "use_tm",
         "user_glossary"
       ],
-      "fingerprint": "c350b1f8cd6df87504ba47d308a853c5edf43d1060389442cbc8a050c9f6420d"
+      "fingerprint": "6fca9e44737b4018d98b4e47a37e059579db0bccfd607a44b2d05bfcb3386c5e"
     },
     "resumed_pdf_job": {
       "config": {

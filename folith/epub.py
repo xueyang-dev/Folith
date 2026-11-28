@@ -995,13 +995,54 @@ def _toc_links(paragraphs: list[str], nodes: list[dict]) -> dict[int, int]:
     return links
 
 
+#: Han, kana, Hangul and full-width punctuation: text that is written without
+#: spaces between words or sentences.
+_CJK_SIDE_RE = re.compile(
+    r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff"
+    r"\u3000-\u303f\uff01-\uff60\u2014\u2026]")
+#: Curly quotes are shared by Chinese and English typography, so they decide
+#: nothing on their own: the character inside them does.
+_SHARED_QUOTES = "\u201c\u201d\u2018\u2019"
+
+
+def _cjk_side(char: str) -> bool:
+    return bool(char) and bool(_CJK_SIDE_RE.match(char))
+
+
+#: Leading punctuation that attaches directly to the preceding segment without
+#: inserting a half-width space (#630: ``（被扔鸡蛋不算吗？）`` + ``.``).
+_ATTACH_TO_LEFT_PUNCT = frozenset(".,;:!?。！？；：，、）”」】》’)]}")
+
+
+def _joins_without_space(left: str, right: str) -> bool:
+    """Whether two adjacent segments of one paragraph meet without a blank.
+
+    Chinese/Japanese segments are concatenated directly; a sentence boundary
+    such as ``发颤。`` + ``“我太害怕了。”`` must not gain a half-width space.
+    Leading punctuation (``.,;:!?`` / closing brackets) also attaches directly
+    without inserting a stray space (#630).  English word/sentence boundaries
+    (``scared.”`` + ``“Hi``) keep the space.
+    """
+    edge_left, edge_right = left[-1], right[0]
+    # A dot that opens a token (``.NET``, ``.env``) is not trailing punctuation.
+    if edge_right in _ATTACH_TO_LEFT_PUNCT and not re.match(r"\.[A-Za-z0-9]", right):
+        return True
+    if not (_cjk_side(edge_left) or edge_left in _SHARED_QUOTES):
+        return False
+    if not (_cjk_side(edge_right) or edge_right in _SHARED_QUOTES):
+        return False
+    core_left = next((c for c in reversed(left) if c not in _SHARED_QUOTES), "")
+    core_right = next((c for c in right if c not in _SHARED_QUOTES), "")
+    return _cjk_side(core_left) or _cjk_side(core_right)
+
+
 def _join_targets(values: list[str]) -> str:
     result = ""
     for value in values:
         value = _text(value).strip()
         if not value:
             continue
-        if result and not (re.search(r"[\u3400-\u9fff。！？；：，、]$", result) and re.match(r"[\u3400-\u9fff]", value)):
+        if result and not _joins_without_space(result, value):
             result += " "
         result += value
     return result

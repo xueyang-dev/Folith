@@ -46,7 +46,7 @@ def test_translation_gate_does_not_submit_quarantined_fragments(tmp_path: Path):
 
     def llm(provider, api_key, model, system, user, temperature=0.1, **kwargs):
         calls.append((system, user))
-        if "学术翻译专家" in system:
+        if "专业翻译人员" in system:
             return json.dumps(["这是完整译文。"])
         if "翻译流知识抽取器" in system:
             return "[]"
@@ -67,7 +67,7 @@ def test_translation_gate_does_not_submit_quarantined_fragments(tmp_path: Path):
         ]
         assert result["pairs"][0]["target"] == ""
         assert result["pairs"][1]["target"] == ""
-        submitted = "\n".join(user for system, user in calls if "学术翻译专家" in system)
+        submitted = "\n".join(user for system, user in calls if "专业翻译人员" in system)
         assert "kati" not in submitted
         assert "stud with ber" not in submitted
         gate_findings = [

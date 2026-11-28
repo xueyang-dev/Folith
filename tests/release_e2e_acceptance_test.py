@@ -28,7 +28,7 @@ def _docx_bytes(paragraphs: list[str]) -> bytes:
 def _translation_llm(*args, **kwargs):
     system = str(args[3] if len(args) > 3 else kwargs.get("system_prompt", ""))
     user = str(args[4] if len(args) > 4 else kwargs.get("user_prompt", ""))
-    if "学术翻译专家" in system:
+    if "专业翻译人员" in system:
         section = user.rsplit("待翻译段落", 1)[-1]
         sources = re.findall(r"^\s*\d+\.\s+(.+?)\s*$", section, re.MULTILINE)
         return json.dumps(
@@ -72,7 +72,7 @@ def test_new_task_noisy_import_to_frozen_delivery(tmp_path, monkeypatch):
 
     def interrupted_llm(*args, **kwargs):
         system = str(args[3] if len(args) > 3 else kwargs.get("system_prompt", ""))
-        if "学术翻译专家" in system:
+        if "专业翻译人员" in system:
             raise RuntimeError("simulated interruption")
         return "[]"
 
