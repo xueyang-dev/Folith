@@ -52,7 +52,7 @@ from folith import terminology as terminology_mod  # noqa: E402
 from folith import translation_evidence as _evidence  # noqa: E402
 from folith.entity_registry import EntityRegistry  # noqa: E402
 
-TRANSLATOR_MARK = "学术翻译专家"
+TRANSLATOR_MARK = "专业翻译人员"
 REVIEWER_MARK = "独立的翻译审校专家"
 KNOWLEDGE_MARK = "翻译流知识抽取器"
 CURRENT_HEADER = "【待翻译段落（按序号返回等长数组）】"

@@ -107,7 +107,7 @@ def main():
 
         def offline_provider(*call_args, **_kwargs):
             system, user = call_args[3:5]
-            if "学术翻译专家" in system:
+            if "专业翻译人员" in system:
                 units = re.findall(r"^\s*\d+\.\s+(.+?)\s*$",
                                    user.rsplit("待翻译段落", 1)[-1], re.MULTILINE)
                 return json.dumps([f"这是第 {index + 1} 段中文译文。"

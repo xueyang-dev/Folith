@@ -54,7 +54,7 @@ def make_mock_llm(glossary_entries):
             return '[]'
         if "翻译审校专家" in system_prompt:
             return '[]'
-        if "学术翻译专家" in system_prompt:
+        if "专业翻译人员" in system_prompt:
             out = []
             for _, src in _numbered(user_prompt):
                 parts = []
