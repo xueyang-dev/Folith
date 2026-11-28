@@ -19,6 +19,8 @@ from packaging.version import InvalidVersion, Version
 import zipfile
 from pathlib import Path
 
+from folith import model_roles as _model_roles
+
 from folith.desktop import paths as desktop_paths
 
 from . import adapter, platform_ui
@@ -532,6 +534,14 @@ def _clean_export_member(name: str, payload: bytes) -> bytes:
     except (UnicodeDecodeError, ValueError):
         return payload
     if name == "state.json":
+        # CX-34: 0.8.3 wrote the raw endpoint into the role copies; #637 cleans
+        # new ones, but an upgraded task keeps the old bytes.  Clean them on the
+        # way out so a backup taken after an upgrade is still credential-free.
+        if isinstance(data, dict):
+            pipeline = data.get("pipeline_config")
+            if isinstance(pipeline, dict):
+                _model_roles.scrub_connection_copies(pipeline)
+            _model_roles.scrub_role_copy(data.get("auxiliary_config"))
         for failure in data.get("translation_failures") or ():
             if isinstance(failure, dict) and failure.get("reason"):
                 failure["reason"] = EXPORT_CLEANED_ERROR_TEXT
@@ -546,6 +556,9 @@ def _clean_export_member(name: str, payload: bytes) -> bytes:
         if data.get("warning"):
             data["warning"] = EXPORT_CLEANED_ERROR_TEXT
     elif name == "runtime_state.json" and isinstance(data, dict):
+        # CX-34: a state file written before this release keeps the raw URL in
+        # ``worker_connection``; the export must not carry those credentials.
+        _model_roles.scrub_connection_copies(data.get("worker_connection"))
         error = data.get("error")
         if isinstance(error, dict) and error.get("message"):
             error["message"] = EXPORT_CLEANED_ERROR_TEXT

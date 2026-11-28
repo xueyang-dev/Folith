@@ -514,8 +514,17 @@ def _conn_base(value):
 
 
 def _connection_role_signature(provider, model, base_url):
-    return {"provider": _conn_text(provider), "model": _conn_text(model),
-            "base_url": _conn_base(base_url)}
+    """The comparable identity of one role, with URL credentials kept out of it.
+
+    ``runtime_state.json`` records this signature and the backup export ships
+    that file, so the raw URL must not be here (#637 cleans the *public* role
+    copies; this one is a different path).  ``connection_endpoint_signature``
+    drops userinfo/credential query parameters and contributes only a short
+    fingerprint for them, so a credential-only edit still reads as a change.
+    """
+    signature = {"provider": _conn_text(provider), "model": _conn_text(model)}
+    signature.update(_model_roles.connection_endpoint_signature(base_url))
+    return signature
 
 
 def _api_key_fingerprint(value):
