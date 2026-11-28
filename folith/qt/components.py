@@ -1990,8 +1990,29 @@ class LoadingOverlay(QWidget):
         column.addWidget(self._label, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(self._track, 0, Qt.AlignmentFlag.AlignHCenter)
 
-    def present(self, message: str) -> None:
-        """Show over the whole parent and paint now (do not wait for the event loop)."""
+    def present(self, message: str, *, paint_now: bool = False) -> None:
+        """Show over the whole parent; the event loop paints the frame by default.
+
+        A forced ``repaint()`` here runs *inside* whatever call stack asked for it.
+        On the navigation path that stack is a worker result (``TaskRunner``
+        delivers ``on_done`` on the GUI thread from a queued invocation, the window
+        then opens the task and shows this overlay), and on Windows the frozen
+        package died inside Qt6Gui with ``present`` and ``ProgressTrack.paintEvent``
+        on the stack (0.8.4 G1a, 2 of 35 rounds; the same crash is in the 0.8.3
+        release, so it is not a regression).  The default is therefore ``update()``:
+        the frame is painted on the next turn of the event loop, which the caller
+        reaches as soon as it returns, and nothing paints from inside a callback.
+
+        ``paint_now`` is the 0.8.3 behaviour and only the ">=300 segments, leaving
+        Prepare" refresh passes it, because that caller does a long synchronous
+        ``workbench.apply`` right after this returns.  That path still forces a
+        synchronous paint from a callback and carries the same risk class as G1a;
+        G1a does not cover it.  The real fix (wait for the first frame, then apply)
+        is scoped for 0.8.5.
+
+        Neither branch calls ``processEvents()``: a queued poll timer must not
+        re-enter the open.
+        """
         self._label.setText(message)
         self._track.setAccessibleName(message)
         self._track.setRange(0, 0)
@@ -2001,7 +2022,10 @@ class LoadingOverlay(QWidget):
         self.setGeometry(parent.rect())
         self.raise_()
         self.show()
-        self.repaint()      # no processEvents: a queued poll timer must not re-enter the open
+        if paint_now:
+            self.repaint()
+        else:
+            self.update()
 
     def dismiss(self) -> None:
         self.hide()

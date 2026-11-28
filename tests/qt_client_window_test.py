@@ -4923,3 +4923,58 @@ def test_514_async_home_refresh_does_not_scan_on_the_gui_thread(client, monkeypa
     assert call_threads, "the home list was never built"
     assert gui_ident not in call_threads, "list_jobs ran on the GUI thread"
     assert all(t != gui_ident for t in call_threads)
+
+
+# ------------------------------------------------------- B-109/B-111 遮罩绘制时机
+def _seed_not_started_big_job(client, name: str, count: int) -> str:
+    """≥300 段、尚未开始的任务：正文区是「译前准备」，命中遮罩分支。"""
+    job_id = _seed_job_for_keyboard(client["adapter"], client["core"], client["tmp"], name,
+                                    [f"第 {i} 段。" for i in range(count)])
+    state = client["core"].load_job_state(job_id) or {}
+    state["p1_done"] = state["p2_done"] = False
+    client["core"].save_job_state(job_id, state)
+    return job_id
+
+
+def test_the_large_grid_overlay_is_painted_before_the_apply(client, monkeypatch):
+    """B-111：≥300 段准备页切换保留 0.8.3 的「先画后 apply」。
+
+    这条路径仍然在回调里同步重绘（同类风险，G1a 未覆盖，正式修法在 0.8.5），
+    所以这里钉的是它没有退化：apply 运行时遮罩已经画过，结束后隐藏。
+    """
+    window = client["window"]
+    job_id = _seed_not_started_big_job(client, "big-prep.docx", 320)
+    open_job_and_wait(window, job_id)
+    window.timer.stop()
+    assert window.workbench._showing_setup, "未开始的任务应停在译前准备页"
+
+    events: list[str] = []
+    overlay = window._loading_overlay
+    assert overlay is not None
+    real_paint = overlay.paintEvent
+
+    def paint(event):
+        if overlay.isVisible():
+            events.append("paint")
+        return real_paint(event)
+
+    monkeypatch.setattr(overlay, "paintEvent", paint)
+    real_apply = window.workbench.apply
+
+    def apply(*args, **kwargs):
+        events.append("apply")
+        assert overlay.isVisible(), "apply 时遮罩必须还在屏幕上"
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(window.workbench, "apply", apply)
+    real_hide = window._hide_loading
+
+    def hide():
+        events.append("dismiss")
+        return real_hide()
+
+    monkeypatch.setattr(window, "_hide_loading", hide)
+
+    window.refresh_workbench(force=True)
+    assert events == ["paint", "apply", "dismiss"], events
+    assert not overlay.isVisible()
