@@ -4547,6 +4547,10 @@ def test_leaving_prepare_for_a_large_task_shows_the_overlay(client, monkeypatch)
     monkeypatch.setattr(window.workbench, "apply",
                         lambda *a, **k: seen.append(_overlay_visible(window)) or real_apply(*a, **k))
     window.refresh_workbench(force=True)
+    # B-110: the apply waits for the overlay's first frame, so it runs on a later
+    # event-loop turn; the overlay must be visible *when it runs*, not after.
+    assert seen == []
+    assert _pump_until(client["app"], lambda: bool(seen))
     assert seen == [True]
     assert not _overlay_visible(window)
 
@@ -4923,3 +4927,98 @@ def test_514_async_home_refresh_does_not_scan_on_the_gui_thread(client, monkeypa
     assert call_threads, "the home list was never built"
     assert gui_ident not in call_threads, "list_jobs ran on the GUI thread"
     assert all(t != gui_ident for t in call_threads)
+
+
+# ---------------------------------------------------------------- B-110 遮罩首帧
+def _pump_until(app, predicate, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+def _seed_not_started_big_job(client, name: str, count: int) -> str:
+    """≥300 段、尚未开始的任务：正文区是「译前准备」，命中遮罩分支。"""
+    job_id = _seed_job_for_keyboard(client["adapter"], client["core"], client["tmp"], name,
+                                    [f"第 {i} 段。" for i in range(count)])
+    state = client["core"].load_job_state(job_id) or {}
+    state["p1_done"] = state["p2_done"] = False
+    client["core"].save_job_state(job_id, state)
+    return job_id
+
+
+def test_the_large_grid_overlay_paints_before_the_apply_and_hides_after(client, monkeypatch):
+    """B-110：≥300 段准备页切换，遮罩必须先画出，再建表，最后才隐藏。"""
+    window, app = client["window"], client["app"]
+    job_id = _seed_not_started_big_job(client, "big-prep.docx", 320)
+    open_job_and_wait(window, job_id)
+    window.timer.stop()
+    assert window.workbench._showing_setup, "未开始的任务应停在译前准备页"
+
+    events: list[str] = []
+    overlay = window._loading_overlay
+    assert overlay is not None
+    real_paint = overlay.paintEvent
+
+    def paint(event):
+        if overlay.isVisible():
+            events.append("paint")
+        return real_paint(event)
+
+    monkeypatch.setattr(overlay, "paintEvent", paint)
+    real_apply = window.workbench.apply
+
+    def apply(*args, **kwargs):
+        events.append("apply")
+        assert overlay.isVisible(), "apply 时遮罩必须还在屏幕上"
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(window.workbench, "apply", apply)
+    real_hide = window._hide_loading
+
+    def hide():
+        events.append("dismiss")
+        return real_hide()
+
+    monkeypatch.setattr(window, "_hide_loading", hide)
+
+    window.refresh_workbench(force=True)
+    assert events == [], "显示遮罩后必须先返回，让事件循环画出这一帧"
+    assert overlay.isVisible()
+    assert _pump_until(app, lambda: "dismiss" in events), events
+    assert events[:3] == ["paint", "apply", "dismiss"], events
+    assert not overlay.isVisible()
+
+
+def test_a_second_refresh_while_the_frame_is_pending_applies_once(client, monkeypatch):
+    """同一请求只应用一次：等待首帧时又来一次刷新，只保留最新的那份工作。"""
+    window, app = client["window"], client["app"]
+    job_id = _seed_not_started_big_job(client, "big-prep-twice.docx", 320)
+    open_job_and_wait(window, job_id)
+    window.timer.stop()
+
+    applied: list[str] = []
+    real_apply = window.workbench.apply
+
+    def apply(*args, **kwargs):
+        applied.append(str(kwargs.get("prepared") and "x" or "x"))
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(window.workbench, "apply", apply)
+    real_hide = window._hide_loading
+    hides: list[int] = []
+    monkeypatch.setattr(window, "_hide_loading",
+                        lambda: hides.append(1) or real_hide())
+
+    window.refresh_workbench(force=True)
+    window.refresh_workbench(force=True)
+    assert applied == [], "两次都只应排队，不应在调用栈里直接建表"
+    assert _pump_until(app, lambda: bool(applied)), applied
+    # 让可能残留的第二个续段也跑完，确认它没有第二次建表。
+    for _ in range(20):
+        app.processEvents()
+        time.sleep(0.01)
+    assert len(applied) == 1, f"同一请求被应用了 {len(applied)} 次"

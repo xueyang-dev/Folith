@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -87,8 +88,8 @@ def test_the_frame_is_not_lost_one_event_loop_turn_later(app, monkeypatch):
     paints = _paint_count(overlay)
 
     overlay.present("正在打开任务…")
+    assert paints["paints"] == 0, "present() 只排队，这一帧还没画"
     app.processEvents()  # 事件循环转一轮：这就是 present() 之后调用方立刻会到达的地方
-
     assert paints["paints"] >= 1, "延迟绘制不能变成不绘制"
 
 
@@ -107,20 +108,32 @@ def test_present_never_processes_events(app, monkeypatch):
     assert overlay.isVisible()
 
 
-def test_presenting_from_a_worker_done_callback_does_not_re_enter(app, monkeypatch):
-    """worker 的 ``done`` 是排队回主线程的回调；在里面显示遮罩不能同步绘制。"""
+def test_a_real_task_runner_callback_presents_without_painting(app, monkeypatch):
+    """真实 ``TaskRunner`` 在 GUI 线程投递 ``on_done``；在其中显示遮罩不得同步绘制。
+
+    这正是 G1a 的调用形状（worker 结果 → 回调 → 遮罩），不是本地手写一次调用。
+    """
+    from folith.qt.workers import TaskRunner
+
     host = QWidget()
     host.resize(400, 300)
     host.show()
     repaint_calls = _spy_repaint(monkeypatch)
-    re_entries = {"n": 0}
+    seen = {}
+    runner = TaskRunner()
 
-    def worker_done() -> None:  # 与 TaskRunner 把 on_done 投递到 GUI 线程等价
-        re_entries["n"] += 1
+    def on_done(_value) -> None:
         overlay = components.LoadingOverlay(host)
         overlay.present("正在打开任务…")
+        seen["visible"] = overlay.isVisible()
 
-    worker_done()
-
-    assert re_entries["n"] == 1
+    try:
+        runner.submit(lambda: 1, on_done=on_done, label="overlay-probe")
+        deadline = time.monotonic() + 5
+        while "visible" not in seen and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+    finally:
+        runner.abandon()
+    assert seen.get("visible") is True, "回调没有在 GUI 线程上跑完"
     assert repaint_calls["n"] == 0

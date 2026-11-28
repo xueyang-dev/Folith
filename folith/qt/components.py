@@ -1986,9 +1986,26 @@ class LoadingOverlay(QWidget):
         self._track = ProgressTrack()
         self._track.setRange(0, 0)
         self._track.setFixedWidth(220)
+        self._after_paint = None
         column.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(self._label, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(self._track, 0, Qt.AlignmentFlag.AlignHCenter)
+
+    def run_after_next_paint(self, callback) -> None:
+        """Run *callback* once, right after this widget paints its next frame.
+
+        The callback runs **inside** ``paintEvent``, so it may only schedule work
+        (the window queues it on its own single-shot timer); it must not apply
+        state or repaint anything.  A later call replaces an earlier one, and a
+        pending callback survives ``dismiss()`` so a hidden overlay cannot strand
+        its continuation.
+        """
+        self._after_paint = callback
+
+    def _fire_after_paint(self) -> None:
+        callback, self._after_paint = self._after_paint, None
+        if callback is not None:
+            callback()
 
     def present(self, message: str) -> None:
         """Show over the whole parent; the event loop paints the frame.
@@ -2030,6 +2047,9 @@ class LoadingOverlay(QWidget):
         colour = theme_module.qcolor(_tokens()["bg-surface"])
         colour.setAlpha(240)
         painter.fillRect(self.rect(), colour)
+        painter.end()
+        # The frame exists now: let the window queue the work this frame covers.
+        self._fire_after_paint()
 
 
 class ProgressTrack(QWidget):
